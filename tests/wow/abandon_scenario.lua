@@ -59,7 +59,12 @@ return function(M, ctx)
     { title = "Courrier rendu", level = 25, xp = 1800, complete = true, objectives = {} },                                        -- 1006
     { title = "Les loups de la colline", level = 26, xp = 2100, objectives = { { text = "Loup tué : 4/10", have = 4, need = 10 } } }, -- 1007
   }
-  for i = 1, 13 do   -- filler to reach 19/20
+  -- filler to reach cap - 1 (19/20 on the old mock; FIDELITY: the real Forever log holds 40 quests, the game says so
+  -- through C_QuestLog.GetMaxNumQuestsCanAccept — Constants.QuestLogConsts.MAXIMUM_NUM_QUESTS_LOG_CAN_ACCEPT)
+  local CQx = rawget(_G, "C_QuestLog")
+  local CAP = (CQx and CQx.GetMaxNumQuestsCanAccept and CQx.GetMaxNumQuestsCanAccept()) or 20
+  local FULL = ("Journal %d/%d"):format(CAP - 1, CAP)
+  for i = 1, CAP - 7 do
     M.quests[#M.quests + 1] = { title = "Quête n°" .. i, level = 26, xp = 2000, objectives = { { text = "Ours tué : 5/8", have = 5, need = 8 } } }
   end
   -- a friend in the group (no TreeAI) has « Les loups de la colline »
@@ -68,7 +73,7 @@ return function(M, ctx)
   if CQ then CQ.IsUnitOnQuest = function(unit, qid) return unit == "party1" and qid == 1007 end end
 
   A.Update(true)
-  ctx.check(A.ctx and A.ctx.logCount == 19 and A.ctx.logMax == 20, "log 19/20 counted")
+  ctx.check(A.ctx and A.ctx.logCount == CAP - 1 and A.ctx.logMax == CAP, "log " .. FULL .. " counted")
   local grey = byTitle("Vieille corvée")
   ctx.check(grey and grey.verdict == "abandon", "grey filler → abandon")
   ctx.check(grey and grey.text:find("^Abandonne « Vieille corvée » : grise %(tu as 9 niveaux de plus%), %d+ XP seulement pour ~%d+ min"),
@@ -93,7 +98,7 @@ return function(M, ctx)
 
   -- « À retirer » block in the « Quêtes » tab + pinned alert (log nearly full)
   local tl = T.GetTabLines and T:GetTabLines("quests") or A.lines
-  ctx.check(find(tl, "Journal 19/20 : %d quêtes? à retirer"), "header (nearly full): " .. dump(tl))
+  ctx.check(find(tl, FULL .. " : %d quêtes? à retirer"), "header (nearly full): " .. dump(tl))
   local line = find(tl, "Retire « Vieille corvée » : trop facile maintenant", true)
   ctx.check(line and line.onClick and tostring(line.tooltip):find("ouvre ton journal (L)", 1, true), "abandon line + tooltip: " .. dump(tl))
   local Pl = T.Plain
@@ -102,7 +107,7 @@ return function(M, ctx)
     ctx.check(okp, "plain abandon line (no " .. tostring(w) .. "): " .. tostring(l.text))
   end
   T.settings.panel.nowMax = 30   -- other modules pin lines too: look past the top 5
-  ctx.check(find(T.GetTabLines and T:GetTabLines("now") or {}, "Journal 19/20", true), "pinned in « Maintenant » " .. dump(T:GetTabLines("now")))
+  ctx.check(find(T.GetTabLines and T:GetTabLines("now") or {}, FULL, true), "pinned in « Maintenant » " .. dump(T:GetTabLines("now")))
 
   -- click = instructions only
   local n0 = #M.output
@@ -115,7 +120,7 @@ return function(M, ctx)
   n0 = #M.output
   M.RunSlash("/tai abandon")
   said = table.concat(M.output, "\n", n0 + 1)
-  ctx.check(said:find("Journal 19/20", 1, true) and said:find("Libérer de la place : 1. ", 1, true), "/tai abandon report")
+  ctx.check(said:find(FULL, 1, true) and said:find("Libérer de la place : 1. ", 1, true), "/tai abandon report")
   ctx.check(said:find("Garde « ", 1, true) and said:find("Retire « ", 1, true) and not said:find("XP/min", 1, true), "every quest has a plain verdict: " .. said)
   n0 = #M.output
   M.RunSlash("/tai abandon detail")

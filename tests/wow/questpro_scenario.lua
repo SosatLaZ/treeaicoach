@@ -207,9 +207,10 @@ return function(M, ctx)
   M.RunSlash("/tai boussole m")
 
   -- secret values (Forever, in combat): never compared / concatenated
-  rawset(_G, "issecretvalue", function(v) return v == "SECRET" end)
+  local realIsSecret = rawget(_G, "issecretvalue")   -- FIDELITY: chain to the client's, restore it (never remove it)
+  rawset(_G, "issecretvalue", function(v) return v == "SECRET" or (realIsSecret ~= nil and realIsSecret(v)) or false end)
   check(TR.DropTip("SECRET") == nil, "secret unit name ignored in tooltips")
-  rawset(_G, "issecretvalue", nil)
+  rawset(_G, "issecretvalue", realIsSecret)
 
   -- heavy planning only out of combat; compass hidden in combat (option)
   M.EnterCombat()

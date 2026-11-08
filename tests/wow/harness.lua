@@ -40,6 +40,22 @@ if not target then
   io.stderr:write("usage: lua5.1 harness.lua [options] <AddonDir|file.toc>\n")
   os.exit(2)
 end
+-- FIDELITY: TREEAI_WOW_FORCE_FLAVOR=forever runs every scenario of the suite on the faithful Forever mock;
+-- TREEAI_WOW_RUNLOG=FILE appends each run's arguments (to replay them: tests/wow/test_forever_fidelity.py)
+do
+  local force = os.getenv("TREEAI_WOW_FORCE_FLAVOR")
+  if force and force ~= "" then opts.flavor = force end
+  local log = os.getenv("TREEAI_WOW_RUNLOG")
+  if log and log ~= "" then
+    local f = io.open(log, "a")
+    if f then
+      local parts = {}
+      for i = 1, #argv do parts[#parts + 1] = argv[i] end
+      f:write(table.concat(parts, "\t"), "\n")
+      f:close()
+    end
+  end
+end
 
 local notes = {}
 local function note(s) notes[#notes + 1] = s end
@@ -119,6 +135,7 @@ end
 
 -- mock -------------------------------------------------------------------------------------------
 local M = dofile(here .. "/wowmock.lua")
+M.addonName = addonName
 M.Install(opts.flavor)
 M.tocMeta = { [addonName] = meta }
 if opts.class then M.player.class = opts.class:upper() end
@@ -126,6 +143,8 @@ if opts.level then M.player.level = opts.level end
 if M.player.class ~= "HUNTER" then M.pet.exists = false end
 
 local allowed = { WowMock = true }
+-- FIDELITY (forever): an API name the real client lacks, set back by a scenario that simulates it, is not a leak
+for _, n in ipairs(M.pruned or {}) do if not n:find(".", 1, true) then allowed[n] = true end end
 allowed[addonName] = true
 for _, n in ipairs(svNames) do allowed[n] = true end
 for n in pairs(opts.allow) do allowed[n] = true end
@@ -326,6 +345,22 @@ end
 
 if opts.storm then storm() end
 
+-- FIDELITY (forever): a scenario calling TreeAI:UserAction(fn) directly stands for the player's click on a line:
+-- that call (and only a call coming from the scenario file) runs as one hardware event, as the click would
+if opts.flavor == "forever" and opts.scenario and addonName == "TreeAI" then
+  local T = rawget(_G, "TreeAI")
+  if type(T) == "table" and type(T.UserAction) == "function" then
+    local ua = T.UserAction
+    local scen = opts.scenario:gsub("^.*[/\\]", "")
+    T.UserAction = function(self, ...)
+      local info = debug.getinfo(2, "S")
+      local src = info and tostring(info.short_src) or ""
+      if src:sub(-#scen) == scen and not M.hardware then return M.Hw(ua, self, ...) end
+      return ua(self, ...)
+    end
+  end
+end
+
 if opts.scenario then
   local chunk, err = loadfile(opts.scenario)
   if not chunk then
@@ -340,6 +375,25 @@ end
 fire("PLAYER_LEAVING_WORLD")
 fire("PLAYER_LOGOUT")
 setmetatable(_G, nil)
+-- FIDELITY (forever): a secret used as a table key (an immediate error in the real client) — scan what the addon
+-- can reach; secret booleans handed to addon code (a boolean test on one errors in the client: listed, not failed)
+if opts.flavor == "forever" and M.ScanSecretKeys then
+  local roots = {}
+  for k, v in pairs(_G) do if allowed[k] and type(v) == "table" and k ~= "WowMock" then roots[#roots + 1] = v end end
+  roots[#roots + 1] = addonTable
+  for _, path in ipairs(M.ScanSecretKeys(roots)) do
+    M.violations[#M.violations + 1] = { kind = "secret", msg = "secret value used as a table key: " .. path, where = "?" }
+  end
+  local seenB = {}
+  for _, b in ipairs(M.secretBooleans or {}) do
+    local key = b.fn .. "@" .. b.where
+    if not seenB[key] then
+      seenB[key] = true
+      local line = "secret boolean from " .. b.fn .. " at " .. b.where .. " (an if / not on it errors in the real client)"
+      if os.getenv("TREEAI_WOW_SECRETBOOL") then io.write("SECRETBOOL ", line, "\n") else note(line) end
+    end
+  end
+end
 
 -- SavedVariables serialisation (WoW-like) -----------------------------------------------------
 local svOut, svProblems = {}, {}
