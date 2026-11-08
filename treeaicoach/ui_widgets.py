@@ -269,6 +269,16 @@ QPushButton#Segment {{ background: transparent; border: none; border-radius: 6px
   font-size: {SMALL_PX}px; font-weight: 500; min-height: 18px; color: {t.secondary}; }}
 QPushButton#Segment:hover {{ color: {t.text}; }}
 QPushButton#Segment:checked {{ background: {t.thumb}; color: {t.text}; font-weight: 600; }}
+QListView#VList {{ background: {t.group}; border: 1px solid {t.edge}; border-radius: {GROUP_RADIUS}px;
+  padding: 4px 0; outline: none; }}
+QListView#VList::item {{ padding: 7px {ROW_PAD_X}px; border: none; }}
+QListView#VList::item:hover {{ background: {t.hover}; }}
+QProgressBar[tone="ok"]::chunk {{ background: {t.ok}; }}
+QProgressBar[tone="warning"]::chunk {{ background: {t.warning}; }}
+QLabel[role="num"] {{ font-size: {SMALL_PX}px; font-weight: 600; color: {t.secondary}; background: {t.control};
+  border-radius: {BADGE_RADIUS}px; padding: 2px 0; }}
+QLabel[role="num"][tone="accent"] {{ color: {t.accent}; background: {t.accent_tint}; }}
+QLabel[role="metric"] {{ font-family: "{display}"; font-size: {HEADLINE_PX}px; font-weight: 600; }}
 #Toast {{ background: {t.text}; border-radius: 10px; }}
 #Toast QLabel {{ color: {t.window}; font-weight: 500; }}
 #Toast[level="error"] QLabel, #Toast[level="warning"] QLabel {{ font-weight: 600; }}
@@ -602,6 +612,90 @@ class Segmented(QtWidgets.QFrame):
             if b.isChecked():
                 return v
         return ""
+
+    def set_choice_visible(self, value: str, on: bool) -> None:
+        """Show / hide one segment (a tab that only exists sometimes, e.g. « Donjon » in an instance)."""
+        b = self._buttons.get(str(value))
+        if b is not None and b.isHidden() == bool(on):
+            b.setVisible(bool(on))
+
+    def choice_visible(self, value: str) -> bool:
+        b = self._buttons.get(str(value))
+        return b is not None and not b.isHidden()
+
+
+class VirtualList(QtWidgets.QListView):
+    """A long list (errors, events, loot) that costs nothing to keep on screen: a C++ model and the default
+    delegate, so only the visible lines are painted and no Python runs while it scrolls or repaints.
+    ``set_rows([(text, tooltip, tone)])`` touches only the lines that changed; up to ``max_visible`` lines are
+    shown, the rest scroll inside. ``tone`` (ok / warning / danger / accent / "") colours a line."""
+
+    TONE_ROLE = int(Qt.UserRole) + 1
+
+    def __init__(self, max_visible: int = 8, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("VList")
+        self._model = QtGui.QStandardItemModel(self)
+        self.setModel(self._model)
+        self.setUniformItemSizes(True)
+        self.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setTextElideMode(Qt.ElideRight)
+        self.setWordWrap(False)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        self._max = max(1, int(max_visible))
+        self._fit()
+
+    def rows(self) -> list[str]:
+        return [self._model.item(i).text() for i in range(self._model.rowCount())]
+
+    def set_rows(self, rows: Sequence[Any]) -> None:
+        m = self._model
+        old = m.rowCount()
+        for i, row in enumerate(rows):
+            text, tip, tone = (tuple(row) + ("", ""))[:3] if isinstance(row, (tuple, list)) else (str(row), "", "")
+            text, tip, tone = str(text), str(tip or ""), str(tone or "")
+            if i < old:
+                it = m.item(i)
+                if it.text() != text:
+                    it.setText(text)
+                if it.toolTip() != tip:
+                    it.setToolTip(tip)
+                if it.data(self.TONE_ROLE) != tone:
+                    it.setData(tone, self.TONE_ROLE)
+                    self._paint_tone(it)
+            else:
+                it = QtGui.QStandardItem(text)
+                it.setEditable(False)
+                it.setToolTip(tip)
+                it.setData(tone, self.TONE_ROLE)
+                self._paint_tone(it)
+                m.appendRow(it)
+        if old > len(rows):
+            m.removeRows(len(rows), old - len(rows))
+        self._fit()
+
+    def _paint_tone(self, it: QtGui.QStandardItem) -> None:
+        tone = str(it.data(self.TONE_ROLE) or "")
+        col = getattr(theme(), tone, None) if tone in ("ok", "warning", "danger", "accent", "secondary") else None
+        if col:
+            it.setForeground(QtGui.QBrush(QtGui.QColor(col)))
+        else:                                  # no tone: the palette's text colour (an empty brush paints black)
+            it.setData(None, Qt.ForegroundRole)
+
+    def recolor(self) -> None:
+        for i in range(self._model.rowCount()):
+            self._paint_tone(self._model.item(i))
+
+    def _fit(self) -> None:
+        n = self._model.rowCount()
+        line = self.fontMetrics().height() + 14
+        h = line * max(1, min(n, self._max)) + 10
+        if self.height() != h or self.minimumHeight() != h:
+            self.setFixedHeight(h)
 
 
 class Combo(QtWidgets.QComboBox):

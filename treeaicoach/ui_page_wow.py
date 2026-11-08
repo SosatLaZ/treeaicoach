@@ -1,22 +1,33 @@
-"""WoW Forever: the World of Warcraft helper made visible. Is WoW running, where it is installed, the
-TreeAI addon (install / update), the combat log (/combatlog), the character seen by the addon
-(SavedVariables) and the WoW switches, plus the live tabs « Direct · Quêtes · Groupe · HV · Session »
-fed by :mod:`treeaicoach.wow.live` (file watchers on TreeAIDB, Auctionator's prices, the chat and combat
-logs; the banner always says how old the last /reload is).
+"""WoW Forever (4.0, « compagnon »): the page to keep on a second screen or an alt-tab away while playing.
 
-All file work (finding WoW, reading SavedVariables, copying the addon) runs on a worker thread
-(``app.run_job``); the page polls every ``POLL_MS`` while shown. Nothing here touches the game process:
-only its process name and its own files (Blizzard rules: no memory, no screen, no keys)."""
+Top to bottom: the « Maintenant » card (the next step with its distance, time and why, the measured XP/h and the
+time to the next level with how sure it is, at most two danger facts, how old all of it is), then the tabs
+« Trajet · Groupe · HV · Session · Donjon (in an instance) · Erreurs », then the setup (« État », moved to the
+top only when something needs doing), the coach switches and « Avancé ».
+
+Zero freeze, by construction:
+
+* every file read, parse and computation runs on a worker thread (:func:`read_state` → :func:`page_vm`): the
+  whole page is turned into plain data (strings, numbers) there, each section with its signature;
+* the UI thread only compares signatures and updates the widgets that changed, in place (pooled rows: a
+  refresh never rebuilds a list), at most once per ``RENDER_MIN_MS``; long lists are virtualised
+  (:class:`treeaicoach.ui_widgets.VirtualList`); sparklines are painted once into a pixmap, so repaints run
+  no Python; hidden tabs are brought up to date one per idle turn, so switching tabs only flips visibility.
+
+Blizzard rules: only the game's own files (SavedVariables, chat / combat logs), never memory, screen or keys."""
 
 from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 from typing import Any
 
 log = logging.getLogger(__name__)
 
 POLL_MS = 3000
+RENDER_MIN_MS = 500          # at most one render per 500 ms
+WARM_MS = 120                # hidden tabs are updated one per idle turn after a render
 ERR_EMPTY = "Pas encore de fichier : en jeu, tape /tai erreurs puis /reload."
 RULES_TEXT = ("TreeAI ne lit ni la mémoire ni l'écran de WoW et n'appuie sur aucune touche. Il lit seulement "
               "les fichiers du jeu : le journal de combat (/combatlog) et les sauvegardes de l'addon "
@@ -135,17 +146,18 @@ def plan_rows(plan: Any) -> list[tuple[str, str]]:
 
 
 def read_state(cfg: Any, hub: Any = None) -> dict:
-    """Everything the page shows (worker thread, files only). Never raises.
+    """Everything the page shows (WORKER thread, files only). Never raises.
 
-    With a :class:`treeaicoach.wow.live.LiveHub` the game files are watched (mtime) and re-parsed only
-    when they change; ``out["live"]`` is its snapshot and ``out["events"]`` the changes of this tick."""
+    With a :class:`treeaicoach.wow.live.LiveHub` the game files are watched (mtime) and re-parsed only when they
+    change; ``out["live"]`` is its snapshot, ``out["events"]`` the changes of this tick and ``out["vm"]`` the
+    whole page as plain data (:func:`page_vm`): the UI thread computes nothing."""
     from treeaicoach.wow import optional  # noqa: PLC0415
 
     out: dict = {"wow_exe": None, "lol": False, "install": None, "src_version": "", "inst_version": "",
                  "needs_update": False, "log": ("", ""), "rows": [], "sv_age": None, "mode": None,
                  "live": {}, "events": []}
     try:
-        process, install, sv = optional("process"), optional("install"), optional("savedvars")
+        process, install = optional("process"), optional("install")
         if process is not None:
             out["wow_exe"] = process.wow_process()
             out["lol"] = process.is_lol_running()
@@ -162,11 +174,13 @@ def read_state(cfg: Any, hub: Any = None) -> dict:
             out["installed"] = bool(inst is not None and inst.addon_dir.is_dir())
             out["needs_update"] = install.needs_update(inst, src)
             out["log"] = install.combat_log_status(inst)
-            if inst is not None:
-                try:
+            if inst is not None and hub is not None:
+                try:            # the app's plan file, parsed once per change (it was re-parsed every 3 s)
+                    from treeaicoach.wow import live  # noqa: PLC0415
                     from treeaicoach.wow.planner import writer  # noqa: PLC0415
 
-                    out["plan"] = writer.read_plan(inst.addons_dir)
+                    plan = live.read_db_cached(Path(inst.addons_dir) / writer.PLAN_ADDON / "Plan.lua", "TreeAIPlan")
+                    out["plan"] = plan or None
                 except Exception:
                     log.debug("plan read failed", exc_info=True)
             if hub is not None:
@@ -176,22 +190,20 @@ def read_state(cfg: Any, hub: Any = None) -> dict:
                 out["live"] = snap
                 out["rows"] = summary_rows(snap.get("db") or {}) if snap.get("db") else []
                 out["sv_age"] = snap.get("sv_age")
-                # (3.9.8) every tab's content is computed HERE, in the worker: switching tabs never computes on
-                # the UI thread (big Auctionator / ledger data froze the window)
-                out["tabs"] = {}
-                for k in ("direct", "quetes", "groupe", "hv", "session"):
-                    try:
-                        out["tabs"][k] = tab_blocks(k, snap)
-                    except Exception:
-                        log.debug("wow tab %s failed", k, exc_info=True)
-                return out
-            files = install.savedvars_files(inst)
-            if files and sv is not None:
-                out["rows"] = summary_rows(sv.read_db(files[0]))
-                out["sv_age"] = install.file_status(files[0]).get("age_s")
+            else:
+                files = install.savedvars_files(inst)
+                live = optional("live")
+                if files and live is not None:
+                    out["rows"] = summary_rows(live.read_db_cached(files[0]))
+                    out["sv_age"] = install.file_status(files[0]).get("age_s")
     except Exception:
         log.debug("wow page state failed", exc_info=True)
     out["errfile"] = _errfile_info()
+    if hub is not None:
+        try:
+            out["vm"] = page_vm(out)
+        except Exception:
+            log.debug("wow page view failed", exc_info=True)
     return out
 
 
@@ -231,7 +243,7 @@ def overview(st: dict, enabled: bool = True) -> dict:
 
     ``headline`` / ``tone``: the verdict (« Tout est prêt », « Addon à installer »…); ``detail``: is WoW
     running; ``steps``: [(key, done True / False / None, text)] for the folder, the addon and the combat
-    log; ``button`` / ``can_install``: the install button."""
+    log; ``button`` / ``can_install``: the install button; ``ready``: nothing to do (the card goes down)."""
     st = st or {}
     exe, mode = st.get("wow_exe"), st.get("mode") or {}
     if not st:
@@ -290,231 +302,371 @@ def overview(st: dict, enabled: bool = True) -> dict:
     button = ("Mettre à jour l'addon" if st.get("needs_update") else "Réinstaller l'addon") if installed \
         else "Installer l'addon"
     return {"headline": headline, "tone": tone, "detail": detail, "steps": steps, "button": button,
-            "can_install": bool(inst is not None and has_src), "found": inst is not None}
+            "can_install": bool(inst is not None and has_src), "found": inst is not None,
+            "ready": not st or tone in ("ok", "") or headline.startswith("Presque")}
 
 
-
-# ---------------------------------------------------------------------------------------- live tabs
-TABS: tuple[tuple[str, str], ...] = (("direct", "Direct"), ("quetes", "Quêtes"), ("groupe", "Groupe"),
-                                     ("hv", "HV"), ("session", "Session"))
-_QT: dict = {}
-
-
-def _qt_classes() -> dict:
-    """The page's own small painted widgets (built once, Qt imported lazily): ``Sparkline`` and ``Meter``."""
-    if _QT:
-        return _QT
-    from PySide6 import QtCore, QtGui, QtWidgets  # noqa: PLC0415
-
-    from treeaicoach import ui_widgets as W  # noqa: PLC0415
-
-    def color_of(name: str) -> str:
-        t = W.theme()
-        return str(getattr(t, name, name))
-
-    class Sparkline(QtWidgets.QWidget):
-        """QPainter sparkline: one or more series ([y…] or [(x, y)…], colour = theme name or #hex) on a
-        shared scale, last point marked."""
-
-        def __init__(self, series: list, width: int = 168, height: int = 40, tip: str = "") -> None:
-            super().__init__()
-            self.series = [(list(pts), color) for pts, color in series if pts]
-            self.setFixedSize(width, height)
-            if tip:
-                self.setToolTip(tip)
-
-        @staticmethod
-        def xy(pts: list) -> list[tuple[float, float]]:
-            out = []
-            for i, p in enumerate(pts):
-                if isinstance(p, (list, tuple)) and len(p) >= 2:
-                    out.append((float(p[0]), float(p[1])))
-                else:
-                    out.append((float(i), float(p)))
-            return out
-
-        def paintEvent(self, _e: Any) -> None:  # noqa: N802
-            all_pts = [self.xy(pts) for pts, _c in self.series]
-            flat = [pt for pts in all_pts for pt in pts]
-            if not flat:
-                return
-            qp = QtGui.QPainter(self)
-            qp.setRenderHint(QtGui.QPainter.Antialiasing)
-            x0, x1 = min(p[0] for p in flat), max(p[0] for p in flat)
-            y0, y1 = min(p[1] for p in flat), max(p[1] for p in flat)
-            if y1 - y0 < 1e-9:
-                y0, y1 = y0 - 1, y1 + 1
-            if x1 - x0 < 1e-9:
-                x0, x1 = x0 - 1, x1 + 1
-            pad = 4.0
-            w, h = self.width() - 2 * pad, self.height() - 2 * pad
-            qp.setPen(QtGui.QPen(QtGui.QColor(color_of("separator")), 1))
-            qp.drawLine(QtCore.QPointF(pad, pad + h), QtCore.QPointF(pad + w, pad + h))
-            for pts, (_p, color) in zip(all_pts, self.series):
-                mapped = [QtCore.QPointF(pad + (x - x0) / (x1 - x0) * w, pad + h - (y - y0) / (y1 - y0) * h)
-                          for x, y in pts]
-                c = QtGui.QColor(color_of(color))
-                path = QtGui.QPainterPath()
-                path.moveTo(mapped[0])
-                for m in mapped[1:]:
-                    path.lineTo(m)
-                qp.setPen(QtGui.QPen(c, 1.6))
-                qp.setBrush(QtCore.Qt.NoBrush)
-                qp.drawPath(path)
-                qp.setPen(QtCore.Qt.NoPen)
-                qp.setBrush(c)
-                qp.drawEllipse(mapped[-1], 2.6, 2.6)
-            qp.end()
-
-    class Meter(QtWidgets.QWidget):
-        """Thin rounded progress bar (0..100) with the percentage on its right."""
-
-        def __init__(self, pct: Any, width: int = 132) -> None:
-            super().__init__()
-            try:
-                self.pct = max(0, min(100, int(pct or 0)))
-            except (TypeError, ValueError):
-                self.pct = 0
-            self.setFixedSize(width, 18)
-
-        def paintEvent(self, _e: Any) -> None:  # noqa: N802
-            qp = QtGui.QPainter(self)
-            qp.setRenderHint(QtGui.QPainter.Antialiasing)
-            bar_w = self.width() - 44
-            qp.setPen(QtCore.Qt.NoPen)
-            qp.setBrush(QtGui.QColor(color_of("track_off")))
-            qp.drawRoundedRect(QtCore.QRectF(0, 6, bar_w, 6), 3, 3)
-            qp.setBrush(QtGui.QColor(color_of("ok" if self.pct >= 100 else "accent")))
-            qp.drawRoundedRect(QtCore.QRectF(0, 6, bar_w * self.pct / 100, 6), 3, 3)
-            qp.setPen(QtGui.QColor(color_of("secondary")))
-            qp.drawText(QtCore.QRectF(bar_w + 4, 0, 40, 18), int(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter),
-                        f"{self.pct} %")
-            qp.end()
-
-    _QT.update(Sparkline=Sparkline, Meter=Meter)
-    return _QT
+# ---------------------------------------------------------------------------------------- view model (pure)
+TABS: tuple[tuple[str, str], ...] = (("trajet", "Trajet"), ("groupe", "Groupe"), ("hv", "HV"),
+                                     ("session", "Session"), ("donjon", "Donjon"), ("erreurs", "Erreurs"))
+TAB_KEYS = tuple(k for k, _t in TABS)
+#: tabs of 3.9 (« Direct », « Quêtes ») now live in the « Maintenant » card and « Trajet »
+TAB_ALIASES = {"direct": "trajet", "quetes": "trajet"}
+#: what a tab shows while it has nothing (title, how to fill it)
+EMPTY_TEXT = {
+    "trajet": ("Pas encore de trajet", "Installe l'addon, connecte-toi puis tape /reload : tes quêtes et ton trajet "
+                                       "arrivent ici."),
+    "groupe": ("Tu joues seul", "Les cartes de tes amis apparaissent en groupe, quand ils ont TreeAI."),
+    "hv": ("Pas encore de données d'hôtel des ventes", "Ouvre l'HV, clique « Scanner », puis /reload. "
+                                                       "Les prix d'Auctionator sont lus aussi."),
+    "session": ("Pas encore de session", "Tape /chatlog en jeu : l'XP, l'or, les morts et le butin sont suivis "
+                                         "en direct. Sinon, chaque /reload ajoute un point."),
+    "donjon": ("Pas de donjon en cours", "L'onglet s'affiche dans une instance ou quand un donjon est prévu."),
+    "erreurs": ("Aucune erreur", "En jeu : /tai erreurs puis /reload pour le rapport complet."),
+}
+SECTION_ROWS_MAX = 16
+EMPTY_GLYPH = {"trajet": "wow", "session": "clock", "donjon": "wow", "erreurs": "about"}
 
 
-def _row(title: str, desc: str = "", value: str = "", spark: Any = None, meter: Any = None) -> dict:
-    return {"title": str(title), "desc": str(desc or ""), "value": str(value or ""), "spark": spark, "meter": meter}
+def _row(title: Any, desc: Any = "", value: Any = "", **kw: Any) -> dict:
+    """One row of a section: title (+ description) on the left; optional number bubble (``num``), badge,
+    progress (``meter`` 0..100), sparkline (``spark``) and value on the right. Plain data."""
+    r = {"title": str(title or ""), "desc": str(desc or ""), "value": str(value or "")}
+    for k, v in kw.items():
+        if v is not None and v != "" and v != [] and v != ():
+            r[k] = v
+    return r
 
 
-def _pairs(rows: list) -> list[dict]:
-    """(title, value) → a row with the value on the right when short, under the title when long."""
-    return [_row(t, "", v) if len(str(v)) < 34 else _row(t, v) for t, v in rows]
+def _sec(out: list, sid: str, title: str, rows: list, foot: str = "", kind: str = "rows", **kw: Any) -> None:
+    """Append a section {id, title, foot, kind, rows} (kind: rows / list / members / chart) when it has rows."""
+    if rows or kw.get("always"):
+        sec = {"id": sid, "title": title, "foot": " ".join(str(foot or "").split()), "kind": kind,
+               "rows": list(rows)[:SECTION_ROWS_MAX] if kind in ("rows", "members") else list(rows)}
+        sec.update({k: v for k, v in kw.items() if k != "always"})
+        out.append(sec)
 
 
-def tab_blocks(key: str, live_snap: dict) -> list[dict]:
-    """What one tab shows: blocks {title, foot, rows=[{title, desc, value, spark, meter}]} (pure, tests).
-    An empty list means « nothing yet » (the page shows :data:`EMPTY_TEXT`)."""
+def _trajet(snap: dict, ctx: dict) -> list[dict]:
     from treeaicoach.wow import live  # noqa: PLC0415
 
-    snap = live_snap or {}
-    blocks: list[dict] = []
-
-    def block(title: str, rows: list, foot: str = "") -> None:
-        if rows:
-            blocks.append({"title": title, "foot": foot, "rows": rows})
-
-    if key == "direct":
-        v = live.direct_view(snap)
-        if v["empty"] and not (snap.get("chat") or {}).get("events"):
-            return blocks
-        rows = [_row(v["title"], v["zone"])]
-        if v["xp_series"]:
-            rows.append(_row("Courbe de la session", "XP (bleu) et or (vert), par tranche de 5 min",
-                             spark=[(v["xp_series"], "accent"), (v["gold_series"], "ok")]))
-        block("En direct", rows + _pairs(v["rows"]), v["live_text"])
-    elif key == "quetes":
-        v = live.quests_view(snap)
-        if v["now"]:
-            block("À faire maintenant", [_row(v["now"], f"Pourquoi ? {v['why']}" if v["why"] else "")])
-        block("Tes quêtes (les meilleures en haut)", [_row(f"{t} — {tag}", why) for t, tag, why in v["route"]], v["head"])
-        block("Ton trajet", [_row(("Maintenant" if i == 1 else "Ensuite"), p) for i, p in enumerate(v["plan"], 1)])
-        block("En passant", [_row(t) for t in v["tips"]])
-        block("À retirer", [_row(f"Retire « {a['title']} »", a["why"]) for a in v["abandon"]],
-              "Tu la retires toi-même : journal de quêtes (L) → Abandonner.")
-    elif key == "groupe":
-        v = live.group_view(snap)
-        if v["members"]:
-            block("Le groupe", [_row(", ".join(v["members"]),
-                                     f"Prochaine mission : {v['next']}" if v["next"] else "")],
-                  f"{v['no_addon']} membre(s) sans TreeAI." if v["no_addon"] else "")
-        block("Tableau des missions", [_row(e["title"], e["state"], meter=e["pct"]) for e in v["board"]])
-        block("Répartition", [_row(t) for t in v["assign"] + v["claims"]])
-        block("Voyage", [_row(t) for t in v["travel"]])
-        block("Artisans", [_row(t) for t in v["crafts"]])
-    elif key == "hv":
-        v = live.ah_view(snap)
-        rows = []
-        for d in v["deals"]:
-            label = f"{d['name']} x{d['count']}" if d["count"] > 1 else d["name"]
-            if d["kind"] == "vendor":
-                desc = f"acheter {live.money(d['buy'])}, revendre au marchand {live.money(d['sell'])} : gain sûr"
-            else:
-                desc = (f"acheter {live.money(d['buy'])} → revendre {live.money(d['sell'])} · commission "
-                        f"{live.money(d['cut'])} · dépôt {live.money(d['deposit'])} (perdu si invendu)")
-                if d.get("sold") is not None:
-                    desc += f" · se vend ~{d['sold']:.1f}/jour".replace(".", ",")
-                if d.get("stop"):
-                    desc += f" · stop-loss {live.money(d['stop'])}/u"
-                if d["atr"]:
-                    desc += f" · Auctionator {live.money(d['atr'] * d['count'])}"
-            series = []
-            if d["ours"]:
-                series.append((list(d["ours"]), "accent"))
-            if d["atr_series"]:
-                series.append((list(d["atr_series"]), "warning"))
-            rows.append(_row(label, desc, f"+{live.money(d['net'])} net", spark=series or None))
-        if not rows and v.get("none"):
-            block("Achat-revente", [_row(v["none"][0], " · ".join(v["none"][1:]))],
-                  "Seuls les objets qui se vendent vraiment sont proposés (ventes mesurées sur plusieurs jours).")
-        block("Meilleures affaires", rows,
-              " ".join(x for x in ("Net = vente − commission − achat. Courbes : prix TreeAI (bleu), Auctionator (jaune).",
-                                   v.get("rules", "")) if x))
-        mine = [_row(m["name"] + (f" x{m['count']}" if m["count"] > 1 else ""),
-                     (f"plus bas {live.money(m['lowest'])} · " if m["lowest"] else "") + m["advice"],
-                     f"{live.money(m['unit'])}/u") for m in v["mine"]]
-        foot = ""
-        if not mine and v["recent"]:
-            mine = [_row(n, day, f"+{live.money(c)}") for n, c, day in v["recent"]]
-            foot = "Ventes réalisées récentes (courrier de l'HV). Ouvre l'HV puis /reload pour tes enchères en cours."
-        block("Mes ventes", mine, foot)
-        r = v["realized"]
-        if r["total"] or r["today"] or r["week"] or r["series"]:
-            rr = [_row("Profit réalisé", f"aujourd'hui {live.money(r['today'])} · 7 jours {live.money(r['week'])}",
-                       live.money(r["total"]), spark=[(r["series"], "ok")] if len(r["series"]) > 1 else None)]
-            rr += [_row(n, "", f"+{live.money(p)}") for n, p in r["top"][:3]]
-            block("Bilan", rr, v["budget"])
-        block("Marchés minces (prudence)", [_row(t) for t in v["thin"]])
-        if blocks and v["info"]:
-            first = blocks[0]
-            first["foot"] = " ".join(x for x in (first["foot"], v["info"][:1].upper() + v["info"][1:] + ".") if x)
-    elif key == "session":
-        v = live.session_view(snap)
-        block("Récap", _pairs(v["rows"]))
-        block("Objectifs", [_row(g["text"], meter=g["pct"]) for g in v["goals"]],
-              "Objectif du groupe en jeu : /tai mission objectif niveau 30 (ou quetes 15).")
-        block("Classement XP", [_row(n, "", f"{x} XP/h" if x else "") for n, x in v["leaderboard"]])
-        from treeaicoach.wow import stats as wstats  # noqa: PLC0415
-        block("Mes stats mesurées", _pairs(wstats.stats_rows(snap.get("summary"))),
-              "Mesurées en jouant par l'addon (Plus → Stats → « Exporter pour TreeAI », puis /reload).")
-        block("Évènements", [_row(t) for t in v["events"]])
-    return blocks
+    out: list[dict] = []
+    s = snap.get("summary") or {}
+    t = live.trajet_view(snap, ctx.get("plan"))
+    rows = []
+    if t["warn"]:
+        rows.append(_row(t["warn"], "", tone="warning"))
+    for st in t["stops"]:
+        cur = bool(st["current"])
+        tag = st.get("tag", "") if st.get("tag") in ("Prête à rendre", "À plusieurs", "Rapide") else ""
+        rows.append(_row(st["title"], st["desc"], num=str(st["n"]), num_tone="accent" if cur else "",
+                         badge="En cours" if cur else tag, badge_tone="accent" if cur else
+                         ("ok" if tag == "Prête à rendre" else "")))
+    foot = [t["head"] + "." if t["head"] and not t["head"].endswith(".") else t["head"]]
+    if t["minutes"]:
+        foot.append(f"Reste ≈ {live.duration_text(t['minutes'] * 60)} selon le planificateur.")
+    if t["dropped"]:
+        foot.append(f"{t['dropped']} étape{'s' if t['dropped'] > 1 else ''} masquée{'s' if t['dropped'] > 1 else ''} : "
+                    "quête plus dans ton journal.")
+    if t["stops"]:
+        _sec(out, "trajet.stops", "Ton trajet", rows, " ".join(x for x in foot if x))
+    elif t["warn"]:
+        _sec(out, "trajet.stops", "Ton trajet", rows)
+    routes = plan_rows(ctx.get("plan"))
+    rrows = [_row(a, b) for a, b in routes] or [
+        _row("Pas encore de trajet calculé", "Après un /reload en jeu, clique « Calculer » : trois trajets au choix "
+                                            "(le plus rapide, tout finir ici, avec tes potes).")]
+    _sec(out, "trajet.routes", "Trajets calculés par TreeAI", rrows,
+         "Choisis-en un en jeu : /tai plan." if routes else "", action="plan", always=True)
+    ab = live.abandon_advice(s)
+    _sec(out, "trajet.abandon", "À retirer de ton journal",
+         [_row(f"Retire « {a['title']} »", a["why"]) for a in ab],
+         "Tu la retires toi-même : journal de quêtes (L) → Abandonner.")
+    tips = []
+    tr = s.get("tracker") if isinstance(s.get("tracker"), dict) else {}
+    logq = live.log_quests(s) or {}
+    pk = tr.get("pickup")
+    if isinstance(pk, dict) and pk.get("title") and live._i(pk.get("id")) not in logq:
+        tips.append(_row(f"Prends « {pk['title']} »", f"chez {pk['giver']}" if pk.get("giver") else "En chemin."))
+    for e in live._list(tr.get("easyNearby"))[:3]:
+        if isinstance(e, dict) and e.get("title") and live._i(e.get("id")) not in logq:
+            tips.append(_row(f"« {e['title']} »", "Facile, juste à côté."))
+    _sec(out, "trajet.tips", "En passant", tips)
+    return out
 
 
-EMPTY_TEXT = {
-    "direct": ("Rien pour l'instant", "Installe l'addon, connecte-toi puis tape /reload (et /chatlog pour le direct)."),
-    "quetes": ("Pas encore de quêtes", "Le suivi de l'addon s'enregistre au /reload."),
-    "groupe": ("Pas de groupe", "Le tableau des missions apparaît en groupe avec des amis qui ont TreeAI."),
-    "hv": ("Pas encore de données d'hôtel des ventes", "Ouvre l'HV, clique « Scanner », puis /reload. "
-                                                      "Les prix d'Auctionator sont lus aussi."),
-    "session": ("Pas encore de session", "Tape /chatlog en jeu : l'XP, l'or et le butin sont suivis en direct."),
-}
+def _groupe(snap: dict, ctx: dict) -> list[dict]:
+    from treeaicoach.wow import live  # noqa: PLC0415
+
+    out: list[dict] = []
+    members = live.members_view(snap)
+    g = live.group_view(snap)
+    if len(members) >= 2:
+        rows = [{"title": m["name"] + (" (toi)" if m["me"] else ""), "desc": m["line"],
+                 "badges": [list(b) for b in m["badges"]]} for m in members]
+        foot = f"{g['no_addon']} membre(s) sans TreeAI." if g["no_addon"] else ""
+        _sec(out, "groupe.members", "Le groupe", rows, foot, kind="members")
+    if g["next"]:
+        _sec(out, "groupe.next", "Prochaine mission", [_row(g["next"])])
+    _sec(out, "groupe.board", "Quêtes en commun",
+         [_row(e["title"], e["state"], meter=e["pct"]) for e in g["board"]])
+    _sec(out, "groupe.split", "Qui fait quoi", [_row(x) for x in g["assign"] + g["claims"]])
+    _sec(out, "groupe.notes", "À savoir", [_row(x) for x in g["travel"] + g["crafts"]])
+    return out
+
+
+def _hv(snap: dict, ctx: dict) -> list[dict]:
+    from treeaicoach.wow import live  # noqa: PLC0415
+
+    out: list[dict] = []
+    v = live.ah_view(snap)
+    if v["empty"]:
+        return out
+    m = live.money
+    rows = []
+    for d in v["deals"]:
+        label = f"{d['name']} x{d['count']}" if d["count"] > 1 else d["name"]
+        if d["kind"] == "vendor":
+            desc = f"acheter {m(d['buy'])}, revendre au marchand {m(d['sell'])} : gain sûr"
+        else:
+            desc = (f"acheter {m(d['buy'])} → revendre {m(d['sell'])} · commission {m(d['cut'])} · "
+                    f"dépôt {m(d['deposit'])} (perdu si invendu)")
+            if d.get("sold") is not None:
+                desc += f" · se vend ~{d['sold']:.1f}/jour".replace(".", ",")
+            if d.get("stop"):
+                desc += f" · stop-loss {m(d['stop'])}/u"
+            if d["atr"]:
+                desc += f" · Auctionator {m(d['atr'] * d['count'])}"
+        series = []
+        if len(d["ours"]) > 1:
+            series.append([[list(p) for p in d["ours"][-30:]], "accent"])
+        if len(d["atr_series"]) > 1:
+            series.append([[list(p) for p in d["atr_series"][-30:]], "warning"])
+        rows.append(_row(label, desc, f"+{m(d['net'])} net", spark=series or None,
+                         value_tone="ok" if d["net"] > 0 else ""))
+    foot = []
+    if rows:
+        foot.append("Net = vente − commission − achat. Courbes : prix TreeAI (bleu), Auctionator (jaune).")
+    elif v["none"]:
+        rows = [_row(v["none"][0], " · ".join(v["none"][1:]), tone="warning" if v.get("stale_deals") else "")]
+        foot.append("Seuls les objets qui se vendent vraiment sont proposés (ventes mesurées sur plusieurs jours).")
+    if v.get("rules"):
+        foot.append(v["rules"])
+    if v["thin"]:
+        foot.append("Prudence, marché mince : " + ", ".join(v["thin"]) + ".")
+    if v["info"]:
+        foot.append(v["info"][:1].upper() + v["info"][1:] + ".")
+    _sec(out, "hv.deals", "Achat-revente", rows, " ".join(foot))
+    mine = [_row(x["name"] + (f" x{x['count']}" if x["count"] > 1 else ""),
+                 (f"plus bas {m(x['lowest'])} · " if x["lowest"] else "") + x["advice"],
+                 f"{m(x['unit'])}/u", tone="warning" if x["undercut"] else "") for x in v["mine"]]
+    foot2 = ""
+    if not mine and v["recent"]:
+        mine = [_row(n, day, f"+{m(c)}") for n, c, day in v["recent"]]
+        foot2 = "Ventes réalisées récentes (courrier de l'HV). Ouvre l'HV puis /reload pour tes enchères en cours."
+    _sec(out, "hv.mine", "Mes ventes", mine, foot2)
+    r = v["realized"]
+    if r["total"] or r["today"] or r["week"] or r["series"]:
+        rr = [_row("Profit réalisé", f"aujourd'hui {m(r['today'])} · 7 jours {m(r['week'])}", m(r["total"]),
+                   spark=[[[float(x) for x in r["series"]], "ok"]] if len(r["series"]) > 1 else None)]
+        rr += [_row(n, "", f"+{m(p)}") for n, p in r["top"][:3]]
+        _sec(out, "hv.profit", "Bilan", rr, v["budget"])
+    return out
+
+
+def _session(snap: dict, ctx: dict) -> list[dict]:
+    from treeaicoach.wow import live  # noqa: PLC0415
+    from treeaicoach.wow import stats as wstats  # noqa: PLC0415
+
+    out: list[dict] = []
+    s = snap.get("summary") or {}
+    chat = snap.get("chat") or {}
+    fresh = live.freshness(snap)
+    rate = live.xp_rate(snap)
+    v = live.session_view(snap)
+    # the XP curve: the live chat log (5-min steps), else one point per /reload
+    if fresh["live"] and len(chat.get("xp_series") or []) > 1:
+        pts = [float(x) for x in chat["xp_series"]][-48:]
+        cap = f"{live.fmt_int(chat.get('xp'))} XP en {live.duration_text(chat.get('duration')) or '< 1 min'} (en direct)"
+        _sec(out, "session.curve", "Courbe d'XP", [{"spark": [[pts, "accent"]], "title": cap,
+                                                    "desc": "Par tranche de 5 min, journal de discussion."}],
+             kind="chart")
+    elif len(snap.get("xp_points") or []) > 1:
+        pts = [[float(a), float(b)] for a, b in snap["xp_points"]][-48:]
+        tot, mins = pts[-1][1], pts[-1][0]
+        cap = f"{live.fmt_int(tot)} XP en {live.duration_text(mins * 60) or '< 1 min'} (entre tes /reload)"
+        _sec(out, "session.curve", "Courbe d'XP", [{"spark": [[pts, "accent"]], "title": cap,
+                                                    "desc": "Un point par /reload. /chatlog pour la courbe en direct."}],
+             kind="chart")
+    recap = []
+    if rate:
+        recap.append(_row("XP par heure", f"{rate['src']}, sur {live.duration_text(rate['minutes'] * 60)} · {rate['conf']}",
+                          f"{live.fmt_int(rate['xp_h'])} XP/h"))
+    recap += [_row(t, "", val) if len(str(val)) < 34 else _row(t, val) for t, val in v["rows"]]
+    recap += _deaths(snap, fresh["live"])
+    _sec(out, "session.recap", "Récap", recap)
+    goals = [_row(g["text"], meter=g["pct"]) for g in v["goals"] if g.get("pct") is not None]
+    goals += [_row(g["text"]) for g in v["goals"] if g.get("pct") is None]
+    _sec(out, "session.goals", "Objectifs", goals, "Objectif du groupe en jeu : /tai mission objectif niveau 30.")
+    _sec(out, "session.board", "Classement XP du groupe",
+         [_row(n, "", f"{live.fmt_int(x)} XP/h" if x else "") for n, x in v["leaderboard"]])
+    loot = [(f"{n} x{c}" if c > 1 else str(n), "", "") for n, c in (chat.get("loot") or []) if fresh["live"]]
+    _sec(out, "session.loot", "Butin (en direct)", loot, kind="list")
+    _sec(out, "session.stats", "Mes stats mesurées", [_row(t, "", val) if len(str(val)) < 34 else _row(t, val)
+                                                      for t, val in wstats.stats_rows(s)],
+         "Mesurées en jouant par l'addon (Plus → Stats → « Exporter pour TreeAI », puis /reload).")
+    report = str(ctx.get("report") or "").strip() or str((snap.get("fights") or {}).get("last_text") or "")
+    if report:
+        _sec(out, "session.fight", "Dernier combat", [_row("Journal de combat", report[:600])],
+             "Lu dans Logs/WoWCombatLog.txt (/combatlog). WoW Forever ne l'écrit pas toujours.")
+    _sec(out, "session.events", "Évènements du groupe", [(e, "", "") for e in v["events"]], kind="list")
+    return out
+
+
+def _deaths(snap: dict, live_chat: bool) -> list[dict]:
+    """Session rows about MY deaths: the count (live chat log, else the addon's session) and the last cause."""
+    from treeaicoach.wow import live  # noqa: PLC0415
+
+    s = snap.get("summary") or {}
+    chat = snap.get("chat") or {}
+    rows = []
+    n, src = None, ""
+    if live_chat and chat.get("events"):
+        n, src = live._i(chat.get("deaths")), "en direct"
+    elif isinstance(s.get("session"), dict) and s["session"].get("deaths") is not None:
+        n, src = live._i(s["session"]["deaths"]), "au /reload"
+    if n is not None:
+        rows.append(_row("Morts", src, str(n) if n else "Aucune", value_tone="warning" if n >= 2 else ""))
+    ld = (s.get("fight") or {}).get("lastDeath") if isinstance(s.get("fight"), dict) else None
+    if isinstance(ld, dict) and ld and not live.freshness(snap)["stale"]:
+        att = live._i(ld.get("attackers"))
+        rows.append(_row("Dernière mort", live._why(ld.get("advice")),
+                         f"{att} ennemi{'s' if att > 1 else ''}" if att else ""))
+    return rows
+
+
+def _donjon(snap: dict, ctx: dict) -> list[dict]:
+    from treeaicoach.wow import live  # noqa: PLC0415
+
+    out: list[dict] = []
+    d = live.dungeon_view(snap)
+    if not d["active"]:
+        return out
+    rows = [_row(d["name"] or "Donjon", d["why"])]
+    if d["boss"]:
+        rows.append(_row("Boss en cours", "", d["boss"], value_tone="warning"))
+    if d["next"]:
+        rows.append(_row("Prochain boss", "", d["next"]))
+    _sec(out, "donjon.now", "En ce moment", rows, "Minuteurs et conseils de boss : dans le jeu (onglet Donjon).")
+    _sec(out, "donjon.run", "Ce run", [_row(t, "", val) for t, val in d["run"]])
+    _sec(out, "donjon.last", "Run précédent", [_row(t, "", val) for t, val in d["last"]])
+    return out
+
+
+def _erreurs(snap: dict, ctx: dict) -> list[dict]:
+    from treeaicoach.wow import errlog  # noqa: PLC0415
+
+    out: list[dict] = []
+    lists = errlog.diag_lists(snap.get("db") or {})
+    info = ctx.get("errfile")
+    c = lists["counts"]
+    if isinstance(info, dict) and info.get("path"):
+        when = _age_text(info.get("age")) or "à l'instant"
+        file_row = _row("TreeAI-erreurs.txt", f"{info['path']} · mis à jour {when}")
+    else:
+        file_row = _row("TreeAI-erreurs.txt", ERR_EMPTY)
+    counts = []
+    if c["errors"]:
+        counts.append(f"{c['errors']} erreur{'s' if c['errors'] > 1 else ''} Lua différente{'s' if c['errors'] > 1 else ''}"
+                      f" ({c['errors_total']} au total)")
+    if c["blocked"]:
+        counts.append(f"{c['blocked']} action{'s' if c['blocked'] > 1 else ''} bloquée{'s' if c['blocked'] > 1 else ''}")
+    rows = [file_row]
+    if snap.get("db"):
+        rows.append(_row(" · ".join(counts) if counts else "Aucune erreur ni action bloquée",
+                         "Dans la dernière sauvegarde de l'addon.", tone="warning" if counts else "ok"))
+    _sec(out, "erreurs.file", "Fichier d'erreurs", rows, "Envoie ce fichier pour une correction.",
+         action="errors", always=True)
+    _sec(out, "erreurs.blocked", "Actions bloquées (les plus fréquentes)",
+         [(t, tip, "") for t, tip, _n in lists["blocked"]], "Survole une ligne pour le détail.", kind="list")
+    _sec(out, "erreurs.errors", "Erreurs Lua (les plus fréquentes)",
+         [(t, tip, "") for t, tip, _n in lists["errors"]], "Survole une ligne pour le message complet.",
+         kind="list")
+    _sec(out, "erreurs.tests", "Autotest : à revoir", [_row(t, "", tone=tone) for t, tone in lists["tests"]])
+    return out
+
+
+_BUILDERS = {"trajet": _trajet, "groupe": _groupe, "hv": _hv, "session": _session, "donjon": _donjon,
+             "erreurs": _erreurs}
+
+
+def _sign(x: Any) -> int:
+    return hash(repr(x))
+
+
+def tab_sections(key: str, snap: dict, ctx: dict | None = None) -> list[dict]:
+    """What one tab shows: ordered sections {id, title, foot, kind, rows, sig} (pure, worker thread). An empty
+    list means « nothing yet » (the page shows :data:`EMPTY_TEXT`)."""
+    key = TAB_ALIASES.get(str(key), str(key))
+    fn = _BUILDERS.get(key)
+    if fn is None:
+        return []
+    try:
+        secs = fn(snap or {}, ctx or {})
+    except Exception:
+        log.debug("wow tab %s failed", key, exc_info=True)
+        secs = []
+    for sec in secs:
+        sec["sig"] = _sign(sec)
+    return secs
+
+
+def tab_blocks(key: str, snap: dict) -> list[dict]:
+    """(3.9 name) :func:`tab_sections` without context: blocks with ``title``, ``foot`` and ``rows`` of
+    {title, desc, value…}."""
+    return tab_sections(key, snap)
+
+
+def _ctx(st: dict) -> dict:
+    mode = st.get("mode") or {}
+    return {"plan": st.get("plan"), "errfile": st.get("errfile"), "report": mode.get("report") if isinstance(mode, dict) else ""}
+
+
+def fresh_texts(snap: dict, tabs: dict) -> dict:
+    """The line under the tab bar, per tab: how old the data is (and the AH scan's age for « HV »)."""
+    from treeaicoach.wow import live  # noqa: PLC0415
+
+    from treeaicoach.wow import auction  # noqa: PLC0415
+
+    f = live.freshness(snap)
+    out = {k: f["text"] for k in TAB_KEYS}
+    a = (snap.get("summary") or {}).get("auction")
+    if isinstance(a, dict):
+        scan = auction.scan_age(a, live.data_age(snap), snap.get("db"), snap.get("now"))
+        if scan is not None:
+            out["hv"] = f"{f['text']} Dernier scan de l'HV {live.age_text(scan)}."
+    out["erreurs"] = ("Le fichier se réécrit quand les erreurs changent, à chaque /reload. "
+                      "En jeu : /tai erreurs puis /reload pour le rapport complet.")
+    return out
+
+
+def page_vm(st: dict) -> dict:
+    """The whole page as plain data (WORKER thread): the « Maintenant » card, every tab's sections with their
+    signatures, which tabs exist, the freshness line of each tab."""
+    from treeaicoach.wow import live  # noqa: PLC0415
+
+    st = st or {}
+    snap = st.get("live") or {}
+    ctx = _ctx(st)
+    hero = live.hero_view(snap)
+    tabs = {k: tab_sections(k, snap, ctx) for k in TAB_KEYS}
+    return {"hero": hero, "hero_sig": _sign(hero), "tabs": tabs,
+            "tab_sig": {k: tuple(s["sig"] for s in v) for k, v in tabs.items()},
+            "visible": {"donjon": bool(tabs.get("donjon"))}, "fresh": fresh_texts(snap, tabs)}
 
 
 def live_toasts(events: list) -> list[str]:
-    """Toasts worth showing for the changes of one tick (level up, death, fresh /reload). Pure."""
+    """Toasts worth showing for the changes of one tick (level up). Pure."""
     out: list[str] = []
     for ev in events or []:
         kind = getattr(ev, "kind", "")
@@ -525,25 +677,577 @@ def live_toasts(events: list) -> list[str]:
     return out[-2:]
 
 
+# ---------------------------------------------------------------------------------------- Qt (UI thread)
+_QT: dict = {}
+
+
+def _qt_classes() -> dict:
+    """The page's widgets (built once, Qt imported lazily). All of them update IN PLACE from plain data."""
+    if _QT:
+        return _QT
+    from PySide6 import QtCore, QtGui, QtWidgets  # noqa: PLC0415
+
+    from treeaicoach import ui_widgets as W  # noqa: PLC0415
+
+    Qt = QtCore.Qt
+
+    def color_of(name: str) -> str:
+        return str(getattr(W.theme(), name, name))
+
+    def spark_pixmap(series: list, w: int, h: int, dpr: float) -> Any:
+        pm = QtGui.QPixmap(max(1, int(w * dpr)), max(1, int(h * dpr)))
+        pm.setDevicePixelRatio(dpr)
+        pm.fill(Qt.transparent)
+        pts_all = []
+        for pts, _c in series:
+            xy = []
+            for i, p in enumerate(pts or []):
+                try:
+                    xy.append((float(p[0]), float(p[1])) if isinstance(p, (list, tuple)) else (float(i), float(p)))
+                except (TypeError, ValueError, IndexError):
+                    continue
+            pts_all.append(xy)
+        flat = [p for xy in pts_all for p in xy]
+        if not flat:
+            return pm
+        x0, x1 = min(p[0] for p in flat), max(p[0] for p in flat)
+        y0, y1 = min(p[1] for p in flat), max(p[1] for p in flat)
+        if y1 - y0 < 1e-9:
+            y0, y1 = y0 - 1, y1 + 1
+        if x1 - x0 < 1e-9:
+            x0, x1 = x0 - 1, x1 + 1
+        pad = 4.0
+        iw, ih = w - 2 * pad, h - 2 * pad
+        qp = QtGui.QPainter(pm)
+        qp.setRenderHint(QtGui.QPainter.Antialiasing)
+        qp.setPen(QtGui.QPen(QtGui.QColor(color_of("separator")), 1))
+        qp.drawLine(QtCore.QPointF(pad, pad + ih), QtCore.QPointF(pad + iw, pad + ih))
+        for xy, (_p, color) in zip(pts_all, series):
+            if not xy:
+                continue
+            mapped = [QtCore.QPointF(pad + (x - x0) / (x1 - x0) * iw, pad + ih - (y - y0) / (y1 - y0) * ih)
+                      for x, y in xy]
+            c = QtGui.QColor(color_of(color))
+            qp.setPen(QtGui.QPen(c, 1.6))
+            qp.setBrush(Qt.NoBrush)
+            qp.drawPolyline(mapped)
+            qp.setPen(Qt.NoPen)
+            qp.setBrush(c)
+            qp.drawEllipse(mapped[-1], 2.6, 2.6)
+        qp.end()
+        return pm
+
+    def screen_dpr() -> float:
+        try:
+            scr = QtGui.QGuiApplication.primaryScreen()
+            return float(scr.devicePixelRatio()) if scr is not None else 1.0
+        except Exception:
+            return 1.0
+
+    class Sparkline(QtWidgets.QLabel):
+        """A sparkline painted ONCE into a pixmap when its data changes: a repaint is plain C++, no Python
+        (it used to run a Python paintEvent on every repaint). ``stretch``: follows the width (charts)."""
+
+        def __init__(self, series: list | None = None, width: int = 168, height: int = 40, tip: str = "",
+                     stretch: bool = False) -> None:
+            super().__init__()
+            self._w, self._h, self._stretch = width, height, stretch
+            self.series: list = []
+            if stretch:
+                self.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
+                self.setMinimumWidth(80)
+                self.setFixedHeight(height)
+            else:
+                self.setFixedSize(width, height)
+            if tip:
+                self.setToolTip(tip)
+            if series:
+                self.set_series(series)
+
+        def set_series(self, series: Any) -> None:
+            series = [(list(pts), str(color)) for pts, color in (series or []) if pts]
+            if series == self.series:
+                return
+            self.series = series
+            self.redraw()
+
+        def redraw(self) -> None:
+            w = max(80, self.width()) if self._stretch else self._w
+            self._drawn_w = w
+            dpr = float(self.devicePixelRatioF() or 0) or screen_dpr()
+            self.setPixmap(spark_pixmap(self.series, w, self._h, dpr))
+
+        def resizeEvent(self, e: Any) -> None:  # noqa: N802
+            super().resizeEvent(e)
+            if self._stretch and abs(self.width() - getattr(self, "_drawn_w", 0)) > 8:
+                self.redraw()
+
+    def set_tone(w: Any, tone: str) -> None:
+        W.set_prop(w, "tone", tone or "")
+
+    def set_text(lbl: Any, text: str) -> None:
+        if lbl.text() != text:
+            lbl.setText(text)
+        vis = bool(text)
+        if lbl.isHidden() == vis:
+            lbl.setVisible(vis)
+
+    class RowView(QtWidgets.QWidget):
+        """One pooled row: number bubble, title + description, then badge, progress, sparkline, value. Every
+        part is created the first time it is needed and updated in place afterwards."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.setMinimumHeight(W.ROW_MIN_H)
+            g = self._g = QtWidgets.QGridLayout(self)
+            g.setContentsMargins(W.ROW_PAD_X, W.ROW_PAD_Y, W.ROW_PAD_X, W.ROW_PAD_Y)
+            g.setHorizontalSpacing(W.SP_3)
+            g.setVerticalSpacing(2)
+            self.title = W.label("", wrap=True)
+            self.title.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            g.addWidget(self.title, 0, 1)
+            self.desc = W.label("", "secondary", wrap=True)
+            g.addWidget(self.desc, 1, 1)
+            self.desc.hide()
+            g.setColumnStretch(1, 1)
+            self.right = QtWidgets.QWidget()
+            rl = self._rl = QtWidgets.QHBoxLayout(self.right)
+            rl.setContentsMargins(0, 0, 0, 0)
+            rl.setSpacing(W.SP_3)
+            g.addWidget(self.right, 0, 2, 2, 1, Qt.AlignRight | Qt.AlignVCenter)
+            self.right.hide()
+            self.num: Any = None
+            self.badge: Any = None
+            self.meter: Any = None
+            self.spark: Any = None
+            self.value: Any = None
+            self.r: dict = {}
+
+        def _part(self, name: str) -> Any:
+            w = getattr(self, name)
+            if w is not None:
+                return w
+            if name == "num":
+                w = W.label("", "num")
+                w.setAlignment(Qt.AlignCenter)
+                w.setFixedWidth(26)
+                self._g.addWidget(w, 0, 0, 2, 1, Qt.AlignTop)
+            elif name == "badge":
+                w = W.badge("")
+                self._rl.insertWidget(0, w)
+            elif name == "meter":
+                w = QtWidgets.QProgressBar()
+                w.setRange(0, 100)
+                w.setTextVisible(False)
+                w.setFixedWidth(120)
+                self._rl.insertWidget(min(1, self._rl.count()), w)
+            elif name == "spark":
+                w = Sparkline(None, tip="Historique")
+                self._rl.insertWidget(max(0, self._rl.count() - (1 if self.value is not None else 0)), w)
+            elif name == "value":
+                w = W.label("", "secondary")
+                self._rl.addWidget(w, 0, Qt.AlignVCenter)
+            setattr(self, name, w)
+            return w
+
+        def set(self, r: dict) -> None:
+            if r == self.r:
+                return
+            old, self.r = self.r, dict(r)
+            set_text(self.title, str(r.get("title") or ""))
+            if old.get("tone", "") != r.get("tone", ""):
+                set_tone(self.title, str(r.get("tone") or ""))
+            set_text(self.desc, str(r.get("desc") or ""))
+            if r.get("num") or self.num is not None:
+                n = self._part("num")
+                set_text(n, str(r.get("num") or ""))
+                set_tone(n, str(r.get("num_tone") or ""))
+            if r.get("badge") or self.badge is not None:
+                W.set_badge(self._part("badge"), str(r.get("badge") or ""), str(r.get("badge_tone") or ""))
+            if r.get("meter") is not None or self.meter is not None:
+                m = self._part("meter")
+                pct = r.get("meter")
+                if pct is None:
+                    m.hide()
+                else:
+                    pct = max(0, min(100, int(pct)))
+                    if m.value() != pct:
+                        m.setValue(pct)
+                    set_tone(m, "ok" if pct >= 100 else "")
+                    m.show()
+            if r.get("spark") or self.spark is not None:
+                sp = self._part("spark")
+                sp.set_series(r.get("spark") or [])
+                sp.setVisible(bool(r.get("spark")))
+            if r.get("value") or self.value is not None:
+                v = self._part("value")
+                set_text(v, str(r.get("value") or ""))
+                set_tone(v, str(r.get("value_tone") or ""))
+            show_right = bool(r.get("badge") or r.get("meter") is not None or r.get("spark") or r.get("value"))
+            if self.right.isHidden() == show_right:
+                self.right.setVisible(show_right)
+
+    class MemberCard(QtWidgets.QFrame):
+        """A friend's card (name, class, level, zone, up to three status badges)."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.setObjectName("Group")
+            lay = QtWidgets.QVBoxLayout(self)
+            lay.setContentsMargins(W.SP_4, W.SP_3, W.SP_4, W.SP_3)
+            lay.setSpacing(W.SP_1)
+            self.name = W.label("", "cardtitle")
+            lay.addWidget(self.name)
+            self.line = W.label("", "secondary", wrap=True)
+            lay.addWidget(self.line)
+            row = QtWidgets.QHBoxLayout()
+            row.setSpacing(W.SP_2)
+            self.badges = [W.badge("") for _ in range(3)]
+            for b in self.badges:
+                row.addWidget(b)
+                b.hide()
+            row.addStretch(1)
+            lay.addLayout(row)
+            lay.addStretch(1)                       # content stays at the top of a taller neighbour's row
+            self.r: dict = {}
+
+        def set(self, r: dict) -> None:
+            if r == self.r:
+                return
+            self.r = dict(r)
+            set_text(self.name, str(r.get("title") or ""))
+            set_text(self.line, str(r.get("desc") or ""))
+            bs = list(r.get("badges") or [])
+            for i, b in enumerate(self.badges):
+                text, tone = (bs[i] + ["", ""])[:2] if i < len(bs) else ("", "")
+                W.set_badge(b, str(text), str(tone))
+
+    class SectionView(QtWidgets.QWidget):
+        """Header (title + optional action) + body (pooled rows, a virtual list, member cards or a chart) +
+        footnote. :meth:`apply` does nothing when the section's signature did not change."""
+
+        def __init__(self, kind: str, action: Any = None) -> None:
+            super().__init__()
+            self.kind = kind
+            self.sig: Any = None
+            lay = QtWidgets.QVBoxLayout(self)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(W.SP_2)
+            head = QtWidgets.QHBoxLayout()
+            head.setContentsMargins(4, 0, 4, 4)
+            head.setSpacing(W.SP_4)
+            self.header = W.label("", "section")
+            head.addWidget(self.header, 0)
+            head.addStretch(1)
+            if action is not None:
+                head.addWidget(action, 0, Qt.AlignRight | Qt.AlignVCenter)
+            lay.addLayout(head)
+            self.rows: list = []
+            if kind == "list":
+                self.body = W.VirtualList(max_visible=8)
+            elif kind == "members":
+                self.body = QtWidgets.QWidget()
+                self._grid = QtWidgets.QGridLayout(self.body)
+                self._grid.setContentsMargins(0, 0, 0, 0)
+                self._grid.setSpacing(W.SP_3)
+            elif kind == "chart":
+                self.body = W.Card(pad=W.SP_4, spacing=W.SP_1)
+                self.chart = Sparkline(None, width=480, height=72, stretch=True)
+                self.body.add(self.chart)
+                self.caption = W.label("", "cardtitle", wrap=True)
+                self.body.add(self.caption)
+                self.sub = W.label("", "secondary", wrap=True)
+                self.body.add(self.sub)
+            else:
+                self.body = W.Group()
+            lay.addWidget(self.body)
+            self.footnote = W.label("", "footnote", wrap=True)
+            self.footnote.setContentsMargins(W.ROW_PAD_X, 0, W.ROW_PAD_X, 0)
+            lay.addWidget(self.footnote)
+            self.footnote.hide()
+
+        def apply(self, sec: dict) -> bool:
+            sig = sec["sig"] if "sig" in sec else repr(sec)      # (signatures come from the worker)
+            if sig == self.sig:
+                return False
+            self.sig = sig
+            set_text(self.header, str(sec.get("title") or ""))
+            set_text(self.footnote, str(sec.get("foot") or ""))
+            rows = list(sec.get("rows") or [])
+            if self.kind == "list":
+                self.body.set_rows(rows)
+            elif self.kind == "chart":
+                r = rows[0] if rows else {}
+                self.chart.set_series(r.get("spark") or [])
+                set_text(self.caption, str(r.get("title") or ""))
+                set_text(self.sub, str(r.get("desc") or ""))
+            elif self.kind == "members":
+                for i, r in enumerate(rows):
+                    if i >= len(self.rows):
+                        card = MemberCard()
+                        self._grid.addWidget(card, i // 2, i % 2)
+                        self.rows.append(card)
+                    self.rows[i].set(r)
+                    if self.rows[i].isHidden():
+                        self.rows[i].show()
+                for card in self.rows[len(rows):]:
+                    card.hide()
+            else:
+                for i, r in enumerate(rows):
+                    if i >= len(self.rows):
+                        self.rows.append(self.body.add(RowView()))
+                    self.rows[i].set(r)
+                    if self.rows[i].isHidden():
+                        self.rows[i].show()
+                for row in self.rows[len(rows):]:
+                    if not row.isHidden():
+                        row.hide()
+                self.body.sync_separators()
+            return True
+
+        def recolor(self) -> None:
+            if self.kind == "list":
+                self.body.recolor()
+            elif self.kind == "chart":
+                self.chart.redraw()
+            else:
+                for r in self.rows:
+                    if isinstance(r, RowView) and r.spark is not None:
+                        r.spark.redraw()
+
+    class TabView(QtWidgets.QWidget):
+        """One tab: its sections in order (created once, updated in place, hidden when absent) or the empty
+        state. ``actions``: section id → header widget (buttons that must survive every update)."""
+
+        def __init__(self, key: str, actions: dict) -> None:
+            super().__init__()
+            self.key = key
+            self.actions = actions
+            self.views: dict[str, SectionView] = {}
+            self.sig: Any = None
+            self.lay = QtWidgets.QVBoxLayout(self)
+            self.lay.setContentsMargins(0, 0, 0, 0)
+            self.lay.setSpacing(W.SECTION_GAP)
+            title, text = EMPTY_TEXT.get(key, ("Rien pour l'instant", ""))
+            self.empty = W.EmptyState(EMPTY_GLYPH.get(key, "tray"), title, text)
+            self.lay.addWidget(self.empty)
+            self.lay.addStretch(1)
+
+        def apply(self, sections: list, sig: Any = None) -> bool:
+            sig = sig if sig is not None else tuple(s.get("sig") for s in sections)
+            if sig == self.sig:
+                return False
+            self.sig = sig
+            ids = []
+            for idx, sec in enumerate(sections, start=1):
+                sid = str(sec.get("id"))
+                ids.append(sid)
+                v = self.views.get(sid)
+                if v is None:
+                    act = self.actions.get(sec.get("action")) if sec.get("action") else None
+                    v = self.views[sid] = SectionView(str(sec.get("kind") or "rows"), act)
+                    self.lay.insertWidget(idx, v)
+                elif self.lay.indexOf(v) != idx:
+                    self.lay.removeWidget(v)
+                    self.lay.insertWidget(idx, v)
+                v.apply(sec)
+                if v.isHidden():
+                    v.show()
+            for sid, v in self.views.items():
+                if sid not in ids and not v.isHidden():
+                    v.hide()
+            if self.empty.isHidden() == (not sections):
+                self.empty.setVisible(not sections)
+            return True
+
+        def section_titles(self) -> list[str]:
+            """Titles of the sections on screen, in order (tests: which content a tab shows)."""
+            out = []
+            for i in range(self.lay.count()):
+                w = self.lay.itemAt(i).widget()
+                if isinstance(w, SectionView) and not w.isHidden():
+                    out.append(w.header.text())
+            return out
+
+    class HeroCard(W.Card):
+        """« Maintenant »: next step (distance, time, why), XP/h, next level, danger facts, freshness."""
+
+        def __init__(self) -> None:
+            super().__init__(pad=W.CARD_PAD, spacing=W.SP_2)
+            self.sig: Any = None
+            head = QtWidgets.QHBoxLayout()
+            head.setSpacing(W.SP_3)
+            self.kicker = W.label("Maintenant", "kicker")
+            head.addWidget(self.kicker, 0, Qt.AlignVCenter)
+            head.addStretch(1)
+            self.badge = W.badge("")
+            head.addWidget(self.badge, 0, Qt.AlignVCenter)
+            self.add(head)
+            self.title = W.label("", "headline", wrap=True)
+            self.title.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            self.add(self.title)
+            self.sub = W.label("", "secondary", wrap=True)
+            self.add(self.sub)
+            self.sep = QtWidgets.QFrame()
+            self.sep.setObjectName("Separator")
+            self.sep.setFixedHeight(1)
+            self.add(self.sep)
+            tiles = QtWidgets.QHBoxLayout()
+            tiles.setSpacing(W.SP_5)
+            self.tiles: dict[str, dict] = {}
+            for key, kick in (("xp", "XP par heure"), ("lvl", "Niveau suivant"), ("risk", "À surveiller")):
+                box = QtWidgets.QWidget()
+                bl = QtWidgets.QVBoxLayout(box)
+                bl.setContentsMargins(0, 0, 0, 0)
+                bl.setSpacing(2)
+                k = W.label(kick, "kicker")
+                bl.addWidget(k)
+                v = W.label("", "metric", wrap=True)
+                bl.addWidget(v)
+                bar = None
+                if key == "lvl":
+                    bar = QtWidgets.QProgressBar()
+                    bar.setRange(0, 100)
+                    bar.setTextVisible(False)
+                    bl.addWidget(bar)
+                c = W.label("", "secondary", wrap=True)
+                bl.addWidget(c)
+                c2 = W.label("", "secondary", wrap=True)
+                bl.addWidget(c2)
+                bl.addStretch(1)
+                tiles.addWidget(box, 1)
+                self.tiles[key] = {"box": box, "kicker": k, "value": v, "cap": c, "cap2": c2, "bar": bar}
+            self.add(tiles)
+            self.foot = W.label("", "footnote", wrap=True)
+            self.add(self.foot)
+
+        def apply(self, h: dict, sig: Any = None) -> bool:
+            sig = sig if sig is not None else repr(h)
+            if sig == self.sig:
+                return False
+            self.sig = sig
+            set_text(self.kicker, str(h.get("kicker") or "Maintenant"))
+            W.set_badge(self.badge, str(h.get("badge") or ""), str(h.get("badge_tone") or ""))
+            step = h.get("step") or {}
+            if h.get("empty"):
+                set_text(self.title, "Pas encore de données de l'addon")
+                set_text(self.sub, "Installe l'addon, connecte-toi puis tape /reload en jeu. Pour l'XP et l'or en "
+                                   "direct : /chatlog.")
+            elif step.get("title"):
+                set_text(self.title, str(step["title"]))
+                set_text(self.sub, " · ".join(x for x in (step.get("dist"), step.get("eta"), step.get("why")) if x))
+            else:
+                set_text(self.title, "Rien de prévu pour l'instant")
+                set_text(self.sub, "Prends des quêtes ou calcule un trajet (onglet Trajet).")
+            xp, lvl, risk = h.get("xp") or {}, h.get("level") or {}, list(h.get("danger") or [])
+            t = self.tiles["xp"]
+            set_text(t["value"], f"{xp['xp_h']:,} XP/h".replace(",", " ") if xp.get("xp_h") else "")
+            if xp.get("xp_h"):
+                mins = int(round(float(xp.get("minutes") or 0)))
+                set_text(t["cap"], f"{xp.get('src')}, sur {mins} min")
+                set_text(t["cap2"], f"Mesure {xp.get('conf')}")
+            else:
+                set_text(t["cap"], "Pas encore mesurée")
+                set_text(t["cap2"], "/chatlog en jeu, ou 10 min entre deux /reload")
+            t = self.tiles["lvl"]
+            t["kicker"].setText(f"Niveau {lvl.get('next')}" if lvl.get("next") else "Niveau suivant")
+            set_text(t["value"], (str(lvl.get("eta") or "")) if lvl.get("pct") is not None else str(lvl.get("text") or ""))
+            if lvl.get("pct") is not None:
+                t["bar"].setValue(int(lvl["pct"]))
+                t["bar"].show()
+                set_text(t["cap"], f"{lvl['pct']} % du niveau {lvl.get('level')}")
+                set_text(t["cap2"], f"Estimation {lvl['conf']}" if lvl.get("conf") else "Sans mesure d'XP/h")
+            else:
+                t["bar"].hide()
+                set_text(t["cap"], "")
+                set_text(t["cap2"], "")
+            t = self.tiles["risk"]
+            set_text(t["value"], "")
+            for lbl, item in ((t["cap"], risk[0] if risk else None), (t["cap2"], risk[1] if len(risk) > 1 else None)):
+                set_text(lbl, str(item[0]) if item else "")
+                set_tone(lbl, str(item[1]) if item else "")
+            show = {"xp": not h.get("empty"), "lvl": bool(lvl), "risk": bool(risk)}
+            for k, on in show.items():
+                if self.tiles[k]["box"].isHidden() == on:
+                    self.tiles[k]["box"].setVisible(on)
+            any_tile = any(show.values())
+            if self.sep.isHidden() == any_tile:
+                self.sep.setVisible(any_tile)
+            set_text(self.foot, " · ".join(x for x in (h.get("who"), h.get("zone")) if x))
+            return True
+
+    _QT.update(Sparkline=Sparkline, RowView=RowView, MemberCard=MemberCard, SectionView=SectionView,
+               TabView=TabView, HeroCard=HeroCard)
+    return _QT
+
+
 class WowPage:
     def __init__(self, app: Any) -> None:
         self.app = app
         W = self.W = app.W
         QtCore, QtWidgets = app.QtCore, app.QtWidgets
         Qt = QtCore.Qt
+        qt = _qt_classes()
         self.state: dict = {}
         self._snap: dict = {}
         self._busy = False
         self._first_poll = True
+        self._last_render = 0.0
+        self.render_ms: list[float] = []            # UI-thread CPU time of the last renders (tests, /diag)
+        self._dirty: set[str] = set()
+        self._vm: dict = {}
         from treeaicoach.wow import optional  # noqa: PLC0415
 
         live_mod = optional("live")
         self.hub = live_mod.LiveHub() if live_mod is not None else None
-        self.page = W.Page("WoW Forever", "Addon en jeu, données en direct, macros et coach. "
-                                          "S'active seul quand WoW est lancé.")
+        self.page = W.Page("WoW Forever", "Ton compagnon de jeu : l'étape, l'XP, le groupe, l'HV. "
+                                          "Suit chaque /reload, et le direct avec /chatlog.")
+
+        # -- « Maintenant »
+        self.hero = qt["HeroCard"]()
+        self.page.add(self.hero)
+
+        # -- tabs (one bar; one TabView per tab, only the current one visible)
+        bar = QtWidgets.QWidget()
+        bl = QtWidgets.QVBoxLayout(bar)
+        bl.setContentsMargins(0, 0, 0, 0)
+        bl.setSpacing(W.SP_2)
+        self.tabs = W.Segmented(TABS, "trajet")
+        self.tabs.set_choice_visible("donjon", False)
+        self.tabs.changed.connect(self._show_tab)
+        bl.addWidget(self.tabs, 0, Qt.AlignLeft)
+        self.fresh = W.label(live_mod.freshness_text(None) if live_mod else "", "footnote", wrap=True)
+        bl.addWidget(self.fresh)
+        self.page.add(bar)
+        self.plan_btn = W.button("Calculer", self._plan, kind="primary",
+                                 tip="Calcule trois trajets avec tes quêtes (après un /reload en jeu).")
+        eact = QtWidgets.QWidget()
+        el = QtWidgets.QHBoxLayout(eact)
+        el.setContentsMargins(0, 0, 0, 0)
+        el.setSpacing(W.SP_2)
+        self.err_open_btn = W.button("Ouvrir", self._open_errors,
+                                     tip="Ouvre TreeAI-erreurs.txt (à envoyer pour une correction).")
+        el.addWidget(self.err_open_btn)
+        self.err_copy_btn = W.button("Copier", self._copy_errors, tip="Copie le contenu du fichier.")
+        el.addWidget(self.err_copy_btn)
+        self._actions = {"plan": self.plan_btn, "errors": eact}
+        self.stack = QtWidgets.QWidget()
+        sl = QtWidgets.QVBoxLayout(self.stack)
+        sl.setContentsMargins(0, 0, 0, 0)
+        sl.setSpacing(0)
+        self.tab_views: dict[str, Any] = {}
+        for key, _title in TABS:
+            tv = qt["TabView"](key, self._actions)
+            sl.addWidget(tv)
+            tv.hide()
+            self.tab_views[key] = tv
+        self.page.add(self.stack)
+        self._plan_last: Any = None
+        self._current = "trajet"
 
         # -- état : verdict + is WoW running (+ the master switch), the three checks, the install button
-        top = self.page.section("État", "L'addon s'installe dans Interface/AddOns/TreeAI. En jeu : /tai.")
+        self.state_section = top = self.page.section("État", "L'addon s'installe dans Interface/AddOns/TreeAI. "
+                                                             "En jeu : /tai.")
         self.state_row = app.switch_row(top, "wow_enabled", "WoW Forever", "Recherche de WoW…")
         self.enable = self.state_row.switch
         self.enable.setToolTip("Mode WoW : TreeAI suit WoW quand il est lancé (et que League ne l'est pas).")
@@ -566,97 +1270,10 @@ class WowPage:
         al.addWidget(self.install_hint, 0, Qt.AlignVCenter)
         al.addStretch(1)
         top.add(act)
-
-        # -- live tabs: Direct / Quêtes / Groupe / HV / Session (one segmented bar + a stack)
-        bar = QtWidgets.QWidget()
-        bl = QtWidgets.QVBoxLayout(bar)
-        bl.setContentsMargins(0, 0, 0, 0)
-        bl.setSpacing(8)
-        self.tabs = W.Segmented(TABS, "direct")
-        self.tabs.changed.connect(self._show_tab)
-        bl.addWidget(self.tabs, 0, Qt.AlignLeft)
-        self.fresh = W.label(live_mod.freshness_text(None) if live_mod else "", "footnote", wrap=True)
-        bl.addWidget(self.fresh)
-        self.page.add(bar)
-        # the tabs live in one column, only the current one shown (a hidden tab takes no height)
-        self.stack = QtWidgets.QWidget()
-        sl = QtWidgets.QVBoxLayout(self.stack)
-        sl.setContentsMargins(0, 0, 0, 0)
-        sl.setSpacing(0)
-        self.page.add(self.stack)
-        self.tab_pages: dict[str, Any] = {}
-        self.tab_layouts: dict[str, Any] = {}
-        self._tab_holder: dict[str, Any] = {}
-        self._tab_sig: dict[str, Any] = {}
-        self._current = "direct"
-        self._stale: set[str] = set()
-        for key, _title in TABS:
-            w = QtWidgets.QWidget()
-            lay = QtWidgets.QVBoxLayout(w)
-            lay.setContentsMargins(0, 0, 0, 0)
-            lay.setSpacing(24)
-            sl.addWidget(w)
-            self.tab_pages[key] = w
-            self.tab_layouts[key] = lay
-            self._tab_holder[key] = None
-
-        # « Direct » also keeps the character card (SavedVariables) and the combat-log report
-        direct = self.tab_layouts["direct"]
-        self.char_section = W.Section("Personnage", "Lu dans les sauvegardes de l'addon : à jour après "
-                                                    "/reload ou déconnexion.")
-        self._char_holder = QtWidgets.QWidget()
-        self._char_layout = QtWidgets.QVBoxLayout(self._char_holder)
-        self._char_layout.setContentsMargins(0, 0, 0, 0)
-        self.char_section.add(self._char_holder)
-        self._char_group: Any = None
-        self._char_sig: Any = None
-        direct.addWidget(self.char_section)
-        plan = W.Section("Plan de quêtes", "Trois trajets au choix : le plus rapide, tout finir ici, avec tes potes. "
-                                            "Choisis-en un en jeu : /tai plan.")
-        self._plan_holder = QtWidgets.QWidget()
-        self._plan_layout = QtWidgets.QVBoxLayout(self._plan_holder)
-        self._plan_layout.setContentsMargins(0, 0, 0, 0)
-        plan.add(self._plan_holder)
-        self._plan_group: Any = None
-        self._plan_sig: Any = None
-        pact = QtWidgets.QWidget()
-        pl = QtWidgets.QHBoxLayout(pact)
-        pl.setContentsMargins(16, 12, 16, 14)
-        pl.setSpacing(12)
-        self.plan_btn = W.button("Calculer le trajet", self._plan, kind="primary")
-        self.plan_btn.setMinimumHeight(36)
-        pl.addWidget(self.plan_btn, 0)
-        self.plan_hint = W.label("Après /reload en jeu (l'addon exporte tes quêtes).", "secondary")
-        self.plan_hint.setWordWrap(True)
-        pl.addWidget(self.plan_hint, 1, Qt.AlignVCenter)
-        plan.add(pact)
-        self._plan_last: Any = None
-        direct.addWidget(plan)
-        fight = W.Section("Journal de combat", "Lu dans Logs/WoWCombatLog.txt (/combatlog). WoW Forever ne "
-                                               "l'écrit pas toujours : l'addon garde alors ses récaps de mort.")
-        self.report_row = fight.add(W.Row("Rapport", "Pas encore de combat lu."))
-        self.report_row.desc.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        direct.addWidget(fight)
-        errs = W.Section("Erreurs WoW", "En jeu : /tai erreurs puis /reload. TreeAI écrit TreeAI-erreurs.txt.")
-        self.err_row = errs.add(W.Row("Fichier d'erreurs", ERR_EMPTY))
-        eact = QtWidgets.QWidget()
-        el = QtWidgets.QHBoxLayout(eact)
-        el.setContentsMargins(16, 12, 16, 14)
-        el.setSpacing(12)
-        self.err_open_btn = W.button("Erreurs WoW : ouvrir le fichier", self._open_errors,
-                                     tip="Ouvre TreeAI-erreurs.txt (à envoyer pour une correction).")
-        el.addWidget(self.err_open_btn, 0)
-        self.err_copy_btn = W.button("Copier", self._copy_errors, tip="Copie le contenu du fichier.")
-        el.addWidget(self.err_copy_btn, 0)
-        el.addStretch(1)
-        errs.add(eact)
-        direct.addWidget(errs)
-        for lay in self.tab_layouts.values():
-            lay.addStretch(1)
-        self._show_tab("direct")
+        self._state_top: Any = None
 
         # -- coach switches
-        coach = self.page.section("Coach", "La voix répond quand tu dis « Hey coach ».")
+        self.coach_section = coach = self.page.section("Coach", "La voix répond quand tu dis « Hey coach ».")
         self.log_row = app.switch_row(coach, "wow_combatlog", "Lire le journal de combat",
                                       "Rapport de combat et contexte du coach.")
         self.clog = self.log_row.switch
@@ -689,77 +1306,47 @@ class WowPage:
 
         self.timer = QtCore.QTimer(self.page)
         self.timer.timeout.connect(self.tick)
+        self._render_timer = QtCore.QTimer(self.page)
+        self._render_timer.setSingleShot(True)
+        self._render_timer.timeout.connect(self._render)
+        self._warm_timer = QtCore.QTimer(self.page)
+        self._warm_timer.setSingleShot(True)
+        self._warm_timer.timeout.connect(self._warm)
+        self._show_tab("trajet")
         self._render()
 
     # ------------------------------------------------------------------ tabs
     def _show_tab(self, key: str) -> None:
-        """Show one tab (the others are hidden, so the column takes the current tab's height only)."""
-        key = str(key) if str(key) in self.tab_pages else "direct"
+        """Show one tab: only a visibility flip (its content is already up to date, or brought up to date now
+        by a diff). The segmented bar and the visible content always name the same tab."""
+        key = TAB_ALIASES.get(str(key), str(key))
+        if key not in self.tab_views or not self.tabs.choice_visible(key):
+            key = "trajet"
         self._current = key
-        for k, w in self.tab_pages.items():
-            w.setVisible(k == key)
+        for k, w in self.tab_views.items():
+            on = k == key
+            if w.isHidden() == on:
+                w.setVisible(on)
         self.tabs.set_value(key)
-        if hasattr(self, "fresh"):                      # built when shown: wrapped text gets its real size
-            if key in self._stale:
-                self._tab_sig.pop(key, None)
-            self._render_tab(key, self._snap)
+        fresh = (self._vm.get("fresh") or {}).get(key)
+        if fresh and self.fresh.text() != fresh:
+            self.fresh.setText(fresh)
+        if key in self._dirty and self._vm:
+            self._apply_tab(key)
 
     def current_tab(self) -> str:
         return self._current
 
-    def _render_tab(self, key: str, snap: dict) -> None:
-        try:
-            pre = (self.state or {}).get("tabs") if snap is (self.state or {}).get("live") else None
-            blocks = pre[key] if isinstance(pre, dict) and key in pre else tab_blocks(key, snap)
-        except Exception:
-            log.debug("wow tab %s failed", key, exc_info=True)
-            blocks = []
-        sig = repr(blocks)
-        if sig == self._tab_sig.get(key):
-            return
-        self._tab_sig[key] = sig
-        (self._stale.add if self.tab_pages[key].isHidden() else self._stale.discard)(key)
-        W, QtWidgets = self.W, self.app.QtWidgets
-        Qt = self.app.QtCore.Qt
-        qt = _qt_classes()
-        old = self._tab_holder.get(key)
-        if old is not None:
-            old.setParent(None)
-            old.deleteLater()
-        holder = QtWidgets.QWidget()
-        hl = QtWidgets.QVBoxLayout(holder)
-        hl.setContentsMargins(0, 0, 0, 0)
-        hl.setSpacing(24)
-        if not blocks:
-            sec = W.Section("")
-            t, d = EMPTY_TEXT.get(key, ("Rien pour l'instant", ""))
-            sec.add(W.Row(t, d))
-            hl.addWidget(sec)
-        for b in blocks:
-            sec = W.Section(b["title"], b.get("foot") or "")
-            for r in b["rows"][:16]:
-                control = None
-                if r.get("spark"):
-                    control = qt["Sparkline"](r["spark"], tip="Historique")
-                elif r.get("meter") is not None:
-                    control = qt["Meter"](r["meter"])
-                if r.get("value"):
-                    val = W.label(r["value"], "secondary")
-                    if control is not None:
-                        box = QtWidgets.QWidget()
-                        bx = QtWidgets.QHBoxLayout(box)
-                        bx.setContentsMargins(0, 0, 0, 0)
-                        bx.setSpacing(12)
-                        bx.addWidget(control)
-                        bx.addWidget(val, 0, Qt.AlignVCenter)
-                        control = box
-                    else:
-                        control = val
-                row = W.Row(r["title"], r.get("desc") or None, control)
-                sec.add(row)
-            hl.addWidget(sec)
-        self.tab_layouts[key].insertWidget(0, holder)
-        self._tab_holder[key] = holder
+    def visible_tab(self) -> str:
+        """The tab whose content is on screen (tests: it must always be :meth:`current_tab`)."""
+        shown = [k for k, w in self.tab_views.items() if not w.isHidden()]
+        return shown[0] if len(shown) == 1 else ""
+
+    def _apply_tab(self, key: str) -> None:
+        tabs = self._vm.get("tabs") or {}
+        sigs = self._vm.get("tab_sig") or {}
+        self.tab_views[key].apply(tabs.get(key) or [], sigs.get(key))
+        self._dirty.discard(key)
 
     # ------------------------------------------------------------------ actions
     def _set_path(self, text: str) -> None:
@@ -812,7 +1399,7 @@ class WowPage:
         if install is None:
             return
         self.plan_btn.setEnabled(False)
-        self.plan_hint.setText("Calcul en cours (~20 s)…")
+        self.plan_btn.setText("Calcul…")
         path = str(getattr(self.app.cfg, "wow_path", "") or "")
 
         def job() -> Any:
@@ -822,18 +1409,18 @@ class WowPage:
 
         def done(res: Any) -> None:
             self.plan_btn.setEnabled(True)
+            self.plan_btn.setText("Calculer")
             res = res if isinstance(res, dict) else {}
             ok = bool(res.get("ok"))
             if res.get("plan"):
                 self._plan_last = res["plan"]
-                self._render_plan(res["plan"])
-            self.plan_hint.setText("Tape /reload en jeu pour charger le trajet." if ok
-                                   else str(res.get("message") or "Calcul impossible."))
-            self.app.show_toast(str(res.get("message") or ""), "info" if ok else "error")
+            self.app.show_toast(("Trajet calculé : tape /reload en jeu pour le charger." if ok
+                                 else str(res.get("message") or "Calcul impossible.")), "info" if ok else "error")
+            self.refresh()
 
         def failed(_exc: BaseException) -> None:
             self.plan_btn.setEnabled(True)
-            self.plan_hint.setText("Calcul impossible.")
+            self.plan_btn.setText("Calculer")
 
         self.app.run_job(job, done, failed, name="TreeAI-wow-plan")
 
@@ -842,6 +1429,15 @@ class WowPage:
         self.refresh()
         if not self.timer.isActive():
             self.timer.start(POLL_MS)
+
+    def on_theme(self) -> None:
+        """Colours changed (Réglages > Thème): repaint the pixmaps and the coloured lines."""
+        try:
+            for tv in self.tab_views.values():
+                for v in tv.views.values():
+                    v.recolor()
+        except Exception:
+            log.debug("wow page recolor failed", exc_info=True)
 
     def tick(self) -> None:
         app = self.app
@@ -860,56 +1456,107 @@ class WowPage:
 
         def done(state: dict) -> None:
             self._busy = False
-            self.state = state or {}
-            if not self._first_poll:
-                for text in live_toasts(self.state.get("events") or []):
-                    self.app.show_toast(text, "info")
-            self._first_poll = False
-            self._render()
+            self._on_state(state)
 
         def failed(_exc: BaseException) -> None:
             self._busy = False
 
         self.app.run_job(lambda: read_state(cfg, hub), done, failed, name="TreeAI-wow-state")
 
+    def _on_state(self, state: dict) -> None:
+        """A new state from the worker (UI thread): store it, toasts, and ONE render within ``RENDER_MIN_MS``."""
+        self.state = state or {}
+        if not self._first_poll:
+            for text in live_toasts(self.state.get("events") or []):
+                self.app.show_toast(text, "info")
+        self._first_poll = False
+        self._request_render()
+
+    def _request_render(self) -> None:
+        if self._render_timer.isActive():
+            return
+        wait = RENDER_MIN_MS - 1000 * (time.monotonic() - self._last_render)
+        self._render_timer.start(max(0, int(wait)))
+
     def _render(self) -> None:
+        """Apply the current state to the widgets: only what changed (signatures computed by the worker)."""
+        t0 = time.thread_time()
+        self._last_render = time.monotonic()
+        try:
+            self._render_state()
+        finally:
+            self.render_ms.append(1000 * (time.thread_time() - t0))
+            del self.render_ms[:-50]
+
+    def _render_state(self) -> None:
         W, st = self.W, self.state
         ov = overview(st, bool(getattr(self.app.cfg, "wow_enabled", True)))
-        self.state_row.title.setText(ov["headline"])
+        if self.state_row.title.text() != ov["headline"]:
+            self.state_row.title.setText(ov["headline"])
         W.set_prop(self.state_row.title, "tone", ov["tone"])
         self.state_row.set_desc(ov["detail"])
         for key, done, text in ov["steps"]:
             row = self.steps[key]
             mark = OK_MARK if done else (BAD_MARK if done is False else WAIT_MARK)
-            row.title.setText(f"{mark}  {STEP_TITLES[key]}")
+            title = f"{mark}  {STEP_TITLES[key]}"
+            if row.title.text() != title:
+                row.title.setText(title)
             W.set_prop(row.title, "tone", "ok" if done else ("danger" if done is False else ""))
             row.set_desc(text)
         self.pick_btn.setVisible(bool(st) and not ov["found"])
-        self.install_btn.setText(ov["button"])
+        if self.install_btn.text() != ov["button"]:
+            self.install_btn.setText(ov["button"])
         self.install_btn.setEnabled(ov["can_install"] and not getattr(self, "_installing", False))
         self.install_hint.setText("Puis /reload en jeu." if ov["found"] else "Indique d'abord le dossier de WoW.")
-        mode = st.get("mode") or {}
-        snap = st.get("live") or {}
-        report = str(mode.get("report") or "").strip() or str((snap.get("fights") or {}).get("last_text") or "")
-        self.report_row.set_desc(report[:1200] if report else "Pas encore de combat lu.")
-        self._render_char(st.get("rows") or [], st.get("sv_age"))
-        self._render_errors(st.get("errfile"))
-        self._render_plan(st.get("plan") or self._plan_last)
-        from treeaicoach.wow import optional  # noqa: PLC0415
+        self._place_state(not ov["ready"])
+        self._snap = st.get("live") or {}
+        vm = st.get("vm")
+        if not isinstance(vm, dict):                    # tests / no hub: the same pure computation
+            try:
+                vm = page_vm({**st, "plan": st.get("plan") or self._plan_last})
+            except Exception:
+                log.debug("wow page view failed", exc_info=True)
+                vm = {}
+        self._vm = vm
+        self.hero.apply(vm.get("hero") or {}, vm.get("hero_sig"))
+        donjon = bool((vm.get("visible") or {}).get("donjon"))
+        self.tabs.set_choice_visible("donjon", donjon)
+        if self._current == "donjon" and not donjon:
+            self._show_tab("trajet")
+        self._dirty = set(TAB_KEYS)
+        self._apply_tab(self._current)
+        fresh = (vm.get("fresh") or {}).get(self._current) or ""
+        if self.fresh.text() != fresh:
+            self.fresh.setText(fresh)
+        if self._dirty and not self._warm_timer.isActive():
+            self._warm_timer.start(WARM_MS)
 
-        live_mod = optional("live")
-        if live_mod is not None:
-            self.fresh.setText(live_mod.freshness_text(st.get("sv_age")))
-        self._snap = snap
-        self._render_tab(self._current, snap)          # the others are built when they are shown
-        if self._current != "direct":
-            self._render_tab("direct", snap)
-        # the live card already shows the character: the SavedVariables card only when it is alone
-        self.char_section.setVisible(not self._tab_sig.get("direct", "[]").startswith("[{"))
+    def _warm(self) -> None:
+        """Bring ONE hidden tab up to date per idle turn: a later switch is only a visibility flip."""
+        for key in TAB_KEYS:
+            if key in self._dirty and key != self._current:
+                self._apply_tab(key)
+                break
+        self._dirty.discard(self._current)
+        if self._dirty:
+            self._warm_timer.start(WARM_MS)
+
+    def _place_state(self, top: bool) -> None:
+        """« État » at the top while something needs doing (install, folder…), else down with the settings."""
+        if self._state_top is top:
+            return
+        self._state_top = top
+        lay = self.page.lay
+        lay.removeWidget(self.state_section)
+        if top:
+            lay.insertWidget(1, self.state_section)
+        else:
+            lay.insertWidget(lay.indexOf(self.coach_section), self.state_section)
 
     # ------------------------------------------------------------------ erreurs WoW
     def _errors_text(self) -> tuple[Any, str]:
-        """(path, text) of TreeAI-erreurs.txt, written now from the last addon save when missing."""
+        """(path, text) of TreeAI-erreurs.txt, written now from the last addon save when missing (a small file,
+        on a click)."""
         from treeaicoach.wow import optional  # noqa: PLC0415
 
         errlog = optional("errlog")
@@ -942,73 +1589,10 @@ class WowPage:
         self.app.copy_text(text)
         self.app.show_toast("Erreurs WoW copiées.", "info")
 
-    def _render_errors(self, info: Any) -> None:
-        if not isinstance(info, dict) or not info.get("path"):
-            self.err_row.set_desc(ERR_EMPTY)
-            return
-        when = _age_text(info.get("age")) or "à l'instant"
-        self.err_row.set_desc(f"{info['path']} · mis à jour {when}")
-
-    def _render_char(self, rows: list, age: Any) -> None:
-        # ANNOY: the age (« il y a 3 min ») changes every minute; only that label is updated then, the card
-        # is rebuilt only when the character data changes (it used to blink once a minute)
-        age_txt = _age_text(age)
-        sig = (tuple(rows), bool(age_txt))
-        if sig == self._char_sig:
-            lbl = getattr(self, "_age_lbl", None)
-            if lbl is not None:
-                try:
-                    lbl.setText(age_txt)
-                except Exception:
-                    log.debug("age label update failed", exc_info=True)
-            return
-        self._char_sig = sig
-        self._age_lbl = None
-        W = self.W
-        if self._char_group is not None:
-            self._char_group.setParent(None)
-            self._char_group.deleteLater()
-        grp = W.Group()
-        rest = list(rows[:12])
-        if rest and rest[0][0] == "Personnage":         # the character as the card's title
-            name = str(rest.pop(0)[1])
-            zone = next((str(v) for t, v in rest if t == "Zone"), "")
-            rest = [(t, v) for t, v in rest if t != "Zone"]
-            head = grp.add(W.Row(name, zone or None))
-            W.set_prop(head.title, "role", "headline")
-        for title, value in rest:
-            if value:
-                grp.add(W.Row(str(title), None, W.label(str(value), "secondary")))
-            else:
-                grp.add(W.Row(str(title)))
-        if not rows:
-            grp.add(W.Row("Rien pour l'instant", "Installe l'addon, connecte-toi puis tape /reload."))
-        elif age_txt:
-            self._age_lbl = W.label(age_txt, "secondary")
-            grp.add(W.Row("Dernière sauvegarde", None, self._age_lbl))
-        self._char_layout.addWidget(grp)
-        self._char_group = grp
-
-    def _render_plan(self, plan: Any) -> None:
-        rows = plan_rows(plan)
-        sig = tuple(rows)
-        if sig == self._plan_sig:
-            return
-        self._plan_sig = sig
-        W = self.W
-        if self._plan_group is not None:
-            self._plan_group.setParent(None)
-            self._plan_group.deleteLater()
-        grp = W.Group()
-        for title, desc in rows:
-            grp.add(W.Row(title, desc or None))
-        if not rows:
-            grp.add(W.Row("Pas encore de trajet", "Clique sur « Calculer le trajet »."))
-        self._plan_layout.addWidget(grp)
-        self._plan_group = grp
-
     def on_close(self) -> None:
         self.timer.stop()
+        self._render_timer.stop()
+        self._warm_timer.stop()
 
 
 def build(app: Any) -> WowPage:

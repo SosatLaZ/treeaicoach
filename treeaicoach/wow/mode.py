@@ -188,13 +188,20 @@ class WowMode:
                 self._changed()
 
     def read_db(self) -> dict | None:
-        """TreeAIDB from the newest SavedVariables file of the found install (None when absent)."""
+        """TreeAIDB from the newest SavedVariables file of the found install (None when absent).
+
+        (4.0) Parsed once per save, shared with the WoW page and the Accueil card (``live.read_db_cached``):
+        a big save is no longer re-parsed every 30 s while WoW runs (CPU that slowed the window down)."""
         install, sv = optional("install"), optional("savedvars")
         if install is None or sv is None or self.install is None:
             return None
         try:
             files = install.savedvars_files(self.install)
-            return (sv.read_db(files[0]) or None) if files else None
+            if not files:
+                return None
+            live = optional("live")
+            db = live.read_db_cached(files[0]) if live is not None else sv.read_db(files[0])
+            return db or None
         except Exception:
             log.debug("wow db read failed", exc_info=True)
             return None
