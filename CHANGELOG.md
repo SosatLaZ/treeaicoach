@@ -3,6 +3,16 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 4.1.3 · 8 novembre 2026
+
+- **Le vrai plus court trajet** : ordre exact jusqu'à 10 arrêts (vérifié contre toutes les combinaisons), pierre de
+  foyer une seule fois au meilleur moment, monture comptée, relief par zone ; l'ordre ne saute plus pour rien.
+- **Chemins appris** : TreeAI retient les chemins que tu marches (rampes, virages) ; la boussole passe « par le
+  chemin » et les temps suivent la réalité.
+- **« Acheter X »** (épices…) : la boussole mène au marchand.
+- **Suivi Forever** (si tu as choisi « lui donner l'ordre ») reçoit toujours l'ordre de TreeAI, même après /reload.
+- **Carré des joueurs ennemis** : autour de la barre de vie seulement, trait fin (il prenait toute la plaque).
+
 ## 4.1.2 · 8 novembre 2026
 
 - **Quêtes et récompenses automatiques coupées chez tout le monde**, et chacune a son interrupteur : Réglages →

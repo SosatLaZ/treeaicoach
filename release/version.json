@@ -1,6 +1,6 @@
 {
-  "version": "4.1.2",
+  "version": "4.1.3",
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334,
-  "notes": "TreeAI 4.1.2 : quêtes et récompenses automatiques coupées (interrupteurs à part), choix de zone + Conseille-moi, HV refaite pour le bénéfice."
+  "notes": "TreeAI 4.1.3 : vrai plus court trajet (exact), chemins appris, boussole par le chemin, quêtes d'achat vers le marchand, carré des joueurs corrigé."
 }
