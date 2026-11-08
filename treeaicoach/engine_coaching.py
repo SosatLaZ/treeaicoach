@@ -716,7 +716,7 @@ class CoachingMixin:
         try:
             self._listen_chip("transcript", f"{who} : {text}" if who else text)
             q = f"Question posée par {who} : {text}" if who else text
-            if self._wow_mode():                          # WoW mode: WoW-expert answer in the channel
+            if self._wow_on():                          # WoW mode: WoW-expert answer in the channel
                 self._general_question(text, who=who)
                 return
             msg = self.ask_ai(question=q)
@@ -729,8 +729,11 @@ class CoachingMixin:
         except Exception:
             log.debug("discord voice question failed", exc_info=True)
 
-    def _wow_mode(self) -> bool:
-        """TreeAI runs in WoW mode (wow/ai_context.wow_mode_active). Never raises."""
+    def _wow_on(self) -> bool:
+        """TreeAI runs in WoW mode (wow/ai_context.wow_mode_active). Never raises.
+
+        (Not named ``_wow_mode``: wow/mode.py stores the bool ``engine._wow_mode``, which shadowed the method —
+        every check raised TypeError in WoW mode and the « Hey coach » mic gate stayed closed.)"""
         try:
             from treeaicoach.wow import ai_context
 
@@ -738,9 +741,42 @@ class CoachingMixin:
         except Exception:
             return False
 
+    def _wow_question(self, text: str, local: bool = False, who: str = "") -> None:
+        """WoW mode: a « Hey coach » / Discord / hotkey question answered from the player's live game files
+        (wow/ai_context.answer_question: the WoW-expert AI, or the same facts said without AI when it is off or
+        fails). Spoken only because a question was asked; one worker thread per question, never raises."""
+        cfg = self._cfg
+        prov = str(getattr(cfg, "ai_provider", "off") or "off").lower()
+        key, model = str(getattr(cfg, "ai_api_key", "") or "").strip(), str(getattr(cfg, "ai_model", "") or "")
+
+        def run() -> None:
+            try:
+                from treeaicoach.wow import ai_context
+
+                ans = ai_context.answer_question(prov, key, model, text, engine=self, who=who)
+            except Exception as exc:
+                log.info("IA (WoW) : %s", exc)
+                ans = "L'IA ne répond pas pour l'instant."
+            try:
+                from treeaicoach import voice_latency
+
+                voice_latency.answered(ans)
+            except Exception:
+                pass
+            if local:                                    # PC mic / F12: said here, shown as a toast
+                self._say(ans, int(Level.INFO))
+                self._toast("insight", "IA", ans, None, f"ai-gen:{self._clock():.0f}", self._clock())
+            else:
+                self._call("ai_answer", ans)
+
+        threading.Thread(target=run, name="TreeAI-ai-wow", daemon=True).start()
+
     def _general_question(self, text: str, local: bool = False, who: str = "") -> None:
         """Outside a game: the question goes to the AI as to an ordinary assistant (still LoL-expert);
         the answer is said in the channel. One worker thread per question, never raises."""
+        if self._wow_on():                               # WoW mode: answered from the game's files (+ AI)
+            self._wow_question(text, local=local, who=who)
+            return
         cfg = self._cfg
         prov = str(getattr(cfg, "ai_provider", "off") or "off").lower()
         key, model = str(getattr(cfg, "ai_api_key", "") or "").strip(), str(getattr(cfg, "ai_model", "") or "")
@@ -754,12 +790,7 @@ class CoachingMixin:
             from treeaicoach.voice_assistant import short_answer
 
             try:
-                if self._wow_mode():                     # WoW-expert prompt + SavedVariables / combat-log context
-                    from treeaicoach.wow import ai_context
-
-                    raw = ai_context.wow_answer(prov, key, model, text, engine=self, who=who)
-                else:
-                    raw = ai_advisor.general_answer(prov, key, model, text)
+                raw = ai_advisor.general_answer(prov, key, model, text)
                 ans = short_answer(raw, sentences=3, max_chars=320)
             except Exception as exc:
                 log.info("IA (question générale) : %s", exc)
@@ -1330,7 +1361,7 @@ class CoachingMixin:
                 a.stop()
                 return
             busy = getattr(self._voice, "is_busy", None)
-            a.set_hooks(should_listen=lambda: bool(self._in_game) or self._wow_mode(),
+            a.set_hooks(should_listen=lambda: bool(self._in_game) or self._wow_on(),
                         is_speaking=(busy if callable(busy) else (lambda: False)),
                         on_wake=lambda: self._voice.alert_beep("info") if self._voice is not None else None,
                         on_question=lambda q: self.ask_ai(question=q, spoken=True))
@@ -1355,13 +1386,16 @@ class CoachingMixin:
         refusal) is also read out loud, 1-2 sentences.
         Returns a French acknowledgement (also shown as a toast). Never raises, never blocks."""
         try:
-            if self._wow_mode():                         # WoW mode: WoW-expert assistant (hotkey or « Hey coach »)
+            if self._wow_on():                         # WoW mode: WoW-expert assistant (hotkey or « Hey coach »)
                 from treeaicoach.wow import ai_context
 
                 now = self._clock()
+                prov = str(getattr(self._cfg, "ai_provider", "off") or "off").lower()
+                ai_on = prov != "off" and (prov == "ollama" or bool(str(getattr(self._cfg, "ai_api_key", "") or "").strip()))
+                self.last_ai_ack = msg = "Question envoyée à l'IA…" if ai_on else "Réponse tirée de tes données de jeu…"
+                if ai_on:                                # without AI the answer itself comes at once
+                    self._toast("insight", "IA", msg, None, f"ai-ask:{now:.0f}", now)
                 self._general_question(question or ai_context.DEFAULT_QUESTION, local=True)
-                self.last_ai_ack = msg = "Question envoyée à l'IA…"
-                self._toast("insight", "IA", msg, None, f"ai-ask:{now:.0f}", now)
                 return msg
             from treeaicoach.ai_advisor import AIAdvisor, engine_context
 
