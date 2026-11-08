@@ -1,25 +1,25 @@
 {
- "version": "4.0.2",
+ "version": "4.0.3",
  "exe": "TreeAICoach-app.exe",
- "sha256": "8de331cb7c2008f43433f58710d968fb1f395bf8752665eb3c1920cf9454e6a5",
+ "sha256": "786a251f8252c5927715b00147e4fb5e03564d2397588193f8bbc34b2268845d",
  "chunks": [
   {
-   "name": "4.0.2/part-01.zip",
-   "size": 88013178,
-   "sha256": "f0c9ade492e05073aec259074e29255445cbd44336b6c1c287185f6728d5c239",
+   "name": "4.0.3/part-01.zip",
+   "size": 88013186,
+   "sha256": "ecfc6993772317b7a5e5cab2fb01d202b0eb5161f3b834b83e35129aab318117",
    "files": 127
   },
   {
-   "name": "4.0.2/part-02.zip",
-   "size": 13932763,
-   "sha256": "a83ac60d1bafb154855c3fff0b7044b17c6392e6ff8f32b1c95463404990abab",
-   "files": 681
+   "name": "4.0.3/part-02.zip",
+   "size": 13965332,
+   "sha256": "3205ec247eb5416216d8530797b25b2adf6c0a76bf250278c32e05219032249a",
+   "files": 683
   }
  ],
- "total_size": 101945941,
+ "total_size": 101978518,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "TreeAI 4.0.2 : conseils pro, macros refaites (pastilles, pr\u00e9r\u00e9glages, TAI Aspects), ic\u00f4nes de qu\u00eates et Suivi TreeAI \u00e0 la place des autres addons, infos sur les objets, rejoindre ses amis et deviner ce que veut le groupe."
+ "notes": "TreeAI 4.0.3 : pilote auto (qu\u00eates inutiles en pause et reprises toutes seules, zone et mode du trajet, courses r\u00e9parer / vendre / munitions, suivre le groupe), avec le pourquoi de chaque d\u00e9cision."
 }

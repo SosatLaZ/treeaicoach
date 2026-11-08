@@ -3,6 +3,24 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 4.0.3 · 8 novembre 2026
+
+- **Pilote auto** (allumé, coupable d'un clic, `/tai pilote on|off`) : TreeAI décide seul ce qui est sûr et
+  réversible, et dit pourquoi.
+  - Met en pause les quêtes qui ne servent à rien (grise, échouée, chaîne bloquée, doublon, donjon déjà fait, trop
+    dure pour le groupe, presque rien pour le détour) et les reprend toutes seules dès qu'elles redeviennent utiles
+    (le groupe grandit, un niveau, le trajet passe à côté). Jamais une quête finie, chronométrée ou suivie à la main ;
+    rien n'est abandonné (l'abandon reste à la page Journal, 2 clics).
+  - Choisit la zone seulement quand le trajet est vide et que tu n'as rien choisi ; passe le trajet en mode « Groupe »
+    quand tu es en groupe ; ton choix gagne toujours.
+  - Courses : réparer, vendre, munitions, maître de classe ajoutés au trajet chez le PNJ connu le plus proche ; en vol :
+    « à l'arrivée, … ».
+  - « Suivre le groupe » (coupé par défaut) : suit ce que veut faire le groupe (zone, donjon, rendez-vous).
+  - Page « Pilote auto : pourquoi ? » : chaque décision, quand et pourquoi, avec Annuler / Reprendre ; couper le
+    pilote remet tout comme avant.
+- **Suivi TreeAI** : les quêtes en pause sont repliées dans une ligne « En pause (n) » (raisons au survol) ; leurs
+  zones d'objectifs ne sont plus dessinées.
+
 ## 4.0.2 · 8 novembre 2026
 
 - **Conseils pro** (nouvelle page, allumée en mode sûr) : 20 conseils d'expert déclenchés par ce que le jeu montre
