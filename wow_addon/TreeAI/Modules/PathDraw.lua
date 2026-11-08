@@ -117,14 +117,12 @@ function PD.GuidanceOff()
   return false
 end
 function PD.SPFDraws()
-  local Gd = guide()
-  if type(Gd) == "table" then
-    for _, fn in ipairs({ "SPFOwns", "SPFActive", "UsesSPF" }) do
-      if type(Gd[fn]) == "function" then return try(Gd[fn], Gd) and true or false end
-    end
+  -- Core (COHERE) : Suivi Forever ne guide que si le joueur l'a choisi (T:ExternalGuide() == "spf")
+  if T.ExternalGuide then
+    local ok, g = pcall(T.ExternalGuide, T)
+    return ok and g == "spf" or false
   end
-  local R = T.Route
-  return (R and R.following and R.SPF and try(R.SPF)) and true or false
+  return false
 end
 
 -- ------------------------------------------------------------------ géométrie (pure, testable)
