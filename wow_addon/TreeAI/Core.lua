@@ -1116,6 +1116,7 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Detect = { lite = true, desc = "Détection : rares, trésors, monstres de quête, services proches" },
   MinimapPins = { lite = true, desc = "Points sur la minimap (ce que Questie ne montre pas)" },
   Binds = { lite = false, desc = "Raccourcis clavier conseillés" },
+  QuickFight = { lite = true, combat = true, desc = "Raccourcis : boutons entre les combats (manger, familier, aspect, pull)" },
   Leveling = { lite = false, desc = "Montée de niveau : zones, rythme" },
   Inventory = { lite = false, desc = "Inventaire : tri, objets inutiles" },
   Classes = { lite = false, combat = true, desc = "Conseils de classe (autres classes)" },

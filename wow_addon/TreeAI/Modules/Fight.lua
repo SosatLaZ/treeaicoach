@@ -340,6 +340,8 @@ end
 ---------------------------------------------------------------------------------------------------
 function M:CheckPrePull()
   if not opt("prepull") or inCombat() or not hostile("target") or unitCombat("target") then M:Clear("prepull") return end
+  local QF = T.QuickFight   -- (QUICK2) la barre Raccourcis affiche déjà « Pas prêt : … » : un seul propriétaire
+  if QF and type(QF.OwnsPrePull) == "function" and QF:OwnsPrePull() then M:Clear("prepull") return end
   local hp = pct("player")
   local ptype = sv(try(G.UnitPowerType, "player"))
   local mana = (ptype == 0) and pct("player", true) or nil

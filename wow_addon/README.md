@@ -1000,3 +1000,20 @@ Uniquement des événements + une minuterie de 60 s (aucun OnUpdate, ≤ 60 kins
 * **Onglet « Stats »** (sous-menu « Plus », `/tai stats`) : 5-8 lignes (fiche, attaque, combat, repos / morts,
   XP/h + or/h, trajets, conso / h) + « Exporter pour TreeAI » → `summary.stats` (aussi au /reload, à la
   déconnexion et à `SUMMARY`), lu par `treeaicoach/wow/stats.py` → bloc « Mes stats mesurées » de l'onglet Session.
+
+## Raccourcis : module `QuickFight` (agent QUICK2, `Modules/QuickFight.lua`, fin du TOC)
+
+Barre compacte déplaçable (`TreeAIQuickBar`, poignée dorée à gauche, mode édition id `quick`) de boutons
+**sécurisés** (`SecureActionButtonTemplate`, `type = macro`, nommés `TreeAIQuick_<clé>` → `/click` possible) qui
+n'apparaissent que quand ils servent : `pull` (Marque du chasseur + `/petattack`, cible hostile hors combat), `pet`
+(Appeler / Ressusciter), `mend` (familier sous `petHp` %), `feed` (bonheur < 3, nourriture de `Hunter:BestFood`),
+`aspect` (Faucon / Singe sans aspect ou en combat ; Guépard / Meute pour voyager 20 s après un combat, Maj = l'autre),
+`bandage` (quand 8 s de bandage battent le repas, sans « Bandage récent », sans besoin de boire), `eat` (meilleure
+boisson / nourriture de `Macros.NewContext`, sous `hp` / `mana` %), + bouton normal `ammo` au marchand (achat sur
+clic jusqu'au stock `ammoBuy`, par piles de 200). Texte d'état : « Repos 18 s : bois maintenant », « Repos : plein
+dans 12 s » (vitesse mesurée pendant le repas), « Bande-toi : 8 s au lieu de 13 s », « Pas prêt : PV 45 %, … »,
+« Prêt à engager » (6 s). Règles : création / attributs / Show / Hide / placement / échelle **hors combat**
+(`RunOutOfCombat`) ; `PLAYER_REGEN_DISABLED` (avant le verrou sur le vrai client) garde seulement `pet` / `mend` /
+`aspect` ; en combat : alpha (1 utile, 0,3 sinon), textures, texte, recharge. Aucune ligne de conseil :
+`QF:OwnsPrePull()` fait taire `Fight:prepull`. Pur / testable : `QF:Plan(snapshot, opt)`, `QF.RestTime`,
+`QF.EatDuration`. Options « Raccourcis » ; `/tai raccourcis` = afficher / masquer. Budget session_sim ≤ 80 kinstr/min.
