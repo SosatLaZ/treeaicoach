@@ -199,6 +199,11 @@ function H.Entries()
     act(function() Td.Toggle() end), (Td and Td.Toggle) and true or false)
   add("outils", "boussole", "Boussole", ICON .. "INV_Misc_Spyglass_02", "Clic : afficher / cacher la flèche", slashCmd("boussole"), hasSlash("boussole"))
   add("outils", "radar", "Radar", ICON .. "INV_Misc_Map_01", "Clic : afficher / cacher le radar", slashCmd("radar"), hasSlash("radar"))
+  for _, e in ipairs(type(T.HUB_EXTRA) == "table" and T.HUB_EXTRA or {}) do   -- entrées des modules (Dungeon…)
+    if type(e) == "table" and type(e.fn) == "function" and e.title then
+      add(e.group or "outils", e.id or e.title, e.title, e.icon or ICON .. "INV_Misc_Note_01", e.tip, act(e.fn))
+    end
+  end
   add("reglages", "options", "Options", ICON .. "INV_Misc_Gear_01", "Clic : toutes les options (taille, transparence, modules)",
     act(function() if T.OpenOptions then T:OpenOptions() end end))
   local nBeta, nOn = 0, 0

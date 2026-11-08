@@ -332,6 +332,8 @@ function M:ReadGear(unit, guid)
     local link = pub(call(_G.GetInventoryItemLink, unit, slot))
     if link then
       c.n = c.n + 1
+      c.links = c.links or {}
+      c.links[slot] = link            -- DUNGEON2 : butin du donjon comparé à l'équipement inspecté
       local name, _, quality, level, _, _, sub = itemInfo(link)
       local det = _G.C_Item and _G.C_Item.GetDetailedItemLevelInfo or _G.GetDetailedItemLevelInfo
       local il = tonumber((call(det, link))) or tonumber(level)
@@ -635,6 +637,9 @@ function M:AutoRefresh()
 end
 
 -- instantané (sans noms) pour TreeAI Coach
+--- Équipement inspecté d'un membre (cache, lecture seule) -> { t, ilvl, links = {[slot] = lien}, ... } | nil
+function M.GearOf(guid) return guid and gearCache[guid] or nil end
+
 function M:SaveSummary()
   local S = T.Summary and T:Summary()
   if type(S) ~= "table" then return end

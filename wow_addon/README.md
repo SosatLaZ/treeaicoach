@@ -251,6 +251,25 @@ rétrogradé quand la frise Blizzard (`C_EncounterTimeline`) est active. Après 
 après wipe, run (pulls, morts, wipes, XP, or), mini-compteur lu dans `C_DamageMeter` hors combat. Pull /
 patrouille = ligne de Fight reprise. Marque conseillée : un clic = un `SetRaidTarget` hors combat.
 `summary.dungeon = {key, name, why, boss, run, meter, runs}`.
+**DUNGEON2** (même module + `Modules/DungeonPrep.lua`) : onglet rangé en blocs (`SetTabLines(tab, lines, <bloc>)`,
+ordre `Dungeon.BLOCKS` : en-tête + boutons « Prêt ? » / « Marquer » / « Partager », Prochain boss, Boss, Butin du groupe,
+Quêtes du donjon, Préparation, Chasseur, Bilan). Fenêtre « Prêt pour <donjon> ? » (◀ ▶ = choisir le donjon prévu ;
+Groupe / Quêtes du donjon / Préparation, ✓ ! ✗ par point, « Partager » par quête) : `Dungeon:ToggleChecklist(on)`,
+`Dungeon.PrepRows(d)`, `Dungeon.Checklist(d)` (niveaux, rôles, réparation, sacs, nourriture, munitions, familier ;
+Squad pour les potes), aussi par la pastille de la minimap (`TreeAI.HUB_EXTRA`, lu par Hub) et `/tai donjon pret`.
+Quêtes du donjon : index Questie `zoneOrSort → ids` construit une fois par tranches de 1 500 hors combat, mémorisé
+(`TreeAIDB…Dungeon.qidx`, refait si le nombre de quêtes Questie change) ; donneur (`startedBy` → PNJ + zone), qui ne
+l'a pas (`C_QuestLog.IsUnitOnQuest` / `IsUnitOnQuest`), qui l'a (Squad), objet d'objectif → boss (`npcDrops`) ;
+partage = `QuestLogPushQuest(index)` au clic, hors combat. Qui fait quoi : codes `jobs` par boss (`Data/Dungeons.lua`
+`extra` + `jobs` : int, cc, magic, curse, poison, disease, fear, adds) attribués aux classes du groupe (`Dungeon.Jobs`,
+`JobsText`). Pulls connus (`extra[key].pulls`, avant le boss `b`), boss optionnels (`opt`), cibles à contrôler (`cc`).
+Butin : `Dungeon.LootPlan(d, members)` → par objet `need` (gain : `Boost.UpgradePct` pour toi, `Boost.ScoreLink` × poids
+de classe contre l'équipement inspecté par Team — `Team.GearOf(guid).links`), `later` (mailles au 40…), `verdict`
+Besoin / Cupidité par membre ; `Dungeon.ItemSource(id)` (contrat Gear). Bilan : `char.last` (durée, boss, morts toi +
+groupe, wipes, butin reçu ≥ vert, quêtes finies, XP, or) à la sortie, suggestion + bloc 30 min ; `summary.dungeon.last`.
+Coût : minuterie 1 s seulement en instance / boss / fenêtre ouverte, reconstruction sur drapeau sale (15 s onglet
+visible, 60 s caché, 2 s pendant un boss à minuteurs) ; `session_sim` plafonne Dungeon à 80 kinstr/min. Tables de
+butin, pulls, qui-fait-quoi = Classic (≈) ; donjons de Forever : boss et ordre du client seulement.
 
 `Modules/Prof.lua` (agent PROF, onglet « Métiers » créé seulement si tu as un métier, bloc `Prof`, `/tai metiers
 [cible N [métier]|debug]`) : montée de métier la moins chère (glouton, coût attendu par point ; formule Classic :

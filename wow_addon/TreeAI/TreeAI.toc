@@ -68,6 +68,7 @@ Modules\Highlight.lua
 Modules\PvP.lua
 Modules\PvPMark.lua
 Modules\Dungeon.lua
+Modules\DungeonPrep.lua
 Modules\Radar.lua
 Modules\MinimapPins.lua
 Modules\Gear.lua
