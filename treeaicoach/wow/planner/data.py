@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from treeaicoach.wow.planner import models as M
+from treeaicoach.wow.planner import rules as RU
 from treeaicoach.wow.planner import transport as TR
 
 log = logging.getLogger(__name__)
@@ -126,6 +127,7 @@ class Node:
     kills: float = 0.0
     ml: int = 0
     elite: bool = False
+    bonus: float = 0.0        # (QUESTQA) XP credited when done: share of a quest whose turn-in is outside this plan
 
 
 @dataclass
@@ -175,6 +177,7 @@ class Problem:
     faction: str = ""                                  # "Alliance" | "Horde" (unknown flight points on the way)
     rects: dict[int, MapRect] = field(default_factory=dict)
     squad_raw: list = field(default_factory=list)
+    excluded: dict = field(default_factory=dict)       # quest id → why it is left out (rules.accept)
     # filled by build_matrix: index n = start, n+1 = hearth
     D: list[list[float]] = field(default_factory=list)
     via: dict[tuple[int, int], tuple[int, int]] = field(default_factory=dict)
@@ -237,14 +240,6 @@ def _in_work(qzone: int, zones: set[int] | None, cont: int | None, rects: dict) 
     return True
 
 
-def _quest_maps(raw: dict, in_log: bool, qzone: int) -> list[int]:
-    """Maps of the quest's remaining points (start when not taken, objectives, turn-in); [zone] when unknown."""
-    pts = [] if in_log else [raw.get("s")]
-    pts += [o for o in _list(raw.get("o")) if isinstance(o, dict)] + [raw.get("f")]
-    out = [int(_n(p.get("map"))) for p in pts if isinstance(p, dict) and _n(p.get("map")) > 0]
-    return out or ([qzone] if qzone else [])
-
-
 def _load(exp, learn, char_learn, group_mode, zones, work=False) -> Problem | None:
     if not isinstance(exp, dict) or int(_n(exp.get("v"))) != 1:
         return None
@@ -284,6 +279,10 @@ def _load(exp, learn, char_learn, group_mode, zones, work=False) -> Problem | No
         pb.hearth_cd = max(0.0, _n(h.get("cd")))
     seen: set[int] = set()
     wz, wc, w_ignore, w_extra = work_filter(exp, rects) if work else (None, None, set(), set())
+    if work and wz is None and wc is None and rects.get(zone) is not None:
+        wc = rects[zone].c                             # (QUESTQA) no work zone exported: never another continent
+    opts = RU.options(exp)
+    pb.excluded = {}
     for raw in _list(exp.get("quests")):
         if not isinstance(raw, dict) or raw.get("id") is None:
             continue
@@ -299,11 +298,26 @@ def _load(exp, learn, char_learn, group_mode, zones, work=False) -> Problem | No
         qzone = int(_n(raw.get("zone"))) or int(_n((raw.get("f") or {}).get("map") if isinstance(raw.get("f"), dict) else 0))
         if zones is not None and not in_log and qzone not in zones:
             continue
-        if qid in w_ignore or (work and qid not in w_extra
-                               and not all(_in_work(m, wz, wc, rects) for m in _quest_maps(raw, in_log, qzone))):
-            continue                                   # « zone de travail » / quêtes ignorées (choix du joueur)
-        if int(_n(raw.get("dg"))) and not group_mode:
-            continue                                   # dungeon quests: squad route only
+        if qid in w_ignore:
+            continue                                   # quêtes ignorées (choix du joueur)
+        # (QUESTQA) « zone de travail » STOP BY STOP, as ZonePlan:BuildRoute: a pick-up outside = the whole quest
+        # out; an objective outside = that objective (and the turn-in) out; a turn-in outside (a capital) = only
+        # the turn-in out — the objectives here stay planned (« La flamme sacrée » in Orneval, turned in at
+        # Thunder Bluff)
+        wk = work and (wz is not None or wc is not None) and qid not in w_extra
+
+        def inw(p: Any, _wk: bool = wk, _zone: int = qzone) -> bool:
+            if not _wk:
+                return True
+            m = int(_n(p.get("map"))) if isinstance(p, dict) else 0
+            return _in_work(m or _zone, wz, wc, rects) if (m or _zone) else True
+
+        if not in_log and not inw(raw.get("s")):
+            continue
+        ok, why = RU.accept(raw, level, k if group_mode else 1, opts)
+        if not ok:                                     # (QUESTQA) same rules as ZonePlan:Accept in the addon
+            pb.excluded[qid] = why                     # dungeon / raid / PvP / elite solo / failed / too high
+            continue
         lv = int(_n(raw.get("lv"), level)) or level
         xp = int(_n(raw.get("xp"))) or M.quest_xp_estimate(lv)
         q = Quest(qid, str(raw.get("t") or f"Quête {qid}"), lv, int(_n(raw.get("rl"))), xp, in_log, qzone,
@@ -327,6 +341,7 @@ def _load(exp, learn, char_learn, group_mode, zones, work=False) -> Problem | No
             nodes.append(Node("pick", qi, 0, sp))
         done = bool(int(_n(raw.get("done"))))
         ok = True
+        obj_in, obj_out = False, False
         if not done:
             for oi, o in enumerate(_list(raw.get("o")), 1):
                 if not isinstance(o, dict):
@@ -334,6 +349,10 @@ def _load(exp, learn, char_learn, group_mode, zones, work=False) -> Problem | No
                 need = int(_n(o.get("n"), 1)) - int(_n(o.get("have")))
                 if need <= 0:
                     continue
+                if not inw(o):
+                    obj_out = True
+                    continue
+                obj_in = True
                 op = make_point(rects, o)
                 if op is None:
                     ok = False
@@ -343,9 +362,18 @@ def _load(exp, learn, char_learn, group_mode, zones, work=False) -> Problem | No
                 nodes.append(Node("obj", qi, oi, op, ot.median, ot.p80, ot.kills if o.get("k") in ("kill", "item") else 0,
                                   ml, int(_n(o.get("rank"))) in (1, 2, 3)))
         fp = make_point(rects, raw.get("f"))
-        if not ok or fp is None:
+        if not ok or (obj_out and not obj_in):
             continue
-        nodes.append(Node("turn", qi, 0, fp))
+        if fp is not None and not obj_out and inw(raw.get("f")):
+            nodes.append(Node("turn", qi, 0, fp))
+        elif fp is None and not obj_in:
+            continue                                   # nowhere to go for it
+        else:                                          # turn-in later, elsewhere: the objectives here still count
+            objn = [nd for nd in nodes if nd.kind == "obj"]
+            for nd in objn:
+                nd.bonus = 0.5 * xp / len(objn)
+        if not any(nd.kind != "pick" for nd in nodes):
+            continue                                   # only a pick-up (or nothing) left here
         feas = 9.0
         for nd in nodes:
             if nd.kind == "obj" and nd.kills:

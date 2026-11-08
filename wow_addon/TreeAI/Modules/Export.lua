@@ -412,8 +412,23 @@ local function libDB()
     local e = xpdb and xpdb[id]
     return type(e) == "table" and tonumber(e[2]) or nil
   end
+  local dgAreas
+  local function dungeon(areaId)             -- (QUESTQA) zone de quête = une instance (ZoneDB privé de Questie)
+    if dgAreas == nil then
+      dgAreas = false
+      local zdb = lib.Support and try(lib.Support.Get, "ZoneDB")
+      local d = type(zdb) == "table" and type(zdb.private) == "table" and zdb.private.dungeons
+      if type(d) == "string" then
+        local ls = G("loadstring")
+        local f = ls and ls(d)
+        d = f and try(f)
+      end
+      if type(d) == "table" then dgAreas = d end
+    end
+    return dgAreas and dgAreas[areaId] ~= nil or false
+  end
   return { src = "LibQuestieDB", Q = getter(Q), N = getter(N), O = getter(O), I = getter(I),
-    ids = function() return try(Q.GetAllIds) end, map = map, xp = qxp,
+    ids = function() return try(Q.GetAllIds) end, map = map, xp = qxp, dungeon = dungeon,
     enum = lib.Enum }
 end
 local function legacyDB()
@@ -436,6 +451,9 @@ local function legacyDB()
     map = function(areaId)
       if type(zdb) == "table" and type(zdb.GetUiMapIdByAreaId) == "function" then return tonumber((try(zdb.GetUiMapIdByAreaId, zdb, areaId))) end
     end,
+    dungeon = function(areaId)
+      return type(zdb) == "table" and type(zdb.IsDungeonZone) == "function" and try(zdb.IsDungeonZone, areaId) and true or false
+    end,
     xp = function() return nil end,
     doable = type(db.IsDoable) == "function" and function(id) return try(db.IsDoable, id) end or nil,
     drop = type(db.GetItemDroprate) == "function" and function(item, npc) return try(db.GetItemDroprate, item, npc) end or nil }
@@ -446,6 +464,17 @@ function X:Source()
 end
 
 -- ------------------------------------------------------------------ journal & joueur (rapide)
+-- (QUESTQA) tag du jeu → drapeaux du schéma (1 élite, 41 JcJ, 62/88/89 raid, 81/85 donjon), mêmes règles que
+-- ZonePlan.Kind et treeaicoach/wow/planner/rules.py
+local function tagFlags(q, tid, isElite)
+  if isElite or tid == 1 then q.elite = 1 end
+  if tid == 81 or tid == 85 then q.dg = 1 end
+  if tid == 62 or tid == 88 or tid == 89 then q.raid = 1 end
+  if tid == 41 then q.pvp = 1 end
+  if tid and tid > 0 then q.tag = tid end
+  return q
+end
+X.TagFlags = tagFlags
 local function logSnapshot()
   local out, n = {}, 0
   local CQ = G("C_QuestLog")
@@ -462,7 +491,8 @@ local function logSnapshot()
             fin = o.finished and true or false, text = o.text }
         end
         local tag = CQ.GetQuestTagInfo and try(CQ.GetQuestTagInfo, qid)
-        if type(tag) == "table" and (tag.isElite or tag.tagID == 1) then q.elite = 1 end
+        if type(tag) == "table" then tagFlags(q, tonumber(tag.tagID), tag.isElite) end
+        if CQ.IsFailed and try(CQ.IsFailed, qid) then q.failed = 1 end   -- (QUESTQA) chrono fini / escorte morte
         out[qid] = q; n = n + 1
       end
     end
@@ -474,6 +504,9 @@ local function logSnapshot()
     if title and not header and tonumber(qid) then
       local q = { id = qid, t = title, lv = tonumber(level) or 0, grp = tonumber(grp) or 0,
         done = (complete == 1 or complete == true) and 1 or 0, obj = {} }
+      if complete == -1 then q.failed = 1 end
+      local tid = try(G("GetQuestTagInfo"), qid)
+      tagFlags(q, tonumber(tid), false)
       for j = 1, (try(G("GetNumQuestLeaderBoards"), i) or 0) do
         local text, typ, fin = try(G("GetQuestLogLeaderBoard"), j, i)
         local have, need = tostring(text or ""):match("(%d+)%s*/%s*(%d+)")
@@ -616,6 +649,19 @@ local function questRecord(db, id, lq, st, maps, budget)
   if rec.lv <= 0 and lq then rec.lv = lq.lv end
   local zone = tonumber(Q(id, "zoneOrSort")) or 0
   if zone > 0 then rec.zone = db.map(zone) end
+  -- (QUESTQA) donjon / raid / JcJ / échouée : tag du journal, sinon tag du jeu (toute quête, cache du client),
+  -- zone de la quête = une instance (Questie ZoneDB / type de carte 4-5) ; objectif « boss » plus bas
+  if lq then
+    for _, k in ipairs({ "dg", "raid", "pvp", "tag", "failed" }) do if lq[k] then rec[k] = lq[k] end end
+  else
+    local tg = try(C("C_QuestLog", "GetQuestTagInfo"), id)
+    if type(tg) == "table" then tagFlags(rec, tonumber(tg.tagID), tg.isElite)
+    else tagFlags(rec, tonumber(_ns((try(G("GetQuestTagInfo"), id)))), false) end
+  end
+  if zone > 0 and db.dungeon and db.dungeon(zone) then rec.dg = 1 end
+  local zi = rec.zone and try(C("C_Map", "GetMapInfo"), rec.zone)
+  local mt = type(zi) == "table" and tonumber(zi.mapType) or nil
+  if mt == 4 then rec.dg = 1 elseif mt == 5 then rec.raid = 1 end
   local sf = tonumber(Q(id, "specialFlags")) or 0
   if floor(sf / 2) % 2 == 1 then rec.esc = 1 end
   if rec.flags and floor(rec.flags / 2) % 2 == 1 then rec.esc = 1 end
@@ -732,6 +778,18 @@ local function questRecord(db, id, lq, st, maps, budget)
     end
   end
   rec.o = order
+  for j, o in ipairs(order) do
+    if tonumber(o.rank) == 3 then rec.dg = 1 end   -- objectif = un boss
+    -- (QUESTQA) nom de l'objectif : texte du journal, sinon Questie (monstre / objet / objet du monde) → libellés
+    -- « Tue « Crin-de-Chardon » » côté appli comme en jeu, même pour une quête pas encore prise
+    local lo = lq and lq.obj and lq.obj[j]
+    if lo and lo.text then o.t = lo.text
+    elseif o.id and o.id > 0 then
+      local nm = (o.k == "kill" and db.N(o.id, "name")) or (o.k == "item" and db.I(o.id, "name"))
+        or (o.k == "obj" and db.O(o.id, "name")) or nil
+      if type(nm) == "string" and nm ~= "" then o.t = nm end
+    end
+  end
   return rec
 end
 
@@ -806,20 +864,29 @@ function X:Build(yieldFn)
         if rec then rec.who = who; add(rec) end
       end
     end
-    -- neighbour zones: count maps referenced so far
-    local cnt = {}
-    for _, rec in ipairs(exp.quests) do
-      for _, m in ipairs({ rec.zone, rec.f and rec.f.map }) do if m and m ~= player.map then cnt[m] = (cnt[m] or 0) + 1 end end
-    end
-    local zl = {}
-    for m, c in pairs(cnt) do zl[#zl + 1] = { m = m, c = c } end
-    tsort(zl, function(a, b) if a.c ~= b.c then return a.c > b.c end return a.m < b.m end)
+    -- zones whose quests to take are exported: the work area (ZonePlan) when there is one; else my zone + the
+    -- 2 zones most referenced by my log ON MY CONTINENT (QUESTQA: a capital where 2 quests are turned in is not
+    -- a « neighbour » to level in — it made the app send the player across the sea)
     local zones = {}
     if player.map then zones[player.map] = true end
-    for i = 1, min(2, #zl) do zones[zl[i].m] = true end
     local Zp = T.ZonePlan                            -- (ZONEPLAN) zones de travail choisies : leurs quêtes à prendre aussi
     local zw = Zp and Zp.ExportZones and try(Zp.ExportZones, Zp)
-    if type(zw) == "table" then for m in pairs(zw) do zones[m] = true end end
+    if type(zw) == "table" and next(zw) then
+      for m in pairs(zw) do zones[m] = true end
+    else
+      local myC = player.map and Geo.Rect(player.map) and Geo.Rect(player.map).c
+      local cnt = {}
+      for _, rec in ipairs(exp.quests) do
+        for _, m in ipairs({ rec.zone, rec.f and rec.f.map }) do
+          local r = m and Geo.Rect(m)
+          if m and m ~= player.map and (not myC or (r and r.c == myC)) then cnt[m] = (cnt[m] or 0) + 1 end
+        end
+      end
+      local zl = {}
+      for m, c in pairs(cnt) do zl[#zl + 1] = { m = m, c = c } end
+      tsort(zl, function(a, b) if a.c ~= b.c then return a.c > b.c end return a.m < b.m end)
+      for i = 1, min(2, #zl) do zones[zl[i].m] = true end
+    end
     -- available quests in those zones (one pass over the DB ids, budgeted)
     local ids = db.ids() or {}
     local lvl = player.level or 1

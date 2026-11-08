@@ -607,19 +607,29 @@ function M.CardTooltip(c)
   return tip
 end
 
+-- (QUESTQA) le trajet (Planner + Itinéraire) a-t-il des arrêts affichés dans ce même onglet ?
+local function planInTab()
+  local P = T.Planner
+  if not (P and P.IsEnabled and P:IsEnabled() and P.GetActiveSteps) then return false end
+  local ok, st = pcall(P.GetActiveSteps, P, 1)
+  return ok and st ~= nil
+end
+M.PlanInTab = planInTab
 function M.TabLines(model)
   model = model or M.Collect()
   local lines = {}
   local a = model.now
-  if a then
+  local planTab = planInTab()
+  -- une seule liste d'étapes dans l'onglet : celle du trajet (« Arrêt 1/8 : … ») ; « À faire maintenant » ne la
+  -- répète pas (étape du plan) et les lignes « Ensuite : … » disparaissent quand le trajet est affiché
+  if a and not (planTab and a.kind == "step") then
     lines[#lines + 1] = { text = "|cffffd100À faire maintenant|r : " .. a.title,
       -- the Planner already pins its step in « Maintenant »: don't pin the same thing twice (QA sim)
-      prio = a.prio or 2, icon = a.icon, pin = not (T.Planner and T.Planner.GetActiveSteps
-        and select(1, pcall(T.Planner.GetActiveSteps, T.Planner, 1)) and T.Planner:GetActiveSteps(1) ~= nil), now = true,
+      prio = a.prio or 2, icon = a.icon, pin = not planTab, now = true,
       tooltip = { a.title, "|cff99ccffPourquoi ?|r " .. (a.why or ""), "|cff888888Clic : boussole · Maj-clic : Y aller|r", (T.AutoRunHint and ("|cff888888" .. T.AutoRunHint() .. "|r") or nil) },
       onClick = function() M.Go(a, shift()) end }
   end
-  local st = model.steps
+  local st = not planTab and model.steps or nil
   if st then
     for i = (a and a.kind == "step") and 2 or 1, min(#st, 3) do
       local s = st[i]

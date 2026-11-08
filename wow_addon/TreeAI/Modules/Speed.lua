@@ -296,7 +296,18 @@ function S:CheckHearth(st, step, map, x, y)
   local dMS = dist(map, x, y, step.map, step.x, step.y)
   local dBS = dist(b.map, b.x, b.y, step.map, step.x, step.y)
   if not (dMS and dBS) or dMS < E.HEARTH_MIN_DIST or not hearthReady() then self:Clear("hearth") return end
-  local gain = E.HearthGain(dMS, dBS, runSpeed())
+  -- (QUESTQA) l'itinéraire montre déjà « Pierre de foyer → … » comme 1er arrêt : pas de 2e conseil
+  local Rt = T.Route                    -- (dernier calcul de la vue : rien n'est recalculé ici)
+  if Rt and Rt.IsEnabled and Rt:IsEnabled() and Rt.firstKind == "hs" then self:Clear("hearth") return end
+  -- même vitesse que la boussole et l'itinéraire (NavTime : mesurée × détour appris), sinon la course du jeu
+  local NT = T.NavTime
+  local speed = runSpeed()
+  if NT and NT.Speed and NT.Detour then
+    local okV, v = pcall(NT.Speed, "w")
+    local okD, det = pcall(NT.Detour, map)
+    if okV and okD and tonumber(v) and v > 0 and tonumber(det) and det >= 1 then speed = v / det end
+  end
+  local gain = E.HearthGain(dMS, dBS, speed)
   if gain >= E.HEARTH_MIN_GAIN then
     self:Suggest("hearth", E.HearthText(gain), 2, { ttl = 30, sound = false,
       tooltip = "Pour : " .. tostring(step.label or "étape suivante") })

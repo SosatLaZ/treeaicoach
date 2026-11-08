@@ -203,16 +203,80 @@ function E.QuestVerdict(q, ctx)
   return "ok", nil
 end
 E.LABEL = { ok = "OK", galere = "On va galérer", long = "Trop long", impossible = "Pas faisable", zone = "Changez de zone" }
+-- (QUESTQA) raison lisible : jamais « Changez de zone : Changez de zone : … » (anciens plans de l'appli qui
+-- répétaient l'étiquette), jamais « +575 % » (un pourcentage de plus de +100 % se dit « plus du double »)
+function E.CleanReason(why)
+  if why == nil then return nil end
+  why = tostring(why)
+  for _ = 1, 3 do
+    local hit = false
+    for _, l in pairs(E.LABEL) do
+      local pfx = l .. " : "
+      if why:sub(1, #pfx) == pfx then why, hit = why:sub(#pfx + 1), true end
+    end
+    if not hit then break end
+  end
+  why = why:gsub("%+(%d+) %%", function(n)
+    n = tonumber(n)
+    if n and n > 100 then return "plus du double" end
+  end)
+  why = why:gsub("^ailleurs : ", "")
+  if why == "" then return nil end
+  return why
+end
+-- (QUESTQA) le plan de l'appli correspond-il encore au jeu ? st = { key, now, level, log = { [qid] = true },
+-- inWork = function(map) } → true | false, raison (en clair). Un plan sans empreinte (ancienne appli) vit 12 h.
+function E.PlanFresh(plan, st)
+  st = st or {}
+  if type(plan) ~= "table" then return false, "illisible" end
+  if plan.char and st.key and st.key ~= "?" and plan.char ~= st.key then return false, "fait pour un autre personnage" end
+  local made, tnow = tonumber(plan.made) or 0, tonumber(st.now) or 0
+  local fp = type(plan.log) == "table"
+  if tnow > 0 and made > 0 then
+    local age = tnow - made
+    if not fp and age > 12 * 3600 then return false, "calculé il y a plus de 12 h" end
+    if age > 3 * 86400 then return false, "calculé il y a plus de 3 jours" end
+  end
+  local pl = tonumber(plan.level)
+  if pl and pl > 0 and st.level and st.level >= pl + 2 then return false, fmt("calculé au niveau %d", pl) end
+  if fp and type(st.log) == "table" then
+    local known, now, new = {}, 0, 0
+    for _, q in ipairs(plan.log) do known[tonumber(q) or -1] = true end
+    for q in pairs(st.log) do
+      now = now + 1
+      if not known[q] then new = new + 1 end
+    end
+    if new >= 3 and new * 2 > now then return false, fmt("%d quêtes prises depuis le calcul", new) end
+  end
+  if (tonumber(plan.zone) or 0) > 0 and st.inWork and not st.inWork(tonumber(plan.zone)) then
+    return false, "fait pour " .. tostring(st.zoneName and st.zoneName(plan.zone) or ("la zone " .. tostring(plan.zone)))
+  end
+  return true
+end
+-- XP/h affichable ? seulement sur ≥ 10 min de trajet et ≤ 6 × tuer des monstres de ton niveau (sinon : rien)
+function E.XPHTrusted(xph, minutes, ctx)
+  xph, minutes = tonumber(xph) or 0, tonumber(minutes) or 0
+  if xph <= 0 or minutes < 10 then return nil end
+  local base = ctx and ctx.level and E.GrindXPH(ctx) or nil
+  if base and base > 0 and xph > 6 * base then return nil end
+  return floor(xph)
+end
 E.PRIO = { ok = 1, galere = 2, long = 2, impossible = 3, zone = 2 }
 -- grind baseline XP/h (same-level mobs, solo)
 function E.GrindXPH(ctx) return 3600 * E.KillXP(ctx.level, ctx.level) / E.KillCycle(ctx, ctx.level) end
 -- route verdict for a plan this addon built itself; plan = {xph, minutes, steps}, info = {nonGrey, zoneMedian, galere={why}}
 function E.RouteVerdict(plan, ctx, info)
   info = info or {}
-  if ctx.raid then return "impossible", "vous êtes en raid : les quêtes normales n'avancent pas" end
+  if ctx.raid then return "impossible", "tu es en raid : les quêtes normales n'avancent pas" end
   if #(plan.steps or {}) == 0 then return "impossible", "aucune étape faisable ici" end
-  if (info.nonGrey or 99) < 3 then return "zone", "presque plus rien d'utile ici" end
-  if info.zoneMedian and ctx.level >= info.zoneMedian + 5 then return "zone", "zone trop facile pour vous" end
+  -- (QUESTQA) « Changez de zone » sur des faits seulement : < 3 quêtes à ton niveau ET aucune quête du journal ici
+  local ng = info.nonGrey or 99
+  if ng < 3 and (info.logHere or 0) == 0 then
+    return "zone", ng == 0 and "plus aucune quête à ton niveau ici" or fmt("plus que %d quête%s à ton niveau ici", ng, ng > 1 and "s" or "")
+  end
+  if info.zoneMedian and ctx.level >= info.zoneMedian + 5 and (info.logHere or 0) == 0 then
+    return "zone", fmt("tu as %d niveaux de plus que la zone", ctx.level - info.zoneMedian)
+  end
   if ctx.session and (plan.minutes or 0) > ctx.session then return "long", "plus long que ta session de jeu" end
   local base = E.GrindXPH(ctx)
   if (plan.xph or 0) > 0 and plan.xph < 0.6 * base then return "long", "tuer des monstres rapporte plus" end
@@ -403,6 +467,11 @@ local function leg(a, b)
   end
   local d = Geo.Dist and Geo.Dist(a.map, a.x, a.y, b.map, b.x, b.y)
   if not d then return 240 end
+  local NT = T.NavTime             -- (QUESTQA) une seule vitesse : NavTime (mesurée × détour appris), pas Stats × Export
+  if NT and NT.Model then
+    local s = try(NT.Model, d, b.map)
+    if tonumber(s) then return s end
+  end
   local det = X() and X():Detour(b.map) or 1.3
   return d * det / runSpeed()
 end
@@ -422,10 +491,22 @@ end
 function P:FilePlan()
   local plan = G("TreeAIPlan")
   if type(plan) ~= "table" then return nil, nil end
-  if plan.v ~= 1 or type(plan.routes) ~= "table" or #plan.routes == 0 then return nil, "Plan TreeAI illisible (version)" end
-  local key = T.CharKey and T:CharKey()
-  if plan.char and key and key ~= "?" and plan.char ~= key then return nil, "Plan TreeAI ignoré : fait pour un autre personnage" end
-  return plan, nil
+  if plan.v ~= 1 or type(plan.routes) ~= "table" or #plan.routes == 0 then return nil, "Plan de TreeAI Coach illisible (version)" end
+  -- (QUESTQA) jamais un plan périmé montré comme actuel : perso, âge, niveau, journal, zone (E.PlanFresh)
+  local memo = self._fresh
+  local tnow = now()
+  if memo and memo.plan == plan and tnow - memo.at < 10 then return memo.ok and plan or nil, memo.err end
+  local Zp = T.ZonePlan
+  local zon = Zp and Zp.IsEnabled and Zp:IsEnabled()
+  local logSet = {}
+  for q in pairs(logSnap()) do logSet[q] = true end
+  local ok, why = E.PlanFresh(plan, { key = T.CharKey and T:CharKey(), now = epoch(), level = myLevel(), log = logSet,
+    inWork = zon and function(m) return Zp:InZone(m) end or nil, zoneName = Zp and Zp.MapName or nil })
+  local err
+  if not ok then err = "Plan de TreeAI Coach ignoré : " .. tostring(why) .. " (trajet refait en jeu)"
+  elseif self._spent and self._spent == plan.made then ok, err = false, "Trajet de TreeAI Coach fini : la suite est préparée en jeu" end
+  self._fresh = { plan = plan, at = tnow, ok = ok, err = err }
+  return ok and plan or nil, err
 end
 local function inGroup() return (try(G("GetNumGroupMembers")) or 0) > 1 or try(G("IsInGroup")) and true or false end
 
@@ -506,13 +587,34 @@ function P:Evaluate()
     local d = stepDone(s, log, me)
     s._other = (d == nil) or nil
     s._done = d and true or false
+    s._full = nil
     if s.q and d then lastQuestDone = i end
     if not s.q and self.char.skip[self.key .. ":" .. i] then s._done = true end
   end
+  -- (ZONEPLAN / QUESTQA) d'abord les règles du trajet : quêtes ignorées, refusées (donjon, élite seul, JcJ…) et
+  -- arrêts hors de la zone de travail masqués (plan de l'appli compris) — AVANT le contrôle ci-dessous, pour qu'un
+  -- objectif masqué ne rende pas visible un « Rendre » d'une quête pas finie
+  local Zp = T.ZonePlan
+  if Zp and Zp.MaskSteps then pcall(Zp.MaskSteps, Zp, steps, log) end
   -- (COHERE) jamais « Rendre » / objectif d'une quête absente du journal : un plan périmé (fait plus tôt, pour un
   -- autre perso / un membre du groupe) ne guide pas. Étape valable seulement si la quête est dans le journal (et
   -- finie pour « rendre »), ou si une étape « prendre » / objectif de cette quête la précède encore (étape future).
   -- Recalculé à chaque passage (la quête prise / finie → l'étape revient) ; plan marqué périmé → l'appli le refait.
+  -- (QUESTQA) journal plein : un « Prendre » qui ne passerait pas (plus de place à ce moment du trajet) est
+  -- masqué avec la suite de sa quête, jusqu'à ce qu'une remise libère une place
+  local nlog, full = 0, {}
+  for _ in pairs(log) do nlog = nlog + 1 end
+  local maxLog = tonumber((try(C("C_QuestLog", "GetMaxNumQuestsCanAccept")))) or tonumber(G("MAX_QUESTLOG_QUESTS")) or 20
+  for _, s in ipairs(steps) do
+    local q = tonumber(s.q)
+    if q and not s._done and not s._other then
+      if full[q] then s._other, s._full = true, true
+      elseif s.k == "pick" and not log[q] then
+        if nlog >= maxLog then full[q], s._other, s._full = true, true, true else nlog = nlog + 1 end
+      elseif s.k == "turn" then nlog = nlog - 1 end
+    end
+  end
+  self.logFullSkipped = next(full) and full or nil
   local pending, absent = {}, 0
   for _, s in ipairs(steps) do
     local q = tonumber(s.q)
@@ -532,9 +634,6 @@ function P:Evaluate()
       s._absent = nil
     end
   end
-  -- (ZONEPLAN) quêtes ignorées et arrêts hors de la zone de travail : masqués (plan de l'appli compris)
-  local Zp = T.ZonePlan
-  if Zp and Zp.MaskSteps then pcall(Zp.MaskSteps, Zp, steps) end
   self.stale = absent > 0 or nil
   if self.stale and T.Fire and not self._staleSent then
     self._staleSent = true
@@ -586,9 +685,13 @@ local function questTitle(q)
   return "quête " .. tostring(q)
 end
 local OBJ_VERB = { monster = "Tue", item = "Ramasse", object = "Utilise", event = "Fais", reputation = "Gagne" }
+local EXP_VERB = { kill = "Tue", item = "Ramasse", obj = "Utilise", explore = "Explore", talk = "Parle à", spell = "Utilise l'objet sur" }
 function P:StepLabel(s)
-  if s.label and s.label ~= "" then return s.label end
   local q = s.q
+  -- (QUESTQA) objectif d'une quête du journal : toujours NOTRE libellé (verbe + nom, lu dans le journal), même
+  -- quand le plan de l'appli en apporte un (« Fiole d'eau forte remplie » → « Ramasse « Fiole d'eau forte remplie » »)
+  if s.k == "obj" and q and self.log and self.log[q] and self.log[q].obj[tonumber(s.o) or 0] then s = { k = "obj", q = q, o = s.o }
+  elseif s.label and s.label ~= "" then return s.label end
   if s.k == "pick" then return "Prendre « " .. cut(questTitle(q), 32) .. " »" end
   if s.k == "turn" then return "Rendre « " .. cut(questTitle(q), 32) .. " »" end
   if s.k == "obj" then
@@ -601,6 +704,16 @@ function P:StepLabel(s)
       if o.type == "monster" then name = name:gsub("%s+tuée?s?$", "") end
       if name == "" then name = questTitle(q) end
       return verb .. " « " .. cut(name, 34) .. " »"
+    end
+    -- (QUESTQA) quête pas encore prise : le nom de l'objectif d'après l'export (Questie), avec le bon verbe
+    local exp = X() and X():Data()
+    local Zp = T.ZonePlan
+    local rec = exp and Zp and Zp.Recs and Zp.Recs(exp)[tonumber(q) or -1]
+    local ro = rec and type(rec.o) == "table" and rec.o[tonumber(s.o) or 0]
+    if type(ro) == "table" and type(ro.t) == "string" and ro.t ~= "" then
+      local name = T.ObjectiveName and T.ObjectiveName(ro.t) or ro.t
+      if ro.k == "kill" then name = name:gsub("%s+tuée?s?$", "") end
+      return (EXP_VERB[ro.k or ""] or "Fais") .. " « " .. cut(name, 34) .. " »"
     end
     return "Objectif de « " .. cut(questTitle(q), 30) .. " »"
   end
@@ -743,6 +856,7 @@ function P:BuildAuto(yieldFn)
     if lv > grey and (not rec or not rec.zone or rec.zone == map) then
       info.nonGrey = info.nonGrey + 1
       levels[#levels + 1] = lv
+      if lq then info.logHere = (info.logHere or 0) + 1 end
     end
     if v == "impossible" and not lq then return end
     if v == "galere" and not galereWhy then galereWhy = "« " .. cut((rec and rec.t) or (lq and lq.t) or "?", 24) .. " » : " .. tostring(why) end
@@ -837,8 +951,15 @@ function P:Repair(force)
   local newQ = {}
   -- (ZONEPLAN) plan auto en zone de travail : il est refait à chaque quête prise (rien à insérer ici)
   local Zp = T.ZonePlan
-  local zAuto = self.src == "auto" and Zp and Zp.BuildRoute and Zp:IsEnabled()
-  for q, lq in pairs(log) do if not inPlan[q] and not zAuto then newQ[#newQ + 1] = { q = q, lq = lq } end end
+  local zon = Zp and Zp.IsEnabled and Zp:IsEnabled()
+  local zAuto = self.src == "auto" and Zp and Zp.BuildRoute and zon
+  local gN = max(1, tonumber((try(G("GetNumGroupMembers")))) or 1)
+  for q, lq in pairs(log) do
+    -- (QUESTQA) jamais d'insertion d'une quête que le trajet refuse (donjon, élite seul, JcJ, échouée…)
+    if not inPlan[q] and not zAuto and not (zon and not Zp:Accept(q, recs[q], lq, ctx.level or myLevel(), gN)) then
+      newQ[#newQ + 1] = { q = q, lq = lq }
+    end
+  end
   tsort(newQ, function(a, b) return a.q < b.q end)
   local cursor = self:Evaluate() or 1
   if not cfg("repair") and not force then return false end
@@ -1051,7 +1172,7 @@ function P:Toast(text)
 end
 local function verdictText(code, reasons)
   local lab = E.LABEL[code or "ok"] or tostring(code or "?")
-  local why = type(reasons) == "table" and reasons[1] or nil
+  local why = type(reasons) == "table" and E.CleanReason(reasons[1]) or nil
   return why and (lab .. " : " .. why) or lab
 end
 P.VerdictText = verdictText
@@ -1244,6 +1365,14 @@ function P:Refresh(force)
   end
   self:EnsureSteps()
   self:Evaluate()
+  -- (QUESTQA) plan de l'appli dont plus aucun arrêt n'est visible (fini, ou tout masqué : donjon, hors zone…) :
+  -- la suite est préparée en jeu tout de suite, au lieu d'un « Trajet terminé » qui ne mène nulle part
+  if plan and self.src == "file" and self.steps and (self.cursor or 1) > #self.steps and cfg("auto")
+      and next(self.log or {}) then                     -- journal pas encore lu (connexion) : rien de décidé
+    self._spent, self._fresh = plan.made, nil
+    self.steps, self.key = nil, nil
+    return self:Refresh(true)
+  end
   if self.steps then self:Repair(false) end
   self:Render()
   if self._syncDirty then self:SendSync(false) end
@@ -1274,7 +1403,8 @@ function P:WriteSummary()
     step = cur, steps = #steps, label = st and self:StepLabel(st) or nil, kind = st and st.k or nil, quest = st and st.q or nil,
     verdict = r.verdict or "ok", reason = type(r.reasons) == "table" and r.reasons[1] or nil, xph = r.xph, minutes = r.minutes,
     left = left, hash = E.Hash(steps), sync = sync, updated = epoch(),
-    stale = self.stale or nil }   -- (COHERE) étapes de quêtes absentes du journal : à recalculer côté appli
+    stale = self.stale or (self.planError and self.planError:find("ignoré", 1, true) and true) or nil,
+    staleWhy = self.planError }   -- (COHERE / QUESTQA) plan absent du journal / périmé : à recalculer côté appli
 end
 
 -- ===================================================================== cycle de vie

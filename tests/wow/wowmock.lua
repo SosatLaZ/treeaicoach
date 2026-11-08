@@ -1175,8 +1175,16 @@ function M.Install(flavor)
       end,
       IsUnitOnQuest = function(u, id) return M.UnitOnQuest(u, id) end,
       GetQuestTagInfo = function(id)
-        local q = qAt(id)
+        local q = qAt(id) or (M.questTags and M.questTags[id] and { tag = M.questTags[id] })
+        -- (QUESTQA) q.tag = tag du jeu (41 JcJ, 62 raid, 81 donjon) ; M.questTags[id] pour une quête pas prise
+        local TAGN = { [1] = "Élite", [41] = "JcJ", [62] = "Raid", [81] = "Donjon" }
+        if q and q.tag then return { tagID = q.tag, tagName = TAGN[q.tag] or "?", isElite = q.tag == 1 or q.elite or false } end
         if q and q.elite then return { tagID = 1, tagName = "Élite", isElite = true } end
+      end,
+      IsFailed = function(id) local q = qAt(id) return q and q.failed or false end,
+      GetTimeAllowed = function(id)
+        local q = qAt(id)
+        if q and q.timer then return q.timer[1], q.timer[2] end
       end,
     }
     G.C_Container.GetContainerItemQuestInfo = function(bag, slot)
@@ -1211,7 +1219,27 @@ function M.Install(flavor)
     local q = M.quests[i]
     if not q then return nil end
     if q.header then return q.header, nil, nil, true, false end
-    return q.title, q.level, q.group, false, false, q.complete and 1 or nil, nil, qid(i)
+    return q.title, q.level, q.group, false, false, (q.failed and -1) or (q.complete and 1) or nil, nil, qid(i)
+  end
+  G.GetQuestUiMapID = function(id) local q = qAt(id) return q and q.map or 0 end
+  if not modern then   -- (QUESTQA) client classique : chronos des quêtes (secondes restantes, index du journal)
+    G.GetQuestTimers = function()
+      local t = {}
+      for _, q in ipairs(M.quests) do if q.timer then t[#t + 1] = q.timer[1] - q.timer[2] end end
+      return unpack(t)
+    end
+    G.GetQuestIndexForTimer = function(k)
+      local n = 0
+      for i, q in ipairs(M.quests) do if q.timer then n = n + 1 if n == k then return i end end end
+    end
+  end
+  if not modern then   -- (QUESTQA) client classique : GetQuestTagInfo(questID) → tagID, tagName
+    G.GetQuestTagInfo = function(id)
+      local q = qAt(id) or (M.questTags and M.questTags[id] and { tag = M.questTags[id] })
+      local TAGN = { [1] = "Élite", [41] = "JcJ", [62] = "Raid", [81] = "Donjon" }
+      if q and q.tag then return q.tag, TAGN[q.tag] end
+      if q and q.elite then return 1, "Élite" end
+    end
   end
   G.IsUnitOnQuest = function(i, u)   -- Classic: 1 / nil ; unknown member log (d.quests nil) = on it (no noise)
     if M.quests[i] and not M.quests[i].header then return M.UnitOnQuest(u, qid(i)) ~= false and 1 or nil end

@@ -79,8 +79,10 @@ eq(e2.xpTurn, 750, "XP au rendu")
 near(e2.xpm, 125, "XP/min au rendu")
 ok(e2.refGrind, "seule quête : référence = farmer")
 eq(e2.score, 10, "score décroissance")
-eq(e2.text, "Abandonne « Lettre » : elle perdra 250 XP si tu montes de niveau avant de la rendre, 750 XP seulement pour ~6 min"
-  .. " de trajet et de farm → 125 XP/min contre 334 XP/min en tuant simplement des monstres.", "explication décroissance")
+-- (QUESTQA) verte, journal à 1/20 : peu rentable selon le modèle, mais rien de FACTUEL → « plus tard », jamais « abandonne »
+eq(e2.text, "Plus tard « Lettre » : elle perdra 250 XP si tu montes de niveau avant de la rendre, 750 XP seulement pour ~6 min"
+  .. " de trajet et de farm → 125 XP/min contre 334 XP/min en tuant simplement des monstres ; fais-la si tu passes à côté.",
+  "explication décroissance")
 
 -- 4. amis + suite + récompense → garder (score plafonné à 100)
 local c3 = { pl = 26, group = 1, secPerKill = 25, logCount = 5, logMax = 20 }
@@ -111,7 +113,8 @@ local q5 = { title = "Moyenne", level = 26, xp = 1000, travelSec = 285, obj = {}
 local e5 = A.Judge(A.Base(q5, { pl = 26 }), 250, { pl = 26, logCount = 10, logMax = 20 })
 eq(e5.score, 35, "score moyen")
 eq(e5.verdict, "later", "journal 10/20 : plus tard")
-eq(A.Judge(A.Base(q5, { pl = 26 }), 250, { pl = 26, logCount = 19, logMax = 20 }).verdict, "abandon", "journal 19/20 : abandon")
+eq(A.Judge(A.Base(q5, { pl = 26 }), 250, { pl = 26, logCount = 19, logMax = 20 }).verdict, "later", "journal 19/20 : plus tard (pas un fait)")
+eq(A.Judge(A.Base(q5, { pl = 26 }), 250, { pl = 26, logCount = 20, logMax = 20 }).verdict, "abandon", "journal plein 20/20 : abandon")
 
 -- 7. relais inutile, quête prête, quête isolée / zone quittée
 local e6 = A.Judge(A.Base({ title = "Le relais", level = 26, xp = 400, travelSec = 100, obj = {}, breadcrumbUseless = true }, c3), 300, c3)

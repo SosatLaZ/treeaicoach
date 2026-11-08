@@ -253,6 +253,11 @@ function A.Judge(e, ref, ctx)
   if verdict == "abandon" and e.hard and ratio >= 0.6 and e.color ~= "gris" and not q.breadcrumbUseless and free > 0 then
     verdict = "later"
   end
+  -- (QUESTQA) abandonner est irréversible : seulement sur un FAIT du jeu (quête grise, relais devenu inutile,
+  -- journal plein), jamais sur une durée estimée (« ≈ 13 min pour 2000 XP ») ; une quête trop dure seul (donjon,
+  -- élite, groupe) se garde pour quand les amis sont là (« plus tard ») ; sinon « plus tard »
+  local fact = e.color == "gris" or q.breadcrumbUseless or (free <= 0 and not e.hard)
+  if verdict == "abandon" and not fact then verdict = "later" end
   table.sort(neg, function(a, b) return a.w > b.w end)
   table.sort(pos, function(a, b) return a.w > b.w end)
   e.score, e.verdict, e.ratio, e.ref, e.neg, e.pos = s, verdict, ratio, ref, neg, pos
@@ -576,9 +581,10 @@ function M.Lines()
   local nAb = 0
   for _, e in ipairs(free) do if e.verdict == "abandon" then nAb = nAb + 1 end end
   if #free == 0 then return out end
-  out[1] = { text = full <= 2 and fmt("— À retirer (journal presque plein : %d/%d) —", ctx.logCount or 0, ctx.logMax or A.LOG_MAX)
-    or "— À retirer —", prio = full <= 2 and 2 or 1,
-    tooltip = "Des quêtes qui ne valent plus le coup. Clic sur une quête = comment la retirer." }
+  out[1] = { text = nAb == 0 and "Quêtes à garder pour plus tard"
+      or (full <= 2 and fmt("Journal presque plein (%d/%d) : quêtes à retirer", ctx.logCount or 0, ctx.logMax or A.LOG_MAX)
+      or "Quêtes à retirer du journal"), prio = (full <= 2 and nAb > 0) and 2 or 1, header = true,
+    tooltip = "Clic sur une quête : comment la retirer (TreeAI ne le fait jamais à ta place)." }
   local cap = tonumber(M.db and M.db.maxLines) or 6
   for _, e in ipairs(free) do
     if #out > cap then break end
@@ -586,8 +592,7 @@ function M.Lines()
       out[#out + 1] = {
         text = A.PlainLine(e),
         prio = e.verdict == "abandon" and 2 or 1,
-        tooltip = A.PlainLine(e, 60) .. "." .. fmt("\n≈ %d min pour %d XP.", max(1, r0(e.sec / 60)), e.xpTurn or e.xp or 0)
-          .. "\n" .. A.HowTo(e.q.title),
+        tooltip = A.PlainLine(e, 60) .. ".\n" .. A.HowTo(e.q.title),
         onClick = function() M.Instructions(e) end,
         data = { questID = e.q.id, verdict = e.verdict, score = e.score },
       }

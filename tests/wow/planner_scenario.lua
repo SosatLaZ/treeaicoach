@@ -102,9 +102,11 @@ return function(M, ctx)
   check(#gs == 3 and gs[1].q == 1 and gs[2].q == 3 and gs[3].q == 2, "glouton : plus proche d'abord")
 
   local key = TreeAI:CharKey()
+  -- (QUESTQA) a plan is « fresh » for 12 h when it carries no log fingerprint: the 2-client sync runs share one time
+  local MADE = tonumber(os.getenv("PLANNER_MADE") or "") or os.time()
 
   if mode == "syncA" or mode == "syncB" then
-    M.SetPlan({ v = 1, made = 1793000000, char = key, routes = {
+    M.SetPlan({ v = 1, made = MADE, char = key, routes = {
       { id = "squad", title = "Escouade (4)", xph = 20000, minutes = 60, verdict = "ok", reasons = {},
         steps = { { k = "obj", q = 1001, o = 1, map = 1424, x = 40, y = 50, label = "Tuer 10 ours", eta = 10 },
           { k = "turn", q = 1002, map = 1424, x = 51, y = 58, label = "Rendre le courrier", eta = 14 } } } } })
@@ -184,7 +186,7 @@ return function(M, ctx)
   check(type(TreeAI.SetTabLines) == "function" or sugg, "repli Suggest quand SetTabLines est absent")
 
   -- ------------------------------------------------------------------ file plan (TreeAI_Plan)
-  M.SetPlan({ v = 1, made = 1793000000, char = key, zone = 1424, routes = {
+  M.SetPlan({ v = 1, made = MADE, char = key, zone = 1424, routes = {
     { id = "xph", title = "XP/h max", xph = 28500, minutes = 74, verdict = "galere", reasons = { "Taux de drop 20 % sur Crocs" },
       steps = {
         { k = "pick", q = 2001, map = 1424, x = 52, y = 57, label = "Prendre « Crocs d'ours »", eta = 2 },
@@ -228,7 +230,8 @@ return function(M, ctx)
   check(P.cursor == 2, "prise de 2001 détectée → étape 2 (" .. tostring(P.cursor) .. ")")
   local c2
   for _, l in ipairs(P:Lines()) do if l.id == "plan:step" then c2 = l.text end end
-  check(c2 and c2:find("Tuer 10 Ours enragés %(4/10%)"), "progression lue dans le journal : " .. tostring(c2))
+  -- (QUESTQA) objectif d'une quête du journal : notre libellé (verbe + nom du journal) plutôt que celui du plan
+  check(c2 and c2:find("Tue « Ours enragé » %(4/10%)"), "progression lue dans le journal : " .. tostring(c2))
   -- Tracker contract: GetActiveSteps(n) → steps, index, total, title ; fallback Planner.active
   local as, ai, at, atitle = P:GetActiveSteps(3)
   check(as and #as == 3 and ai == 2 and at == 5 and atitle == "XP/h max" and as[1].k == "obj" and as[1].q == 1001
@@ -314,7 +317,7 @@ return function(M, ctx)
     check(#m <= 255, "message ≤ 255 o")
   end
   local payload = pln and pln:match("~r(1:.*)$")
-  check(payload and payload:match("^1:1793000000:xph:%d+:%x+:%d+$"), "charge PLN : " .. tostring(payload))
+  check(payload and payload:match("^1:" .. MADE .. ":xph:%d+:%x+:%d+$"), "charge PLN : " .. tostring(payload))
   if payload then
     local v1, made, rid, step, hash, n = payload:match("^(%d+):(%d+):(%w+):(%d+):(%x+):(%d+)$")
     M.DeliverAddon("TREEAI", "1~PLN~77~1/1~r" .. table.concat({ v1, made, rid, tonumber(step) + 1, hash, n }, ":"), "PARTY", "Amie-Royaume")

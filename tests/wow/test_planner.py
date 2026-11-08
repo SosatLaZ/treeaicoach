@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -37,11 +38,12 @@ def test_planner_scenario(flavor):
 @pytest.mark.skipif(not LUA, reason="lua5.1 not installed")
 def test_planner_two_clients_sync(tmp_path):
     f = tmp_path / "pln.txt"
-    a = run(env={"PLANNER_MODE": "syncA", "PLANNER_SYNC_FILE": str(f)})
+    made = str(int(time.time()))                     # both clients load the same (fresh) plan
+    a = run(env={"PLANNER_MODE": "syncA", "PLANNER_SYNC_FILE": str(f), "PLANNER_MADE": made})
     assert a.returncode == 0 and "RESULT ok" in a.stdout, a.stdout[-3000:]
     msgs = f.read_text(encoding="utf-8").split()
     assert msgs and all(len(m.encode()) <= 255 and "|" not in m for m in msgs)
-    b = run(env={"PLANNER_MODE": "syncB", "PLANNER_SYNC_FILE": str(f)})
+    b = run(env={"PLANNER_MODE": "syncB", "PLANNER_SYNC_FILE": str(f), "PLANNER_MADE": made})
     assert b.returncode == 0 and "RESULT ok" in b.stdout, b.stdout[-3000:]
 
 

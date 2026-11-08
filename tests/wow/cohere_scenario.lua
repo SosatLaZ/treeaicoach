@@ -67,6 +67,10 @@ return function(M, ctx)
       objectives = { { text = "Oeuf de wyverne : 0/10", done = false, have = 0, need = 10 } } },
   }
   Q.Update()
+  -- (QUESTQA) « près de la remise » est la ligne du journal SANS trajet (avec un trajet, l'arrêt le dit déjà)
+  local PL = T.Planner
+  local oldAS = PL and PL.GetActiveSteps
+  if PL then PL.GetActiveSteps = function() return nil end end
   Q.last.turnIn[1].dist = 50                        -- à 50 m du PNJ
   Q.CheckNear()
   check(T._suggestions["Quests:near"], "près de la remise proposé")
@@ -76,6 +80,7 @@ return function(M, ctx)
   for _, q in ipairs(Q.last.turnIn) do check(q.id ~= 7101, "quête rendue absente du relevé même si le journal traîne") end
   Q.CheckNear()
   check(not T._suggestions["Quests:near"], "pas de retour de la ligne périmée")
+  if PL then PL.GetActiveSteps = oldAS end
   table.remove(M.quests, 2)
   ctx.fire("QUEST_REMOVED", 7101)
   M.Advance(1)

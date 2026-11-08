@@ -400,15 +400,19 @@ def galere(q: dict, members: list[Member], calib: Calib | None = None, zone: int
 def should_switch_zone(r_here: float, r_alt: float, travel_min: float, horizon_min: float,
                        non_grey_left: int = 99, level: int = 0, zone_median: int = 0) -> tuple[bool, str]:
     """Report 4 §6.5: leave when r_here < r_alt·(1 − T_tr/H)/1.1, or < 3 non-grey quests, or 5+ levels above
-    the zone's median quest level."""
+    the zone's median quest level. (QUESTQA) ``r_here`` ≤ 0 = not measured (no rate comparison); the gain is
+    said in words past +100 % (« plus du double ») — never « +575 % »."""
     if non_grey_left < 3:
-        return True, f"plus que {non_grey_left} quête(s) utile(s) ici"
+        n = max(0, int(non_grey_left))
+        return True, ("plus aucune quête utile ici" if n == 0 else
+                      f"plus que {n} quête{'s' if n > 1 else ''} utile{'s' if n > 1 else ''} ici")
     if zone_median and level >= zone_median + 5:
         return True, f"tu as {level - zone_median} niveaux de plus que la zone"
     h = max(1.0, horizon_min)
-    if r_alt > 0 and r_here < r_alt * max(0.0, 1 - travel_min / h) / 1.1:
-        gain = int(round((r_alt * (1 - travel_min / h) / max(1.0, r_here) - 1) * 100))
-        return True, f"ailleurs : +{gain} % d'XP/h après {int(round(travel_min))} min de trajet"
+    if r_here > 0 and r_alt > 0 and r_here < r_alt * max(0.0, 1 - travel_min / h) / 1.1:
+        gain = int(round((r_alt * (1 - travel_min / h) / r_here - 1) * 100))
+        txt = "plus du double d'XP/h" if gain > 100 else f"+{max(10, gain)} % d'XP/h"
+        return True, f"ailleurs : {txt} ({int(round(travel_min))} min de trajet)"
     return False, ""
 
 

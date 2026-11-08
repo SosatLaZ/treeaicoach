@@ -666,7 +666,12 @@ function M.PushTab()
   local lines = {}
   local function nm(x) return linkName(x.link) or (API.ItemName and API.ItemName(x.itemID)) or ("objet " .. tostring(x.itemID)) end
   for _, x in ipairs(r.starter) do
-    lines[#lines + 1] = { text = ("« ! » %s lance « %s » (clic droit)"):format(nm(x), cut(x.e and x.e.quest, 30)), prio = 2,
+    -- (QUESTQA) l'icône « ! » suffit ; objet et quête du même nom → dit une fois (« Commission d'artisan : …
+    -- lance « Commission d'artisan : … » » répétait le titre)
+    local item, quest = nm(x), tostring(x.e and x.e.quest or "")
+    local same = quest == "" or item == quest or quest:sub(1, #item) == item or item:sub(1, #quest) == quest
+    lines[#lines + 1] = { text = same and ("Clic droit sur « %s » (sac) : nouvelle quête"):format(cut(item, 40))
+        or ("Clic droit sur « %s » (sac) : nouvelle quête « %s »"):format(cut(item, 26), cut(quest, 28)), prio = 2,
       icon = TEX.bang, pin = true }
   end
   if #r.useless > 0 then

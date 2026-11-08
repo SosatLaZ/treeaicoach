@@ -63,15 +63,19 @@ return function(M, ctx)
   ctx.fire("PLAYER_REGEN_ENABLED")
   M.Advance(2)
   ctx.check(b:GetAttribute("item") == nil, "button cleared after combat")
-  -- leaving the zone with unfinished objectives
+  -- leaving the zone with unfinished objectives ((QUESTQA) without a route: with one, its stops say it already)
+  local PL = T.Planner
+  local oldAS = PL and PL.GetActiveSteps
+  if PL then PL.GetActiveSteps = function() return nil end end
   M.player.zone = "Orneval"
   ctx.fire("ZONE_CHANGED_NEW_AREA")
   M.Advance(2)
   local left, turnin
   for _, s in ipairs(T:GetSuggestions()) do
     if s.text:find("^Finis « ") and s.text:find("avant de quitter " .. ZONE, 1, true) then left = s end
-    if s.text:find("^À rendre ici %(Orneval%)") then turnin = s end
+    if s.text:find("^À rendre ici : « ") or s.text:find("^%d+ quêtes à rendre ici : « ") then turnin = s end
   end
+  if PL then PL.GetActiveSteps = oldAS end
   ctx.check(left, "« finis ici avant de partir » on leaving")
   ctx.check(turnin, "« à rendre ici » on entering")
   -- loot that matters for a quest

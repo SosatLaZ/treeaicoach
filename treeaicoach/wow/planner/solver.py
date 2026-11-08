@@ -77,7 +77,9 @@ class Solver:
         self.kills = [0.0] * nn
         self.ml = [0] * nn
         self.elite = [False] * nn
+        self.bonus = [0.0] * nn
         for i, nd in enumerate(pb.nodes):
+            self.bonus[i] = nd.bonus
             self.kind[i] = {"pick": 0, "obj": 1, "turn": 2}[nd.kind]
             self.nq[i] = nd.q
             self.svc[i] = (nd.svc80 if p80 else nd.svc) * eff
@@ -217,6 +219,10 @@ class Solver:
             if k == 1:
                 t += svc[n]
                 left[q] -= 1
+                if self.bonus[n]:
+                    g = self.bonus[n] * self.value[q]
+                    gained += g
+                    xp_in += g
                 kc = self.kills[n]
                 if kc:
                     g = kc * self.kx(lvl, self.ml[n], self.elite[n]) * self.kill_share
@@ -279,6 +285,9 @@ class Solver:
                         need = self.need.get(lvl, 0)
             if kind[n] == 1:
                 t += svc[n]
+                if self.bonus[n]:
+                    gained += self.bonus[n] * self.value[q]
+                    xp_in += self.bonus[n] * self.value[q]
                 kc = self.kills[n]
                 if kc:
                     g = kc * self.kx(lvl, self.ml[n], self.elite[n]) * self.kill_share
