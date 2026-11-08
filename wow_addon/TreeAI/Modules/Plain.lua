@@ -14,7 +14,7 @@ T.Plain = P
 local floor, pi = math.floor, math.pi
 
 local function trim(s) return (tostring(s or ""):gsub("^%s+", ""):gsub("%s+$", "")) end
-local function cut(s, n) s = tostring(s or "") if #s > n then return s:sub(1, n - 1) .. "…" end return s end
+local cut = T.Cut   -- (4.0) Core : n caractères UTF-8 (« … » compris), jamais une lettre accentuée coupée
 P.Cut = cut
 
 -- « ≈ 3 min » (jamais moins d'1 min, au-delà d'une heure « ≈ 1 h 20 »)

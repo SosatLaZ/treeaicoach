@@ -20,8 +20,7 @@ local function str(v, n)
   if secret(v) then return "<secret>" end
   local s = tostring(v == nil and "" or v):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("[\r\n]+", " ")
   n = n or 200
-  if #s > n then s = s:sub(1, n - 3) .. "..." end
-  return s
+  return T.Cut(s, n, "...")         -- (4.0) Core : n caractères UTF-8 (rapport à copier : « ... » ASCII)
 end
 local function stamp(t)
   t = tonumber(t)
@@ -39,7 +38,7 @@ local M = T:RegisterModule("Bugs", {
   title = "Erreurs (export)",
   defaults = { enabled = true },
   options = {
-    { type = "button", label = "Préparer le fichier d'erreurs", onClick = function() T.Bugs.Build(false) end },
+    { type = "button", label = "Préparer le fichier d'erreurs", onClick = function() T.Bugs.Clicked() end },
   },
 })
 T.Bugs = M
@@ -209,12 +208,19 @@ function M.Build(quiet, note)
   return rep
 end
 
+--- (4.0) bouton / ligne « Erreurs » : le fichier préparé, la réponse au pied de la fenêtre (jamais le chat) ;
+--- /tai erreurs garde la réponse dans le chat (commande tapée)
+function M.Clicked()
+  M.Build(true)
+  if T.ClickNote then T:ClickNote("Fichier d'erreurs prêt : fais /reload, TreeAI l'écrit dans TreeAI-erreurs.txt.") end
+end
+
 function M.PushTab()
   if type(T.SetTabLines) ~= "function" then return end
   T:SetTabLines("info", {
     { text = "Erreurs pour TreeAI : préparer le fichier", label = "Erreurs", control = true, prio = 1,
       tooltip = { "Rassemble erreurs, blocages et autotest.", "Puis /reload : TreeAI écrit TreeAI-erreurs.txt." },
-      onClick = function() M.Build(false) end },
+      onClick = function() M.Clicked() end },
   }, "bugs")
 end
 

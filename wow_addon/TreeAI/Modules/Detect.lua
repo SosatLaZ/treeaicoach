@@ -75,7 +75,7 @@ local function vec(x, y)
   if type(mk) == "function" then local v = try(mk, x, y) if v then return v end end
   return { x = x, y = y, GetXY = function(p) return p.x, p.y end }
 end
-local function cut(s, n) s = tostring(s or "") if #s > n then return s:sub(1, n - 1) .. "…" end return s end
+local cut = T.Cut   -- (4.0) Core : n caractères UTF-8 (« … » compris), jamais une lettre accentuée coupée
 
 -- ------------------------------------------------------------------ abonnés
 local subs = {}

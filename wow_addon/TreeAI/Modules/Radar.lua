@@ -64,7 +64,7 @@ local function try(fn, ...)
   return tryPass(pcall(fn, ...))
 end
 local function now() return try(_G.GetTime) or 0 end
-local function cut(s, n) s = tostring(s or "") if #s > n then return s:sub(1, n - 1) .. "…" end return s end
+local cut = T.Cut   -- (4.0) Core : n caractères UTF-8 (« … » compris), jamais une lettre accentuée coupée
 local function secret(v)
   local f = rawget(_G, "issecretvalue")
   return type(f) == "function" and try(f, v) and true or false
@@ -590,8 +590,7 @@ local function newPin()
   b:SetScript("OnLeave", hideTip)
   b:SetScript("OnClick", function(self)
     if not self.pin or (self.pin.dist or 1e9) < 5 then return end  -- déjà dessus : rien à viser
-    local t = R.SetTarget(self.pin)
-    if t then R:Print("Boussole → " .. cut(self.pin and self.pin.label or "?", 50)) end
+    R.SetTarget(self.pin)   -- (4.0) la flèche de la boussole qui tourne = la réponse au clic, jamais le chat
   end)
   pinPool[#pinPool + 1] = b
   return b

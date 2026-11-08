@@ -59,19 +59,7 @@ local function str(v) v = pub(v) return type(v) == "string" and v ~= "" and v or
 local function opt(k) return not (Q.db and Q.db[k] == false) end
 local function inCombat() return T.InCombat and T:InCombat() or false end
 local function clock() return num(try(g("GetTime"))) or 0 end
-local function cut(s, n)
-  s = tostring(s or "")
-  if T.TextLen and T.TextLen(s) > n then
-    local out, k = {}, 0
-    for ch in s:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
-      k = k + 1
-      if k >= n then break end
-      out[#out + 1] = ch
-    end
-    return tconcat(out) .. "…"
-  end
-  return s
-end
+local cut = T.Cut   -- (4.0) Core : n caractères UTF-8 (« … » compris), jamais une lettre accentuée coupée
 local function shortName(n) return (tostring(n or ""):gsub("%-.*$", "")) end
 local Fmt = T.Fmt or {}
 local function money(c) return Fmt.Money and Fmt.Money(c) or (floor((c or 0) / 10000) .. " po") end
@@ -992,7 +980,7 @@ function Q.DecodeMeet(p)
   if type(p) ~= "table" or tonumber(p.v) ~= 1 then return nil end
   local m, x, y = tonumber(p.m), tonumber(p.x), tonumber(p.y)
   if not (m and x and y) or m < 1 or m > 100000 or x < 0 or x > 1000 or y < 0 or y > 1000 then return nil end
-  local l = type(p.l) == "string" and p.l:gsub("[|%c]", ""):sub(1, 60) or ""
+  local l = type(p.l) == "string" and T.Cut((p.l:gsub("[|%c]", "")), 60, "") or ""
   return { map = floor(m), x = x / 10, y = y / 10, label = l }
 end
 function Q.SendMeet()

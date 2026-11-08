@@ -9,10 +9,12 @@ end
 local function eq(a, b, msg) ok(a == b, msg .. " : attendu [" .. tostring(b) .. "], obtenu [" .. tostring(a) .. "]") end
 local function near(a, b, msg) ok(type(a) == "number" and math.abs(a - b) < 0.01, msg .. " : attendu " .. b .. ", obtenu " .. tostring(a)) end
 
--- TreeAI minimal : seul RegisterModule sert au chargement
+-- TreeAI minimal : RegisterModule au chargement + la coupe de texte de Core (TreeAI.Cut, lue dans Core.lua)
 local env = setmetatable({}, { __index = _G })
 env._G = env
-env.TreeAI = { RegisterModule = function(_, name, tbl) tbl.name = name return tbl end }
+local core = path:gsub("Modules[/\\][^/\\]*$", "Core.lua")
+env.TreeAI = { RegisterModule = function(_, name, tbl) tbl.name = name return tbl end,
+  Cut = dofile(((arg[0] or ""):match("^(.*)[/\\]") or ".") .. "/corecut.lua")(core) }
 local chunk = assert(loadfile(path))
 setfenv(chunk, env)
 chunk()

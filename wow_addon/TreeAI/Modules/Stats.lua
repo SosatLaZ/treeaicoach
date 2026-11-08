@@ -365,7 +365,7 @@ function M.OnDeath()
     if f and (f.delta or 0) >= 3 then d.hi = d.hi + 1 end
     if (f and f.cls == "e") or (type(r) == "table" and (tonumber(r.elites) or 0) > 0) then d.el = d.el + 1 end
     if name then
-      name = name:sub(1, 40)
+      name = T.Cut(name, 40, "")
       d.c[name] = (d.c[name] or 0) + 1
       local n, low, lowK = 0, nil, nil
       for k, v in pairs(d.c) do n = n + 1 if not low or v < low then low, lowK = v, k end end
@@ -493,7 +493,7 @@ function M.OnNewArea()
   if onTaxi() or try(g("UnitIsDeadOrGhost"), "player") then return end
   local dt = lastSub.t - prev.t
   if dt < 30 or dt > 900 then return end
-  local key = (prev.z or "?"):sub(1, 30) .. ">" .. (lastSub.z or "?"):sub(1, 30)
+  local key = T.Cut(prev.z or "?", 30, "") .. ">" .. T.Cut(lastSub.z or "?", 30, "")
   acc(c.trans, key, dt, 10)
   local n, low, lowK = 0, nil, nil
   for k, v in pairs(c.trans) do n = n + 1 if not low or (v.n or 0) < low then low, lowK = v.n or 0, k end end
@@ -763,7 +763,7 @@ local function ahEntry(name, create)
   local c = C()
   name = str(name)
   if not (c and name) then return nil end
-  name = name:sub(1, 40)
+  name = T.Cut(name, 40, "")
   local e = c.ah[name]
   if type(e) ~= "table" and create then
     local n, oldK, oldT = 0, nil, nil
@@ -1157,7 +1157,7 @@ function M.Lines(s, lvl)
   p = {}
   if s.downSec then p[#p + 1] = "repos " .. floor(s.downSec + 0.5) .. " s / combat" end
   if s.deathsH then p[#p + 1] = "morts " .. dec(s.deathsH) .. "/h" end
-  if s.deathTop then p[#p + 1] = "tué surtout par " .. tostring(s.deathTop):sub(1, 24) end
+  if s.deathTop then p[#p + 1] = "tué surtout par " .. T.Cut(s.deathTop, 24, "") end
   if #p > 0 then add("Repos : " .. tconcat(p, " · ")) end
   p = {}
   local sp = s.speed or {}

@@ -1761,11 +1761,18 @@ def _trajet_view(snap: dict, plan_file: Any = None) -> dict:
     # summary.plan.next = {{k, q, map, label, min}} (Planner); without it, the quest tracker's order below
     nxt = [x for x in _list(sp.get("next")) if isinstance(x, dict) and _why(x.get("label"))] if game else []
     if nxt:
+        prev_g, num = None, 0
         for st in nxt:
             k, q = str(st.get("k") or ""), _i(st.get("q"))
             if logq is not None and q and k in ("obj", "turn") and q not in logq:
                 out["dropped"] += 1
                 continue
+            # (4.0) the in-game stop numbers (Route.Groups): objectives of the same corner share ONE number on the
+            # card and the Trajet page, so they do here (``n`` from the addon; an older addon: one number per line)
+            g = _i(st.get("n")) or None
+            if g is None or g != prev_g or not out["stops"]:
+                num += 1
+            prev_g = g
             label = _plain(st.get("label"))
             desc = [STEP_KIND[k]] if k in STEP_KIND and STEP_KIND[k].split()[0].lower() not in label.lower() else []
             zone = names.get(_i(st.get("map")))
@@ -1773,7 +1780,7 @@ def _trajet_view(snap: dict, plan_file: Any = None) -> dict:
                 desc.append(zone)
             if fresh and _i(st.get("min")) > 0:
                 desc.append(f"dans ≈ {duration_text(_i(st['min']) * 60)}")
-            out["stops"].append({"n": len(out["stops"]) + 1, "title": label, "desc": " · ".join(desc),
+            out["stops"].append({"n": num, "title": label, "desc": " · ".join(desc),
                                  "current": not out["stops"], "kind": k})
             if len(out["stops"]) >= STOPS_MAX:
                 break

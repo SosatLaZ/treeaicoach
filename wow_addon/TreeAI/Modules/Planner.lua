@@ -45,7 +45,7 @@ local function now() return try(G("GetTime")) or 0 end
 local function epoch() return try(G("time")) or floor(now()) end
 local function clock() return try(G("debugprofilestop")) or now() * 1000 end
 local function inCombat() return T.InCombat and T:InCombat() or false end
-local function cut(s, n) s = tostring(s or "") if #s > n then return s:sub(1, n - 1) .. "…" end return s end
+local cut = T.Cut   -- (4.0) Core : n caractères UTF-8 (« … » compris), jamais une lettre accentuée coupée
 local function cfg(k) return not (P.db and P.db[k] == false) end
 local function myLevel() return tonumber((try(G("UnitLevel"), "player"))) or 1 end
 local function myName() return try(G("UnitName"), "player") end
@@ -1430,13 +1430,16 @@ function P:NextStops(n)
     local ok, st = pcall(Rt.Stops, Rt, 64)
     if ok and type(st) == "table" then
       local keep = Rt.Horizon(st)
+      -- (4.0) le numéro d'arrêt de la carte et de la page Trajet (Route.Groups : objectifs du même coin = un numéro)
+      local okG, grp = pcall(Rt.Groups, st, keep)
+      if not (okG and type(grp) == "table") then grp = nil end
       for i = 1, min(keep, n) do
         local e = st[i]
         local s = e.step
         local arrive = max(0, (tonumber(e.at) or 0) - (s and (tonumber(e.sec) or 0) or 0))
         out[#out + 1] = { k = s and s.k or e.kind, q = s and s.q or nil, map = (s and s.map) or (e.place and e.place.map) or nil,
           label = s and (self:StepLabel(s) .. progress(s, self.log)) or (T.SafeText and T.SafeText(tostring(e.text or "")) or e.text),
-          min = floor(arrive / 60 + 0.5) }
+          min = floor(arrive / 60 + 0.5), n = grp and grp[i] or nil }
       end
       return out
     end

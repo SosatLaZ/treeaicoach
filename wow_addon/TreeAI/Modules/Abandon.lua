@@ -125,7 +125,7 @@ local function names(list)
   if #list <= 1 then return list[1] or "" end
   return table.concat(list, ", ", 1, #list - 1) .. " et " .. list[#list]
 end
-local function cutT(s, n) s = tostring(s or "?") if #s > n then return s:sub(1, n - 1) .. "…" end return s end
+local function cutT(s, n) return T.Cut(s or "?", n) end   -- (4.0) Core : coupe UTF-8, jamais une lettre accentuée coupée
 
 -- Valeur brute (sans référence) : XP, temps, XP/min. q : voir Evaluate.
 function A.Base(q, ctx)
@@ -601,7 +601,7 @@ function M.Lines()
   out[1] = { text = nAb == 0 and "Quêtes à garder pour plus tard"
       or (full <= 2 and fmt("Journal presque plein (%d/%d) : quêtes à retirer", ctx.logCount or 0, ctx.logMax or A.LOG_MAX)
       or "Quêtes à retirer du journal"), prio = (full <= 2 and nAb > 0) and 2 or 1, header = true,
-    tooltip = "Clic sur une quête : comment la retirer (TreeAI ne le fait jamais à ta place)." }
+    tooltip = "Survole une quête : comment la retirer (TreeAI ne le fait jamais à ta place)." }
   local cap = tonumber(M.db and M.db.maxLines) or 6
   for _, e in ipairs(free) do
     if #out > cap then break end
@@ -609,8 +609,7 @@ function M.Lines()
       out[#out + 1] = {
         text = A.PlainLine(e),
         prio = e.verdict == "abandon" and 2 or 1,
-        tooltip = A.PlainLine(e, 60) .. ".\n" .. A.HowTo(e.q.title),
-        onClick = function() M.Instructions(e) end,
+        tooltip = A.PlainLine(e, 60) .. ".\n" .. A.HowTo(e.q.title),   -- (4.0) au survol, plus dans le chat au clic
         data = { questID = e.q.id, verdict = e.verdict, score = e.score },
       }
     end

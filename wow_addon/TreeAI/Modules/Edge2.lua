@@ -77,8 +77,7 @@ local function nm(s, n)
   s = tostring(s):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|H.-|h(.-)|h", "%1"):gsub("^%s+", ""):gsub("%s+$", "")
   if s == "" or s:find("?", 1, true) or s == "nil" then return nil end
   n = n or 30
-  if #s > n then s = s:sub(1, n - 1):gsub("[\192-\255][\128-\191]*$", "") .. "…" end
-  return s
+  return T.Cut(s, n)                -- (4.0) Core : n caractères UTF-8, « … » compris
 end
 M.Name = nm
 
@@ -345,7 +344,7 @@ function M.CheckEscort()
     local title = q.failed and E.IsEscort(q) and nm(q.title, 30)
     if title then
       return say("escortFail", fmt("Abandonne puis reprends « %s » : l'escorte a échoué", title), 2,
-        { ttl = 300, cooldown = 600, tooltip = "Clic : ouvre la quête (l'abandon reste manuel).",
+        { ttl = 300, cooldown = 600, tooltip = "Clic : comment la retirer (l'abandon reste manuel).",
           onClick = function() if Q and Q.OpenQuest then try(Q.OpenQuest, q) end end })
     end
   end
@@ -362,7 +361,7 @@ function M.CheckBreadcrumb()
       if a and b then
         local Q = mod("Quests")
         return say("breadcrumb", fmt("Abandonne « %s » : elle mène à « %s », déjà faite", a, b), 1,
-          { ttl = 300, cooldown = 1800, window = 300, sig = q.id, tooltip = "Clic : ouvre la quête (l'abandon reste manuel).",
+          { ttl = 300, cooldown = 1800, window = 300, sig = q.id, tooltip = "Clic : comment la retirer (l'abandon reste manuel).",
             onClick = function() if Q and Q.OpenQuest then try(Q.OpenQuest, q) end end })
       end
     end

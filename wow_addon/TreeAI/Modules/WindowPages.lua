@@ -35,7 +35,18 @@ local function questProgress(q)
   end
   return #parts > 0 and tconcat(parts, " · ") or "en cours"
 end
+-- (4.0) clic sur une quête du journal : la boussole la vise (comme dans le suivi) ; sans position connue, le pied de
+-- la fenêtre le dit (avant : « Ouvre ton journal… Abandonner » dans le chat, même pour une quête à rendre)
+local QUEST_HINT = "Clic : la boussole vise cette quête"
 local function openQuest(q)
+  return function()
+    local C = T.Compass
+    local t = q and q.id and C and C.SetQuestTarget and C.SetQuestTarget(q.id)
+    if not t and W.Flash then W.Flash(fmt("« %s » : pas encore de position connue pour la boussole.", strip(q and q.title or "?"))) end
+  end
+end
+-- une quête grise : comment la retirer (l'abandon reste au joueur)
+local function cleanQuest(q)
   local Q = mod("Quests")
   return function() if Q and Q.OpenQuest then Q.OpenQuest(q) end end
 end
@@ -79,19 +90,19 @@ W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = 
       local turn = {}
       for _, q in ipairs(a.turnIn or {}) do if W.Match(q.title, q.zone) then turn[#turn + 1] = q end end
       if #turn > 0 and Ly.header("À rendre", "q:turn", #turn, W.MARK.turn) then
-        for _, q in ipairs(turn) do Ly.quest(q.level, q.title, questProgress(q), openQuest(q), nil, "Clic : ouvrir la quête") end
+        for _, q in ipairs(turn) do Ly.quest(q.level, q.title, questProgress(q), openQuest(q), nil, QUEST_HINT) end
       end
       local here = {}
       for _, q in ipairs(a.here or {}) do if W.Match(q.title) then here[#here + 1] = q end end
       if #here > 0 and Ly.header("En cours ici", "q:here", #here, W.MARK.pick) then
-        for _, q in ipairs(here) do Ly.quest(q.level, q.title, questProgress(q), openQuest(q), nil, "Clic : ouvrir la quête") end
+        for _, q in ipairs(here) do Ly.quest(q.level, q.title, questProgress(q), openQuest(q), nil, QUEST_HINT) end
       end
       local grey = {}
       for _, q in ipairs(a.grey or {}) do if W.Match(q.title) then grey[#grey + 1] = q end end
       if #grey > 0 and Ly.header("Nettoyer mon journal", "q:clean", #grey, "Interface\\GossipFrame\\IncompleteQuestIcon", true) then
         for _, q in ipairs(grey) do
-          Ly.quest(q.level, q.title, "grise : presque pas d'XP · ouvre-la pour l'abandonner", openQuest(q),
-            { "L'abandon reste ton choix : TreeAI ouvre la quête, tu cliques « Abandonner »." }, "Clic : ouvrir la quête")
+          Ly.quest(q.level, q.title, "grise : presque pas d'XP · à retirer du journal", cleanQuest(q),
+            { "L'abandon reste ton choix : journal (L) > la quête > « Abandonner »." }, "Clic : comment la retirer")
         end
       end
       -- ailleurs, par zone (plus de quêtes d'abord), repliés
@@ -108,7 +119,7 @@ W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = 
       tsort(zl, function(x, y) if #x.list ~= #y.list then return #x.list > #y.list end return x.z < y.z end)
       for _, it in ipairs(zl) do
         if Ly.header("Direction " .. it.z, "q:zone:" .. it.z, #it.list, W.MARK.pick, true) then
-          for _, q in ipairs(it.list) do Ly.quest(q.level, q.title, questProgress(q), openQuest(q), nil, "Clic : ouvrir la quête") end
+          for _, q in ipairs(it.list) do Ly.quest(q.level, q.title, questProgress(q), openQuest(q), nil, QUEST_HINT) end
         end
       end
       any = any or #turn > 0 or #here > 0 or #zl > 0
@@ -435,8 +446,7 @@ local function renderDungeonDetail(Ly, D, d)
         sub = #parts > 0 and tconcat(parts, " · ") or "dans ton journal"
       end
       if #(e.missing or {}) > 0 then sub = sub .. " · pas chez " .. tconcat(e.missing, ", ") end
-      local QM = mod("Quests")
-      Ly.quest(nil, e.title, sub, function() if QM and QM.OpenQuest then QM.OpenQuest(e) end end, nil, "Clic : ouvrir la quête")
+      Ly.quest(nil, e.title, sub, openQuest(e), nil, QUEST_HINT)
     end
     for _, e in ipairs(res.toGet or {}) do
       local sub = "à prendre" .. (e.giver and (" · " .. e.giver) or "")
@@ -454,7 +464,7 @@ local function renderDungeonDetail(Ly, D, d)
     for i, b in ipairs(d.bosses) do
       local killed = D.Killed and D.Killed(b)
       local tip = strip(b.tip or "")
-      if #tip > 110 then tip = (W.UCut and W.UCut(tip, 100) or tip:sub(1, 100):gsub("[\192-\255][\128-\191]*$", "")) .. "…" end
+      tip = T.Cut(tip, 110)
       Ly.step({ n = i, title = b.n .. (killed and "  |cff33dd33(tué)|r" or ""), sub = tip }, false)
     end
   end

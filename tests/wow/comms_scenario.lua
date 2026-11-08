@@ -88,6 +88,18 @@ return function(M, ctx)
   ctx.check(T.commPaused == "bloquée", "code 11 -> pause")
   M.FireEvent("ZONE_CHANGED_NEW_AREA")
   ctx.check(T.commPaused == nil, "reprise au changement de zone")
+  -- (4.0) « Groupe » coupé (mode sûr) : pas de synchro du groupe, donc rien à expliquer (ni le drapeau consommé)
+  T:SetModuleEnabled("Group", false)
+  T:ClearSuggestion("core:commpause")
+  if type(T.db.flags) == "table" then T.db.flags.commPause_donjon = nil end
+  IsInInstance = function() return true, "party" end
+  M.FireEvent("PLAYER_ENTERING_WORLD")
+  ctx.check(T.commPaused == "donjon" and not TreeAI._suggestions["core:commpause"],
+    "Groupe coupé : pas de ligne « synchro en pause »")
+  ctx.check(not (type(T.db.flags) == "table" and T.db.flags.commPause_donjon), "Groupe coupé : l'explication reste à faire")
+  IsInInstance = realInst
+  M.FireEvent("PLAYER_ENTERING_WORLD")
+  T:SetModuleEnabled("Group", true)
   local st = T:CommStatus()
   ctx.check(type(st) == "table" and st.stats.sent > 0, "CommStatus")
   ctx.check(T._ClassifySend(true, 0) == "ok" and T._ClassifySend(true, true) == "ok"

@@ -378,6 +378,11 @@ return function(M, ctx)
   local a1 = find("^Arrêt 1/%d+")
   local nShown = a1 and tonumber(strip(a1.text):match("^Arrêt 1/(%d+)"))
   check(g and g.n >= 1 and nShown == g.n, "F18: « Arrêt 1/N » counts the same stops as R.Groups (" .. tostring(nShown) .. " / " .. tostring(g and g.n) .. ")")
+  -- (4.0 final) the app numbers its Trajet tab with the same stop numbers (summary.plan.next[i].n = R.Groups)
+  local nx = P:NextStops(12)
+  local okN = #nx > 0
+  for i, e in ipairs(nx) do if e.n ~= g[i] then okN = false end end
+  check(okN, "F18: summary.plan.next carries the in-game stop numbers (R.Groups)")
   -- F20: a quest the route plans is never « plus tard » beside it; dungeon quests: « à faire en groupe »
   if VARIANT == "full" then
     local Ab = T.modules.Abandon

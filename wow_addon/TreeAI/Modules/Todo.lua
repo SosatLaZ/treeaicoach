@@ -55,7 +55,7 @@ local function try(fn, ...)
   return nil
 end
 local function now() return try(_G.GetTime) or 0 end
-local function cut(s, n) s = tostring(s or "") if #s > n then return s:sub(1, n - 1) .. "…" end return s end
+local cut = T.Cut   -- (4.0) Core : n caractères UTF-8 (« … » compris), jamais une lettre accentuée coupée
 local function low(s) return tostring(s or ""):lower() end
 local function opt(k, def) local v = M.db and M.db[k] if v == nil then return def end return v end
 local function on(k) return not (M.db and M.db[k] == false) end

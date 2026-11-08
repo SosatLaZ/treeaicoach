@@ -464,6 +464,18 @@ function TreeAI:CombatRefused(msg)
   self:Print(msg)
 end
 
+--- (4.0) la réponse à un clic qui n'a rien d'autre à montrer : le pied de la fenêtre TreeAI quand elle est ouverte,
+--- sinon le message doré du jeu au centre de l'écran ; jamais une ligne dans le chat
+function TreeAI:ClickNote(msg)
+  msg = tostring(msg or "")
+  local Wn = self.Window
+  local win = Wn and Wn._active and Wn.GetWindow and Wn.GetWindow()
+  if win and win.IsShown and win:IsShown() and Wn.Flash then Wn.Flash(msg) return end
+  local ef = _G.UIErrorsFrame
+  if ef and ef.AddMessage and pcall(ef.AddMessage, ef, self.SafeText and self.SafeText(msg) or msg, 1, 0.82, 0) then return end
+  self:Print(msg)
+end
+
 local function toggleMacros()
   if TreeAI:InCombat() then TreeAI:CombatRefused(); return end
   local M = TreeAI.GetModule and TreeAI:GetModule("Macros")
@@ -1185,7 +1197,7 @@ local function guideFor(e)
   if t and st.dist then
     local match = (qid and t.questID == qid)
     if not match and not qid and t.label then
-      local lab = plainOf(t.label):sub(1, 18)
+      local lab = TreeAI.Cut(plainOf(t.label), 18, "")
       match = lab ~= "" and plainOf(e.text):find(lab, 1, true) ~= nil
     end
     if match then

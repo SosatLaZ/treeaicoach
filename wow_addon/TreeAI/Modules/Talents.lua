@@ -326,7 +326,8 @@ function M.Lines(st)
       add(fmt("%d point%s libre%s : prends « %s » (%d/%d), %s", r.unspent, r.unspent > 1 and "s" or "", r.unspent > 1 and "s" or "",
         p.name, p.rank, p.target, p.why), 2, howTo(p, r.tabs), true)
     else
-      add(fmt("%d point(s) libre(s) : parcours terminé, mets-les où tu veux.", r.unspent), 2)
+      add(fmt("%d point%s libre%s : parcours terminé, mets-les où tu veux.", r.unspent, r.unspent > 1 and "s" or "",
+        r.unspent > 1 and "s" or ""), 2)
     end
   end
   local shown, last = 0, nil
@@ -344,7 +345,8 @@ function M.Lines(st)
     end
   end
   if plan.off > 0 then
-    add(fmt("%d point(s) hors parcours : pas grave, mais le parcours suppose une réinitialisation. %s", plan.off, M.RespecText()), 1)
+    add(fmt("%d point%s hors parcours : pas grave, mais le parcours suppose une réinitialisation. %s", plan.off,
+      plan.off > 1 and "s" or "", M.RespecText()), 1)
   elseif plan.complete then
     add("Parcours complet. " .. M.RespecText(), 1)
   end
@@ -431,13 +433,12 @@ function M.WriteSummary()
   local r = st.r
   local out = { unspent = r.unspent, points = r.ok and C.Split(r.points) or nil, trees = { r.tabs[1], r.tabs[2], r.tabs[3] },
     group = r.group, groups = r.numGroups, mode = M.char and M.char.mode, resets = M.char and M.char.resets,
-    respec = M.RespecText() }
+    respec = M.RespecText(), readable = r.ok and true or false }   -- (4.0) toujours dit à l'appli (talents_context)
   if st.build then
     out.build, out.buildName, out.role = st.build.id, st.build.name, st.build.role
     local p = r.ok and st.plan and st.plan.next   -- arbre illisible (Forever) : pas de « prochain point » inventé
     if p then out.next = { name = p.name, rank = p.rank, max = p.target, why = p.why, tab = p.tab, tier = p.tier, col = p.col } end
     out.off = r.ok and st.plan and st.plan.off or nil
-    out.readable = r.ok
   end
   local rk = {}
   for k, v in pairs(r.ranks) do if v > 0 then rk[#rk + 1] = k .. "=" .. v end end

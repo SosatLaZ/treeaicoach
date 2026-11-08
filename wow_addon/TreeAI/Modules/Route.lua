@@ -10,8 +10,8 @@
 --  * Shortest Path Forever présent : « Suivre ce trajet » = ShortestPathForever.API.NavigateRoute("TreeAI",
 --    arrêts dans NOTRE ordre) → un seul trajet, dans le Suivi Forever que le joueur aime déjà ; zones
 --    d'objectif tenues (hold + radius + questID) et itinéraire renvoyé quand une étape est faite.
---  * Tri des quêtes avant le calcul : trop loin / trop dures (niveau, élite en solo) → « Garde ces 6 quêtes,
---    laisse ces 3 (trop loin) » ; un clic adopte (ces quêtes sortent du trajet, rien n'est abandonné).
+--  * Tri des quêtes avant le calcul : trop loin / trop dures (niveau, élite en solo) → « Garde 6 quêtes,
+--    mets-en 3 de côté (trop loin) » ; un clic adopte (ces quêtes sortent du trajet, rien n'est abandonné).
 -- Guidage UNIQUEMENT sur clic, jamais en combat ; aucune fonction protégée, aucun cadre de Blizzard touché.
 -- Lua 5.1, aucune globale.
 local T = _G.TreeAI
@@ -46,7 +46,7 @@ local function G(name) return rawget(_G, name) end
 local function C(ns, fn) local t = G(ns) return type(t) == "table" and t[fn] or nil end
 local function now() return try(G("GetTime")) or 0 end
 local function inCombat() return T.InCombat and T:InCombat() or false end
-local function cut(s, n) s = tostring(s or "") if #s > n then return s:sub(1, n - 1) .. "…" end return s end
+local cut = T.Cut   -- (4.0) Core : n caractères UTF-8 (« … » compris), jamais une lettre accentuée coupée
 local function opt(k) return not (R.db and R.db[k] == false) end
 local function data() return T.Data and T.Data.Travel or nil end
 -- (QA-QUEST F27) réponse à un clic : une ligne courte dans « Maintenant » (6 s), jamais le chat
@@ -788,7 +788,15 @@ function R:PlanLines(P)
   local following = self:Following()
   if spf() then
     if following then
-      lines[#lines + 1] = { text = fmt("Suivi Forever te guide · arrêt %d", following), prio = 1,
+      -- (4.0) le numéro d'arrêt de l'onglet / de la carte (R.Groups), pas l'index du point chez SPF (un par
+      -- objectif) ; CurrentStop peut aussi rendre { index = n }
+      local k = type(following) == "number" and following or (type(following) == "table" and tonumber(following.index or following.i)) or 1
+      local cs = self:CurrentStep()
+      if cs then
+        local num = R.Groups(st)
+        for i, e in ipairs(st) do if e.step == cs then k = num[i] break end end
+      end
+      lines[#lines + 1] = { text = fmt("Suivi Forever te guide · arrêt %d", k), prio = 1,
         tooltip = "Shortest Path Forever suit l'ordre TreeAI\nClic : renvoyer le trajet", onClick = function() R:Follow() end }
     else
       lines[#lines + 1] = { text = "▶ Suivre ce trajet (Suivi Forever)", prio = 2, onClick = function() R:Follow() end,

@@ -592,15 +592,7 @@ end
 -- (4.0 QA) la carte coupe elle-même ses textes (224 px, petite police) : UNE ellipse, et dans « … » le titre de
 -- quête est raccourci en gardant le guillemet fermant (jamais « Prendre « Les salines : le venin acide de… » »)
 local CARD_TXT = 224
-local function ucut(s, n)
-  local t, k = {}, 0
-  for ch in s:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
-    k = k + 1
-    if k > n then break end
-    t[k] = ch
-  end
-  return (tconcat(t):gsub("%s+$", ""))
-end
+local function ucut(s, n) return (T.Cut(s, n, ""):gsub("%s+$", "")) end   -- n caractères UTF-8 (Core)
 local function fitCard(s)
   s = strip(s or "")
   if ulen(s) * AVG.S <= CARD_TXT then return s end

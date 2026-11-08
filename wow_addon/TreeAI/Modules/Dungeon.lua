@@ -663,7 +663,7 @@ end
 
 --- Partage des quêtes du donjon à ceux qui ne les ont pas (clic, hors combat ; jamais la sélection du journal)
 function M:ShareQuests(only)
-  if inCombat() then self:Print("Partage après le combat.") return 0 end
+  if inCombat() then T:CombatRefused("Partage après le combat.") return 0 end   -- (4.0) jamais le chat
   local d = M.Active()
   if not d then return 0 end
   local push = rawget(G, "QuestLogPushQuest")
@@ -1094,9 +1094,10 @@ function M.MarkPlan(members)
 end
 
 function M:MarkTarget()
-  if inCombat() then self:Print("Pas de marque en combat : pose-la avant le pull.") return end
+  -- (4.0) un clic refusé : le message rouge du jeu (T:CombatRefused), jamais le chat
+  if inCombat() then T:CombatRefused("Pas de marque en combat : pose-la avant le pull.") return end
   if not (sv(try(G.UnitExists, "target")) and sv(try(G.UnitCanAttack, "player", "target"))) then
-    self:Print("Cible un monstre du prochain pack, puis clique : crâne, puis croix, puis CC.") return
+    T:CombatRefused("Cible un monstre du prochain pack, puis clique : crâne, puis croix, puis CC.") return
   end
   local plan = M.MarkPlan(M.Members())
   if #plan == 0 then return end

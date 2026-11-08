@@ -48,7 +48,7 @@ end
 local function G(name) return rawget(_G, name) end
 local function C(ns, fn) local t = G(ns) return type(t) == "table" and t[fn] or nil end
 local function inCombat() return T.InCombat and T:InCombat() or false end
-local function cut(s, n) s = tostring(s or "") if #s > n then return s:sub(1, n - 1) .. "…" end return s end
+local cut = T.Cut   -- (4.0) Core : n caractères UTF-8 (« … » compris), jamais une lettre accentuée coupée
 local function myLevel() return tonumber(_ns((try(G("UnitLevel"), "player")))) or 1 end
 local function groupSize() return max(1, tonumber(_ns((try(G("GetNumGroupMembers"))))) or 0) end
 local function opt(k) return Z.db and Z.db[k] end

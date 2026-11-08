@@ -16,7 +16,7 @@ local function pass(ok, ...) if ok then return ... end return nil end
 local function try(fn, ...) if type(fn) ~= "function" then return nil end return pass(pcall(fn, ...)) end
 local function secret(v) return API.IsSecret and API.IsSecret(v) or false end
 local function wall() return try(G.time) or try(G.GetServerTime) or 0 end
-local function cut(s, n) s = tostring(s or "") if #s > n then return s:sub(1, n - 1) .. "…" end return s end
+local cut = T.Cut   -- (4.0) Core : n caractères UTF-8 (« … » compris), jamais une lettre accentuée coupée
 
 ---------------------------------------------------------------------------------------------------
 -- Erreurs Lua de nos modules -> TreeAIDB.diag.errors (30 dernières, doublons regroupés)
@@ -314,7 +314,7 @@ local M = T:RegisterModule("SelfTest", {
   title = "Autotest",
   defaults = { enabled = true },
   options = {   -- boutons (page d'options du module) : tout se fait aussi sans commande
-    { type = "button", label = "Lancer l'autotest", onClick = function() T.SelfTest.Run(false) end },
+    { type = "button", label = "Lancer l'autotest", onClick = function() T.SelfTest.Clicked() end },
     { type = "button", label = "Voir les dernières erreurs", onClick = function() T.SelfTest.PrintErrors() end },
   },
 })
@@ -403,6 +403,17 @@ function M.PrintBlocked()
 end
 
 -- Onglet « Infos » : une ligne cliquable lance l'autotest (+ dernier résultat, erreurs gardées)
+--- (4.0) bouton / ligne « Autotest » : le test tourne, le résumé au pied de la fenêtre (jamais 20 lignes de chat) ;
+--- le détail : /tai test (commande tapée) ou la page WoW de l'appli après /reload
+function M.Clicked()
+  local r = M.Run(true)
+  if M.PushTab then pcall(M.PushTab) end
+  if T.ClickNote and type(r) == "table" then
+    T:ClickNote(("Autotest : %d ok, %d à vérifier, %d en échec · le détail : /tai test (rapport pour l'appli après /reload)")
+      :format(r.ok or 0, r.warn or 0, r.ko or 0))
+  end
+end
+
 function M.PushTab()
   if type(T.SetTabLines) ~= "function" then return end
   local d = diag() or {}
@@ -413,11 +424,11 @@ function M.PushTab()
     -- un bouton de l'onglet (pas une ligne qui prend la place d'un conseil) ; une ligne seulement s'il y a un souci
     { text = "Autotest TreeAI : vérifier le jeu et les modules", label = "Autotest", control = true, prio = 1,
       tooltip = { "Vérifie le jeu et les modules" .. last .. ".", "Écrit un rapport que l'appli TreeAI lit (après /reload)." },
-      onClick = function() M.Run(false); M.PushTab() end },
+      onClick = function() M.Clicked() end },
   }
   if r and (r.ko or 0) > 0 then
-    lines[#lines + 1] = { text = ("Relance l'autotest : %d point(s) en échec (clic)"):format(r.ko), prio = 2,
-      onClick = function() M.Run(false); M.PushTab() end }
+    lines[#lines + 1] = { text = ("Relance l'autotest : %d point%s en échec (clic)"):format(r.ko, r.ko > 1 and "s" or ""), prio = 2,
+      onClick = function() M.Clicked() end }
   end
   if nerr > 0 then
     lines[#lines + 1] = { text = ("Vois les %d erreurs TreeAI gardées (clic)"):format(nerr), prio = 2,

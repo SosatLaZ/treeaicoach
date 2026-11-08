@@ -108,6 +108,35 @@ return function(M, ctx)
       end)
     end
   end
+  -- 3b. (4.0 final) every clickable row of every page (journal quests, steps, lines, dungeon cards): nothing in the
+  -- chat either (a quest of the journal printed « Ouvre ton journal (L) → … → Abandonner » on a plain click)
+  p("== page rows")
+  local function clickables()
+    local t = {}
+    for _, cb in ipairs(W.GetWindow().content.__children) do
+      if cb.__kind == "Button" and cb:IsVisible() and cb:GetScript("OnClick") then t[#t + 1] = cb end
+    end
+    return t
+  end
+  for _, pg in ipairs(W.PAGES) do
+    if not pg.hidden and pg.id ~= "options" and pg.id ~= "modules" and pg.id ~= "tools" then
+      W.Open(pg.id)
+      W.char.collapsed = {}
+      W.Render()
+      local n = #clickables()
+      W.GetWindow():Hide()
+      for i = 1, math.min(n, 30) do
+        run("row:" .. pg.id .. "#" .. i, function()
+          W.char.dungeon = nil
+          W.Open(pg.id)
+          W.char.collapsed = {}
+          W.Render()
+          local cb = clickables()[i]
+          if cb then cb:GetScript("OnClick")(cb, "LeftButton") end
+        end)
+      end
+    end
+  end
   W.db.card = true
   W:OnOptionChanged("card")
   -- 4. card: hero click, Ouvrir, step 1 click

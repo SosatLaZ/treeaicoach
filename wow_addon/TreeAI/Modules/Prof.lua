@@ -45,7 +45,7 @@ local function epoch() local f = g("time") or (g("os") and g("os").time) return 
 local function opt(k) return M.db and M.db[k] ~= false end
 local function mod(n) local m = T.modules and T.modules[n] return (m and (not m.IsEnabled or m:IsEnabled())) and m or nil end
 local function D() return T.Data and T.Data.Recipes end
-local function cut(s, n) s = tostring(s or "") if #s > n then return s:sub(1, n - 1) .. "…" end return s end
+local cut = T.Cut   -- (4.0) Core : n caractères UTF-8 (« … » compris), jamais une lettre accentuée coupée
 
 -- ------------------------------------------------------------------ moteur pur (testable, = professions.py)
 local E = {}

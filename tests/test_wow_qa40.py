@@ -144,6 +144,27 @@ def test_trajet_follows_the_in_game_route() -> None:
     assert live.trajet_view(_snap(summary=s))["source"] == "suivi"
 
 
+def test_trajet_numbers_are_the_games_stop_numbers() -> None:
+    """4.0 final: objectives of the same corner are ONE stop in game (Route.Groups): the « Prochaine étape » card and
+    the Trajet page give them the same number, and so does the app (summary.plan.next[i].n); gapless after a drop."""
+    s = _summary()
+    s["plan"] = {"v": 1, "src": "auto", "route": "auto", "step": 1, "steps": 6, "label": "Tue « Ours Test »",
+                 "kind": "obj", "quest": 1005, "left": 10, "updated": NOW - 120, "next": [
+                     {"k": "obj", "q": 1005, "map": 1424, "label": "Tue « Ours Test » 4/10", "min": 0, "n": 1},
+                     {"k": "obj", "q": 1005, "map": 1424, "label": "Ramasse « Peau Test » 1/5", "min": 1, "n": 1},
+                     {"k": "fly", "map": 1424, "label": "Vol vers Camp Test", "min": 6, "n": 2},
+                     {"k": "turn", "q": 4242, "map": 1424, "label": "Rendre « Quête Partie »", "n": 3},
+                     {"k": "turn", "q": 1005, "map": 1424, "label": "Rendre « Quête 5 »", "min": 12, "n": 4}]}
+    t = live.trajet_view(_snap(summary=s))
+    assert t["source"] == "jeu" and t["dropped"] == 1
+    assert [(st["n"], st["title"]) for st in t["stops"]] == [
+        (1, "Tue « Ours Test » 4/10"), (1, "Ramasse « Peau Test » 1/5"), (2, "Vol vers Camp Test"), (3, "Rendre « Quête 5 »")]
+    assert [st["current"] for st in t["stops"]] == [True, False, False, False]
+    for st in s["plan"]["next"]:                                      # an older addon (no « n »): one number per line
+        st.pop("n")
+    assert [st["n"] for st in live.trajet_view(_snap(summary=s))["stops"]] == [1, 2, 3, 4]
+
+
 # ------------------------------------------------------------------ APP-9: the real blocked-action counters
 def test_blocked_actions_use_the_real_counters() -> None:
     d = {"blocked": [{"func": "UseAction", "kind": "en combat", "ctx": "Quick:clic", "t": int(NOW)}] * 20,

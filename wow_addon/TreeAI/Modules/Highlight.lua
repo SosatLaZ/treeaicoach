@@ -71,7 +71,7 @@ local function meth(o, k, ...) if type(o) == "table" and type(o[k]) == "function
 local function secret(v) local f = rawget(G, "issecretvalue") return type(f) == "function" and try(f, v) and true or false end
 local function sv(v) if v == nil or secret(v) then return nil end return v end
 local function low(s) return tostring(s or ""):lower() end
-local function cut(s, n) s = tostring(s or "") if #s > n then return s:sub(1, n - 1) .. "…" end return s end
+local cut = T.Cut   -- (4.0) Core : n caractères UTF-8 (« … » compris), jamais une lettre accentuée coupée
 local function opt(k) return M.db and M.db[k] end
 -- (LITE) profil essentiel : sacs + butin seulement (pas de barres de nom, badge de cible, boussole, infobulles)
 local LITE_OFF = { plates = true, plateDrops = true, plateTooltipScan = true, target = true, compass = true,

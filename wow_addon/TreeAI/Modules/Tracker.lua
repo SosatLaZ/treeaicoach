@@ -64,7 +64,7 @@ local function try(fn, ...)
   return tryPass(pcall(fn, ...))
 end
 local function now() return try(_G.GetTime) or 0 end
-local function cut(s, n) s = tostring(s or "") if #s > n then return s:sub(1, n - 1) .. "…" end return s end
+local cut = T.Cut   -- (4.0) Core : n caractères UTF-8 (« … » compris), jamais une lettre accentuée coupée
 local function low(s) return tostring(s or ""):lower() end
 local function cfg(k) return not (M.db and M.db[k] == false) end
 local function opt(k, def) local v = M.db and M.db[k] if v == nil then return def end return v end
@@ -870,15 +870,14 @@ function M.Tooltip(it)
     local s = Q and Q.Story and Q.Story(q)
     if s then tip[#tip + 1] = "|cffbbbbbb« " .. s .. " »|r" end
   end
-  tip[#tip + 1] = "|cff888888Clic : boussole · Maj : Aller là · Ctrl : itinéraire · Alt : masquer|r"
+  tip[#tip + 1] = "|cff888888Clic : boussole · Maj : Aller là · Ctrl : itinéraire · Alt : masquer (/tai suivi montrer)|r"
   return tip
 end
 
 function M.OnLineClick(qid)
   local C = compass()
   if alt() and not shift() then
-    M.hidden[qid] = true
-    M:Print("Masquée jusqu'au /reload (/tai suivi montrer pour tout réafficher).")
+    M.hidden[qid] = true   -- (4.0) la ligne qui disparaît répond au clic (rien dans le chat ; l'astuce est dans l'infobulle)
     M.Push()
     return "hidden"
   end
@@ -1301,17 +1300,21 @@ function M.RouteStops()
   end
   return stops
 end
-function M.SendRoute()
+function M.SendRoute(say)   -- say = commande tapée (/tai itineraire) : la réponse dans le chat ; un clic : rien
   local Rt = T.Route          -- a TreeAI plan is active: its order goes to SPF / the compass (Route.lua)
   if Rt and Rt.Follow and Rt:IsEnabled() and Rt:HasRoute() and #Rt:SPFStops() > 0 then return Rt:Follow() end
   if not M.items then M.Update(true) end
   local stops = M.RouteStops()
   local C = compass()
-  if #stops == 0 then M:Print("Itinéraire : aucun point connu (Questie / API de quêtes).") return nil end
+  if #stops == 0 then
+    if say then M:Print("Itinéraire : aucun point connu (Questie / API de quêtes).")
+    else T:CombatRefused("Itinéraire : aucun point connu (Questie / API de quêtes).") end
+    return nil
+  end
   local A = C and C.SPF and C.SPF()
   if A and not inCombat() and C.SPFCall(A, "NavigateRoute", "TreeAI", stops) then
     if C.MarkRoute then C.MarkRoute("spf") end
-    M:Print(("Itinéraire (%d étapes) envoyé à Shortest Path."):format(#stops))
+    if say then M:Print(("Itinéraire (%d étapes) envoyé à Shortest Path."):format(#stops)) end
     return "spf"
   end
   if C and C.GoTo and #M.items > 0 then
@@ -1319,8 +1322,8 @@ function M.SendRoute()
     return C.GoTo()
   end
 end
-T:RegisterSlash("itineraire", function() M.SendRoute() end, "itinéraire conseillé → Shortest Path (ou boussole)")
-T:RegisterSlash("itinéraire", function() M.SendRoute() end)
+T:RegisterSlash("itineraire", function() M.SendRoute(true) end, "itinéraire conseillé → Shortest Path (ou boussole)")
+T:RegisterSlash("itinéraire", function() M.SendRoute(true) end)
 
 local ALIAS = { ["prêtes"] = "pretes", pret = "pretes", prete = "pretes", ["prête"] = "pretes", tout = "tous",
   toutes = "tous", facile = "faciles", cout = "cout", ["coût"] = "cout", xp = "cout", itineraire = "route",

@@ -2109,15 +2109,16 @@ function M.BilanLines()
     money(g.parts.keep), money(g.parts.train), money(g.parts.mount))
   L[#L + 1] = ("Budget de revente %s%s · dépensé aujourd'hui %s"):format(money(g.budget), g.cap > 0 and (" (plafond/jour " .. money(g.cap) .. ")") or "", money(g.spent))
   L[#L + 1] = ("Argent immobilisé %s (en vente %s, acheté non revendu %s)"):format(money(g.invested), money(g.listed), money(g.held))
-  L[#L + 1] = ("Plan : %d achat(s) pour %s → profit attendu %s (max %d %% de ton or par objet, quantité ≤ ventes de %d j)"):format(#(M.plan or {}),
-    money(M.planSpend), money(M.planGain), n0(cfg("capGold", 20)), n0(cfg("qtyDays", 3)))
+  local np = #(M.plan or {})   -- (4.0) pluriels écrits, pas de « → » (absent des polices du jeu : la fenêtre HV ne le filtre pas)
+  L[#L + 1] = ("Plan : %d achat%s pour %s, profit attendu %s (max %d %% de ton or par objet, quantité ≤ ventes de %d j)"):format(np,
+    np > 1 and "s" or "", money(M.planSpend), money(M.planGain), n0(cfg("capGold", 20)), n0(cfg("qtyDays", 3)))
   local lr = M.char and M.char.rafale
-  if lr and n0(lr.n) > 0 then L[#L + 1] = ("Dernière rafale : %d action(s), +%s attendus"):format(n0(lr.n), money(lr.gain)) end
+  if lr and n0(lr.n) > 0 then L[#L + 1] = ("Dernière rafale : %d action%s, +%s attendus"):format(n0(lr.n), n0(lr.n) > 1 and "s" or "", money(lr.gain)) end
   local deps = M.char and M.char.deposits and M.char.deposits[dateKey()]
   L[#L + 1] = ("Profit réalisé : aujourd'hui %s, 7 j %s, total %s · dépôts payés aujourd'hui %s"):format(money(r.today), money(r.week), money(r.total), money(deps))
   for i, d in ipairs(M.plan or {}) do
     if i > 6 then break end
-    L[#L + 1] = ("  achat %d : %s x%d %s → +%s (risque %s)"):format(i, itemName(d.id), d.count, money(d.buy), money(d.adj), M.RiskText(d))
+    L[#L + 1] = ("  achat %d : %s x%d %s, gain +%s (risque %s)"):format(i, itemName(d.id), d.count, money(d.buy), money(d.adj), M.RiskText(d))
   end
   local ev = (M.char and M.char.ledger) or {}
   local KIND = { buy = "acheté", sell = "vendu", expired = "expiré", cancelled = "annulé" }

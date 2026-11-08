@@ -20,3 +20,5 @@ scratch/
 tmp/
 # stray outputs of ad-hoc scripts at the repository root
 /*.json
+# luac5.1 without -p writes its bytecode here
+luac.out

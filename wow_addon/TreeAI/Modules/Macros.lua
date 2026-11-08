@@ -150,6 +150,8 @@ end
 M._SuggestReady = suggestReady
 
 -- Pas de chat (règle TreeAI) : les messages vont dans la ligne d'état du panneau (M._log, 20 derniers).
+-- (4.0) pluriels écrits (« 1 macro créée », « 3 macros créées »), jamais « macro(s) créée(s) »
+local function pl(n, one, many) return (tonumber(n) or 0) > 1 and many or one end
 local function say(...)
   local parts = {}
   for i = 1, select("#", ...) do parts[#parts + 1] = tostring((select(i, ...))) end
@@ -905,27 +907,31 @@ function M:Install(all, force)
     end
     if n + same0 > 0 then char().setup = true end
     local spec = self:Spec()
-    say(("%d macro(s) créée(s)/mise(s) à jour, %d déjà à jour (%s, %s)."):format(n, same0, self:SpecName(spec),
-      (self:Context())))
+    say(("%d %s, %d déjà à jour (%s, %s)."):format(n, pl(n, "macro créée ou mise à jour", "macros créées ou mises à jour"),
+      same0, self:SpecName(spec), (self:Context())))
     if full > 0 then
       local maxG, maxC = macroLimits()
       local g, c = macroCounts()
-      say(("%d macro(s) non créée(s) : plus de place (perso %d/%d, compte %d/%d). Supprime des macros inutiles (Échap > Macros) ou copie-les à la main."):format(full, c, maxC, g, maxG))
+      say(("%d %s : plus de place (perso %d/%d, compte %d/%d). Supprime des macros inutiles (Échap > Macros) ou copie-les à la main."):format(full,
+        pl(full, "macro non créée", "macros non créées"), c, maxC, g, maxG))
       M._copyList = failed
-      suggest("ready", ("Plus de place pour %d macro(s) : clique pour les copier-coller"):format(full), 2,
+      suggest("ready", ("Plus de place pour %d %s : clique pour %s copier-coller"):format(full, pl(full, "macro", "macros"),
+        pl(full, "la", "les")), 2,
         { ttl = 0, onClick = function() M:ShowCopy(M._copyList) end })
     elseif fail > 0 then
-      say(("%d macro(s) refusée(s) par le jeu (%s) : bouton « Diagnostic »."):format(fail,
+      say(("%d %s par le jeu (%s) : bouton « Diagnostic »."):format(fail, pl(fail, "macro refusée", "macros refusées"),
         tostring(self.lastError or "?")))
     end
     if user > 0 then
-      say(("%d macro(s) modifiée(s) à la main gardée(s) telle(s) (Maj+clic sur « Installer » pour écraser)."):format(user))
+      say(("%d %s (Maj+clic sur « Installer » pour écraser)."):format(user,
+        pl(user, "macro modifiée à la main, gardée telle quelle", "macros modifiées à la main, gardées telles quelles")))
     end
     if full == 0 and n > 0 then
       local hints = keyHints(defs)
       say("Pose-les sur ta barre : « Glisser sur la barre » (ou fais glisser une ligne de la liste)." ..
         (hints ~= "" and (" Touches conseillées : " .. hints) or ""))
-      suggest("ready", ("%d macro(s) TAI prête(s) — clique pour les glisser sur ta barre"):format(n + same0), 1,
+      suggest("ready", ("%d %s — clique pour %s glisser sur ta barre"):format(n + same0,
+        pl(n + same0, "macro TAI prête", "macros TAI prêtes"), pl(n + same0, "la", "les")), 1,
         { ttl = 300, onClick = function() M:OpenPanel() end })
     end
     self:Diagnose(false)
@@ -1201,7 +1207,7 @@ function M:Remove()
       end
     end
     char().installed, char().bodies, char().setup = {}, {}, false
-    say(("%d macro(s) TreeAI supprimée(s)."):format(n))
+    say(("%d %s."):format(n, pl(n, "macro TreeAI supprimée", "macros TreeAI supprimées")))
   end)
 end
 
@@ -1546,7 +1552,7 @@ local function fillDiag(f, rep)
   end
   f.icon:SetTexture("Interface\\RaidFrame\\ReadyCheck-Ready")
   f.name:SetText("Diagnostic macros")
-  f.desc:SetText(("%d installée(s), %d à voir — mode %s."):format(rep.ok or 0, rep.ko or 0, rep.mode or "auto"))
+  f.desc:SetText(("%d %s, %d à voir — mode %s."):format(rep.ok or 0, pl(rep.ok, "installée", "installées"), rep.ko or 0, rep.mode or "auto"))
   local s = rep.slots or {}
   f.where:SetText(("Emplacements : perso %d/%d, compte %d/%d."):format(s.char or 0, s.charMax or 0,
     s.account or 0, s.accountMax or 0))

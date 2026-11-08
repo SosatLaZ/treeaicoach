@@ -64,8 +64,7 @@ local function n(x) return Fmt.Num and Fmt.Num(x) or tostring(floor(x or 0)) end
 local function plural(k, one, many) return k .. " " .. (k > 1 and many or one) end
 local function short(s, len)
   s = tostring(s or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|H.-|h(.-)|h", "%1"):gsub("[%[%]]", "")
-  if T.TextLen and T.TextLen(s) > len then s = s:sub(1, len) end
-  return s
+  return T.Cut(s, len, "")          -- (4.0) Core : len caractères UTF-8, jamais une lettre accentuée coupée
 end
 
 local function myLevel() return num(try(g("UnitLevel"), "player")) or 1 end

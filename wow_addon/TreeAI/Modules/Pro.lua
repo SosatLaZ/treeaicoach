@@ -59,7 +59,7 @@ local function inCombat() return T:InCombat() end
 local function level() return tonumber((try(g("UnitLevel"), "player"))) or 1 end
 local function mod(n) local m = T.modules and T.modules[n] return (m and (not m.IsEnabled or m:IsEnabled())) and m or nil end
 local function zoneName() return try(g("GetRealZoneText")) or try(g("GetZoneText")) or "" end
-local function cut(s, n) s = tostring(s or "") if #s > n then return s:sub(1, n - 1) .. "…" end return s end
+local cut = T.Cut   -- (4.0) Core : n caractères UTF-8 (« … » compris), jamais une lettre accentuée coupée
 
 local U = T.ProUtil or {}
 T.ProUtil = U

@@ -2024,6 +2024,35 @@ local function ulen(s)
   return #s - n
 end
 TreeAI.TextLen = ulen
+
+-- (4.0) LA coupe de texte de TreeAI, pour tous les modules : n caractères UTF-8 (« é » compte pour un et n'est
+-- jamais coupé en deux ; les anciennes coupes en octets affichaient « Les loups-garous de la for\195… »).
+-- Plus de n caractères : le début + tail (« … » par défaut, "" = coupe sèche), n caractères en tout, sans
+-- espace avant la fin ni code |c… / |T… à moitié (une couleur ouverte est refermée). Sinon le texte tel quel.
+local function charEnd(s, k)            -- dernier octet des k premiers caractères (#s s'il y en a ≤ k)
+  local pos, i = 1, 0
+  while true do
+    local a = strfind(s, "[^\128-\191]", pos)
+    if not a then return #s end
+    if i == k then return a - 1 end
+    i, pos = i + 1, a + 1
+  end
+end
+local function cutText(s, n, tail)
+  s = tostring(s or "")
+  n = tonumber(n)
+  if not n or #s <= n or charEnd(s, n) >= #s then return s end
+  tail = tail or "…"
+  local _, cont = strgsub(tail, "[\128-\191]", "")
+  local keep = n - (#tail - cont)
+  local head = keep > 0 and strgsub(strsub(s, 1, charEnd(s, keep)), "%s+$", "") or ""
+  if strfind(head, "|", 1, true) then
+    head = strgsub(strgsub(strgsub(head, "|c%x*$", ""), "|T[^|]*$", ""), "([^|])|$", "%1")
+    if strfind(head, "|c%x%x%x%x%x%x%x%x[^|]*$") then return head .. tail .. "|r" end
+  end
+  return head .. tail
+end
+TreeAI.Cut = cutText
 local SEPS = { " — ", ". ", " ; ", " : ", " (", ", " }
 local function shortText(text, tooltip)
   local max = TreeAI.LINE_MAX
@@ -2823,7 +2852,8 @@ function TreeAI:_SetCommPaused(reason)
     local flags = type(db) == "table" and (type(db.flags) == "table" and db.flags or {}) or nil
     if type(db) == "table" then db.flags = flags end
     local fk = "commPause_" .. tostring(reason)
-    if not flags or not flags[fk] then
+    local grp = self.modules and self.modules.Group   -- (4.0) rien à expliquer si « Groupe » est coupé (mode sûr)
+    if grp and grp._active and (not flags or not flags[fk]) then
       if flags then flags[fk] = true end
       -- une ligne de l'onglet Groupe, jamais le chat (règle TreeAI)
       self:Suggest("core:commpause", ("Synchro du groupe en pause (%s) : elle reprend à la sortie"):format(

@@ -100,7 +100,7 @@ return function(M, ctx)
   local tl = T.GetTabLines and T:GetTabLines("quests") or A.lines
   ctx.check(find(tl, FULL .. " : %d quêtes? à retirer"), "header (nearly full): " .. dump(tl))
   local line = find(tl, "Retire « Vieille corvée » : trop facile maintenant", true)
-  ctx.check(line and line.onClick and tostring(line.tooltip):find("ouvre ton journal (L)", 1, true), "abandon line + tooltip: " .. dump(tl))
+  ctx.check(line and tostring(line.tooltip):find("ouvre ton journal (L)", 1, true), "abandon line + tooltip: " .. dump(tl))
   local Pl = T.Plain
   for _, l in ipairs(A.lines or {}) do
     local okp, w = Pl.IsPlain(l.text)
@@ -109,12 +109,11 @@ return function(M, ctx)
   T.settings.panel.nowMax = 30   -- other modules pin lines too: look past the top 5
   ctx.check(find(T.GetTabLines and T:GetTabLines("now") or {}, FULL, true), "pinned in « Maintenant » " .. dump(T:GetTabLines("now")))
 
-  -- click = instructions only
+  -- (4.0) why + how in the tooltip (hover), never in the chat: the line has no click
   local n0 = #M.output
-  if line and line.onClick then line.onClick() end
-  local said = table.concat(M.output, "\n", n0 + 1)
-  ctx.check(said:find("Retire « Vieille corvée » : trop facile maintenant", 1, true) and said:find("puis « Abandonner » et confirme", 1, true),
-    "click prints why + how: " .. said)
+  local said = tostring(line and line.tooltip)
+  ctx.check(said:find("Retire « Vieille corvée » : trop facile maintenant", 1, true) and said:find("puis « Abandonner » et confirme", 1, true)
+    and not (line and line.onClick), "tooltip says why + how, no click into the chat: " .. said)
 
   -- /tai abandon (full report) and /tai abandon 1
   n0 = #M.output

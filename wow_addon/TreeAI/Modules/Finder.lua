@@ -57,7 +57,7 @@ local function now() return try(G("GetTime")) or 0 end
 local function inCombat() return T.InCombat and T:InCombat() or false end
 local function secret(v) local f = G("issecretvalue") return f and try(f, v) and true or false end
 local function pub(v) if secret(v) then return nil end return v end
-local function cut(s, n) s = tostring(s or "") if #s > n then return s:sub(1, n - 1) .. "…" end return s end
+local cut = T.Cut   -- (4.0) Core : n caractères UTF-8 (« … » compris), jamais une lettre accentuée coupée
 local function low(s) return tostring(s or ""):lower() end
 local function opt(k) return not (F.db and F.db[k] == false) end
 local function mod(n) local m = T.modules and T.modules[n] return (type(m) == "table" and m.IsEnabled and m:IsEnabled()) and m or nil end

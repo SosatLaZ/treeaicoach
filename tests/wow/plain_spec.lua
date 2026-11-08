@@ -10,7 +10,9 @@ local function eq(a, b, msg) ok(a == b, msg .. " : attendu [" .. tostring(b) .. 
 
 local env = setmetatable({}, { __index = _G })
 env._G = env
-env.TreeAI = {}
+-- Core's TreeAI.Cut (the one UTF-8 text cut), read from Core.lua next to Modules/
+local core = path:gsub("Modules[/\\][^/\\]*$", "Core.lua")
+env.TreeAI = { Cut = dofile(((arg[0] or ""):match("^(.*)[/\\]") or ".") .. "/corecut.lua")(core) }
 local chunk = assert(loadfile(path))
 setfenv(chunk, env)
 chunk()

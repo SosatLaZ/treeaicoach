@@ -56,7 +56,7 @@ local function low(s) return trim(s):lower() end
 local function cfg(k) return not (M.db and M.db[k] == false) end
 local function playerLevel() return try(_G.UnitLevel, "player") or 1 end
 local function curZone() return try(_G.GetRealZoneText) or try(_G.GetZoneText) or "" end
-local function cut(s, n) s = tostring(s or "") if #s > n then return s:sub(1, n - 1) .. "…" end return s end
+local cut = T.Cut   -- (4.0) Core : n caractères UTF-8 (« … » compris), jamais une lettre accentuée coupée
 local function fmtNum(n)
   local s = tostring(floor((n or 0) + 0.5))
   local out = s:reverse():gsub("(%d%d%d)", "%1 "):reverse()
@@ -790,7 +790,7 @@ local function greyHint(a)
   if ab and ab._active then clear("grey") return end
   local q = a.grey[1]
   if not q then clear("grey") return end
-  suggest("grey", ("« %s » est grise (niv %d) : presque pas d'XP. Clic = ouvrir pour l'abandonner."):format(
+  suggest("grey", ("« %s » est grise (niv %d) : presque pas d'XP. Clic : comment la retirer."):format(
     cut(q.title, 30), q.level), 1, { ttl = 300, cooldown = 1800, sound = false,
     onClick = function() M.OpenQuest(q) end })
 end
@@ -895,12 +895,13 @@ function M.UpdateButton()
   end)
 end
 
--- ------------------------------------------------------------------ ouvrir une quête (pour l'abandon)
+-- ------------------------------------------------------------------ retirer une quête : comment faire
 function M.OpenQuest(q)
   if not q then return end
   -- (0.2) on n'ouvre plus le journal nous-mêmes (QuestMapFrame_OpenToQuestDetails / ShowUIPanel /
   -- SetSelectedQuest depuis un addon contaminent le journal : le jeu bloquait ensuite « Abandonner »)
-  M:Print(("Ouvre ton journal (L) → « %s » → « Abandonner » si tu veux la retirer."):format(q.title or "?"))
+  -- (4.0) la marche à suivre au pied de la fenêtre (ou au centre de l'écran), plus jamais dans le chat
+  T:ClickNote(("Pour retirer « %s » : journal (L) > la quête > « Abandonner »."):format(cut(q.title or "?", 40)))
 end
 
 -- ------------------------------------------------------------------ infobulles / butin / objets
@@ -1228,7 +1229,8 @@ function M.Report()
       P(("Pas encore prises ici (%d) : %s"):format(qs.hereCount, table.concat(o, ", ")))
     end
     if (qs.nextLevelCount or 0) > 0 then
-      P(("Au niveau %d : %d nouvelle(s) quête(s) ici."):format(playerLevel() + 1, qs.nextLevelCount))
+      local nq = qs.nextLevelCount
+      P(("Au niveau %d : %d nouvelle%s quête%s ici."):format(playerLevel() + 1, nq, nq > 1 and "s" or "", nq > 1 and "s" or ""))
     end
     if (qs.dungeonCount or 0) > 0 then
       local o = {}
