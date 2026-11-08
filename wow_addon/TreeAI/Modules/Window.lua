@@ -14,6 +14,7 @@
 -- protégé ; un clic = l'action de la ligne (T:UserAction). Coût : fenêtre fermée = 0 ; carte = signature
 -- comparée, redessin seulement quand le texte change (≤ 1 / 2 s), aucune minuterie (suit les rendus du panneau).
 -- Pages : Modules/WindowPages.lua (Quêtes, Trajet, Donjons).
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 local G = _G

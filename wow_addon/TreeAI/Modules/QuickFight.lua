@@ -9,6 +9,7 @@
 -- Propriétaires : nourriture du familier (Hunter:BestFood), munitions (Hunter:AmmoInfo), meilleurs consommables
 -- (Macros.NewContext) ; aucune ligne de conseil ici (la ligne « Avant d'engager » de Fight se tait quand la
 -- barre affiche l'indicateur). Lua 5.1, aucune globale (boutons nommés TreeAIQuick_<clé> pour /click).
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if type(T) ~= "table" or type(T.RegisterModule) ~= "function" then return end
 local G = _G

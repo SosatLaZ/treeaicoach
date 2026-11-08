@@ -11,6 +11,7 @@
 -- Pas repris (exprès) : masquer les messages d'erreur, déplacer ou masquer des cadres de Blizzard (blocages / taint),
 -- accepter des invitations ou des résurrections (fenêtres protégées). Aucune sortie dans le chat : le résultat d'une
 -- vente s'affiche brièvement en haut de l'écran (comme une réponse à un clic). Lua 5.1, aucune globale.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 local G = _G

@@ -35,6 +35,7 @@
 -- Coût : tout est événementiel (les gestionnaires posent un drapeau) ; un seul ticker (2 s) fait le travail hors
 -- combat ; les lignes ne sont recalculées que si quelque chose a changé (onglet visible : ≤ 1 / 3 s ; caché : ≤ 1 / 30 s,
 -- sauf une ligne épinglée qui change). Lua 5.1, aucune globale créée.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local _, ns = ...
 ns = type(ns) == "table" and ns or {}
 local T = _G.TreeAI

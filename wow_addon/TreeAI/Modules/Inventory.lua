@@ -5,6 +5,7 @@
 --  • Nourriture : plus que 4 en sac → une ligne ; chez un marchand qui en vend, combien en prendre pour 1 h de jeu
 --    à ton rythme MESURÉ (Stats). Boissons aussi pour les lanceurs de sorts — pas pour le chasseur.
 -- Lua 5.1, aucune globale créée. Toutes les API WoW sont testées avant usage (Classic / Forever).
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local _, ns = ...
 ns = ns or {}
 

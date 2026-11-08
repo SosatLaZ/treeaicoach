@@ -13,6 +13,7 @@
 -- rien de protégé, aucun cadre Blizzard modifié, rien dans le chat (sauf la réponse à /tai aide en combat).
 -- Coût : aucun AutoRefresh ; un réveil ponctuel tant qu'il y a de quoi attendre, un ticker 1 s pendant qu'une bulle est là.
 -- État : TreeAIDB.tour (compte) = { done, step, seen = { [astuce] = date }, last }. Lua 5.1, aucune globale.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 local G = _G

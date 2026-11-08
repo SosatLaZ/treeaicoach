@@ -12,6 +12,7 @@
 --    (C_Map.SetUserWaypoint + C_SuperTrack). Jamais de sélection dans le journal de quêtes Blizzard, aucun
 --    panneau Blizzard ouvert, rien d'automatique (ToS).
 -- Résumé : TreeAIDB.chars[perso].summary.plan. Lua 5.1, aucune globale (lit TreeAIPlan avec rawget).
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local function _ns(v) local f = rawget(_G, "issecretvalue") if f and f(v) then return nil end return v end   -- valeurs secrètes (combat) → nil
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end

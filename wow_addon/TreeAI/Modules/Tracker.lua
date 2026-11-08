@@ -19,6 +19,7 @@
 -- sélection du journal) ; infobulles : AddLine sur GameTooltip via TooltipDataProcessor / HookScript.
 -- Calculs lourds hors combat seulement (en combat : progression recopiée, rien de recalculé).
 -- Résumé IA : TreeAIDB.chars[perso].summary.tracker. Lua 5.1, aucune globale.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local _, ns = ...
 ns = ns or {}
 

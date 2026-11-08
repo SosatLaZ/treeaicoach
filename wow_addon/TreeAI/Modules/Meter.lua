@@ -5,6 +5,7 @@
 -- → la fenêtre se met à jour à la fin du combat (et à l'ouverture), jamais en combat ; aucune valeur secrète lue.
 -- Deux vues : dernier combat / toute la session ; « Remise à zéro » = celle du jeu (clic). Fenêtre = Theme:Window,
 -- déplaçable, cachée = aucun événement suivi. Sans C_DamageMeter (Classic Era) : la fenêtre le dit. Lua 5.1.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 local G = _G

@@ -2,6 +2,7 @@
 -- Données : Data/Macros.lua (généré par tools/wow_build_macros.py).
 -- Règles Blizzard : création/édition UNIQUEMENT hors combat (InCombatLockdown), aucune
 -- automatisation : une macro = une capacité par appui, le joueur appuie lui-même.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 if type(TreeAI) ~= "table" or type(TreeAI.RegisterModule) ~= "function" then return end
 
 local T = TreeAI

@@ -7,6 +7,7 @@
 -- Laissé aux autres : maître de classe → Guichets (prix réel lu chez lui) ; « change de zone / coin conseillé » →
 -- planificateur ; quêtes trop dures → Abandon. Résumé : summary.leveling (lu par TreeAI Coach).
 -- Lua 5.1, aucune globale créée, toutes les API testées.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local _, ns = ...
 ns = ns or {}
 

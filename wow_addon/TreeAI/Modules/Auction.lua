@@ -23,6 +23,7 @@
 --  * gestion de l'or : réserve (entraînement / réparations / monture), budget de revente, répartition
 --    sur les meilleures affaires (glouton profit ajusté / risque, plafond par objet), file « Suivant ».
 -- Résumé : TreeAIDB.chars[perso].summary.auction. Lua 5.1 ; aucune globale.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local _, ns = ...
 ns = ns or {}
 

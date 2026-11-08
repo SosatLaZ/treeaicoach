@@ -12,6 +12,7 @@
 -- est là (contre quoi, niveau). Jamais un chiffre qu'on n'a pas (pas d'XP/h ici : c'est Stats, avec sa durée de
 -- mesure). Rien n'est fait à la place du joueur.
 -- Sortie : onglet « Infos » (TreeAI:SetTabLines, bloc "Session") + Suggest rares. Lua 5.1, aucune globale.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 

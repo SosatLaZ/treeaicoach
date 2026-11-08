@@ -23,6 +23,7 @@
 -- Coût : événements + un rappel T:After regroupé ; rien quand rien ne change ; calculs hors combat. Aucune fonction
 -- protégée (seulement C_QuestLog.AddQuestWatch / RemoveQuestWatch, réglages de nos modules, boussole) ; rien dans le
 -- chat. Le cœur (B.Core) est pur : tests/wow/brain_spec.lua. Lua 5.1, aucune globale.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 

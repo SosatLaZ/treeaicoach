@@ -3,6 +3,7 @@
 -- Contrat cœur : TreeAI:RegisterModule(name, tbl), TreeAI:Suggest(id, text, prio). Options :
 -- Réglages : M.db (= TreeAIDB.modules.Classes) = { enabled = true, disabled = { ["ROGUE.poison"] = true } }
 
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local TreeAI = _G.TreeAI
 if type(TreeAI) ~= "table" then return end
 

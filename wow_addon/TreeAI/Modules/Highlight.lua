@@ -14,6 +14,7 @@
 -- SetParent, jamais d'écriture de champ sur un cadre Blizzard, aucun clic intercepté (EnableMouse false),
 -- hooksecurefunc / HookScript / API publiques des addons de sacs en lecture seule. Événementiel, budget ≤ 1 ms.
 -- Lua 5.1, aucune globale, toutes les API testées.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not T or not T.RegisterModule then return end
 local API = T.API or {}

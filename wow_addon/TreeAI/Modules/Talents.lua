@@ -11,6 +11,7 @@
 -- par niveau (« au niveau 28, le parcours prend X ») ; tu vérifies tes points dans la fenêtre du jeu (touche N).
 -- RIEN n'est dépensé à ta place : LearnTalent est protégé → instructions seulement (touche N, onglet, ligne,
 -- colonne). Calcul hors combat. Sortie : onglet « Infos », bloc Talents (SetTabLines, lignes cliquables) + Suggest. Lua 5.1, aucune globale.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 

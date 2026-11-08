@@ -13,6 +13,7 @@
 -- journal de quêtes Blizzard, aucune sélection) ; cadres simples enfants d'UIParent, aucun modèle sécurisé.
 -- Rafraîchissement : à chaque Push du Tracker (évènementiel) + :AutoRefresh() ; ≤ 2 rendus/s, mise en page
 -- refaite seulement si le contenu change. Lua 5.1, aucune globale.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local _, ns = ...
 ns = ns or {}
 

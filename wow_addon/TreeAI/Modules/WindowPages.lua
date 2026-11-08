@@ -2,6 +2,7 @@
 -- Window : même module, même coût mesuré). Rendu seulement : les données viennent de Planner / Route (étapes,
 -- arrêts), Quests (journal analysé : ici, à rendre, gris, par zone), ZonePlan (zone de travail), Dungeon
 -- (donjons, quêtes, boss, butin du groupe). Rien n'est recalculé ici ; fenêtre fermée = rien ne tourne.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 local W = T and T.Window
 if not W then return end

@@ -8,6 +8,7 @@
 --  * « Ce que TreeAI voit » (repliée) : le contexte du moment ; « Règles » : chaque règle d'un clic, interrupteur général
 --    en bas à droite ; page « Quêtes » : section « En pause » (repliée) qui renvoie ici.
 -- Fenêtre fermée = rien ne tourne ; aucune fonction protégée ; jamais le chat.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 local W = T and T.Window
 if not (W and W.AddPage) then return end

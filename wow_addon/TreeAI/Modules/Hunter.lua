@@ -16,6 +16,7 @@
 -- Retiré (ne marchait pas dans le vrai jeu) : zone morte (CheckInteractDistance interdit en combat), PV du familier
 -- en combat (valeur secrète), « 2 ennemis sur toi » (journal de combat interdit sur Forever).
 
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local function _ns(v) local f = rawget(_G, "issecretvalue") if f and f(v) then return nil end return v end   -- valeurs secrètes (combat) → nil
 local TreeAI = _G.TreeAI
 if type(TreeAI) ~= "table" then return end

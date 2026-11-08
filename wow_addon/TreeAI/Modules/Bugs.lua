@@ -6,6 +6,7 @@
 -- tire « TreeAI-erreurs.txt ». Capture aussi les erreurs Lua hors safecall dont la pile cite TreeAI, en CHAÎNANT
 -- le gestionnaire d'erreurs existant (jamais remplacé : on appelle toujours le précédent).
 -- Lecture seule : aucun appel protégé. Lua 5.1, aucune globale.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 local G = _G
@@ -54,6 +55,12 @@ function M.OnLuaError(err)
     local msg = str(err, 400)
     local stack = try(G.debugstack, 3) or ""
     if type(stack) ~= "string" then stack = "" end
+    -- (4.0.8) notre propre gestionnaire est dans la pile : sans ce filtre, TOUTES les erreurs (Questie, OpenMap…)
+    -- étaient gardées comme « [Bugs] ». On retire nos lignes de gestionnaire, et une alerte de taint d'un autre addon
+    -- (« Lua Taint: Questie ») n'est jamais la nôtre.
+    stack = stack:gsub("[^\n]*Modules[/\\]Bugs%.lua[^\n]*\n?", "")
+    local taintOf = msg:match("Lua Taint:%s*([%w_%-]+)")
+    if taintOf and taintOf ~= "TreeAI" then return end
     if not (msg:find("TreeAI", 1, true) or stack:find("AddOns[/\\]TreeAI[/\\]")) then return end
     if T.RecordError then
       local mod = msg:match("Modules[/\\](%w+)%.lua") or stack:match("Modules[/\\](%w+)%.lua") or "jeu"

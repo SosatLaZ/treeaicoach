@@ -10,6 +10,7 @@
 -- Sources : barres de nom / cible / survol (classification « rare ») et vignettes du jeu (TreeAI.Detect, position
 -- exacte). Pour les autres modules, ce fichier garde l'ancien contrat Boost (XPStats, UpgradePct…) : il renvoie
 -- vers Stats et Gear, sans calcul à lui. Lua 5.1, aucune globale, toutes les API testées.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not T or not T.RegisterModule then return end
 local API = T.API or {}
