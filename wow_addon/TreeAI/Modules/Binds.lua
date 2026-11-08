@@ -230,13 +230,27 @@ function M.MacroList()
   end
   local out = {}
   if type(raw) ~= "table" then return out end
+  -- (MACRO3) activée selon le préréglage / les réglages du joueur, et son nom dans le jeu (renommable) ; une macro
+  -- ni activée ni installée ne compte pas (rien à placer, rien qui manque) : pas de travail pour elle
+  local isOn = type(mod.IsOn) == "function" and mod.IsOn or nil
+  local gameName = type(mod.GameName) == "function" and mod.GameName or nil
+  local c = mod.char
+  local installed = type(c) == "table" and type(c.installed) == "table" and c.installed or nil
   for i, e in ipairs(raw) do
     local m
     if type(e) == "string" then m = { n = e }
     elseif type(e) == "table" then
-      local r = {}
-      for _, v in ipairs(e.v or {}) do for _, id in ipairs(v.r or {}) do r[#r + 1] = id end end
-      m = { n = e.n or e.name, key = M.KeyFromHint(e.k or e.key), r = r, def = e.def, prio = tonumber(e.p or e.prio) }
+      local on, gn = e.def, e.n or e.name
+      if e.v and isOn then local ok, v = pcall(isOn, mod, e) if ok then on = v end end
+      if not (e.v and installed and not on and not installed[gn]) then
+        if e.v and gameName then
+          local ok, v = pcall(gameName, mod, e)
+          if ok and type(v) == "string" then gn = v end
+        end
+        local r = {}
+        for _, v in ipairs(e.v or {}) do for _, id in ipairs(v.r or {}) do r[#r + 1] = id end end
+        m = { n = gn, key = M.KeyFromHint(e.k or e.key), r = r, def = on, prio = tonumber(e.p or e.prio) }
+      end
     end
     if m and type(m.n) == "string" then
       m.prio = m.prio or (m.def and i or 100 + i)

@@ -14,7 +14,7 @@ COMMANDS = {
     "/stopmacro", "/petattack", "/petfollow", "/petpassive", "/petdefensive", "/petaggressive",
     "/petstay", "/petautocaston", "/petautocastoff", "/equip", "/equipslot", "/target",
     "/targetenemy", "/targetfriend", "/targetlasttarget", "/assist", "/cleartarget",
-    "/cancelaura", "/cancelform", "/dismount", "/click", "/run", "/script", "/say", "/p",
+    "/cancelaura", "/cancelform", "/dismount", "/click", "/run", "/script", "/say", "/p", "/clearfocus",
     "/party", "/ra", "/raid", "/s", "/y", "/e", "/emote", "/focus", "/console", "/userandom",
 }
 # commands whose argument list uses [conditions] clauses separated by ';'
@@ -22,7 +22,7 @@ CONDITIONAL = {
     "/cast", "/use", "/castsequence", "/castrandom", "/stopmacro", "/petattack", "/petfollow",
     "/petpassive", "/petdefensive", "/petaggressive", "/petstay", "/equip", "/target",
     "/targetenemy", "/assist", "/startattack", "/stopattack", "/cancelaura", "/cancelform",
-    "/dismount", "/userandom", "/equipslot", "/stopcasting", "/click",
+    "/dismount", "/userandom", "/equipslot", "/stopcasting", "/click", "/focus", "/clearfocus",
 }
 CONDS = {
     "mod", "modifier", "harm", "help", "dead", "exists", "combat", "stance", "form", "stealth",
@@ -48,18 +48,18 @@ def _check_conditions(group: str) -> list[str]:
     for a, b in OPPOSITE:
         if a in parts and b in parts:
             errs.append(f"conditions contradictoires [{a},{b}]")
-    if ("@mouseover" in parts or "target=mouseover" in parts) and not (
-            {"harm", "help", "exists", "dead", "nodead"} & set(parts)):
-        errs.append("@mouseover sans harm/help/exists : vise le vide quand rien n'est survolé")
+    for unit in ("mouseover", "focus"):
+        if ("@" + unit in parts or "target=" + unit in parts) and not (
+                {"harm", "help", "exists", "dead", "nodead"} & set(parts)):
+            errs.append(f"@{unit} sans harm/help/exists : vise le vide quand il n'y a rien")
     for raw in group.split(","):
         c = raw.strip()
         if not c:
             continue
         if c.startswith("@") or c.startswith("target="):
             unit = c[1:] if c.startswith("@") else c[7:]
-            if unit == "focus":
-                errs.append("@focus : pas de focus fiable en Classic, utiliser @mouseover")
-            elif unit not in UNITS:
+            # @focus : Forever a la focalisation (FocusUnit + /focus dans le client), qualifiée comme @mouseover
+            if unit not in UNITS:
                 errs.append(f"unité inconnue « {unit} »")
             continue
         key, _, val = c.partition(":")

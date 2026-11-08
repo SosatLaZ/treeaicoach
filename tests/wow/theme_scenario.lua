@@ -23,7 +23,7 @@ return function(M, ctx)
   local A = T:GetModule("Auction")
   if A and A.CreateWindow then try("auction", A.CreateWindow) end
   local Mc = T:GetModule("Macros")
-  if Mc and Mc.TogglePanel then try("macros", Mc.TogglePanel, Mc) end
+  if Mc and (Mc.ToggleList or Mc.TogglePanel) then try("macros", Mc.ToggleList or Mc.TogglePanel, Mc) end   -- (MACRO3) list = panel
   M.FireEvent("START_AUTOREPEAT_SPELL")
   local HP = T:GetModule("HunterPro")
   if HP and HP.OnTrapCast then try("hunterpro", HP.OnTrapCast, HP, "Piège givrant") end

@@ -30,6 +30,7 @@ return function(M, ctx)
   M.macros = { global = {}, char = {} }
   local c = Mc.char or {}
   c.installed, c.bodies, c.setup = {}, {}, false
+  c.opts, c.preset = {}, nil   -- (MACRO3) default preset (the storm clicked the « Macros » page)
   Mc:ClearBlocked(); Mc:ClearSpellCache()
   local out0 = #M.output
 

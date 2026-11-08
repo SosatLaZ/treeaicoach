@@ -91,7 +91,9 @@ def test_hunter_macros_expert_patterns():
     assert "/petfollow [combat]" in fd and "/stopcasting [combat]" in fd
     assert _hunter("TAI FD Piege", level=28) is None            # Feign Death is learned at 30
     asp = _hunter("TAI Aspects", level=40)
-    assert asp.count("!Aspect") == 4
+    # (MACRO3) smart: Hawk in combat / on a hostile target, else Cheetah; every aspect cast with « ! »
+    assert "[combat][harm,nodead] !Aspect du faucon; !Aspect du guépard" in asp
+    assert asp.count("!Aspect") == asp.count("Aspect") == 5
     fam = _hunter("TAI Familier", level=12)
     assert "[@pet,dead] Ressusciter le familier; [nopet] Appel du familier; Guérison du familier" in fam
     assert "/use [mod:ctrl,pet] item:" in fam and "/stopmacro [mod:ctrl]" in fam

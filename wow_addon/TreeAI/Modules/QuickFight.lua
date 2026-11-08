@@ -27,13 +27,14 @@ local M = T:RegisterModule("QuickFight", {
     enabled = true, bar = true, scale = 100, timer = true, ready = true,
     eat = true, bandage = true, hp = 70, mana = 60,
     feed = true, mend = true, petCall = true, aspect = true, pull = true, ammo = true,
-    petHp = 70, ammoBuy = 1000, pos = nil,
+    petHp = 70, ammoBuy = 1000, pos = nil, aspectGlow = true, aspectSound = true, pips = true,
   },
   options = {
     { key = "bar", type = "toggle", label = "Afficher la barre de combat", section = "Barre" },
     { key = "scale", type = "range", label = "Taille de la barre (%)", min = 60, max = 160, step = 10 },
     { key = "timer", type = "toggle", label = "Minuteur de repos (« plein dans 12 s »)" },
     { key = "ready", type = "toggle", label = "Indicateur « prêt à engager »" },
+    { key = "pips", type = "toggle", label = "Pastille sur chaque bouton : vert = à jour, orange = après le combat, rouge = plus d'objet" },
     { key = "eat", type = "toggle", label = "Boire / manger (meilleur objet des sacs)", section = "Repos" },
     { key = "bandage", type = "toggle", label = "Bandage quand il va plus vite que manger" },
     { key = "hp", type = "range", label = "Manger ou se bander sous (% PV)", min = 30, max = 95, step = 5 },
@@ -44,6 +45,8 @@ local M = T:RegisterModule("QuickFight", {
     { key = "petHp", type = "range", label = "Soigner le familier sous (% PV)", min = 30, max = 95, step = 5 },
     { key = "feed", type = "toggle", label = "Nourrir le familier (meilleure nourriture des sacs)" },
     { key = "aspect", type = "toggle", label = "Changer d'aspect (Faucon en combat, Guépard pour voyager)" },
+    { key = "aspectGlow", type = "toggle", label = "Le bouton d'aspect brille quand le mauvais aspect est actif" },
+    { key = "aspectSound", type = "toggle", label = "Un son (une fois) si tu te bats sous Guépard ou Meute (hébété)" },
     { key = "ammo", type = "toggle", label = "Acheter des munitions chez le marchand" },
     { key = "ammoBuy", type = "range", label = "Stock de munitions visé", min = 200, max = 4000, step = 200 },
   },
@@ -73,7 +76,7 @@ local function num(v) return tonumber(_ns(v)) end
 
 local S = {
   MARK = 1130, CALL = 883, REVIVE = 982, MEND = 136, FEED = 6991, FEED_EFFECT = 1539,
-  HAWK = 13165, MONKEY = 13163, CHEETAH = 5118, PACK = 13159, BANDAGED = 11196,
+  HAWK = 13165, MONKEY = 13163, CHEETAH = 5118, PACK = 13159, BANDAGED = 11196, BEAST = 13161, WILD = 20043,
 }
 M.SPELLS = S
 
@@ -182,15 +185,69 @@ function M:Picks()
 end
 
 ---------------------------------------------------------------------------
+-- (MACRO3) Aspect actif : lu sur les auras quand elles sont lisibles (hors combat ; Forever les masque en combat :
+-- research/fidelity.md), sinon suivi par nos propres lancers (UNIT_SPELLCAST_SUCCEEDED du joueur, jamais secret),
+-- remis à zéro à la mort. sure = on sait vraiment (sinon : on ne dit rien, jamais de fausse alerte).
+---------------------------------------------------------------------------
+local aspectNow = { name = nil, sure = false, src = nil }
+M._aspect = aspectNow
+local aspectKind
+local function aspectKinds()
+  if aspectKind then return aspectKind end
+  local k, any = {}, false
+  for _, id in ipairs({ S.HAWK, S.MONKEY }) do local n = spellName(id) if n then k[n] = "combat" any = true end end
+  for _, id in ipairs({ S.CHEETAH, S.PACK }) do local n = spellName(id) if n then k[n] = "travel" any = true end end
+  for _, id in ipairs({ S.BEAST, S.WILD }) do local n = spellName(id) if n then k[n] = "other" any = true end end
+  if any then aspectKind = k end
+  return k
+end
+M.AspectKinds = aspectKinds
+--- lancer réussi du joueur (UNIT_SPELLCAST_SUCCEEDED) : un aspect ? -> état sûr (ID -> nom d'aspect ou false, en cache :
+--- le tir automatique arrive toutes les 3 s)
+local castAspect = {}
+function M.OnPlayerCast(spellID)
+  local id = num(spellID)
+  if not id then return false end
+  local n = castAspect[id]
+  if n == nil then
+    local f = API().SpellName
+    local nm = f and f(id)
+    n = (type(nm) == "string" and aspectKinds()[nm]) and nm or false
+    if type(nm) == "string" and aspectKind then castAspect[id] = n end   -- noms d'aspects connus : réponse sûre
+  end
+  if n then
+    aspectNow.name, aspectNow.sure, aspectNow.src = n, true, "cast"
+    return true
+  end
+  return false
+end
+--- la macro du bouton d'aspect = celle de « TAI Aspects » : en combat ou sur une cible hostile Faucon, sinon
+--- Guépard (Meute en groupe si connue) ; Maj = voyage quand même. « ! » : jamais coupé. Pas besoin de la
+--- réécrire en combat : la condition [combat] choisit le Faucon toute seule.
+local aspectMacros = {}
+function M.AspectMacro(hawk, travel)
+  local k = hawk .. "|" .. tostring(travel)
+  local m = aspectMacros[k]
+  if not m then
+    m = travel and ("/cast [mod:shift] !%s; [combat][harm,nodead] !%s; !%s"):format(travel, hawk, travel) or ("/cast !" .. hawk)
+    aspectMacros[k] = m
+  end
+  return m
+end
+local movingSince
+
+---------------------------------------------------------------------------
 -- Instantané de l'état (lectures gardées ; valeurs secrètes → nil)
 ---------------------------------------------------------------------------
 local lastPetHP, petDied = nil, false
 local combatEndAt = 0
 local eatT0, eatHP0, eatMP0
 
-local function auraScan(unit, filter)
+local function auraScan(unit, filter)   -- -> auras lisibles, nombre d'auras masquées (secrètes en combat)
   local f = API().Auras
-  return f and f(unit, filter) or {}
+  if not f then return {}, 0 end
+  local list, hidden = f(unit, filter)
+  return type(list) == "table" and list or {}, tonumber(hidden) or 0
 end
 
 function M:Snapshot()
@@ -206,19 +263,25 @@ function M:Snapshot()
   local inGroup = try(G.IsInGroup)
   s.inGroup = inGroup and true or false
   -- auras du joueur : repas, boisson, bandage récent, aspects
-  local combatAspect, travelAspect = {}, {}
-  for _, id in ipairs({ S.HAWK, S.MONKEY }) do local n = spellName(id) if n then combatAspect[n] = true end end
-  for _, id in ipairs({ S.CHEETAH, S.PACK }) do local n = spellName(id) if n then travelAspect[n] = true end end
-  for _, a in ipairs(auraScan("player", "HELPFUL")) do
+  local kinds = s.class == "HUNTER" and aspectKinds() or {}
+  local helpful, hidden = auraScan("player", "HELPFUL")
+  local seen
+  for _, a in ipairs(helpful) do
     local k = a.name and EAT_NAMES[a.name]
     if k then
       local left = (a.expires and a.expires > 0) and (a.expires - s.t) or nil
       if k == "f" or k == "b" then s.eating, s.eatLeft = true, left end
       if k == "d" or k == "b" then s.drinking, s.drinkLeft = true, left end
     end
-    if a.name and combatAspect[a.name] then s.combatAspect = a.name end
-    if a.name and travelAspect[a.name] then s.travelAspect = a.name end
+    if a.name and kinds[a.name] then seen = a.name end
   end
+  -- (MACRO3) toutes lisibles : l'état est sûr (aucun aspect = aucun) ; sinon on garde nos lancers suivis
+  if seen or (tonumber(hidden) or 0) == 0 then aspectNow.name, aspectNow.sure, aspectNow.src = seen, true, "aura" end
+  s.aspect, s.aspectSure = aspectNow.name, aspectNow.sure
+  s.aspectKind = s.aspect and kinds[s.aspect] or nil
+  if s.aspectKind == "combat" then s.combatAspect = s.aspect elseif s.aspectKind == "travel" then s.travelAspect = s.aspect end
+  s.moving = movingSince ~= nil
+  s.movingFor = movingSince and (s.t - movingSince) or 0
   for _, a in ipairs(auraScan("player", "HARMFUL")) do
     if a.spellId == S.BANDAGED or (a.name and BANDAGED_NAMES[a.name]) then
       s.bandaged, s.bandagedExp, s.bandagedDur = true, a.expires, a.duration
@@ -352,30 +415,40 @@ function M:Plan(s, o)
         title = "Nourrir : " .. itemName(pk.petfood) .. (pk.petfoodQ == "partial" and " (un peu faible)" or ""),
         tip = { s.happy == 1 and "Mécontent : 75 % des dégâts, il peut s'enfuir." or "Heureux = +25 % de dégâts." } }
     end
-    -- aspect
+    -- aspect (MACRO3) : le bouton porte la macro « intelligente » de TAI Aspects (en combat ou sur une cible hostile
+    -- = Faucon, sinon Guépard ; Meute en groupe si connue). P.aspectWarn = mauvais aspect -> lueur (+ un son si
+    -- Guépard / Meute en combat : le seul vrai danger). On ne lit
+    -- l'aspect que s'il est sûr (auras lisibles ou notre dernier lancer) : jamais de fausse alerte en combat.
     local hawkId = knows(S.HAWK) and S.HAWK or (knows(S.MONKEY) and S.MONKEY or nil)
     local hawk = hawkId and spellName(hawkId)
-    if hawk and not busy then
+    if hawk and not s.dead and not s.taxi then
       local travelId = (s.inGroup and knows(S.PACK)) and S.PACK or (knows(S.CHEETAH) and S.CHEETAH or nil)
       local travel = travelId and spellName(travelId)
-      local a
-      if s.inCombat then
-        if s.travelAspect or not s.combatAspect then a = { id = hawkId, travelMode = false } end
-      elseif not s.combatAspect and not s.travelAspect then
-        a = { id = hawkId, travelMode = false }
-      elseif s.combatAspect and travel and not s.inGroup and (s.sinceCombat or 0) >= 20 and not needHP and not needMP
-          and not (s.target and s.target.hostile and not s.target.dead) then
-        a = { id = travelId, travelMode = true }
+      local hostile = s.target and s.target.hostile and not s.target.dead
+      local kind = s.aspectSure and (s.aspectKind or "none") or nil
+      local warn
+      if s.inCombat and (kind == "travel" or kind == "none") then
+        warn = { level = kind == "travel" and "danger" or "combat",
+          text = kind == "travel" and ((s.aspect or travel or "Guépard") .. " en combat : hébété à chaque coup") or "Aucun aspect en combat" }
+      elseif not s.inCombat and not s.mounted and hostile and kind and kind ~= "combat" and kind ~= "other" then
+        warn = { level = "pull", text = (kind == "travel" and ((s.aspect or "Guépard") .. " actif") or "Aucun aspect") .. " avant le pull" }
+      elseif not s.inCombat and not s.mounted and travel and not s.inGroup and s.moving and (s.movingFor or 0) >= 4
+          and kind == "combat" and not hostile and (s.sinceCombat or 0) >= 20 and not needHP and not needMP then
+        warn = { level = "travel", text = "Tu voyages : " .. travel .. " va plus vite" }
       end
-      if a then
-        local m
-        -- « ! » (règle MACRO2) : un double clic ne coupe jamais l'aspect qu'on vient de mettre
-        if a.travelMode then m = "/cast [combat][mod:shift] !" .. hawk .. "; !" .. travel
-        elseif travel then m = "/cast [nocombat,mod:shift] !" .. travel .. "; !" .. hawk
-        else m = "/cast !" .. hawk end
-        B.aspect = { useful = true, macro = m, icon = spellIcon(a.id), title = spellName(a.id) or hawk,
-          tip = { a.travelMode and "Pour voyager. Maj : " .. hawk .. ". En combat : toujours " .. hawk .. "."
-            or ("Avant le pull" .. (travel and (". Maj : " .. travel .. " (hors combat).") or ".")) } }
+      P.aspectWarn = warn
+      P.aspectMacro = M.AspectMacro(hawk, travel)
+      local toCombat = s.inCombat or hostile or not travel or (warn and warn.level ~= "travel")
+      local showIt = warn ~= nil or (not s.inCombat and kind == "none" and not busy)
+      if showIt and not (busy and not s.inCombat) then
+        local id = toCombat and hawkId or travelId
+        local tip = { warn and warn.text or "Aucun aspect actif.",
+          travel and ("Clic : le bon aspect tout seul (" .. hawk .. " en combat ou sur une cible hostile, sinon " .. travel
+            .. ") ; Maj : " .. travel .. ".") or ("Clic : " .. hawk .. "."),
+          "Pourquoi pas tout seul ? Lancer un sort demande ton clic : un addon qui le ferait sans toi serait un bot "
+            .. "(le jeu le bloque). TreeAI choisit, ton clic lance." }
+        B.aspect = { useful = true, macro = P.aspectMacro, icon = spellIcon(id), title = spellName(id) or hawk, tip = tip,
+          warn = warn }
       end
     end
     -- pull : marque + familier
@@ -544,6 +617,37 @@ local function setCooldown(b)
   elseif b.cd.Clear then pcall(b.cd.Clear, b.cd) end
 end
 
+local PIP_TEX = "Interface\\CHARACTERFRAME\\TempPortraitAlphaMask"
+local PIP_RGB = { good = { 0.3, 0.9, 0.4 }, warn = { 1, 0.6, 0.15 }, bad = { 1, 0.3, 0.25 } }
+--- (MACRO3) état de la macro d'un bouton : à jour (vert), à refaire après le combat (orange), objet épuisé (rouge)
+function M.PipState(b, w, fighting, count)
+  if not (b and b._macro) then return nil end
+  if b.itemID and not fighting and (count or itemCount(b.itemID)) == 0 then return "bad" end
+  if w and w.macro and w.macro ~= b._macro then return "warn" end
+  return "good"
+end
+--- texte de l'infobulle (calculé au survol seulement)
+function M.PipText(b)
+  local st = b and b.pipState
+  if st == "bad" then return "plus d'objet dans les sacs" end
+  if st == "warn" then return inCombat() and "sera mise à jour après le combat" or "mise à jour en cours" end
+  if st ~= "good" then return nil end
+  local t = b._macroAt and floor(now() - b._macroAt + 0.5) or nil
+  return "à jour" .. ((t and t >= 0) and (t < 60 and (" (il y a " .. max(1, t) .. " s)")
+    or (" (il y a " .. floor(t / 60) .. " min)")) or "")
+end
+local function setPip(b, w, fighting, count)
+  if not (b and b.pip) then return end
+  local st = M.PipState(b, w, fighting, count)
+  if st == b.pipState and b.pipShown == (st ~= nil and opt("pips") ~= false) then return end
+  b.pipState = st
+  b.pipShown = st ~= nil and opt("pips") ~= false
+  if not b.pipShown then b.pip:Hide() return end
+  local c = PIP_RGB[st]
+  if b.pip.SetVertexColor then b.pip:SetVertexColor(c[1], c[2], c[3], 1) end
+  b.pip:Show()
+end
+
 local function createButton(key)
   if buttons[key] then return buttons[key] end
   if inCombat() or not createBar() then return nil end
@@ -560,10 +664,22 @@ local function createButton(key)
   if b.SetHighlightTexture then pcall(b.SetHighlightTexture, b, "Interface\\Buttons\\ButtonHilight-Square", "ADD") end
   local cok, cd = pcall(G.CreateFrame, "Cooldown", nil, b, "CooldownFrameTemplate")
   if cok and cd then cd:SetAllPoints(b) b.cd = cd end
+  -- (MACRO3) pastille d'état de la macro du bouton (texture : changée en combat sans rien bloquer)
+  b.pip = b:CreateTexture(nil, "OVERLAY", nil, 7)
+  b.pip:SetSize(7, 7)
+  b.pip:SetPoint("TOPRIGHT", b, "TOPRIGHT", -1, -1)
+  b.pip:SetTexture(PIP_TEX)
+  b.pip:Hide()
+  if key == "aspect" and T.Glow and T.Glow.Pulse then   -- la lueur existe avant le combat (rien à créer en combat)
+    pcall(T.Glow.Pulse, b, 1, 0.6, 0.15, 1)
+    pcall(T.Glow.Stop, b)
+  end
   b:SetScript("OnEnter", function(self)
     local w = self.want or {}
     local lines = {}
     for _, l in ipairs(w.tip or {}) do lines[#lines + 1] = l end
+    local pt = M.PipText(self)
+    if pt then lines[#lines + 1] = "|cff9d9d9dMacro du bouton : " .. pt .. "|r" end
     -- (UIREDO) la touche liée (ou où la choisir), plus de « /click » à écrire soi-même
     local Th = T.Theme
     lines[#lines + 1] = "|cff66ccff" .. ((Th and Th.KeyHint) and Th:KeyHint(self) or ("Touche : /click TreeAIQuick_" .. key)) .. "|r"
@@ -712,23 +828,39 @@ local function applyLayout(P, combatPrep)
         if w and b._macro ~= w.macro then
           b:SetAttribute("type", "macro")
           b:SetAttribute("macrotext", w.macro)
-          b._macro = w.macro
+          b._macro, b._macroAt = w.macro, now()
         end
+        local cnt
         if w then
           b.want = w
           b.itemID = w.item
           b.icon:SetTexture(w.icon or 134400)
-          b.count:SetText(w.item and tostring(itemCount(w.item)) or "")
+          cnt = w.item and itemCount(w.item) or nil
+          b.count:SetText(cnt and tostring(cnt) or "")
         end
         b:ClearAllPoints()
         b:SetPoint("LEFT", bar, "LEFT", x, 0)
         b:Show()
         pcall(b.SetAlpha, b, 1)
+        setPip(b, w, false, cnt)
         x = x + SIZE + GAP
         order[#order + 1] = key
       elseif b:IsShown() then
         b:Hide()
       end
+    end
+  end
+  -- (MACRO3) bouton d'aspect caché : sa macro « intelligente » est posée d'avance (hors combat), pour qu'il puisse
+  -- apparaître en combat (combatPrep) et briller si l'aspect est mauvais
+  if P.aspectMacro and opt("aspect") and not combatPrep and not P.buttons.aspect then
+    local ab = createButton("aspect")
+    if ab and ab._macro ~= P.aspectMacro then
+      ab:SetAttribute("type", "macro")
+      ab:SetAttribute("macrotext", P.aspectMacro)
+      ab._macro, ab._macroAt = P.aspectMacro, now()
+      ab.want = { title = "Aspect", macro = P.aspectMacro, tip = { "Le bon aspect tout seul : Faucon en combat ou sur une "
+        .. "cible hostile, sinon Guépard. Il brille quand le mauvais aspect est actif." } }
+      ab.icon:SetTexture(spellIcon(S.HAWK) or 132000)
     end
   end
   -- munitions (bouton normal, marchand ouvert)
@@ -783,11 +915,12 @@ function M:Refresh()
   if P.kind == "ready" and (s.t - readySince > 6) then P.status = nil end
   if label then label:SetText(P.status or "") end
   if s.inCombat then
-    -- en combat : uniquement l'alpha (jamais Show / Hide / SetPoint / SetAttribute)
+    -- en combat : uniquement l'alpha et les textures (jamais Show / Hide / SetPoint / SetAttribute)
     for key, b in pairs(buttons) do
-      if shownKeys[key] then pcall(b.SetAlpha, b, P.buttons[key] and 1 or 0.3) end
+      if shownKeys[key] then pcall(b.SetAlpha, b, P.buttons[key] and 1 or 0.3) setPip(b, P.buttons[key], true) end
       setCooldown(b)
     end
+    M:AspectReminder(P, s)
   else
     if not bar and not next(P.buttons) and not P.status then return end
     T:RunOutOfCombat("QuickFight:layout", function()
@@ -796,6 +929,7 @@ function M:Refresh()
       if label then label:SetText(P.status or "") end
       applyLayout(P)
       for _, b in pairs(buttons) do setCooldown(b) end
+      M:AspectReminder(P, s)
     end)
   end
   if bar then
@@ -814,6 +948,36 @@ function M:Refresh()
   elseif not (s.eating or s.drinking) and M._ticker then
     M._ticker:Cancel()
     M._ticker = nil
+  end
+end
+
+-- (MACRO3) rappel d'aspect : le bouton d'aspect brille (texture animée, permise en combat) tant que l'aspect est
+-- mauvais ; un son UNE fois par épisode (« danger » en combat, « important » avant un pull ; jamais pour le voyage).
+local WARN_RGB = { danger = { 1, 0.25, 0.2 }, combat = { 1, 0.45, 0.15 }, pull = { 1, 0.65, 0.1 }, travel = { 0.4, 0.75, 1 } }
+local warnKey
+function M:AspectReminder(P, s)
+  local w = P and P.aspectWarn
+  local ab = buttons.aspect
+  local G2 = T.Glow
+  if ab and G2 then
+    if w and opt("aspectGlow") ~= false and ab:IsShown() then
+      local c = WARN_RGB[w.level] or WARN_RGB.pull
+      pcall(G2.Pulse, ab, c[1], c[2], c[3], 1)
+      M._glowing = w.level
+    elseif M._glowing then
+      pcall(G2.Stop, ab)
+      M._glowing = nil
+    end
+  end
+  local key = w and (w.level .. ":" .. tostring(s and s.aspect)) or nil
+  if key ~= warnKey then
+    warnKey = key
+    -- un son seulement pour le vrai danger (Guépard / Meute en combat = hébété à chaque coup) : jamais de son
+    -- « sans danger » (ANNOY) ; avant le pull ou sans aspect, la lueur suffit
+    if w and w.level == "danger" and opt("aspectSound") ~= false and T.Sound then
+      local ok, played = pcall(T.Sound, T, "danger")
+      M._aspectSound = ok and played or false
+    end
   end
 end
 
@@ -840,6 +1004,27 @@ function M:OnEnable()
     self:RegisterUnitEvent("UNIT_AURA", "player", "pet", req)
     self:RegisterUnitEvent("UNIT_PET", "player", nil, function() lastPetHP = nil M:InvalidatePicks() M:Request() end)
     self:RegisterUnitEvent("UNIT_HAPPINESS", "pet", nil, req)
+  end
+  -- (MACRO3) aspect suivi par nos lancers (lisibles en combat), remis à zéro à la mort ; déplacement (rappel « voyage »)
+  if T:PlayerClass() == "HUNTER" then
+    if self.RegisterUnitEvent then
+      self:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player", nil, function(_, _, _, _, spellID)
+        if M.OnPlayerCast(spellID) then M:Request(0.1) end
+      end)
+    end
+    self:RegisterEvent("PLAYER_DEAD", function() aspectNow.name, aspectNow.sure, aspectNow.src = nil, true, "dead" end)
+    self:RegisterEvent("PLAYER_STARTED_MOVING", function()
+      movingSince = movingSince or now()
+      local P = M._lastPlan
+      if P and P.aspectMacro and P.aspectMacro:find(";", 1, true) and not inCombat() and not (G.IsInGroup and G.IsInGroup()) then
+        M:Request(4.2)
+      end
+    end)
+    self:RegisterEvent("PLAYER_STOPPED_MOVING", function()
+      movingSince = nil
+      local w = M._lastPlan and M._lastPlan.aspectWarn
+      if w and w.level == "travel" then M:Request(0.5) end
+    end)
   end
   self:RegisterEvent("PLAYER_TARGET_CHANGED", req)
   self:RegisterEvent("BAG_UPDATE_DELAYED", bags)

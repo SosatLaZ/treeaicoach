@@ -129,7 +129,7 @@ return function(M, ctx)
   end
   local Mc = T:GetModule("Macros")
   if Mc and Mc.TogglePanel then
-    Mc:TogglePanel()
+    if Mc.ToggleList then Mc:ToggleList() else Mc:TogglePanel() end   -- (MACRO3) the list = the macro panel
     check(Mc.panel and Th:IsWindow(Mc.panel) and Th:SkinOf(Mc.panel) == "window", "macros : fenêtre habillée")
     if Mc.panel then Mc.panel:Hide() end
   end

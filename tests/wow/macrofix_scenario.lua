@@ -20,6 +20,7 @@ return function(M, ctx)
     M.macroFail, M.macroBlockedCalls = nil, 0
     local c = Mc.char or {}
     c.installed, c.bodies, c.setup = {}, {}, false
+    c.opts, c.preset = {}, nil   -- (MACRO3) the storm clicked the « Macros » page (presets, settings)
     Mc:ClearBlocked()
     Mc:ClearSpellCache()
     if Mc.copy then Mc.copy:Hide() end
@@ -166,7 +167,7 @@ return function(M, ctx)
 
   -- 7. panel: one macro → created, put on the cursor (« glisse-la sur ta barre »)
   reset()
-  Mc:TogglePanel()
+  Mc:ToggleList()   -- (MACRO3) TogglePanel opens the « Macros » page of the TreeAI window; the list = old panel
   local P = Mc.panel
   if P then
     local sel = Mc:SelectedDef()

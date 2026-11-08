@@ -1,7 +1,9 @@
 """Spell knowledge base for WoW Forever macros (9 classes, reworked in Forever 1.60).
 
 ``SPELLS[cls][key] = (spell_id, French client name, flags)``; flags: ``o`` = off the global cooldown
-(next-swing attacks, cooldowns, racials), ``p`` = pet spell (never required to install a macro).
+(next-swing attacks, cooldowns, racials — checked against the client's SpellCategories / SpellCooldowns tables:
+StartRecoveryCategory 133 with StartRecoveryTime > 0 = on the GCD; aspects ARE on the GCD in Forever), ``p`` = pet
+spell (never required to install a macro).
 IDs and names come from Blizzard's WoW Forever client tables (build 1.60.1.70862, frFR: SkillLineAbility /
 SpellLevels / SpellName, see ``treeaicoach/wow/data``); the learn level of each spell is read from
 ``gamedata.class_spells`` (``learn_level``). Spells that only come from a talent tree are listed in
@@ -20,12 +22,12 @@ COMMON = {
     # racials + wand (optional lines only)
     "berserking": (20554, "Berserker", "o"),
     "blood_fury": (20572, "Fureur sanguinaire", "o"),
-    "stoneform": (20594, "Forme de pierre", "o"),
+    "stoneform": (20594, "Forme de pierre", ""),
     "escape_artist": (20589, "Maître de l'évasion", ""),
-    "will_forsaken": (7744, "Volonté des Réprouvés", "o"),
-    "war_stomp": (20549, "Choc martial", ""),
+    "will_forsaken": (7744, "Volonté des Réprouvés", ""),
+    "war_stomp": (20549, "Choc martial", "o"),
     "shadowmeld": (20580, "Camouflage dans l'ombre", "o"),
-    "perception": (20600, "Perception", "o"),
+    "perception": (20600, "Perception", ""),
     "wand": (5019, "Tir", "o"),
 }
 RACIALS = ("berserking", "blood_fury", "stoneform", "escape_artist", "will_forsaken", "war_stomp",
@@ -152,9 +154,9 @@ SPELLS: dict[str, dict[str, tuple[int, str, str]]] = {
         "frost_trap": (13809, "Piège de givre", ""),
         "counterattack": (19306, "Contre-attaque", ""),
         "strider_kick": (1317257, "Coup de trotteur", ""),
-        "feign_death": (5384, "Feindre la mort", ""),
+        "feign_death": (5384, "Feindre la mort", "o"),
         "scatter_shot": (19503, "Flèche de dispersion", ""),
-        "intimidation": (19577, "Intimidation", "o"),
+        "intimidation": (19577, "Intimidation", ""),
         "flare": (1543, "Fusée éclairante", ""),
         "enchanted_flare": (1221404, "Fusée éclairante enchantée", ""),
         "explosive_trap": (13812, "Piège explosif", ""),
@@ -164,6 +166,13 @@ SPELLS: dict[str, dict[str, tuple[int, str, str]]] = {
         "volley": (1510, "Salve", ""),
         "precision_shot": (1310687, "Tir de précision", ""),
         "tranq_shot": (19801, "Tir tranquillisant", ""),
+        "tame_beast": (1515, "Apprivoise une bête", ""),
+        "beast_training": (5149, "Dressage des bêtes", ""),
+        "beast_lore": (1462, "Connaissance des bêtes", ""),
+        "eyes_beast": (1002, "Oeil de la bête", ""),
+        "eagle_eye": (6197, "Oeil d'aigle", ""),
+        "aspect_beast": (13161, "Aspect de la bête", ""),
+        "aspect_wild": (20043, "Aspect de la nature", ""),
         "growl": (2649, "Grondement", "p"),
         "cower": (1742, "Dérobade", "p"),
     },
@@ -502,6 +511,8 @@ TALENTS: dict[str, dict[str, dict[str, int]]] = {
 # a trainer teaches them in Forever: key -> learn level.
 LEVEL_OVERRIDE = {
     "WARRIOR": {"victory_rush": 20},
+    # Dressage des bêtes : absent des tables de classe du client (sort de quête) : clause optionnelle seulement
+    "HUNTER": {"beast_training": 10},
     "MAGE": {"evocation": 20},
     "WARLOCK": {"curse_elements": 30},
     "DRUID": {"innervate": 40},

@@ -30,7 +30,7 @@ def test_no_glyphs_missing_from_wow_fonts():
 
 
 def test_create_macro_checked_by_return_value_and_forbidden_listener():
-    assert "CreateMacro, def.n" in SRC and "macroName(ret) == def.n" in SRC
+    assert "CreateMacro, gn" in SRC and "macroName(ret) == gn" in SRC   # (MACRO3) gn = name in game (renamable)
     assert '"ADDON_ACTION_FORBIDDEN"' in SRC
     assert "Constants.MacroConsts" in SRC
     assert "FindSpellBookSlotForSpell" in SRC
