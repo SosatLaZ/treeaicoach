@@ -53,11 +53,11 @@ M.ROAD_MULT = 0.8
 M.PEN_CAP = 40
 M.WEIGHT = { elite = 8, red = 6, orange = 3, yellow = 1, green = 0.3, live = 4, death = 5 }
 
+-- (LITE) sans table par appel (pcall direct) ; toujours au moins une valeur
+local function tryPass(ok, a, ...) if ok then return a, ... end return nil end
 local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
-  local r = { pcall(fn, ...) }
-  if not r[1] then return nil end
-  return unpack(r, 2)
+  return tryPass(pcall(fn, ...))
 end
 local function G(name) return rawget(_G, name) end
 local function now() return try(G("GetTime")) or 0 end

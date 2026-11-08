@@ -673,11 +673,14 @@ function M.Count()
 end
 
 function M:OnEnable()
-  for _, ev in ipairs({ "QUEST_LOG_UPDATE", "QUEST_ACCEPTED", "QUEST_REMOVED", "PLAYER_LEVEL_UP", "ZONE_CHANGED_NEW_AREA",
-    "GROUP_ROSTER_UPDATE" }) do
+  -- (LITE) profil essentiel : calculé à la demande (/tai abandon) et quand le journal gagne / perd une quête
+  local lite = T.Lite and T:Lite()
+  local evs = lite and { "QUEST_ACCEPTED", "QUEST_REMOVED", "PLAYER_LEVEL_UP" }
+    or { "QUEST_LOG_UPDATE", "QUEST_ACCEPTED", "QUEST_REMOVED", "PLAYER_LEVEL_UP", "ZONE_CHANGED_NEW_AREA", "GROUP_ROSTER_UPDATE" }
+  for _, ev in ipairs(evs) do
     M:RegisterEvent(ev, function() M.Refresh(1.5) end)
   end
-  M:On("COMBAT_END", function() M.Refresh(1.5) end)
+  if not lite then M:On("COMBAT_END", function() M.Refresh(1.5) end) end
   M:On("SUMMARY", function() pcall(M.WriteSummary, M) end)
   if T.RegisterSlash then
     T:RegisterSlash("abandon", function(rest) M.Report(rest) end, "quêtes à retirer : verdict + pourquoi (/tai abandon 2 = comment)")

@@ -64,7 +64,7 @@ LOOT_ITEM_SELF_MULTIPLE = "Vous recevez le butin : %sx%d."
 SlashCmdList = {}
 TreeAI = { mods = {}, RegisterModule = function(self, n, t) self.mods[n] = t end,
   Suggest = function(self, id, text, prio) sugg[#sugg+1] = id .. " [" .. prio .. "] " .. text end }
-TreeAIDB = {}
+TreeAIDB = { profileV = 999, moduleProfile = "tout" }   -- (LITE) every module on: this smoke tests them all
 local ns = {}
 if arg[2] then
   TreeAI = nil

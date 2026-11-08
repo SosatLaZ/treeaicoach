@@ -96,7 +96,18 @@ local GetPetTrainingPoints = PetInfo.GetPetTrainingPoints or _G.GetPetTrainingPo
 local GetPetFoodTypes = PetInfo.GetPetFoodTypes or _G.GetPetFoodTypes
 local function pub(v) local A = API() if A and A.Pub then return A.Pub(v) end return v end
 
+local spellNameMemo, spellNameMiss = {}, {}   -- (LITE) un nom de sort ne change pas : lu une fois (absent : relu après 60 s)
+local spellNameRaw
 local function spellName(id)
+  local c = spellNameMemo[id]
+  if c then return c end
+  local t = (GetTime and GetTime()) or 0
+  if spellNameMiss[id] and t - spellNameMiss[id] < 60 then return nil end
+  c = spellNameRaw(id)
+  if c then spellNameMemo[id] = c else spellNameMiss[id] = t end
+  return c
+end
+spellNameRaw = function(id)
   local A = API()
   if A and A.SpellName then
     local ok, n = pcall(A.SpellName, id)
@@ -229,8 +240,23 @@ local function slotItemID(bag, slot)
   return nil
 end
 
-local function bagItemIDs()
+-- (LITE) liste gardée jusqu'au prochain changement de sacs (BAG_UPDATE_DELAYED…) ou 30 s
+local bagCache, bagCacheAt = nil, -100
+local function bagItemIDsRaw()
   local seen, out = {}, {}
+  -- (LITE) l'id seul suffit : GetContainerItemID (pas de table par case) quand le jeu l'a
+  if (C_Container and C_Container.GetContainerItemID) or GetContainerItemID then
+    local ok = pcall(function()
+      for bag = 0, 4 do
+        for slot = 1, numSlots(bag) do
+          local id = slotItemID(bag, slot)
+          if id and not seen[id] then seen[id] = true; out[#out + 1] = id end
+        end
+      end
+    end)
+    if ok then return out end
+    seen, out = {}, {}
+  end
   local A = API()
   if A and A.IterBags then
     local ok = pcall(function()
@@ -249,6 +275,11 @@ local function bagItemIDs()
     end
   end
   return out
+end
+local function bagItemIDs()
+  local t = (GetTime and GetTime()) or 0
+  if not bagCache or t - bagCacheAt > 30 then bagCache, bagCacheAt = bagItemIDsRaw(), t end
+  return bagCache
 end
 
 local function inCombat()
@@ -791,8 +822,17 @@ local EVENTS = {
   "COMBAT_LOG_EVENT_UNFILTERED", "PLAYER_LOGOUT", "PLAYER_LEAVING_WORLD",
 }
 
+local startCombatTicker, stopCombatTicker   -- (LITE) définis plus bas
+local UNIT_EVENTS = { UNIT_PET = true, UNIT_HAPPINESS = true, UNIT_INVENTORY_CHANGED = true,
+  UNIT_SPELLCAST_SUCCEEDED = true, UNIT_SPELLCAST_START = true }
 function M:OnEvent(ev, ...)
   if ev == "COMBAT_LOG_EVENT_UNFILTERED" then return self:OnCombatLog(...) end
+  -- (LITE) événements d'unité : seulement le joueur et son familier (pas tout le groupe à chaque sort)
+  if UNIT_EVENTS[ev] then
+    local unit = ...
+    if unit ~= nil and unit ~= "player" and unit ~= "pet" then return end
+  end
+  if ev == "BAG_UPDATE_DELAYED" or ev == "UNIT_INVENTORY_CHANGED" or ev == "PLAYER_ENTERING_WORLD" then bagCache = nil end
   if ev == "START_AUTOREPEAT_SPELL" then autoOn = true; buildBar(); return end
   if ev == "STOP_AUTOREPEAT_SPELL" then autoOn = false; return end
   if ev == "UNIT_SPELLCAST_SUCCEEDED" then
@@ -811,7 +851,7 @@ function M:OnEvent(ev, ...)
   end
   if ev == "PLAYER_LOGOUT" or ev == "PLAYER_LEAVING_WORLD" then return pcall(self.Snapshot, self) end
   if ev == "PLAYER_TARGET_CHANGED" then return self:CheckMark() end
-  if ev == "PLAYER_REGEN_DISABLED" then self:CheckAspect(); self:CheckMark(); return end
+  if ev == "PLAYER_REGEN_DISABLED" then startCombatTicker(); self:CheckAspect(); self:CheckMark(); return end
   if ev == "PLAYER_REGEN_ENABLED" then
     for g in pairs(attackers) do attackers[g] = nil end
   end
@@ -823,19 +863,16 @@ function M:OnEvent(ev, ...)
   if ev == "PLAYER_REGEN_ENABLED" or ev == "PLAYER_ENTERING_WORLD" then self:CheckTraining(); self:CheckAspect() end
 end
 
-local tick, slow = 0, 0
-local function onUpdate(_, elapsed)
-  tick, slow = tick + (elapsed or 0), slow + (elapsed or 0)
-  if tick >= 0.25 then
-    tick = 0
-    if inCombat() then pcall(M.CheckDeadZone, M) end
-  end
-  if slow >= 5 then
-    slow = 0
-    pcall(M.CheckPet, M)
-    if inCombat() then pcall(M.CheckAspect, M) end
-  end
+-- (LITE) plus d'OnUpdate à chaque image : un minuteur de 5 s, et la zone morte (0,25 s) seulement en combat
+local combatTicker
+startCombatTicker = function()
+  if combatTicker or not TreeAI.NewTicker then return end
+  combatTicker = TreeAI:NewTicker(0.25, function()
+    if inCombat() then pcall(M.CheckDeadZone, M)
+    elseif combatTicker then combatTicker:Cancel(); combatTicker = nil end
+  end, M)
 end
+stopCombatTicker = function() if combatTicker then combatTicker:Cancel(); combatTicker = nil end end
 
 function M:Enable()
   if self.enabled or not CreateFrame then return end
@@ -857,7 +894,14 @@ function M:Enable()
     if not ok and TreeAI.Debug then pcall(TreeAI.Debug, TreeAI, "Hunter: " .. tostring(err)) end
     if not ok and TreeAI._errorHook then pcall(TreeAI._errorHook, err, "Hunter:" .. tostring(ev)) end
   end)
-  frame:SetScript("OnUpdate", onUpdate)
+  if not self._slowTicker and TreeAI.NewTicker then
+    self._slowTicker = TreeAI:NewTicker(5, function()
+      if not M.enabled then return end
+      pcall(M.CheckPet, M)
+      if inCombat() then pcall(M.CheckAspect, M) end
+    end, M)
+  end
+  if inCombat() then startCombatTicker() end
   if type(self.On) == "function" and not self.summaryHooked then
     self.summaryHooked = true
     pcall(self.On, self, "SUMMARY", function() if M.enabled then pcall(M.Snapshot, M) end end)
@@ -872,6 +916,8 @@ function M:OnDisable()
     if frame.UnregisterAllEvents then frame:UnregisterAllEvents() end
     frame:SetScript("OnUpdate", nil)
   end
+  if self._slowTicker then self._slowTicker:Cancel(); self._slowTicker = nil end
+  stopCombatTicker()
   if bar then bar:Hide() end
 end
 

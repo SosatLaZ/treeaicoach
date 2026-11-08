@@ -45,6 +45,8 @@ if command -v lua5.1 >/dev/null 2>&1; then
     done
     # forever = the real WoW Forever 1.60.1 rules: secret values in combat, Era globals removed,
     # COMBAT_LOG_EVENT_UNFILTERED forbidden, macro writes only inside a click / command (+ /tai test)
+    # LITE: what a new player gets (profile « essentiel »: most modules asleep, events / tickers unregistered)
+    run_h "TreeAI/forever/essentiel/HUNTER" --flavor forever --class HUNTER --profile essentiel "$ADDON" || fail=1
     for cls in HUNTER WARRIOR; do
       run_h "TreeAI/forever/selftest/$cls" --flavor forever --class "$cls" \
         --scenario tests/wow/selftest_scenario.lua "$ADDON" || fail=1

@@ -58,11 +58,11 @@ local CIRCLE = "Interface\\CharacterFrame\\TempPortraitAlphaMask"
 local ARROW = "Interface\\Minimap\\MinimapArrow"
 local GOLD = { 0.95, 0.78, 0.32 }
 
+-- (LITE) sans table par appel (pcall direct) ; toujours au moins une valeur
+local function tryPass(ok, a, ...) if ok then return a, ... end return nil end
 local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
-  local r = { pcall(fn, ...) }
-  if not r[1] then return nil end
-  return unpack(r, 2)
+  return tryPass(pcall(fn, ...))
 end
 local function now() return try(_G.GetTime) or 0 end
 local function cut(s, n) s = tostring(s or "") if #s > n then return s:sub(1, n - 1) .. "…" end return s end

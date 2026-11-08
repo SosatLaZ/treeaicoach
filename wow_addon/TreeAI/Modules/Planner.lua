@@ -32,11 +32,11 @@ local floor, max, min, sqrt, abs, huge = math.floor, math.max, math.min, math.sq
 local tinsert, tremove, tsort, tconcat, fmt = table.insert, table.remove, table.sort, table.concat, string.format
 local unpack = unpack or table.unpack
 
+-- (LITE) sans table par appel (pcall direct) ; toujours au moins une valeur
+local function tryPass(ok, a, ...) if ok then return a, ... end return nil end
 local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
-  local r = { pcall(fn, ...) }
-  if not r[1] then return nil end
-  return unpack(r, 2, math.max(2, table.maxn(r)))   -- always at least one value (tonumber(try(...)) safe)
+  return tryPass(pcall(fn, ...))
 end
 local function G(name) return rawget(_G, name) end
 local function C(ns, fn) local t = G(ns) return type(t) == "table" and t[fn] or nil end
@@ -219,13 +219,19 @@ function E.RouteVerdict(plan, ctx, info)
   return "ok", nil
 end
 -- deterministic hash of a step list (k, q, o) → 6 hex digits, no bit ops
+-- (LITE) mémorisé par liste (même table, même longueur, même 1re/dernière étape) : recalculé seulement si elle change
+local hashMemo = setmetatable({}, { __mode = "k" })
 function E.Hash(steps)
+  local m = type(steps) == "table" and hashMemo[steps]
+  if m and m.n == #steps and m.a == steps[1] and m.z == steps[#steps] then return m.h end
   local h = 5381
   for _, s in ipairs(steps or {}) do
     local str = tostring(s.k or "") .. "," .. tostring(s.q or "") .. "," .. tostring(s.o or "") .. ";"
     for i = 1, #str do h = (h * 33 + str:byte(i)) % 16777216 end
   end
-  return fmt("%06x", h)
+  local r = fmt("%06x", h)
+  if type(steps) == "table" then hashMemo[steps] = { n = #steps, a = steps[1], z = steps[#steps], h = r } end
+  return r
 end
 -- precedence: within one quest pick < obj < turn
 local RANK = { pick = 1, obj = 2, turn = 3 }
@@ -1219,7 +1225,7 @@ function P:OnEnable()
   self:On("SUMMARY", function() pcall(P.WriteSummary, P) end)
   self:On("SQUAD_UPDATE", function() P:Render() end)
   T:RegisterComm("PLN", self, function(_, payload, sender) P:OnSync(payload, sender) end)
-  self.ticker = T:NewTicker(2, function()
+  self.ticker = T:NewTicker(3, function()
     if inCombat() or not P.steps then return end
     -- arrival on a non-quest step (fly / hs / meet…) within 40 yd → done
     local s = P.steps[P.cursor or 0]

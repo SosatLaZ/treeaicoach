@@ -1635,6 +1635,9 @@ function M:Tick()
     if n ~= myName() and not roster[n] then claims[n] = nil end
   end
   for n in pairs(info) do if n ~= myName() and not roster[n] then info[n] = nil end end
+  -- (LITE) tableau, trajets, artisans, instantané : recalculés quand quelque chose a changé, sinon toutes les 10 s
+  if not self._dirty and t - (self._heavyAt or -100) < 10 then return end
+  self._heavyAt = t
   local list = self:MemberList()
   self.list = list
   local me = myName()
@@ -1875,7 +1878,7 @@ function M:OnEnable()
   self:On("SUMMARY", function() M:SaveSummary() end)
   self:RefreshRoster()
   if T.NewTicker and not self._ticker then
-    self._ticker = T:NewTicker(1, function() if M:IsEnabled() then M:Tick() end end)
+    self._ticker = T:NewTicker(2, function() if M:IsEnabled() then M:Tick() end end)
   end
 end
 

@@ -154,6 +154,8 @@ return function(M, ctx)
   -- 40. aspect time: whole fight in Cheetah -> tip
   M.auras.player = { { name = "Aspect du guépard", spellId = 5118 } }
   M.Advance(10, 0.5)
+  -- (LITE) the Hunter module's live aspect line depends on when its 5 s check last ran: out of the way here
+  T:ClearSuggestion("Hunter:aspect")
   M.LeaveCombat()
   local as = sug("HunterPro:aspect")
   ctx.check(as and as.prio == 2 and as.text:find("guépard"), "aspect report: " .. tostring(as and as.text))
@@ -188,6 +190,7 @@ return function(M, ctx)
   rawset(_G, "IsPassiveSpell", nil)
 
   -- 50. perf: per-module timing + report + auto slowdown
+  if not C.instrumented then C.instrumented = C.InstrumentModules(); M.Advance(6, 0.5) end   -- (LITE) option off by default
   ctx.check((C.instrumented or 0) > 10, "modules instrumented: " .. tostring(C.instrumented))
   ctx.check(C.stats.Fight and C.stats.Fight.calls > 0, "Fight calls timed")
   rawset(_G, "GetAddOnMemoryUsage", function() return 812.4 end)
