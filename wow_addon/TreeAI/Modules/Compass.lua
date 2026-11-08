@@ -281,6 +281,24 @@ function M.OtherGuide(t)
   return nil
 end
 
+-- Un itinéraire TreeAI confié à Shortest Path (clic du joueur) s'affiche en ligne flottante en haut de l'écran
+-- (« Arrêt 1 sur 1 : … »). À la mort, il recouvre la fenêtre de mort de Blizzard et vise une quête au lieu du
+-- corps : on retire NOTRE itinéraire (propriétaire « TreeAI » seulement, API publique de SPF, testée avant usage).
+-- Rien n'est relancé tout seul : le joueur reclique (« Aller là » / itinéraire) une fois relevé.
+local SPF_STOP = { "StopRoute", "ClearRoute", "StopNavigation", "Stop", "Clear", "Cancel" }
+function M.MarkRoute(how) M.routeBy = how end
+function M.ClearRouteOnDeath()
+  if M.routeBy ~= "spf" and not (M.guide and M.guide.how == "spf") then return false end
+  local A = M.SPF()
+  if not A then M.routeBy = nil return false end
+  for _, fn in ipairs(SPF_STOP) do
+    if type(A[fn]) == "function" and spfCall(A, fn, "TreeAI") ~= nil then break end
+  end
+  M.routeBy = nil
+  if M.guide and M.guide.how == "spf" then M.guide = nil end
+  return true
+end
+
 local PIN_TXT = { spf = "Shortest Path te guide", tomtom = "point TomTom posé", blizzard = "repère posé sur la carte" }
 function M.GoTo(t)
   t = t or M.Current()
@@ -796,7 +814,11 @@ function M.Refresh()
   if not frame then return st end
   local want = M.db and M.db.shown ~= false and M:IsEnabled()
   st.dup = (M.db and M.db.hideDup ~= false and not st.none) and M.OtherGuide(st.target) or nil
-  if not want or st.hidden or st.none or st.dup or (M.db.hideCombat ~= false and inCombat()) then
+  -- mort / fantôme : la fenêtre de mort de Blizzard (haut-centre) reste lisible, la course au corps a son guide
+  local ps = T.PlayerState and T:PlayerState()
+  st.hiddenDead = ps and (ps.dead or ps.ghost) or nil
+  if st.hiddenDead then M.ClearRouteOnDeath() end
+  if not want or st.hidden or st.none or st.dup or st.hiddenDead or (M.db.hideCombat ~= false and inCombat()) then
     -- caché : instance / pas de position / pas de cible ; on garde le OnUpdate via un ticker léger
     if frame:IsShown() then frame:Hide() end
     return st
@@ -864,6 +886,14 @@ function M:OnEnable()
   self:RegisterEvent("PLAYER_ENTERING_WORLD", function() rebuildSoon("init") end)
   self:RegisterEvent("PLAYER_REGEN_ENABLED", function() if M.dirty then rebuildSoon() end M.Refresh() end)
   self:RegisterEvent("PLAYER_REGEN_DISABLED", function() M.Refresh() end)
+  -- mort / relevé : cacher tout de suite (fenêtre de mort lisible), réafficher une fois vivant
+  for _, ev in ipairs({ "PLAYER_DEAD", "PLAYER_ALIVE", "PLAYER_UNGHOST" }) do
+    self:RegisterEvent(ev, function()
+      if T.InvalidatePlayerState then T:InvalidatePlayerState() end
+      if ev == "PLAYER_DEAD" then M.ClearRouteOnDeath() end
+      M.Refresh()
+    end)
+  end
   self:On("SUMMARY", function() pcall(M.WriteSummary) end)
   self:On("QUESTS_UPDATED", function() rebuildSoon() end)
   -- ticker : flèche même cadre caché (pour réapparaître en sortant d'instance), cibles toutes les 10 s

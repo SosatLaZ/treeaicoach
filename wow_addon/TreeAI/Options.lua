@@ -1,71 +1,66 @@
--- TreeAI - options: a main page (Aides PvP, panneau, encadré d'alerte, messages) and one page per module.
--- Modern Settings API if present (canvas category + subcategories), else InterfaceOptions (.parent).
--- Plain frames only: nothing protected, no Blizzard frame is modified.
+-- TreeAI - options. ONE entry in Blizzard's list (« TreeAI Coach ») ; inside it, our own layout like the best
+-- addons (Ace3 AceConfigDialog / ElvUI): a category tree on the left (grouped, scrollable, always fits) and the
+-- selected page on the right in a ScrollFrame. Every page is built by the same vertical layout engine: each widget
+-- goes BELOW the previous one with a fixed rhythm (header 24, checkbox 26, slider ≈ 50, button 28, section gap
+-- 14); labels have a fixed width, wrap, and their measured height pushes the next row down → nothing can
+-- overlap and nothing leaves the column. The engine records every rectangle (TreeAI:GetOptionLayout) so the
+-- harness can prove it. Plain frames only: nothing protected, no Blizzard frame is modified.
 local TreeAI = TreeAI
 if not TreeAI then return end
 local _G = _G
 local L = TreeAI.L
-local pcall, ipairs, pairs, type, tostring, floor = pcall, ipairs, pairs, type, tostring, math.floor
+local pcall, ipairs, pairs, type, tostring, floor, ceil = pcall, ipairs, pairs, type, tostring, math.floor, math.ceil
+local max, min = math.max, math.min
 
 local category, canvas, appearance
-local soundsPage, soundsCat
-local pages = {}       -- { frame, category }
+local soundsPage, homePage
+local pages = {}       -- { frame, module }  (one per module, shown inside our canvas)
 local widgets = {}
 
-local function newCheck(parent, label, getter, setter, tip)
-  local ok, cb = pcall(_G.CreateFrame, "CheckButton", nil, parent, "UICheckButtonTemplate")
-  if not ok or not cb then return nil end
-  cb:SetSize(24, 24)
-  local fs = cb.text or cb.Text
-  if not fs then
-    fs = cb:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    fs:SetPoint("LEFT", cb, "RIGHT", 2, 0)
-  end
-  fs:SetText(label)
-  cb.refresh = function() cb:SetChecked(getter() and true or false) end
-  cb:SetScript("OnClick", function(self) setter(self:GetChecked() and true or false) end)
-  if tip then
-    cb:SetScript("OnEnter", function(self)
-      local tt = _G.GameTooltip
-      if not tt then return end
-      tt:SetOwner(self, "ANCHOR_RIGHT")
-      tt:AddLine(label, 1, 1, 1)
-      tt:AddLine(tip, 0.8, 0.8, 0.8, true)
-      tt:Show()
-    end)
-    cb:SetScript("OnLeave", function() if _G.GameTooltip then _G.GameTooltip:Hide() end end)
-  end
-  cb.refresh()
-  return cb
-end
+-- rythme vertical (px) : identique sur toutes les pages
+local R = { pad = 12, header = 24, check = 26, slider = 50, button = 28, gap = 14, line = 4, btnW = 280, btnH = 24,
+  navW = 158, navRow = 18, navHead = 22 }
+TreeAI.OPTIONS_RHYTHM = R
 
-local function newSlider(parent, label, min, max, step, getter, setter)
-  local ok, s = pcall(_G.CreateFrame, "Slider", nil, parent, "OptionsSliderTemplate")
-  if not ok or not s then return nil end
-  s:SetWidth(220)
-  s:SetMinMaxValues(min, max)
-  s:SetValueStep(step)
-  if s.SetObeyStepOnDrag then s:SetObeyStepOnDrag(true) end
-  local text = s.Text or s.text
-  local lo, hi = s.Low, s.High
-  if lo and lo.SetText then lo:SetText(tostring(min)) end
-  if hi and hi.SetText then hi:SetText(tostring(max)) end
-  local function fmt(v)
-    if text and text.SetText then text:SetText(label .. " : " .. tostring(v)) end
+local function plain(s) return (tostring(s or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
+local function ulen(s) local _, n = plain(s):gsub("[^\128-\191]", "") return n end
+local AVG = { GameFontHighlightSmall = 5.4, GameFontDisableSmall = 5.4, GameFontNormalSmall = 5.4,
+  GameFontHighlight = 6.2, GameFontNormal = 6.4, GameFontNormalLarge = 8.2 }
+local LINE = { GameFontHighlightSmall = 13, GameFontDisableSmall = 13, GameFontNormalSmall = 13,
+  GameFontHighlight = 15, GameFontNormal = 15, GameFontNormalLarge = 19 }
+-- hauteur d'un texte à largeur fixe : la mesure du jeu, jamais moins que l'estimation (mots coupés compris)
+local function measure(fs, text, width, font)
+  local lh = LINE[font or ""] or 14
+  local lines = max(1, ceil(ulen(text) * (AVG[font or ""] or 6) / max(40, width - 8)))
+  local est = lines * lh
+  local got = 0
+  if fs and fs.GetStringHeight then
+    local ok, v = pcall(fs.GetStringHeight, fs)
+    got = ok and tonumber(v) or 0
   end
-  s.refresh = function()
-    local v = getter() or min
-    s:SetValue(v)
-    fmt(v)
-  end
-  s:SetScript("OnValueChanged", function(_, v)
-    v = floor(v / step + 0.5) * step
-    if step < 1 then v = floor(v * 100 + 0.5) / 100 end
-    fmt(v)
-    setter(v)
+  return max(est, got, lh)
+end
+local function wrapFS(parent, font, width, text)
+  local fs = parent:CreateFontString(nil, "OVERLAY", font)
+  fs:SetJustifyH("LEFT")
+  if fs.SetJustifyV then fs:SetJustifyV("TOP") end
+  fs:SetWidth(width)
+  if fs.SetWordWrap then fs:SetWordWrap(true) end
+  if fs.SetNonSpaceWrap then fs:SetNonSpaceWrap(true) end
+  fs:SetText(text)
+  return fs
+end
+local function tooltip(owner, title, tip)
+  if not tip then return end
+  owner:SetScript("OnEnter", function(self)
+    local tt = _G.GameTooltip
+    if not tt then return end
+    tt:SetOwner(self, "ANCHOR_RIGHT")
+    tt:AddLine(title, 1, 1, 1)
+    tt:AddLine(tip, 0.8, 0.8, 0.8, true)
+    tt:Show()
   end)
-  s.refresh()
-  return s
+  owner:SetScript("OnLeave", function() if _G.GameTooltip then _G.GameTooltip:Hide() end end)
 end
 
 local function newButton(parent, label, width, fn, textFn)
@@ -78,33 +73,152 @@ local function newButton(parent, label, width, fn, textFn)
   return b
 end
 
--- layout helper: a page is a vertical list
-local function layout(content)
-  local P = { y = -10 }
-  function P.text(str, font, h)
-    local fs = content:CreateFontString(nil, "OVERLAY", font or "GameFontHighlightSmall")
-    fs:SetPoint("TOPLEFT", content, "TOPLEFT", 14, P.y)
-    fs:SetWidth(540)
-    fs:SetJustifyH("LEFT")
-    fs:SetText(str)
-    P.y = P.y - (h or 18)
+-- ---------------------------------------------------------------- moteur de mise en page (vertical, sans chevauchement)
+-- P.rects = { {x, y, w, h, kind, label, widget} } en px depuis le coin haut-gauche du contenu (y vers le bas).
+local function layout(content, width)
+  width = floor(tonumber(width) or 440)
+  local col = width - 2 * R.pad
+  local P = { y = 8, W = width, col = col, rects = {}, sections = 0 }
+  content.__layout = P
+  local function rec(w, x, y, ww, h, kind, label)
+    P.rects[#P.rects + 1] = { x = x, y = y, w = ww, h = h, kind = kind, label = plain(label), widget = w }
+  end
+  local function at(w, x, y) w:ClearAllPoints(); w:SetPoint("TOPLEFT", content, "TOPLEFT", x, -y) end
+  function P.text(str, font, _)
+    font = font or "GameFontHighlightSmall"
+    local fs = wrapFS(content, font, col, str)
+    local h = measure(fs, str, col, font)
+    at(fs, R.pad, P.y)
+    rec(fs, R.pad, P.y, col, h, "text", str)
+    P.y = P.y + h + R.line
     return fs
   end
   function P.header(str)
-    P.y = P.y - 8
-    P.text("|cff33cc66" .. str .. "|r", "GameFontNormal", 22)
+    if P.sections > 0 or #P.rects > 0 then P.y = P.y + R.gap end
+    P.sections = P.sections + 1
+    local fs = wrapFS(content, "GameFontNormal", col, "|cff33cc66" .. str .. "|r")
+    at(fs, R.pad, P.y)
+    local rule = content:CreateTexture(nil, "ARTWORK")
+    if rule.SetColorTexture then rule:SetColorTexture(0.2, 0.8, 0.4, 0.35) end
+    rule:SetSize(col, 1)
+    rule:SetPoint("TOPLEFT", content, "TOPLEFT", R.pad, -(P.y + R.header - 4))
+    rec(fs, R.pad, P.y, col, R.header, "header", str)
+    P.y = P.y + R.header
+    return fs
   end
-  function P.add(w, h)
-    if not w then return end
-    w:SetPoint("TOPLEFT", content, "TOPLEFT", 16, P.y)
-    widgets[#widgets + 1] = w
-    P.y = P.y - (h or 26)
-    return w
+  -- case à cocher ; `right` = largeur réservée à droite (bouton « Écouter »)
+  function P.check(label, getter, setter, tip, right)
+    local ok, cb = pcall(_G.CreateFrame, "CheckButton", nil, content, "UICheckButtonTemplate")
+    if not ok or not cb then return nil end
+    cb:SetSize(24, 24)
+    local tw = col - 28 - (right or 0)
+    local old = cb.text or cb.Text
+    if type(old) == "table" and old.SetText then old:SetText("") end
+    local fs = wrapFS(cb, "GameFontHighlight", tw, label)
+    fs:SetPoint("TOPLEFT", cb, "TOPLEFT", 28, -5)
+    cb.label = fs
+    local h = max(R.check, measure(fs, label, tw, "GameFontHighlight") + 10)
+    at(cb, R.pad, P.y)
+    cb.refresh = function() cb:SetChecked(getter() and true or false) end
+    cb:SetScript("OnClick", function(self) setter(self:GetChecked() and true or false) end)
+    tooltip(cb, label, tip)
+    cb.refresh()
+    widgets[#widgets + 1] = cb
+    rec(cb, R.pad, P.y, col - (right or 0), h, "check", label)
+    cb.__rowY, cb.__rowH = P.y, h
+    P.y = P.y + h
+    return cb
   end
-  function P.slider(...) return P.add(newSlider(content, ...), 42) end
-  function P.check(...) return P.add(newCheck(content, ...)) end
-  function P.button(...) return P.add(newButton(content, ...), 28) end
-  function P.finish() content:SetHeight(-P.y + 20) end
+  -- curseur : titre (ligne à lui, coupé sur plusieurs lignes au besoin) · barre + valeur à droite · min / max dessous
+  function P.slider(label, lo, hi, step, getter, setter)
+    local fs = wrapFS(content, "GameFontNormalSmall", col, label)
+    local lh = measure(fs, label, col, "GameFontNormalSmall")
+    local ok, s = pcall(_G.CreateFrame, "Slider", nil, content, "OptionsSliderTemplate")
+    if not ok or not s then return nil end
+    at(fs, R.pad, P.y)
+    local sw = min(300, col - 70)
+    s:SetSize(sw, 17)
+    s:SetMinMaxValues(lo, hi)
+    s:SetValueStep(step)
+    if s.SetObeyStepOnDrag then s:SetObeyStepOnDrag(true) end
+    at(s, R.pad + 6, P.y + lh + 3)
+    local t = s.Text or s.text
+    if type(t) == "table" and t.SetText then t:SetText("") end
+    local l, h = s.Low, s.High
+    if type(l) == "table" and l.SetText then l:SetText(tostring(lo)) end
+    if type(h) == "table" and h.SetText then h:SetText(tostring(hi)) end
+    local val = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    val:SetJustifyH("LEFT")
+    val:SetWidth(56)
+    val:SetPoint("LEFT", s, "RIGHT", 10, 0)
+    s.label, s.valueText = fs, val
+    local function show(v) val:SetText(tostring(v)) end
+    s.refresh = function()
+      local v = getter() or lo
+      s:SetValue(v)
+      show(v)
+    end
+    s:SetScript("OnValueChanged", function(_, v)
+      v = floor(v / step + 0.5) * step
+      if step < 1 then v = floor(v * 100 + 0.5) / 100 end
+      show(v)
+      setter(v)
+    end)
+    s.refresh()
+    widgets[#widgets + 1] = s
+    local rowH = max(R.slider, lh + 3 + 17 + 16 + 4)
+    rec(fs, R.pad, P.y, col, rowH, "slider", label)
+    P.rects[#P.rects].ctl = s
+    P.y = P.y + rowH
+    return s
+  end
+  -- bouton : largeur commune (R.btnW) ; toute la colonne si le texte ne tient pas
+  function P.button(label, _, fn, textFn, opts)
+    local b = newButton(content, label, R.btnW, fn, textFn)
+    if not b then return nil end
+    local txt = b.GetText and b:GetText() or label
+    local bw = (ulen(txt) * 6.4 + 28 > R.btnW) and col or min(R.btnW, col)
+    local bh = (opts and opts.h) or R.btnH
+    b:SetSize(bw, bh)
+    at(b, R.pad, P.y + 2)
+    widgets[#widgets + 1] = b
+    local rowH = max(R.button, bh + 4)
+    rec(b, R.pad, P.y, bw, rowH, "button", txt)
+    P.y = P.y + rowH
+    return b
+  end
+  -- grille de boutons de même largeur (cols colonnes) : list = { {label, fn, textFn}, … }
+  function P.buttons(list, cols)
+    cols = cols or 2
+    local bw = floor((col - (cols - 1) * 8) / cols)
+    local out = {}
+    for i, it in ipairs(list) do
+      local c = (i - 1) % cols
+      if c == 0 and i > 1 then P.y = P.y + R.button end
+      local b = newButton(content, it[1], bw, it[2], it[3])
+      if b then
+        local x = R.pad + c * (bw + 8)
+        at(b, x, P.y + 2)
+        widgets[#widgets + 1] = b
+        rec(b, x, P.y, bw, R.button, "button", b.GetText and b:GetText() or it[1])
+        out[#out + 1] = b
+      end
+    end
+    if #list > 0 then P.y = P.y + R.button end
+    return out
+  end
+  -- petit bouton aligné à droite sur la ligne d'une case à cocher (réservée avec P.check(..., right))
+  function P.side(cb, label, w, fn)
+    if not cb then return nil end
+    local b = newButton(content, label, w, fn)
+    if not b then return nil end
+    local x = R.pad + col - w
+    at(b, x, cb.__rowY + 1)
+    widgets[#widgets + 1] = b
+    rec(b, x, cb.__rowY, w, min(cb.__rowH, R.button), "button", label)
+    return b
+  end
+  function P.finish() content:SetHeight(P.y + 16); content:SetWidth(width) end
   return P
 end
 
@@ -112,80 +226,66 @@ local function refreshAll()
   for _, w in ipairs(widgets) do if w.refresh then pcall(w.refresh) end end
 end
 
-local function newPage(name, parentName, build)
-  local f = _G.CreateFrame("Frame", nil)
-  f.name = name
-  if parentName then f.parent = parentName end
-  local content
-  local ok, scroll = pcall(_G.CreateFrame, "ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
-  if ok and scroll then
-    scroll:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -4)
-    scroll:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -28, 4)
-    content = _G.CreateFrame("Frame", nil, scroll)
-    content:SetSize(580, 800)
-    scroll:SetScrollChild(content)
-  else
-    content = f
-  end
-  local built = false
-  f:SetScript("OnShow", function()
-    if not built then built = true; TreeAI.safecall(build, content) end
-    refreshAll()
-  end)
-  f.build = function() if not built then built = true; TreeAI.safecall(build, content) end end
-  return f
+-- largeur utile de la colonne de droite (canvas Blizzard ≈ 600–700 px ; repli 440)
+local function pageWidth()
+  local w = canvas and tonumber(canvas.GetWidth and canvas:GetWidth()) or 0
+  w = w - R.navW - 12 - 30
+  if w < 360 then w = 440 end
+  return min(640, w)
 end
 
+-- une page = un cadre de contenu (enfant de la ScrollFrame de droite), construit à la première ouverture
+local scroll, navChild, navButtons, selected
+local function newPage(name, build, key)
+  local f = _G.CreateFrame("Frame", nil, scroll or _G.UIParent)
+  f.name, f.key = name, key
+  f:SetSize(440, 100)
+  f:Hide()
+  local built = false
+  f.build = function()
+    if built then return end
+    built = true
+    TreeAI.safecall(build, f, pageWidth())
+  end
+  return f
+end
 ---------------------------------------------------------------------------
--- main page
+-- page « Accueil » : démarrer · panneau · encadré d'alerte · sons et messages · cadres · général
 ---------------------------------------------------------------------------
-local function buildMain(content)
+local function buildMain(content, width)
   -- toujours le profil actif (compte ou perso), même après « /tai profil perso »
   local S = setmetatable({}, {
     __index = function(_, k) return TreeAI.settings and TreeAI.settings[k] end,
     __newindex = function(_, k, v) if TreeAI.settings then TreeAI.settings[k] = v end end,
   })
-  local P = layout(content)
-  P.text("TreeAI Coach  |cff999999v" .. tostring(TreeAI.version) .. "|r", "GameFontNormalLarge", 24)
-  P.text(L["Conseils uniquement: l'addon n'agit jamais à ta place."], nil, 16)
-  P.text("|cff999999" .. L["Chaque module a sa page (liste à gauche, sous « TreeAI Coach »)."] .. "|r", nil, 16)
+  local P = layout(content, width)
+  P.text("TreeAI Coach  |cff999999v" .. tostring(TreeAI.version) .. "|r", "GameFontNormalLarge")
+  P.text(L["Conseils uniquement: l'addon n'agit jamais à ta place."])
+  P.text("|cff999999" .. L["Chaque module a sa page (liste à gauche)."] .. "|r")
 
   P.header(L["Démarrer"])
   local function presetText()
     local cur = S.preset or "normal"
     return L["Conseils"] .. " : " .. L[(TreeAI.PRESET_LABEL or {})[cur] or "Perso"] .. "  (" .. L["clic : changer"] .. ")"
   end
-  P.button("", 300, function()
+  P.button("", nil, function()
     local order, cur = TreeAI.PRESET_ORDER or { "normal" }, S.preset
     local nxt = order[1]
     for i, p in ipairs(order) do if p == cur then nxt = order[i % #order + 1] end end
     TreeAI:ApplyPreset(nxt)
     refreshAll()
   end, presetText)
-  P.text("|cff999999" .. L["Calme : 3 lignes, l'utile seulement · Normal : 5 lignes · Tout : 8 lignes, même les petits conseils."] .. "|r", nil, 16)
-  P.button("", 300, function()
+  P.text("|cff999999" .. L["Calme : 3 lignes, l'utile seulement · Normal : 5 lignes · Tout : 8 lignes, même les petits conseils."] .. "|r")
+  P.button("", nil, function()
     TreeAI:SetProfile(TreeAI:ProfileMode() == "char" and "account" or "char")
     refreshAll()
   end, function()
     return L["Réglages"] .. " : " .. (TreeAI:ProfileMode() == "char" and L["propres à ce personnage"] or L["communs au compte"])
   end)
-  P.button(L["Assistant de démarrage"], 200, function() if TreeAI.ShowWizard then TreeAI:ShowWizard(1) end end)
-  P.button(L["Tout : toutes les actions (/tai aide)"], 260, function() if TreeAI.ShowHelp then TreeAI:ShowHelp() end end)
-  P.button(L["Déplacer les cadres (mode édition)"], 260, function() if TreeAI.SetEditMode then TreeAI:SetEditMode(true) end end)
-  P.button(L["Placer automatiquement"], 260, function() if TreeAI.AutoLayout then TreeAI:AutoLayout(true) end end)
-  -- (LITE) performances : coût par module, profil essentiel / tout, liste des modules (Plus → Modules)
-  P.button(L["Coût des modules (/tai perf)"], 260, function() if TreeAI.PrintPerf then TreeAI:PrintPerf() end end)
-  P.button(L["Modules : un par ligne (Plus → Modules)"], 260, function() if TreeAI.SelectTab then TreeAI:SelectTab("modules") end end)
-  local big = P.add(newButton(content, L["Réinitialiser l'interface"], 320, function()
-    if TreeAI.ResetInterface then TreeAI:ResetInterface() end
-    refreshAll()
-  end), 40)
-  if big then big:SetHeight(32) end
-  P.text("|cff999999" .. L["Tous les cadres TreeAI reviennent à leur place automatique (loin de la minimap, des suivis de quêtes et du groupe)."] .. "|r", nil, 16)
-
-  P.header(L["Aides PvP"])
-  P.check(L["Aides PvP (contre les joueurs, champs de bataille)"], function() return S.pvp end,
-    function(v) S.pvp = v end, L["Désactivé : l'addon aide à quêter et se tait face aux joueurs ennemis."])
+  P.buttons({
+    { L["Assistant de démarrage"], function() if TreeAI.ShowWizard then TreeAI:ShowWizard(1) end end },
+    { L["Toutes les actions"], function() if TreeAI.ShowHelp then TreeAI:ShowHelp() end end },
+  }, 2)
 
   P.header(L["Panneau"])
   P.check(L["Afficher le panneau"], function() return S.panel.shown end,
@@ -207,31 +307,34 @@ local function buildMain(content)
     function(v) S.panel.scale = v; TreeAI:ApplyPanelSettings() end)
   P.slider(L["Opacité"], 0.2, 1, 0.05, function() return S.panel.alpha end,
     function(v) S.panel.alpha = v; TreeAI:ApplyPanelSettings() end)
-  P.button(L["Remettre le panneau au centre"], 200, function() TreeAI:ResetPanel() end)
+  P.button(L["Remettre le panneau au centre"], nil, function() TreeAI:ResetPanel() end)
 
   P.header(L["Encadré d'alerte (important seulement)"])
   P.check(L["Afficher les alertes importantes dans un coin"], function() return S.alert.enabled end,
     function(v) S.alert.enabled = v end)
   local CORNER_FR = { TOPRIGHT = L["en haut à droite"], TOPLEFT = L["en haut à gauche"],
     BOTTOMLEFT = L["en bas à gauche"], BOTTOMRIGHT = L["en bas à droite"] }
-  P.button("", 240, function()
-    local list = TreeAI.ALERT_CORNERS or { "TOPRIGHT" }
-    local nxt = list[1]
-    for i, c in ipairs(list) do if c == S.alert.corner then nxt = list[i % #list + 1] end end
-    S.alert.corner = nxt
-    if TreeAI.ApplyAlertSettings then TreeAI:ApplyAlertSettings() end
-  end, function() return L["Coin"] .. " : " .. (CORNER_FR[S.alert.corner] or S.alert.corner or "?") end)
+  P.buttons({
+    { "", function()
+      local list = TreeAI.ALERT_CORNERS or { "TOPRIGHT" }
+      local nxt = list[1]
+      for i, c in ipairs(list) do if c == S.alert.corner then nxt = list[i % #list + 1] end end
+      S.alert.corner = nxt
+      if TreeAI.ApplyAlertSettings then TreeAI:ApplyAlertSettings() end
+    end, function() return L["Coin"] .. " : " .. (CORNER_FR[S.alert.corner] or S.alert.corner or "?") end },
+    { L["Tester l'encadré"], function() TreeAI:HandleSlash("alerte") end },
+  }, 2)
   P.slider(L["Durée d'affichage (s)"], 3, 30, 1, function() return S.alert.duration end,
     function(v) S.alert.duration = v end)
   P.slider(L["Échelle de l'encadré"], 0.6, 1.6, 0.05, function() return S.alert.scale end,
     function(v) S.alert.scale = v; if TreeAI.ApplyAlertSettings then TreeAI:ApplyAlertSettings() end end)
   P.slider(L["Opacité de l'encadré"], 0.3, 1, 0.05, function() return S.alert.alpha end,
     function(v) S.alert.alpha = v end)
-  P.button(L["Tester l'encadré"], 160, function() TreeAI:HandleSlash("alerte") end)
 
   P.header(L["Sons et messages"])
-  P.check(L["Sons TreeAI (alertes, quêtes, rares…)"], function() return S.sound end, function(v) S.sound = v end)
-  P.button(L["Sons : choisir par genre, écouter"], 260, function() TreeAI:OpenOptions("sounds") end)
+  local snd = P.check(L["Sons TreeAI (alertes, quêtes, rares…)"], function() return S.sound end,
+    function(v) S.sound = v end, nil, 96)
+  P.side(snd, L["Réglages"], 88, function() TreeAI:OpenOptions("sounds") end)
   P.check(L["Sons aussi pour certains conseils (rares…)"], function() return S.soundTips end,
     function(v) S.soundTips = v end, L["Par défaut, seul l'important (priorité 3) fait du bruit."])
   P.check(L["Écrire aussi les conseils dans le chat (déconseillé)"], function() return S.chat end,
@@ -239,12 +342,27 @@ local function buildMain(content)
   P.slider(L["Priorité minimale"], 1, 3, 1, function() return S.minPrio end,
     function(v) S.minPrio = v; TreeAI:RefreshPanel() end)
 
+  P.header(L["Cadres et performances"])
+  P.buttons({
+    { L["Déplacer les cadres"], function() if TreeAI.SetEditMode then TreeAI:SetEditMode(true) end end },
+    { L["Placer automatiquement"], function() if TreeAI.AutoLayout then TreeAI:AutoLayout(true) end end },
+    -- (LITE) performances : coût par module, profil essentiel / tout, liste des modules (Plus → Modules)
+    { L["Coût des modules (/tai perf)"], function() if TreeAI.PrintPerf then TreeAI:PrintPerf() end end },
+    { L["Modules : un par ligne"], function() if TreeAI.SelectTab then TreeAI:SelectTab("modules") end end },
+  }, 2)
+  P.button(L["Réinitialiser l'interface"], nil, function()
+    if TreeAI.ResetInterface then TreeAI:ResetInterface() end
+    refreshAll()
+  end, nil, { h = 28 })
+  P.text("|cff999999" .. L["Tous les cadres TreeAI reviennent à leur place automatique (loin de la minimap, des suivis de quêtes et du groupe)."] .. "|r")
+
   P.header(L["Général"])
   P.check(L["Activer TreeAI"], function() return S.enabled end, function(v) TreeAI:SetEnabled(v) end)
   P.check(L["Synchro avec le groupe (messages d'addon)"], function() return S.comms end, function(v) S.comms = v end)
+  P.check(L["Aides PvP (contre les joueurs, champs de bataille)"], function() return S.pvp end,
+    function(v) S.pvp = v end, L["Désactivé : l'addon aide à quêter et se tait face aux joueurs ennemis."])
   P.finish()
 end
-
 ---------------------------------------------------------------------------
 -- page « Apparence » : micro-réglages de chaque cadre (taille, transparence, largeur, police, interligne,
 -- icônes) + afficher / cacher chaque cadre ; défauts réglés sur un écran 2000×1125.
@@ -262,37 +380,34 @@ local function modSet(name, key, v)
 end
 local function modGet(name, key) local _, db = modDB(name); return db and db[key] end
 
-local function buildAppearance(content)
-  local P = layout(content)
+local function buildAppearance(content, width)
+  local P = layout(content, width)
   local function S() return TreeAI.settings end
   local function panelSet(k, v) local s = S(); if s and s.panel then s.panel[k] = v; TreeAI:ApplyPanelSettings() end end
   local function panelGet(k) local s = S(); return s and s.panel and s.panel[k] end
-  P.text(L["Apparence"], "GameFontNormalLarge", 24)
-  P.text("|cff999999" .. L["Chaque cadre TreeAI, réglé au pixel près. Rien ne touche aux cadres de Blizzard."] .. "|r", nil, 16)
-  local big = P.add(newButton(content, L["Réinitialiser l'interface"], 320, function()
-    if TreeAI.ResetInterface then TreeAI:ResetInterface() end
-    refreshAll()
-  end), 40)
-  if big then big:SetHeight(32) end
-  P.button(L["Déplacer les cadres (mode édition)"], 260, function() if TreeAI.SetEditMode then TreeAI:SetEditMode(true) end end)
+  P.text(L["Apparence"], "GameFontNormalLarge")
+  P.text("|cff999999" .. L["Chaque cadre TreeAI, réglé au pixel près. Rien ne touche aux cadres de Blizzard."] .. "|r")
+  P.buttons({
+    { L["Réinitialiser l'interface"], function()
+      if TreeAI.ResetInterface then TreeAI:ResetInterface() end
+      refreshAll()
+    end },
+    { L["Déplacer les cadres"], function() if TreeAI.SetEditMode then TreeAI:SetEditMode(true) end end },
+  }, 2)
 
   P.header(L["Disposition (un clic)"])
-  P.text("|cff999999" .. L["Compacte : petit, groupé près de la minimap · Confort : grand, sur un bord · Coins : chaque cadre dans un coin libre."] .. "|r", nil, 28)
-  local x0 = P.y
-  for i, key in ipairs(TreeAI.DISPOSITION_ORDER or {}) do
+  P.text("|cff999999" .. L["Compacte : petit, groupé près de la minimap · Confort : grand, sur un bord · Coins : chaque cadre dans un coin libre."] .. "|r")
+  local disp = {}
+  for _, key in ipairs(TreeAI.DISPOSITION_ORDER or {}) do
     local D = TreeAI.DISPOSITIONS[key]
-    local b = newButton(content, L[D.label], 120, function()
+    disp[#disp + 1] = { L[D.label], function()
       if TreeAI.ApplyDisposition then TreeAI:ApplyDisposition(key) end
       refreshAll()
     end, function()
       return ((TreeAI.GetDisposition and TreeAI:GetDisposition() == key) and "|cff33ff66> " or "") .. L[D.label]
-    end)
-    if b then
-      b:SetPoint("TOPLEFT", content, "TOPLEFT", 16 + (i - 1) * 128, x0)
-      widgets[#widgets + 1] = b
-    end
+    end }
   end
-  P.y = x0 - 30
+  P.buttons(disp, 3)
   P.check(L["S'écarter quand un autre cadre grandit (suivi de quêtes, groupe…)"],
     function() local s = S() return s and s.reflow ~= false end,
     function(v) local s = S(); if s then s.reflow = v and true or false end end,
@@ -363,15 +478,15 @@ end
 -- one page per module
 ---------------------------------------------------------------------------
 -- page « Sons » : un son par genre (sons du jeu), on/off + écouter, canal, écart minimum ; jamais en combat sauf danger
-local function buildSounds(content)
-  local P = layout(content)
+local function buildSounds(content, width)
+  local P = layout(content, width)
   local function S() return TreeAI.settings end
   local function SS() return TreeAI.SoundSettings and TreeAI:SoundSettings() end
-  P.text(L["Sons"], "GameFontNormalLarge", 24)
-  P.text("|cff999999" .. L["Sons du jeu, discrets. En combat : seulement le danger. Jamais deux sons à la suite."] .. "|r", nil, 16)
+  P.text(L["Sons"], "GameFontNormalLarge")
+  P.text("|cff999999" .. L["Sons du jeu, discrets. En combat : seulement le danger. Jamais deux sons à la suite."] .. "|r")
   P.check(L["Sons TreeAI activés"], function() local s = S() return s and s.sound ~= false end,
     function(v) local s = S(); if s then s.sound = v and true or false end end)
-  P.button("", 240, function()
+  P.button("", nil, function()
     local ss = SS(); if not ss then return end
     local list, cur = TreeAI.SOUND_CHANNELS, ss.channel or "Master"
     local nxt = list[1]
@@ -389,11 +504,11 @@ local function buildSounds(content)
   for _, kind in ipairs(TreeAI.SOUND_ORDER or {}) do
     local def = TreeAI.SOUND_KINDS[kind]
     local cb = P.check(L[def.label], function() return TreeAI:SoundKindOn(kind) end,
-      function(v) TreeAI:SetSoundKind(kind, v) end)
-    local b = newButton(content, L["Écouter"], 80, function() TreeAI:PreviewSound(kind) end)
-    if b and cb then b:SetPoint("LEFT", cb, "LEFT", 330, 0) end
+      function(v) TreeAI:SetSoundKind(kind, v) end, nil, 92)
+    P.side(cb, L["Écouter"], 84, function() TreeAI:PreviewSound(kind) end)
   end
-  P.button(L["Tout remettre par défaut"], 200, function()
+  P.header(L["Défaut"])
+  P.button(L["Tout remettre par défaut"], nil, function()
     local ss = SS()
     if ss then ss.kinds, ss.channel, ss.gap = {}, "Master", TreeAI.SOUND_GAP end
     refreshAll()
@@ -401,15 +516,15 @@ local function buildSounds(content)
   P.finish()
 end
 
-local function buildModule(content, name, mod)
-  local P = layout(content)
-  P.text(mod.title or name, "GameFontNormalLarge", 24)
-  if mod.description then P.text(tostring(mod.description), nil, 18) end
+local function buildModule(content, name, mod, width)
+  local P = layout(content, width)
+  P.text(mod.title or name, "GameFontNormalLarge")
+  if mod.description then P.text(tostring(mod.description)) end
   if type(mod.classes) == "table" then
     local cls = {}
     for c in pairs(mod.classes) do cls[#cls + 1] = c end
     table.sort(cls)
-    P.text("|cff999999" .. L["Classes"] .. " : " .. table.concat(cls, ", ") .. "|r", nil, 16)
+    P.text("|cff999999" .. L["Classes"] .. " : " .. table.concat(cls, ", ") .. "|r")
   end
   P.check(L["Module activé"], function() return mod.db and mod.db.enabled end,
     function(v) TreeAI:SetModuleEnabled(name, v) end)
@@ -418,12 +533,12 @@ local function buildModule(content, name, mod)
     TreeAI:RequestRefresh()
   end
   if type(mod.options) == "table" and #mod.options > 0 then
-    P.header(L["Réglages"])
+    if not mod.options[1].section then P.header(L["Réglages"]) end
     for _, o in ipairs(mod.options) do
       local key = o.key
       if o.section then P.header(o.section) end
       if o.type == "choice" and type(o.values) == "table" and #o.values > 0 then
-        P.button("", 240, function()
+        P.button("", nil, function()
           if not mod.db then return end
           local n = (tonumber(mod.db[key]) or 1) % #o.values + 1
           mod.db[key] = n; changed(key, n)
@@ -431,7 +546,7 @@ local function buildModule(content, name, mod)
           return (o.label or key) .. " : " .. tostring(o.values[tonumber(mod.db and mod.db[key]) or 1] or "?")
         end)
       elseif o.type == "button" and type(o.onClick) == "function" then   -- action du module (clic = action du joueur)
-        P.button(o.label or key or "?", o.width or 220, function() TreeAI:UserAction(o.onClick, mod) end)
+        P.button(o.label or key or "?", nil, function() TreeAI:UserAction(o.onClick, mod) end)
       elseif o.type == "range" then
         P.slider(o.label or key, o.min or 0, o.max or 100, o.step or 1,
           function() return mod.db and mod.db[key] end,
@@ -442,14 +557,159 @@ local function buildModule(content, name, mod)
       end
     end
   else
-    P.text("|cff999999" .. L["Pas d'autre réglage pour ce module."] .. "|r", nil, 18)
+    P.text("|cff999999" .. L["Pas d'autre réglage pour ce module."] .. "|r")
   end
   P.finish()
 end
 
+-- ---------------------------------------------------------------- canvas : arbre des catégories + page à droite
+-- familles de modules (ordre logique : jouer → combat → groupe → sacs → réglages) ; inconnu → « Autres »
+local FAMILY = {
+  { title = "Quêtes et trajet", mods = { "Quests", "Tracker", "Todo", "Planner", "Compass", "Radar", "MinimapPins",
+    "SafePath", "Highlight", "Predict", "Abandon", "Leveling", "Errands", "Edge" } },
+  { title = "Combat et classe", mods = { "Hunter", "HunterPro", "Classes", "Fight", "Boost", "Talents", "Macros",
+    "Binds", "Detect" } },
+  { title = "Groupe", mods = { "Group", "Squad", "Missions", "Dungeon", "PvP" } },
+  { title = "Sacs, or, métiers", mods = { "Inventory", "Economy", "Auction", "Gear", "Prof" } },
+  { title = "Outils", mods = { "Session", "Comfort", "Pro", "Theme", "Export", "SelfTest" } },
+}
+TreeAI.OPTIONS_FAMILY = FAMILY
+
+local function navEntries()
+  local out = { { head = "TreeAI" }, { page = homePage, label = L["Accueil"] }, { page = appearance, label = L["Apparence"] },
+    { page = soundsPage, label = L["Sons"] } }
+  local byName, used = {}, {}
+  for _, p in ipairs(pages) do byName[p.module] = p end
+  for _, fam in ipairs(FAMILY) do
+    local first = true
+    for _, n in ipairs(fam.mods) do
+      local p = byName[n]
+      if p and not used[n] then
+        if first then out[#out + 1] = { head = L[fam.title] }; first = false end
+        used[n] = true
+        out[#out + 1] = { page = p.frame, label = p.frame.name }
+      end
+    end
+  end
+  local first = true
+  for _, p in ipairs(pages) do
+    if not used[p.module] then
+      if first then out[#out + 1] = { head = L["Autres"] }; first = false end
+      out[#out + 1] = { page = p.frame, label = p.frame.name }
+    end
+  end
+  return out
+end
+
+local function selectPage(page)
+  if not page then return end
+  if selected and selected ~= page then selected:Hide() end
+  selected = page
+  page.build()
+  page:Show()
+  if scroll then
+    scroll:SetScrollChild(page)
+    if scroll.SetVerticalScroll then pcall(scroll.SetVerticalScroll, scroll, 0) end
+  end
+  for _, b in ipairs(navButtons or {}) do
+    if b.page then
+      local on = b.page == page
+      b.fs:SetText((on and "|cff33ff66" or "|cffffffff") .. b.label .. "|r")
+      if b.sel then if on then b.sel:Show() else b.sel:Hide() end end
+    end
+  end
+  refreshAll()
+end
+TreeAI.SelectOptionPage = function(_, page) selectPage(page) end
+
+local function buildNav()
+  if navButtons or not canvas then return end
+  navButtons = {}
+  local ok, ns = pcall(_G.CreateFrame, "ScrollFrame", nil, canvas, "UIPanelScrollFrameTemplate")
+  local parent = canvas
+  if ok and ns then
+    ns:SetPoint("TOPLEFT", canvas, "TOPLEFT", 4, -8)
+    ns:SetPoint("BOTTOMLEFT", canvas, "BOTTOMLEFT", 4, 8)
+    ns:SetWidth(R.navW - 22)
+    navChild = _G.CreateFrame("Frame", nil, ns)
+    navChild:SetSize(R.navW - 22, 100)
+    ns:SetScrollChild(navChild)
+    parent = navChild
+  end
+  local y = 2
+  local rects = {}
+  local iw = R.navW - 26
+  for _, e in ipairs(navEntries()) do
+    if e.head then
+      if y > 2 then y = y + 6 end
+      local fs = wrapFS(parent, "GameFontNormalSmall", iw, "|cff33cc66" .. e.head .. "|r")
+      if fs.SetWordWrap then fs:SetWordWrap(false) end
+      fs:SetPoint("TOPLEFT", parent, "TOPLEFT", 2, -(y + 6))
+      rects[#rects + 1] = { x = 2, y = y, w = iw, h = R.navHead, label = e.head }
+      y = y + R.navHead
+    elseif e.page then
+      local b = _G.CreateFrame("Button", nil, parent)
+      b:SetSize(iw, R.navRow)
+      b:SetPoint("TOPLEFT", parent, "TOPLEFT", 2, -y)
+      b:RegisterForClicks("LeftButtonUp")
+      local fs = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+      fs:SetPoint("LEFT", b, "LEFT", 8, 0)
+      fs:SetWidth(iw - 10)
+      fs:SetJustifyH("LEFT")
+      if fs.SetWordWrap then fs:SetWordWrap(false) end
+      b.fs, b.page, b.label = fs, e.page, e.label
+      local hl = b:CreateTexture(nil, "HIGHLIGHT")
+      hl:SetAllPoints(b)
+      if hl.SetColorTexture then hl:SetColorTexture(1, 1, 1, 0.08) end
+      local sel = b:CreateTexture(nil, "BACKGROUND")
+      sel:SetAllPoints(b)
+      if sel.SetColorTexture then sel:SetColorTexture(0.2, 0.8, 0.4, 0.18) end
+      sel:Hide()
+      b.sel = sel
+      fs:SetText(e.label)
+      b:SetScript("OnClick", function(self) selectPage(self.page) end)
+      navButtons[#navButtons + 1] = b
+      rects[#rects + 1] = { x = 2, y = y, w = iw, h = R.navRow, label = e.label }
+      y = y + R.navRow
+    end
+  end
+  if navChild then navChild:SetHeight(y + 8) end
+  canvas.__nav = { W = R.navW - 22, rects = rects, height = y }
+  -- séparateur vertical entre l'arbre et la page
+  local sep = canvas:CreateTexture(nil, "ARTWORK")
+  if sep.SetColorTexture then sep:SetColorTexture(0.2, 0.8, 0.4, 0.3) end
+  sep:SetWidth(1)
+  sep:SetPoint("TOPLEFT", canvas, "TOPLEFT", R.navW, -8)
+  sep:SetPoint("BOTTOMLEFT", canvas, "BOTTOMLEFT", R.navW, 8)
+end
+
+local function buildCanvas()
+  if not canvas or canvas.__built then return end
+  canvas.__built = true
+  buildNav()
+  selectPage(selected or homePage)
+end
+
 function TreeAI:InitOptions()
   if canvas or not _G.CreateFrame then return end
-  canvas = newPage("TreeAI Coach", nil, buildMain)
+  canvas = _G.CreateFrame("Frame", nil)
+  canvas.name = "TreeAI Coach"
+  local ok, sc = pcall(_G.CreateFrame, "ScrollFrame", nil, canvas, "UIPanelScrollFrameTemplate")
+  if ok and sc then
+    scroll = sc
+    scroll:SetPoint("TOPLEFT", canvas, "TOPLEFT", R.navW + 8, -8)
+    scroll:SetPoint("BOTTOMRIGHT", canvas, "BOTTOMRIGHT", -28, 8)
+  end
+  homePage = newPage(L["Accueil"], buildMain, "home")
+  appearance = newPage(L["Apparence"], buildAppearance, "appearance")
+  soundsPage = newPage(L["Sons"], buildSounds, "sounds")
+  for name, mod in self:IterModules() do
+    local page = newPage(mod.title or name, function(content, w) buildModule(content, name, mod, w) end, name)
+    pages[#pages + 1] = { frame = page, module = name }
+  end
+  canvas.build = function() buildCanvas(); homePage.build() end
+  canvas:SetScript("OnShow", function() buildCanvas(); refreshAll() end)
+
   local Settings = _G.Settings
   local modern = Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory
   if modern then
@@ -462,49 +722,27 @@ function TreeAI:InitOptions()
     end
   end
   if not modern and _G.InterfaceOptions_AddCategory then pcall(_G.InterfaceOptions_AddCategory, canvas) end
-
-  appearance = newPage(L["Apparence"], canvas.name, buildAppearance)
-  if modern and Settings.RegisterCanvasLayoutSubcategory then
-    pcall(Settings.RegisterCanvasLayoutSubcategory, category, appearance, appearance.name)
-  elseif _G.InterfaceOptions_AddCategory then
-    pcall(_G.InterfaceOptions_AddCategory, appearance)
-  end
-  soundsPage = newPage(L["Sons"], canvas.name, buildSounds)
-  if modern and Settings.RegisterCanvasLayoutSubcategory then
-    local oks, c = pcall(Settings.RegisterCanvasLayoutSubcategory, category, soundsPage, soundsPage.name)
-    if oks then soundsCat = c end
-  elseif _G.InterfaceOptions_AddCategory then
-    pcall(_G.InterfaceOptions_AddCategory, soundsPage)
-  end
-
-  for name, mod in self:IterModules() do
-    local page = newPage(mod.title or name, canvas.name, function(content) buildModule(content, name, mod) end)
-    local sub
-    if modern and Settings.RegisterCanvasLayoutSubcategory then
-      local oks, c = pcall(Settings.RegisterCanvasLayoutSubcategory, category, page, page.name)
-      if oks then sub = c end
-    elseif _G.InterfaceOptions_AddCategory then
-      pcall(_G.InterfaceOptions_AddCategory, page)
-    end
-    pages[#pages + 1] = { frame = page, category = sub, module = name }
-  end
 end
 
-function TreeAI:GetOptionPages() return canvas, pages, appearance, soundsPage end
+-- canvas (racine), pages de modules, Apparence, Sons, Accueil
+function TreeAI:GetOptionPages() return canvas, pages, appearance, soundsPage, homePage end
+--- Rectangles posés par le moteur sur une page (nil si pas encore construite) ; `nav` = l'arbre de gauche.
+function TreeAI:GetOptionLayout(page)
+  if page == "nav" then return canvas and canvas.__nav end
+  return page and page.__layout
+end
 
 function TreeAI:OpenOptions(which)
   if self:InCombat() then self:Print(L["Impossible en combat."]); return end
   if not canvas then self:InitOptions() end
-  local Settings = _G.Settings
-  if which == "sounds" and soundsPage then
-    local id = soundsCat and (soundsCat.GetID and soundsCat:GetID() or soundsCat.ID)
-    if id and Settings and Settings.OpenToCategory and pcall(Settings.OpenToCategory, id) then return end
-    if _G.InterfaceOptionsFrame_OpenToCategory then
-      pcall(_G.InterfaceOptionsFrame_OpenToCategory, soundsPage)
-      pcall(_G.InterfaceOptionsFrame_OpenToCategory, soundsPage)
-      return
-    end
+  local target = homePage
+  if which == "sounds" then target = soundsPage
+  elseif which == "appearance" then target = appearance
+  elseif type(which) == "string" then
+    for _, p in ipairs(pages) do if p.module == which then target = p.frame end end
   end
+  if canvas.__built then selectPage(target) else selected = target end
+  local Settings = _G.Settings
   if category and Settings and Settings.OpenToCategory then
     local id = category.GetID and category:GetID() or category.ID
     if pcall(Settings.OpenToCategory, id) then return end

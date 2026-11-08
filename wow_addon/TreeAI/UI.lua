@@ -750,6 +750,57 @@ local function layoutControls(list, width, top)
 end
 function TreeAI:GetTabControls() return ctrlRects end
 
+-- ---------------------------------------------------------------- sections dans les onglets (rangé)
+-- « Maintenant » : Urgent → Quête en cours → Ensuite ; autres onglets : un titre par bloc (module) quand il y en a
+-- au moins deux. Les titres sont dessinés entre les lignes (pas des entrées : rien ne change pour les clics).
+local SECTION_SRC = { Quests = "Étape conseillée", plan = "Trajet", main = nil, Auction = "Hôtel des ventes",
+  missions = "Missions", Talents = "Talents", Squad = "Groupe", Missions = "Missions" }
+local function nowGroup(e)
+  if e.prio >= 3 and not e.pin then return 1, L["Urgent"] end
+  if e.pin then return 2, L["Quête en cours"] end
+  return 3, L["Ensuite"]
+end
+local function blockGroup(e, tab)
+  local src = e.source
+  if not src then return "~sugg", L["Conseils"] end
+  if src == "main" then
+    local owner = TreeAI.MAIN_OWNER and TreeAI.MAIN_OWNER[tab]
+    local om = owner and TreeAI.modules and TreeAI.modules[owner]
+    local t = TreeAI.tabs[tab]
+    return "main", L[(om and om.title) or (t and t.title) or tab]
+  end
+  local m = TreeAI.modules and TreeAI.modules[src]
+  return src, L[SECTION_SRC[src] or (m and m.title) or src]
+end
+TreeAI.PanelSectionOf = function(_, e, tab)
+  if tab == "now" then return nowGroup(e) end
+  return blockGroup(e, tab)
+end
+-- « Maintenant » : ordre logique stable (danger d'abord, puis l'étape de quête, puis le reste par priorité)
+local function orderNow(list)
+  for i, e in ipairs(list) do e._ord = i end
+  table.sort(list, function(a, b)
+    local ga, gb = nowGroup(a), nowGroup(b)
+    if ga ~= gb then return ga < gb end
+    return a._ord < b._ord
+  end)
+end
+local secPool = {}
+local function sectionFS(i)
+  local fs = secPool[i]
+  if not fs then
+    fs = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    fs:SetJustifyH("LEFT")
+    if fs.SetWordWrap then fs:SetWordWrap(false) end
+    fs.rule = panel:CreateTexture(nil, "ARTWORK")
+    fs.rule:SetTexture("Interface\\Buttons\\WHITE8X8")
+    if fs.rule.SetVertexColor then fs.rule:SetVertexColor(0.2, 0.8, 0.4, 0.25) end
+    fs.rule:SetHeight(1)
+    secPool[i] = fs
+  end
+  return fs
+end
+
 function TreeAI:RefreshPanel()
   if not panel then return end
   if TreeAI._PanelRendered then TreeAI:_PanelRendered() end
@@ -775,6 +826,7 @@ function TreeAI:RefreshPanel()
     closeMenu()
     for _, b in ipairs(ctrlButtons) do b:Hide() end
     for i = 1, MAX_ROWS do rows[i].entry = nil; rows[i]:Hide() end
+    for _, fs in ipairs(secPool) do fs:Hide(); fs.rule:Hide() end
     panel.empty:Hide(); panel.thumb:Hide(); panel.more:Hide()
     panel:SetHeight(HEADER_H + 6)
     return
@@ -815,6 +867,7 @@ function TreeAI:RefreshPanel()
   for _, e in ipairs(all) do
     if e.control then ctrls[#ctrls + 1] = e else current[#current + 1] = e end
   end
+  if tab == "now" then orderNow(current) end
   tabsH = tabsH + layoutControls(ctrls, width, HEADER_H + tabsH + 2)
   local maxRows = min(MAX_ROWS, max(3, (s and s.maxLines) or 8))
   local n = #current
@@ -828,10 +881,36 @@ function TreeAI:RefreshPanel()
   local avail = width - 2 * PAD - 4 - (isize + 3)
   local y = top
   local shown = 0
+  -- sections : seulement s'il y a au moins deux groupes dans l'onglet
+  local groups, nG = {}, 0
+  for _, e in ipairs(current) do
+    local g = TreeAI:PanelSectionOf(e, tab)
+    if not groups[g] then groups[g] = true; nG = nG + 1 end
+  end
+  local lastG, nSec = nil, 0
+  local secH = fsize + 5
   for i = 1, MAX_ROWS do
     local b, e = rows[i], current[first + i - 1]
     if e and i <= maxRows then
       shown = shown + 1
+      local g, gl = TreeAI:PanelSectionOf(e, tab)
+      if nG > 1 and g ~= lastG and gl then
+        nSec = nSec + 1
+        local fs = sectionFS(nSec)
+        local font, _, flags = fs:GetFont()
+        if font then fs:SetFont(font, max(9, fsize - 1), flags) end
+        fs:ClearAllPoints()
+        fs:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, y - 1)
+        fs:SetWidth(width - 2 * PAD - 4)
+        fs:SetText("|cff33cc66" .. tostring(gl) .. "|r")
+        fs:Show()
+        fs.rule:ClearAllPoints()
+        fs.rule:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, y - secH + 1)
+        fs.rule:SetWidth(width - 2 * PAD - 4)
+        fs.rule:Show()
+        y = y - secH - 1
+      end
+      lastG = g
       b.entry = e
       local c = PRIO_COLORS[e.prio] or PRIO_COLORS[1]
       local font, _, flags = b.text:GetFont()
@@ -861,6 +940,8 @@ function TreeAI:RefreshPanel()
       b:Hide()
     end
   end
+  for i = nSec + 1, #secPool do secPool[i]:Hide(); secPool[i].rule:Hide() end
+  panel.sections = nSec
   if shown == 0 then
     panel.empty:ClearAllPoints()
     panel.empty:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, top - 1)
