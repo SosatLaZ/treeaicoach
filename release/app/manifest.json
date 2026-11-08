@@ -1,25 +1,25 @@
 {
- "version": "4.0.6",
+ "version": "4.0.7",
  "exe": "TreeAICoach-app.exe",
- "sha256": "6f3912a7f321a5365b1ae51025bd2c778771714c45e6a5110c9c12b316d4550d",
+ "sha256": "a5f524017287da7e9260eaaf54a1061af12fa26d1dcd633f7bf412baa82c998b",
  "chunks": [
   {
-   "name": "4.0.6/part-01.zip",
-   "size": 88018736,
-   "sha256": "78147282cc7a122a4a78dd795b07b88bc117023ee5aff7d2f4d307e857b8fab5",
+   "name": "4.0.7/part-01.zip",
+   "size": 88018739,
+   "sha256": "5b3206db4522b10aa472e8b01885d9a313835be4efc8a4ca2f6edb9de8a96ee2",
    "files": 127
   },
   {
-   "name": "4.0.6/part-02.zip",
-   "size": 14003139,
-   "sha256": "63cb707e611f37b68058851149f7abfa7a71ea4b7dce86bd8d1142071ef164e2",
+   "name": "4.0.7/part-02.zip",
+   "size": 14008895,
+   "sha256": "37fd6ab3ea748798c65f18c8e1b1825ebfe52b732c21de82317f83a04fdad1d1",
    "files": 684
   }
  ],
- "total_size": 102021875,
+ "total_size": 102027634,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "TreeAI 4.0.6 : Suivi TreeAI coup\u00e9 chez tous les persos (plus par-dessus le suivi de Questie)."
+ "notes": "TreeAI 4.0.7 : les sacs redeviennent cliquables, moins de d\u00e9pendance \u00e0 Questie, noms des vols en fran\u00e7ais, une seule fl\u00e8che."
 }

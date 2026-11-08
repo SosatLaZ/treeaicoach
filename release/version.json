@@ -1,6 +1,6 @@
 {
-  "version": "4.0.6",
+  "version": "4.0.7",
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334,
-  "notes": "TreeAI 4.0.6 : Suivi TreeAI coupé chez tous les persos (plus par-dessus le suivi de Questie)."
+  "notes": "TreeAI 4.0.7 : les sacs redeviennent cliquables, moins de dépendance à Questie, noms des vols en français, une seule flèche."
 }

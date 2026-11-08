@@ -3,6 +3,15 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 4.0.7 · 8 novembre 2026
+
+- **Les sacs redeviennent cliquables** : quand tes sacs sont ouverts, aucun cadre TreeAI ne passe au-dessus (ils
+  passent dessous, puis reviennent à la fermeture) ; plus de cadre invisible qui prend les clics après un fondu.
+- Moins de dépendance à Questie : TreeAI retient les PNJ de quête quand tu leur parles, lit les quêtes à prendre que
+  le jeu montre sur la carte, et marque les monstres qui ont vraiment lâché un objet de quête.
+- Noms des vols en français (Les Pitons-du-Tonnerre, Sombre-Comté, Bastion de Pennelune, Cabestan) ; la 2e flèche
+  près de la minimap est coupée (une seule flèche : la boussole) ; la fenêtre Dégâts n'est plus en bas à droite.
+
 ## 4.0.6 · 8 novembre 2026
 
 - « Suivi TreeAI » coupé aussi chez chaque perso en profil perso (il pouvait rester par-dessus le suivi de Questie).
