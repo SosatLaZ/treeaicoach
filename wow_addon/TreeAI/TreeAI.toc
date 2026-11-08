@@ -41,6 +41,8 @@ Modules\Macros.lua
 Modules\Binds.lua
 Modules\Tracker.lua
 Modules\Todo.lua
+Modules\Region.lua
+Modules\Hub.lua
 Modules\Predict.lua
 Modules\Export.lua
 Modules\Planner.lua

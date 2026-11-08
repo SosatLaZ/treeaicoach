@@ -1244,6 +1244,8 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Route = { lite = true, desc = "Itinéraire le plus rapide entre les étapes" },
   Speed = { lite = true, desc = "Aller plus vite : mort, monture, foyer" },
   Plain = { lite = true, desc = "Conseils de quête en mots simples" },
+  Region = { lite = true, desc = "Quêtes rangées par région (ici, à côté, loin)" },
+  Hub = { lite = true, desc = "Pastille de la minimap : tout TreeAI en un clic" },
   Detect = { lite = true, desc = "Détection : rares, trésors, monstres de quête, services proches" },
   MinimapPins = { lite = true, desc = "Points sur la minimap (ce que Questie ne montre pas)" },
   Edge = { lite = false, desc = "Astuces avancées (petits avantages)" },
@@ -2236,6 +2238,9 @@ local function normLine(l, source)
     -- control = true : bouton dans la barre de l'onglet (pas une ligne) ; label = texte court du bouton
     control = (l.control and type(l.onClick) == "function") and true or nil,
     label = l.label and safeText(tostring(l.label)) or nil,
+    -- MENU : quête liée (regroupement par région), en-tête de bloc, colonne de droite (chiffres), texte du clic
+    questID = tonumber(l.questID) or nil, header = l.header and true or nil,
+    right = l.right and safeText(tostring(l.right)) or nil, clickHint = l.clickHint,
     _rt = l.text, _rp = l.prio, _rtip = l.tooltip, _rc = l.control, _rl = l.label }
 end
 
@@ -2264,7 +2269,8 @@ local function sameLines(old, lines)
       local o = old[j]
       if not o or o._rt ~= txt or o._rp ~= prio or o.icon ~= icon or (o.pin or false) ~= (pin and true or false)
         or o._rtip ~= tip or o.kind ~= kind or o.id ~= lid or o.death ~= death
-        or (type(l) == "table" and (o._rc ~= l.control or o._rl ~= l.label)) then return false end
+        or (type(l) == "table" and (o._rc ~= l.control or o._rl ~= l.label or o.questID ~= (tonumber(l.questID) or nil)
+          or o.right ~= l.right)) then return false end
     end
   end
   if math.min(j, 100) ~= #old then return false end
@@ -2899,6 +2905,9 @@ function TreeAI:RegisterSlash(cmd, fn, help)
   slash[cmd] = { fn = fn, help = help }
   return true
 end
+
+--- MENU : la commande existe-t-elle ? (le menu de la pastille n'affiche que ce qui marche)
+function TreeAI:HasSlash(cmd) return type(cmd) == "string" and slash[cmd:lower()] ~= nil end
 
 -- Aide groupée : commande -> rubrique (les commandes des modules sans rubrique vont dans « Autres »)
 TreeAI.SLASH_GROUPS = TreeAI.SLASH_GROUPS or {

@@ -42,6 +42,9 @@ return function(M, ctx)
   ctx.check(tx:find("Pour Ami%-un %(Guerrier%)"), "loot for a friend")
   ctx.check(tx:find("Chasseur :"), "hunter tips")
   ctx.check(tx:find("Marque conseillée"), "mark line")
+  ctx.check(tx:find("Ce qui tue le groupe : ", 1, true), "fiche : ce qui tue le groupe")
+  ctx.check(tx:find("DPS (toi) : ", 1, true), "fiche : conseil du rôle du joueur (DPS, le guerrier tanke)")
+  ctx.check(not tx:find("pas de panique", 1, true) and not tx:find("Rare. Facile", 1, true), "pas de phrase bizarre")
 
   -- mark: one click = one SetRaidTarget on the target, out of combat only
   M.target = { exists = true, name = "Déviant-test", level = 18, hostile = true, guid = "Creature-0-0-0-0-5-1" }
