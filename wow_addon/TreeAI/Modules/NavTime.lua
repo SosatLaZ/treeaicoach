@@ -17,13 +17,47 @@ if not (T and T.RegisterModule) then return end
 local N = T:RegisterModule("NavTime", {
   title = "Temps de trajet",
   defaults = { enabled = true },
+  charDefaults = { mount = false },
   options = {},
 })
 T.NavTime = N
 
 local floor, sqrt, abs, max, min = math.floor, math.sqrt, math.abs, math.max, math.min
-local DEFAULT_RUN, DEFAULT_MOUNT, DEFAULT_SWIM = 7, 14, 4.7
+-- (ROUTEFIX) monture des niveaux 30–40 = +60 % (7 × 1,6 = 11,2 yd/s) : l'ancien défaut 14 (+100 %) faisait des trajets
+-- montés 25 % trop courts tant que la vitesse n'était pas mesurée
+local DEFAULT_RUN, DEFAULT_MOUNT, DEFAULT_SWIM = 7, 11.2, 4.7
 local PRIOR_DETOUR = 1.15          -- prairie ouverte ≈ 1,05 ; relief ≈ 1,3 : appris ensuite par zone
+local MOUNT_LEVEL, MOUNT_UP = 30, 3  -- monture possible dès 30 sur Forever ; 3 s pour monter en selle
+-- (ROUTEFIX) relief A PRIORI des zones (facteur de détour, jamais une coordonnée) : montagnes, mesas, cratères, villes
+-- à étages ; remplacé dès 2 trajets mesurés dans la zone (N.Detour)
+N.RELIEF = {
+  [1442] = 1.45,  -- Serres-Rocheuses
+  [1441] = 1.35,  -- Mille pointes (mesas, rampes)
+  [1456] = 1.5,   -- Les Pitons-du-Tonnerre (ascenseurs, ponts)
+  [1454] = 1.3,   -- Orgrimmar
+  [1458] = 1.6,   -- Fossoyeuse
+  [1455] = 1.3,   -- Forgefer
+  [1416] = 1.4,   -- Montagnes d'Alterac
+  [1425] = 1.35,  -- Les Hinterlands
+  [1427] = 1.35,  -- Gorge des Vents brûlants
+  [1418] = 1.3,   -- Terres ingrates
+  [1428] = 1.25,  -- Steppes ardentes
+  [1426] = 1.25,  -- Dun Morogh
+  [1449] = 1.25,  -- Cratère d'Un'Goro
+  [1444] = 1.25,  -- Féralas
+  [1447] = 1.3,   -- Azshara
+  [1452] = 1.3,   -- Berceau-de-l'Hiver
+  [1434] = 1.3,   -- Strangleronce
+  [1430] = 1.3,   -- Défilé de Deuillevent
+  [1438] = 1.25,  -- Teldrassil
+  [1440] = 1.2,   -- Orneval
+  [1443] = 1.15,  -- Désolace
+  [1413] = 1.08,  -- Les Tarides (plaine)
+  [1412] = 1.12,  -- Mulgore
+  [1411] = 1.15,  -- Durotar
+  [1446] = 1.1,   -- Tanaris
+  [1436] = 1.08,  -- Marche de l'Ouest
+}
 local ARRIVE_YD = 15
 local MIN_SAMPLES = 5
 
@@ -84,6 +118,54 @@ function N.Speed(m)
   return (m == "m" and DEFAULT_MOUNT) or (m == "s" and DEFAULT_SWIM) or DEFAULT_RUN, "défaut"
 end
 
+-- (ROUTEFIX) monture connue : vue (montée une fois, gardé par personnage), ou le journal des montures du jeu
+local mountAt, mountV = -1e9, false
+function N.MountKnown()
+  if try(G("IsMounted")) then
+    if N.char then N.char.mount = true end
+    return true
+  end
+  if N.char and N.char.mount then return true end
+  if now() - mountAt < 30 then return mountV end      -- le journal des montures relu au plus toutes les 30 s
+  mountAt, mountV = now(), false
+  local MJ = G("C_MountJournal")
+  local ids = MJ and MJ.GetMountIDs and try(MJ.GetMountIDs)
+  if type(ids) == "table" and MJ.GetMountInfoByID then
+    for _, id in ipairs(ids) do
+      local _, _, _, _, usable, _, _, _, _, _, collected = try(MJ.GetMountInfoByID, id)
+      if collected and usable then
+        if N.char then N.char.mount = true end
+        mountV = true
+        return true
+      end
+    end
+  end
+  return false
+end
+-- vitesse d'un trajet : monté si tu l'es, ou si tu as une monture (niveau ≥ 30) ; à pied sinon
+function N.TravelMode()
+  if try(G("IsMounted")) then return "m" end
+  local lv = num(try(G("UnitLevel"), "player")) or 1
+  if lv >= MOUNT_LEVEL and N.MountKnown() then return "m", true end
+  return "w"
+end
+function N.TravelSpeed()
+  local m = N.TravelMode()
+  if m == "m" then
+    local db = store()
+    local e = db and db.speed.m
+    if type(e) == "table" and (e.n or 0) >= MIN_SAMPLES and (e.v or 0) > 1 then return e.v end
+    if try(G("IsMounted")) then return (N.Speed("m")) end
+    return max(DEFAULT_MOUNT, N.Speed("w") * 1.6)
+  end
+  return (N.Speed("w"))
+end
+-- secondes pour monter en selle à chaque vrai trajet (monture connue, pas encore en selle), sinon nil
+function N.MountUp()
+  local m, later = N.TravelMode()
+  return (m == "m" and later) and MOUNT_UP or nil
+end
+
 function N.LearnSpeed(m, v)
   local db = store()
   if not (db and v and v > 1 and v < 60) then return end
@@ -99,8 +181,9 @@ function N.Detour(mapID)
   local db = store()
   local e = db and mapID and db.detour[mapID]
   if type(e) == "table" and (e.n or 0) >= 2 and (e.s or 0) > 0 then return e.s / e.n, e.n end
-  return PRIOR_DETOUR, 0
+  return (mapID and N.RELIEF[tonumber(mapID) or -1]) or PRIOR_DETOUR, 0
 end
+N.rev = 0                          -- (ROUTEFIX) change quand un détour est appris (le graphe du trajet est refait)
 function N.LearnDetour(mapID, ratio)
   local db = store()
   ratio = tonumber(ratio)
@@ -110,14 +193,25 @@ function N.LearnDetour(mapID, ratio)
   if type(e) ~= "table" then e = { s = 0, n = 0 }; db.detour[mapID] = e end
   e.s, e.n = e.s + ratio, e.n + 1
   if e.n > 20 then e.s, e.n = e.s * 20 / e.n, 20 end  -- récent d'abord
+  N.rev = (N.rev or 0) + 1
 end
 
 -- ------------------------------------------------------------------ estimation a → b ({mapID, x, y} en 0..1)
 -- → secondes, source ("spf" | "modèle"), distance à vol d'oiseau (yd)
 function N.Model(yd, mapID, m)
   if not yd then return nil end
-  local sp = N.Speed(m)
+  local sp = m and N.Speed(m) or N.TravelSpeed()   -- (ROUTEFIX) la même vitesse que le trajet (Route)
   return yd * N.Detour(mapID) / sp
+end
+-- (ROUTEFIX) temps à pied / monté a → b ({mapID, x, y} en 0..1) : le chemin appris (PathLearn) si les deux bouts sont
+-- sur des endroits parcourus, sinon le modèle — LA formule que la boussole et le trajet partagent ; → secondes, "appris"|nil
+function N.Walk(a, b, yd)
+  local PL = T.PathLearn
+  if PL and PL.LegSecMap then
+    local s = PL.LegSecMap(a, b, N.TravelSpeed())
+    if s then return s, "appris" end
+  end
+  return N.Model(yd, b and b.mapID), nil
 end
 function N.Estimate(a, b)
   local C = T.Compass
@@ -126,7 +220,8 @@ function N.Estimate(a, b)
   local sec = C and C.Travel and C.Travel(a, b)
   if sec then return sec, "spf", yd end
   if not yd then return nil end
-  return N.Model(yd, b.mapID or a.mapID), "modèle", yd
+  local w, how = N.Walk(a, b, yd)
+  return w, how or "modèle", yd
 end
 
 -- ------------------------------------------------------------------ chronométrage d'un trajet
@@ -238,6 +333,9 @@ function N.Sample()
   if v > 60 then return nil end                       -- téléport / foyer
   if tr then tr.moving = tr.moving + dt end
   if not fight and not gone then N.LearnSpeed(m, v) end
+  -- (ROUTEFIX) chemin réellement parcouru (PathLearn) : même échantillon, jamais en vol / en instance / mort
+  local PL = T.PathLearn
+  if PL and PL.Feed and not gone then pcall(PL.Feed, c, wx, wy, tnow, m) end
   return v
 end
 

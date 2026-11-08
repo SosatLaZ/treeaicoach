@@ -34,6 +34,7 @@ Modules\Plain.lua
 Modules\Quests.lua
 Modules\Compass.lua
 Modules\NavTime.lua
+Modules\PathLearn.lua
 Modules\Horizon.lua
 Modules\Detect.lua
 Modules\Stats.lua

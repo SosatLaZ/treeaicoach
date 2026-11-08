@@ -143,7 +143,7 @@ return function(M, ctx)
   local rl = T:GetRowLayout()
   local two, okGap = false, true
   for i, r in ipairs(rl) do
-    if r.lines == 2 then two = true end
+    if (r.lines or 1) >= 2 then two = true end   -- (ROUTEFIX) wrapped (2 lines or more), never « … »
     if rl[i + 1] and rl[i + 1].top > r.top - r.h then okGap = false end
   end
   check(two, "texte long sur 2 lignes")

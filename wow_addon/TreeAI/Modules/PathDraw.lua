@@ -242,10 +242,21 @@ local function fillView()
 end
 
 -- relit les 1–2 prochains arrêts (sur changement du trajet, ou toutes les 3 s : les transports dépendent de la position)
-local function readLegs(c)
+-- (ROUTEFIX) 1er trajet à pied : le chemin APPRIS (PathLearn : rampe, virages) quand la ligne droite est fausse — la
+-- traînée suit les points de passage, comme la flèche « par le chemin »
+local MAX_PATH = 24
+local function learnedPath(c, n, w, p)
+  local PLm = T.PathLearn
+  if not (PLm and PLm.Path and n and p and p.n) then return nil end
+  local ok, pts = pcall(PLm.Path, { c = c, n = n, w = w }, { c = c, n = p.n, w = p.w })
+  return ok and type(pts) == "table" and #pts > 1 and pts or nil
+end
+PD.LearnedPath = learnedPath
+local function readLegs(c, pn, pw)
   nLegs = 0
   local st = PD.Stops()
   if not st then return end
+  PD.learnedPts = 0
   for i = 1, #st do
     local e = st[i]
     -- (QA-QUEST F19) pierre de foyer : on se téléporte, aucune traînée vers l'auberge ; vol / bateau : la traînée
@@ -254,9 +265,19 @@ local function readLegs(c)
     local dep = not e.step and e.from or nil
     local p = dep or e.place
     if p and p.n and p.w and p.c == c then
+      local lp = nLegs == 0 and learnedPath(c, pn, pw, p) or nil
+      if lp then                                     -- points du chemin appris, sans le dernier (l'arrêt, ajouté ci-dessous)
+        local k = 0
+        for j = 1, #lp - 1 do
+          if k >= MAX_PATH then break end
+          legs[nLegs * 2 + 1], legs[nLegs * 2 + 2] = lp[j].n, lp[j].w
+          nLegs, k = nLegs + 1, k + 1
+        end
+        PD.learnedPts = k
+      end
       legs[nLegs * 2 + 1], legs[nLegs * 2 + 2] = p.n, p.w
       nLegs = nLegs + 1
-      if dep or nLegs >= 2 then break end
+      if dep or nLegs >= 2 + (PD.learnedPts or 0) then break end
     elseif p then
       break                                          -- autre continent : la traînée s'arrête là
     end
@@ -293,7 +314,7 @@ local function drawTrail(n, w)
               d:ClearAllPoints()
               d:SetPoint("CENTER", trail, "CENTER", px, py)
               d:SetSize(size, size)
-              d:SetVertexColor(cr, cg, cb, li == 1 and 0.95 or 0.6)
+              d:SetVertexColor(cr, cg, cb, li <= 1 + (PD.learnedPts or 0) and 0.95 or 0.6)
               if not d:IsShown() then d:Show() end
             end
           end
@@ -361,7 +382,7 @@ function PD.MinimapTick(force)
   -- (4.0.1) arrêts relus quand le trajet change, ou toutes les 3 s si le joueur s'est déplacé (les transports en
   -- dépendent) ; immobile : jamais (avant : la liste de l'Itinéraire relue toutes les 3 s pour rien)
   if routeChanged or c ~= last.c or (t - last.stopsAt >= 3 and not (last.ln and abs(n - last.ln) < 5 and abs(w - last.lw) < 5)) then
-    readLegs(c)
+    readLegs(c, n, w)
     last.steps, last.cur, last.len, last.stopsAt, last.ln, last.lw = steps, cur, len, t, n, w
     routeChanged = true
   end

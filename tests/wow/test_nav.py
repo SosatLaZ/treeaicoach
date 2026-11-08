@@ -46,7 +46,7 @@ def test_horizon_and_compass_never_allocate_per_frame():
 def test_estimate_prefers_spf():
     src = code("NavTime")
     est = src[src.index("function N.Estimate"):]
-    assert est.index("C.Travel") < est.index("N.Model(")
+    assert est.index("C.Travel") < est.index("N.Walk(")
 
 
 @needs_lua

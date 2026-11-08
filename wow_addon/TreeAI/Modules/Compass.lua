@@ -517,6 +517,14 @@ function M.QuestieObjectivePoints(qid, objNames, playerMap)
           if #out >= 40 then break end
           spawnsOf("obj", ob, db, zdb, playerMap, out)
         end
+        -- (ROUTEFIX) objet VENDU (« achète des épices ») : les marchands qui le vendent sont des points de l'objectif —
+        -- avant, seuls le butin et les objets du monde comptaient : TreeAI ne disait rien, Suivi Forever le disait
+        local n0 = #out
+        for _, npc in ipairs(try(db.QueryItemSingle, itemID, "vendors") or {}) do
+          if #out >= 40 then break end
+          spawnsOf("npc", npc, db, zdb, playerMap, out)
+        end
+        for i = n0 + 1, #out do out[i].vendor = iname or true end
       end
     end
   end
@@ -683,7 +691,10 @@ function M.BuildTargets(list, me)
         zone = q.complete and (q.turnZone or q.zone) or q.zone, super = (st and st == q.id) or nil }
       if p then
         t.mapID, t.x, t.y, t.dist, t.npc = p.mapID, p.x, p.y, d, p.name
-        if q.complete and p.name then t.label = ("Rendre « %s » à %s"):format(cut(q.title, 26), p.name) end
+        if q.complete and p.name then t.label = ("Rendre « %s » à %s"):format(cut(q.title, 26), p.name)
+        elseif p.vendor and p.name then
+          t.label = ("Acheter « %s » chez %s"):format(cut(type(p.vendor) == "string" and p.vendor or t.label, 24), cut(p.name, 22))
+        end
       else
         t.kind = "zone"
       end
@@ -952,7 +963,31 @@ function M.Compute()
     end
     local NT = T.NavTime
     if M.travelSec and M.travelT == t then st.sec, st.spf = M.travelSec, true
-    else st.sec = (NT and NT.Model) and NT.Model(d, t.mapID) or d / M.Speed() end
+    else
+      -- (ROUTEFIX) UNE formule avec le trajet (Route.WalkSecMap : chemin appris, relief de la zone, monture) — la
+      -- boussole, la fenêtre et la bande disent le même temps pour l'arrêt 1
+      local Rt = T.Route
+      local ws = me and Rt and Rt.WalkSecMap and Rt.WalkSecMap(me, t)
+      st.sec = ws or ((NT and NT.Model) and NT.Model(d, t.mapID)) or d / M.Speed()
+    end
+    -- (ROUTEFIX) « par le chemin » : la ligne droite traverse une falaise / tourne trop (chemin appris, PathLearn) → la
+    -- flèche vise le prochain point de passage ; la distance et le temps restent ceux de l'arrêt
+    st.an, st.aw, st.via = nil, nil, nil
+    local PLm = T.PathLearn
+    if PLm and PLm.Waypoint and st.tn and not approx then
+      local py, px, _, inst = try(_G.UnitPosition, "player")
+      py, px, inst = _ns(py), _ns(px), _ns(inst)
+      if not (py and px) and me then inst, py, px = G.World(me.mapID, me.x, me.y) end   -- client sans UnitPosition
+      if py and px and (inst == nil or inst == st.tc) then
+        local okW, wp = pcall(PLm.Waypoint, { c = st.tc, n = py, w = px }, { c = st.tc, n = st.tn, w = st.tw })
+        if okW and type(wp) == "table" and wp.n then
+          st.an, st.aw, st.via = wp.n, wp.w, true
+          local n2, w2 = wp.n - py, wp.w - px
+          st.bearing = atan2(w2, n2)
+          st.rel = G.Relative(st.bearing, facing)
+        end
+      end
+    end
     st.eta = st.sec and G.ETA(st.sec * RUN, RUN)
     st.secPerYd = (st.sec and d > 1) and st.sec / d or nil      -- (ZONEFIX) temps relu 5 ×/s en marchant
     t.dist = d
@@ -1053,7 +1088,7 @@ function M.Step(dt)
     py, px, inst = _ns(py), _ns(px), _ns(inst)
     if py and px and (inst == nil or inst == st.tc) then
       if py ~= lastPy or px ~= lastPx then posMoved, lastPy, lastPx = true, py, px end
-      local n, w = st.tn - py, st.tw - px
+      local n, w = (st.an or st.tn) - py, (st.aw or st.tw) - px
       if n * n + w * w > 4 then bearing = atan2(w, n) st.bearing = bearing end
     end
   end
@@ -1068,7 +1103,11 @@ function M.Step(dt)
   paint(shown)
   local behind = target > BEHIND and target < 2 * pi - BEHIND
   st.behind = behind
-  if not textOff then if behind then setTag("Derrière toi", 1, 0.35, 0.3) else setTag(nil) end end
+  if not textOff then
+    if behind then setTag("Derrière toi", 1, 0.35, 0.3)
+    elseif st.via then setTag("Par le chemin", 0.6, 0.9, 1)
+    else setTag(nil) end
+  end
   return posMoved or turned or abs(d) >= 0.004
 end
 M.Spin = function() M.Step(0.1) end
