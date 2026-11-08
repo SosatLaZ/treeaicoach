@@ -204,10 +204,10 @@ return function(M, ctx)
   local pl = P:Lines()
   local head = pl[1]
   local function line(pat) for _, l in ipairs(pl) do if l.text:find(pat) then return l end end end
-  check(head.text:find("^Trajet %d+ min · ") and tostring(head.tooltip):find("XP/h max") and tostring(head.tooltip):find("28 500")
+  check(head.text:find("^Trajet %d+ min · ") and tostring(head.tooltip):find("Le plus rapide") and tostring(head.tooltip):find("28 500")
     and line("^On va galérer : Taux de drop 20 %%"), "en-tête : " .. head.text)
-  local sw = line("^Route : XP/h max %(clic : changer%)")
-  check(sw and tostring(sw.tooltip):find("Finir la zone") and tostring(sw.tooltip):find("Prudent"), "sélecteur : 3 routes")
+  local sw = line("^Choix : Le plus rapide %(clic : changer%)")
+  check(sw and tostring(sw.tooltip):find("Tout finir ici") and tostring(sw.tooltip):find("Sans galère"), "sélecteur : 3 routes")
   -- pick up 2001 → cursor moves to the bear objective
   M.quests[3] = { title = "Crocs d'ours", level = 25, complete = false, objectives = { { text = "Croc : 0/6", done = false, have = 0, need = 6 } } }
   -- mock ids are 1000+index: map log index 3 → 1003; keep quest ids aligned with the plan via a remap

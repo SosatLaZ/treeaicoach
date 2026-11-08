@@ -123,7 +123,8 @@ return function(M, ctx)
       { drops = { ["patte de loup"] = { mob = "Loup des bois", rate = 4 / 14, lo = 0.14161109987515277, measured = true, n = 10 } } })
     check(est.mobs == 11 and est.mobsMax == 22, "Tracker : ~11 loups, jusqu'à 22")
     local h = TR.ObjHint(est)
-    check(h:find("encore ~11 × Loup des bois (29 %), jusqu'à 22 si pas de chance", 1, true) ~= nil, "Tracker : texte simple : " .. h)
+    -- mots simples (agent SIMPLE) : « encore ~11 Loups des bois à tuer, jusqu'à 22 si pas de chance »
+    check(h:find("encore ~11 Loups des bois à tuer, jusqu'à 22 si pas de chance", 1, true) ~= nil, "Tracker : texte simple : " .. h)
   end
   if Q then Q.ObjectiveFor, Q.lastList = oldObj, oldList end
 

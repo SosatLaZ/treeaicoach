@@ -524,11 +524,11 @@ function X:PlayerState()
     hearth = { cd = cd, name = try(G("GetBindLocation")) },
     taxi = knownTaxi(), group = max(1, n), raid = try(G("IsInRaid")) and true or false,
   }
-  local bind = T.Speed and T.Speed.Bind and try(T.Speed.Bind, T.Speed)   -- auberge mémorisée (Speed)
-  if type(bind) == "table" then p.hearth.map, p.hearth.x, p.hearth.y = bind.map, bind.x, bind.y end
-  local Rt = T.Route                     -- bind point learned on arrival (Route.lua) → the Python solver's hearth
-  local bp = Rt and Rt.BindPlace and try(Rt.BindPlace)
-  if type(bp) == "table" and bp.map and bp.x then p.hearth.map, p.hearth.x, p.hearth.y = bp.map, bp.x, bp.y end
+  -- auberge : une seule source — Route.BindPlace lit d'abord Speed:Bind (liaison), puis l'arrivée apprise, puis le nom
+  local Rt = T.Route
+  local bind = Rt and Rt.BindPlace and try(Rt.BindPlace)
+  if type(bind) ~= "table" then bind = T.Speed and T.Speed.Bind and try(T.Speed.Bind, T.Speed) end
+  if type(bind) == "table" and bind.map and bind.x then p.hearth.map, p.hearth.x, p.hearth.y = bind.map, bind.x, bind.y end
   local SQ = T.Squad
   local lm = SQ and SQ.char and tonumber(SQ.char.leaveAt) or 0
   if lm > 0 then p.session = max(0, floor((lm - epoch()) / 60)) end

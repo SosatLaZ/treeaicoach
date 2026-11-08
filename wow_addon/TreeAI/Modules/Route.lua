@@ -315,6 +315,13 @@ end
 local function low(s) return tostring(s or ""):lower() end
 function R.BindPlace()
   local name = try(G("GetBindLocation"))
+  -- one source: the inn Speed memorised at HEARTHSTONE_BOUND; then our arrival memory; then a name match
+  local Sp = T.Speed
+  local sb = Sp and Sp.Bind and try(Sp.Bind, Sp)
+  if type(sb) == "table" and sb.map and sb.x then
+    local w = world(sb)
+    if w then w.name = sb.name or name return w end
+  end
   if not name or name == "" then return nil end
   local p = R.char and R.char.bind[name]
   if type(p) == "table" and p.map then
@@ -644,7 +651,8 @@ function R:PlanLines(P)
   local E = P.Engine
   local verdict = route.verdict or "ok"
   lines[#lines + 1] = { text = head, prio = (E and E.PRIO and E.PRIO[verdict]) or 1, onClick = togg, id = "route:head",
-    tooltip = fmt("%s%s · dont %s de déplacement\nClic : mettre en pause", cut(route.title or route.id or "Plan", 30),
+    tooltip = fmt("%s%s · dont %s de déplacement\nClic : mettre en pause",
+      (T.Plain and T.Plain.RouteName and T.Plain.RouteName(route.id, route.title)) or cut(route.title or route.id or "Plan", 30),
       (tonumber(route.xph) and route.xph > 0) and (" · " .. ((T.Fmt and T.Fmt.Num) and T.Fmt.Num(route.xph) or route.xph) .. " XP/h") or "",
       minutes(st.travel)) }
   if verdict ~= "ok" and P.VerdictText then
@@ -693,14 +701,23 @@ function R:PlanLines(P)
     local line = { text = fmt("Arrêt %d/%d : %s", k, count, txt), prio = k == 1 and 2 or 1, onClick = click }
     if k == 1 then
       line.id, line.pin = "plan:step", true
+      local Pl = T.Plain                             -- mots simples (agent SIMPLE) : « tout près, au sud (≈ 3 min) »
       if e.place and st.here and e.place.c == st.here.c then
         local d = sqrt((e.place.n - st.here.n) ^ 2 + (e.place.w - st.here.w) ^ 2)
-        line.text = line.text .. fmt(" — %s %s", km(d), dirTo(st.here, e.place) or "")
+        local w = Pl and Pl.Where and Pl.Where(d, dirTo(st.here, e.place)) or nil
+        if w then line.text = line.text .. " " .. w
+        elseif not Pl then line.text = line.text .. fmt(" — %s %s", km(d), dirTo(st.here, e.place) or "") end
       end
+      local tm = Pl and Pl.Minutes and Pl.Minutes(e.sec) or nil
+      if tm then line.text = line.text .. " (" .. tm .. ")" end
       line.tooltip = "Clic : guider vers cet arrêt\n/tai plan passer : étape suivante"
         .. ((e.sec or 0) >= 30 and ("\nDurée estimée : ~" .. max(1, floor(e.sec / 60 + 0.5)) .. " min") or "")
     end
     lines[#lines + 1] = line
+    -- technique de vitesse de l'appli (SPEED) : une ligne simple sous l'arrêt courant
+    if k == 1 and e.step and type(e.step.tip) == "string" and e.step.tip ~= "" then
+      lines[#lines + 1] = { text = e.step.tip, prio = 2, id = "plan:tip" }
+    end
     shown = shown + 1
   end
   -- groupe (repris du Planner, inchangé)
@@ -708,12 +725,14 @@ function R:PlanLines(P)
   if #wait > 0 then lines[#lines + 1] = { text = "Attendez " .. tconcat(wait, ", ") .. " avant de rendre", prio = 2 } end
   local routes = P.Routes and P:Routes() or {}
   if #routes > 1 then
+    local Pl = T.Plain
+    local function name(r) return (Pl and Pl.RouteName and Pl.RouteName(r.id, r.title)) or cut(r.title or r.id, 24) end
     local tip = {}
     for i, r in ipairs(routes) do
-      tip[#tip + 1] = fmt("%s %d. %s · %d min · %s", r == route and "●" or "○", i, cut(r.title or r.id, 18), r.minutes or 0,
+      tip[#tip + 1] = fmt("%s %d. %s · %d min · %s", r == route and "●" or "○", i, name(r), r.minutes or 0,
         (E and E.LABEL and E.LABEL[r.verdict or "ok"]) or "?")
     end
-    lines[#lines + 1] = { text = fmt("Route : %s (clic : changer)", cut(route.title or route.id, 24)), prio = 1,
+    lines[#lines + 1] = { text = fmt("Choix : %s (clic : changer)", name(route)), prio = 1,
       tooltip = tconcat(tip, "\n"), onClick = function() P:CycleRoute() end }
   end
   return lines

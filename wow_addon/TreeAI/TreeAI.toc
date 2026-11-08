@@ -24,9 +24,6 @@ Data\Talents.lua
 Data\Recipes.lua
 Data\Travel.lua
 
-Modules\Stats.lua
-Modules\Macros.lua
-Modules\Binds.lua
 Modules\Hunter.lua
 Modules\Classes.lua
 Modules\Leveling.lua
@@ -38,6 +35,9 @@ Modules\Quests.lua
 Modules\Compass.lua
 Modules\SafePath.lua
 Modules\Detect.lua
+Modules\Stats.lua
+Modules\Macros.lua
+Modules\Binds.lua
 Modules\Tracker.lua
 Modules\Todo.lua
 Modules\Predict.lua

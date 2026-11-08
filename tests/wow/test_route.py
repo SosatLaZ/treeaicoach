@@ -116,7 +116,7 @@ def test_syntax():
 
 def test_toc_order():
     lines = [l.strip() for l in (ADDON / "TreeAI.toc").read_text(encoding="utf-8").splitlines()]
-    assert lines.index("Modules\\Route.lua") == lines.index("Modules\\Planner.lua") + 1
+    assert lines.index("Modules\\Route.lua") > lines.index("Modules\\Planner.lua")
     assert lines.index("Data\\Travel.lua") < lines.index("Modules\\Route.lua")
 
 

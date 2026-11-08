@@ -30,7 +30,7 @@ return function(M, ctx)
   local oldPlayer, oldRect, oldSteps = Geo.Player, Geo.rects[1424], P.GetActiveSteps
   local pos = { 80, 50 }
   Geo.Player = function() return 1424, pos[1], pos[2] end
-  Geo.rects[1424] = { c = 0, x0 = 0, y0 = 0, x1 = 3000, y1 = 2000 }
+  Geo.rects[1424] = { c = 0, x0 = 0, y0 = 0, x1 = 2000, y1 = 3000 }   -- client frame: x0→x1 follows the map y (Geo.World)
   local step = { k = "turn", map = 1424, x = 60, y = 50, label = "Rendre « Test »" }
   P.GetActiveSteps = function() return { step }, 1, 1, "test" end
   local oldCount = rawget(_G, "GetItemCount")
