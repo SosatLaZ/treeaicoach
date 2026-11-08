@@ -5,6 +5,8 @@ return function(M, ctx)
   local Q = T and T:GetModule("Quests")
   ctx.check(Q, "Quests module registered")
   if not Q then return end
+  -- (QUICK1) the « Raccourcis » bar carries the quest item when on: this scenario tests the Quests button itself
+  if T.Quick and T.Quick.db then T.Quick.db.btnItem = false end
   local ZONE = "Contreforts de Hautebrande"
   M.player.zone = ZONE
   M.AddItem(9001, { name = "Totem de purification", stack = 1, type = "Quête", classID = 12 })
