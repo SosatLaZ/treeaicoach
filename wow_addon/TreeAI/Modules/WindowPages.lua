@@ -87,8 +87,10 @@ W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = 
       if #turn > 0 and Ly.header("À rendre", "q:turn", #turn, W.MARK.turn) then
         for _, q in ipairs(turn) do Ly.quest(q.level, q.title, questProgress(q), openQuest(q), nil, QUEST_HINT) end
       end
+      local Bn = T.Brain                                   -- (BRAIN) une quête en pause n'est listée qu'une fois (« En pause »)
+      local function shown(q) return not (Bn and Bn.Parked and Bn.Parked(q.id)) end
       local here = {}
-      for _, q in ipairs(a.here or {}) do if W.Match(q.title) then here[#here + 1] = q end end
+      for _, q in ipairs(a.here or {}) do if W.Match(q.title) and shown(q) then here[#here + 1] = q end end
       if #here > 0 and Ly.header("En cours ici", "q:here", #here, W.MARK.pick) then
         for _, q in ipairs(here) do Ly.quest(q.level, q.title, questProgress(q), openQuest(q), nil, QUEST_HINT) end
       end
@@ -96,10 +98,12 @@ W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = 
       -- « Journal » pour abandonner (2 clics) — Modules/JournalPage.lua
       local Jp = T.JournalPage
       if Jp and Jp.QuestsSection then Jp.QuestsSection(Ly) end
+      local Bp = T.BrainPage                               -- (BRAIN) « En pause » : quêtes mises de côté par le pilote auto
+      if Bp and Bp.QuestsSection then Bp.QuestsSection(Ly) end
       -- ailleurs, par zone (plus de quêtes d'abord), repliés
       local zones = {}
       for _, q in ipairs(a.elsewhere or {}) do
-        if not q.grey and W.Match(q.title, q.zone) then
+        if not q.grey and W.Match(q.title, q.zone) and shown(q) then
           local z = q.zone or "?"
           zones[z] = zones[z] or {}
           zones[z][#zones[z] + 1] = q

@@ -1496,6 +1496,7 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Addons = { lite = true, desc = "Mes addons : ce que TreeAI remplace, Questie et Suivi Forever en silence en un clic" },
   QoL = { lite = true, desc = "Confort : vendre les gris et réparer, butin instantané, butin automatique, recul de caméra" },
   Meter = { lite = true, desc = "Dégâts : la fenêtre des dégâts du groupe (compteur du jeu, après chaque combat)" },
+  Brain = { lite = true, desc = "Pilote auto : quêtes inutiles en pause, zone et mode du trajet, courses, pourquoi" },   -- (BRAIN) sûr : Brain.lua s'y inscrit
 }
 
 TreeAI.MODULE_PROFILES = { sur = true, essentiel = true, tout = true }

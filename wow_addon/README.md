@@ -41,7 +41,8 @@ Modules/DungeonPrep.lua  Modules/Radar.lua  Modules/MinimapPins.lua  Modules/Que
 Modules/Gear.lua  Modules/ItemInfo.lua  Modules/Talents.lua
 Modules/Session.lua  Modules/Errands.lua  Modules/Edge2.lua  Modules/Bugs.lua  Modules/Finder.lua  Modules/Quick.lua
 Modules/QuickFight.lua  Modules/QuickTravel.lua  Modules/Shortcuts.lua  Modules/Window.lua  Modules/WindowPages.lua
-Modules/JournalPage.lua  Modules/Coach.lua  Modules/QoL.lua  Modules/Meter.lua  Modules/Addons.lua  Modules/Tour.lua
+Modules/JournalPage.lua  Modules/Coach.lua  Modules/QoL.lua  Modules/Meter.lua  Modules/Addons.lua  Modules/Brain.lua
+Modules/BrainPage.lua  Modules/Tour.lua
 (4.0 : Squad / Missions / Team → Group ; SafePath, Edge, HunterPro, Comfort, Economy, Predict retirés — voir plus bas)
 ```
 
@@ -978,6 +979,92 @@ Gear (« mieux que ce que tu portes », prix), Highlight (« Quête : X — enco
   lui-même l'infobulle). `ItemInfo.Decorate(tt, data)` (rend les lignes), `ItemInfo.Build(it, ctx, shift)`,
   `ItemInfo.stats = {built, hits, loading}`. Tests : `tests/wow/iteminfo_scenario.lua` (3 saveurs + mode sûr),
   `test_iteminfo.py`, plafond session_sim `ItemInfo` (survol des sacs chez le marchand, sacs pleins).
+## Pilote auto : module `Brain` (agent BRAIN, 4.0.2, `Modules/Brain.lua` + page `Modules/BrainPage.lua`)
+« Fais une super intelligence qui fait plein de trucs logiques » : TreeAI décide SEUL ce qui est **sûr, logique et
+réversible**, et dit pourquoi. **Mode sûr** (allumé par défaut), interrupteur général = le module « Pilote auto »
+(page « Fonctions », bouton de sa page, `/tai pilote on|off`) ; chaque règle se coupe d'un clic (page « Pilote auto » →
+« Règles », ou la page d'options). Rien de protégé (seulement `C_QuestLog.AddQuestWatch / RemoveQuestWatch`, nos réglages
+de ZonePlan, la boussole), rien d'abandonné, rien dans le chat, aucune minuterie à lui (événements + un rappel `T:After`
+regroupé, une seule tâche lourde par image), tout hors combat. Couper le pilote rend tout (quêtes reprises, zone et mode
+d'avant, courses retirées du trajet).
+* **Contexte** (`T.Brain.Context()` → `{ main, label, flags, map, raw, at }`, même table, lecture seule) : `main` =
+  `dead` / `ghost` / `dungeon` / `taxi` / `afk` / `city` (capitale) / `travel` (on bouge ≥ 20 s vers un arrêt à > 600 yd,
+  ou un transport en tête du trajet) / `grind` (≥ 3 combats en 5 min sans quête avancée ni arrêt à < 400 yd) / `quest` /
+  `idle` ; `flags` = `pvp` (JcJ en zone contestée / hostile), `gather` (un membre du groupe dans une autre zone), `group`,
+  `levelUp` (5 min), `bags` (≤ 1 place), `ammo` (< 400 ou < 30 min au rythme mesuré), `repair` (≤ 25 % ou pièce cassée),
+  `rested` / `restedXP`, `resting`, `logFull` / `log` / `logMax`, `combat`, `mounted`. `T.Brain.Is(kind)`. Message
+  `BRAIN_CONTEXT` (main) quand le contexte principal change. Carte « Prochaine étape » : UNE ligne d'avis (badge « i »,
+  `CARD_NOTICE["Brain:card"]`) — urgent (réparer, sacs pleins, plus de munitions : clic = la boussole vise le PNJ connu
+  le plus proche) > décision du pilote (90 s, clic = sa page) > en vol (« En vol : à l'arrivée, <étape> », genre
+  `always`) > en ville (« Courses ici : répare · vends · achète des flèches ») > pierre de foyer.
+* **Quêtes en pause** (`T.Brain.Parked(q)` → `{ k = raison, t = fait du jeu, at, n = titre, lv }` ou nil ;
+  `ParkedList()` ; `Resume(q)` ; message `BRAIN_PARKED`) : retirées du suivi du jeu (par le « Suivi auto par zone »
+  quand il est là — il suit le trajet —, sinon par le pilote, qui remet le suivi en les reprenant) et du trajet
+  (`Z:Accept` → `false, "pause"` APRÈS les règles de ZonePlan, pour les raisons qu'elles ne jugent pas : grise, échouée,
+  bloquée, doublon, donjon fait, détour ; « trop dure » et « loin » restent à ZonePlan — une quête qu'il prend n'est
+  jamais en pause), rangées « En pause » avec la raison. Raisons = faits du module « Nettoyer mon journal »
+  (`Abandon.cleanup` : échouée, chaîne bloquée, doublon, grise, donjon déjà fait, trop dure pour le groupe actuel, autre
+  continent / ≥ 15 min) ; une quête grise du trajet est jugée par le pilote (faits d'Abandon, `planned = false`) ;
+  « presque rien pour le détour » = XP réelle (`GetQuestLogRewardXP`) × 3600 / (détour du trajet + 30 s) < 25 % de l'XP/h
+  mesurée par Stats (≥ 10 min), détour ≥ 2 min 30 (sinon la règle attend). **Jamais** : finie, chrono en cours, prise il
+  y a < 5 min, avancée il y a < 15 min, visée à la main par la boussole, suivie à la main (`ZonePlan.char.watchManual`).
+  **Reprise seule** quand la raison disparaît : le groupe grandit (« vous êtes 3 maintenant », ou « ton groupe l'a
+  aussi » ; à 4 et plus pour une quête de donjon : « Groupe de 4 : <donjon> possible », clic = « Prêt pour le donjon ? »),
+  un niveau, le trajet passe à < 150 yd, tu y avances, elle est finie, tu la suis à la main. Abandon : jamais ici — page
+  « Journal » (2 clics).
+* **Zone** : seulement si tu n'as pas choisi de zone (`ZonePlan.char.mode == "auto"`) ET que le trajet n'a plus RIEN (une
+  remise compte) : la meilleure zone du même continent (`ZonePlan.counts.n` = quêtes à ton niveau, QuestieDB), ≥ 6 quêtes,
+  score = n / (1 + trajet / 5 min) → `Z:PickZone(map)` ; annoncée une fois, annulable (retour « auto »).
+* **Mode du trajet** (ZonePlan `Z.STYLES`, `Z:StyleIndex()`, `Z:SetStyle(i)`) : groupe ≥ 2 et mode « Le plus rapide »
+  → « Groupe » ; groupe dissous → le mode d'avant ; un mode choisi par le joueur n'est jamais remplacé.
+* **Courses** (`T.Brain.Needs()` → `{ key, text, urgent, kind, short }`, `ErrandStops()`, `GoService(kind)`) : réparer
+  (≤ 25 %, urgent ≤ 10 % ou pièce cassée), vendre (sacs ≤ 3 places, urgent plein), munitions (chasseur : < 400, urgent
+  < 100), maître de classe (niveau pris, prix lu chez lui par Guichets, sinon niveaux pairs). Un **arrêt** est inséré au
+  plus court dans le trajet (contrat du Planner, comme Finder : `Brain.Inject(steps, cursor)` / `Brain.StopDone(s)`,
+  étape `{ k = "vendor"|"train", label, map, x, y, brain = clé }`) seulement chez un PNJ CONNU (QuestieDB / déjà vu, module
+  Détection) : urgent = le plus proche à ≤ 900 yd, en tête ; sinon seulement quand le trajet passe par une capitale (PNJ
+  connu là-bas) — ailleurs, une note (page « Pilote auto », avis « Courses ici » en ville). Fait à l'arrivée (≤ 40 yd), retiré quand le besoin est réglé, jamais reproposé 10 min après.
+* **Pierre de foyer** : prête, ≥ 2 quêtes finies se rendent à ≤ 400 yd de l'auberge (`C_QuestLog.GetNextWaypoint`), plus
+  rien d'autre au trajet, ≥ 5 min gagnées (Route) → avis ; jamais si le trajet la prend déjà (`Route.firstKind == "hs"`).
+* **Suivre le groupe** (coupé par défaut) : lit `Group.Intent()` (contrat GROUPJOIN ci-dessous) ; zone → `Z:PickZone`,
+  donjon → `Dungeon.SetPlanned`, point de rencontre → `Compass:SetTarget`, quête → `Compass.SetQuestTarget` ; une fois
+  par intention, journalisé avec qui l'a dit, annulable.
+* **Le choix du joueur gagne pour la session** (≤ 2 h sans jeu) : « Reprendre », « Annuler », une zone / un mode changés
+  à la main, une course annulée → `T.Brain.Overrides()` (`keep[q]`, `zone`, `style`, `errand[genre]`).
+* **Page « Pilote auto : pourquoi ? »** (`T.BrainPage`, page cachée de la navigation comme « Journal de la boussole » :
+  pastille > Outils > « Pilote auto : pourquoi ? », clic sur l'avis de la carte, section « En pause » de la page Quêtes,
+  `/tai pilote`) : en-tête
+  (contexte, quêtes en pause, décisions) ; « En pause » (bouton « Reprendre », lien « Abandonner : page Journal » pour
+  les raisons sûres) ; « Courses » (clic = boussole) ; « Décisions » (heure, quoi, pourquoi, bouton « Annuler » :
+  `T.Brain.Undo(id)`, `T.Brain.Decisions(n)`, ≤ 30 gardées par perso) ; « Ce que TreeAI voit » et « Règles » repliés ;
+  bouton d'action « Couper / Allumer le pilote ». Page « Quêtes » : section « En pause (pilote auto) » repliée
+  (`T.BrainPage.QuestsSection(Ly)`, crochet gardé de WindowPages.lua).
+* **Crochets** (gardés, sans Brain rien ne change) : `Z.Accept` enveloppé une fois par le pilote (ZonePlan peut le faire
+  lui-même et poser `Z.BRAIN_AWARE = true`) ; Planner `Evaluate` → `T.Brain.Inject`, `stepDone` → `T.Brain.StopDone` ;
+  WindowPages → `T.BrainPage.QuestsSection`. Résumé `summary.brain = { v, ctx, parked = { {title, reason, why} },
+  decisions = { {at, kind, text, undone} }, updated }`. `/tai pilote` ouvre la page.
+* **Coût** : `session_sim` plafonne Brain à 40 kinstr/min (mesuré ≈ 7 en mode sûr) et à 1 au repos (`--idle`).
+  Tests : `tests/wow/brain_spec.lua` (cœur pur), `tests/wow/brain_scenario.lua` (contextes, chaque règle : déclenche /
+  ne déclenche pas / annuler / le joueur gagne ; suivi auto par zone allumé et coupé), `tests/wow/test_brain.py`.
+**Contrats demandés aux agents en parallèle** (le pilote les détecte ; sans eux il fait sans) :
+* **ZONEFIX** (ZonePlan / Route / Planner / Compass) : (1) à la fin de `Z:Accept(q, …)`, quand ses règles prennent la
+  quête : `local p = T.Brain and T.Brain.Parked and T.Brain.Parked(q) if p and T.Brain.Core.ROUTE_KEYS[p.k] then return
+  false, "pause" end` + `Z.BRAIN_AWARE = true`, et `WHY_TXT.pause = "en pause (pilote auto)"` dans `MaskedText` ; (2) `Z:SetStyle(i, by)` / `Z:PickZone(map, by)` avec `by = "brain"` ou nil (joueur)
+  → `Z.char.styleBy` / `Z.char.zoneBy` = `"brain"` | `"player"` : un choix explicite du joueur reconnu même quand il
+  vaut le défaut (aujourd'hui le pilote ne remplace que « Le plus rapide ») ; (3) garder stables `Z.counts.n[map]`,
+  `Z:Allowed().maps`, `Z.char.watchManual[q]` (true / false = la main du joueur) et `Z:AutoWatchOn()` ; (4) facultatif :
+  `Z:SetBias({ kill = 1.5 })` (repos + monstres sur le chemin) — le pilote le posera quand il existe ; (5) garder les deux
+  crochets du Planner (`Brain.Inject` juste après `Finder.Inject`, `s.brain` dans `stepDone`).
+* **GROUPJOIN** (Group) : `T.modules.Group.Intent()` → nil | `{ kind = "zone" | "dungeon" | "quest" | "meet" | "grind",
+  map = uiMapID, dungeon = clé de Data/Dungeons, questID, point = { map, x, y (0–100) }, label = texte court en français
+  (« on va à Mille pointes »), by = nom court de qui l'a dit, src = "chat" | "goal" | "leader" | "positions" | "log",
+  conf = 0..1, at = GetTime() de l'inférence (stable tant que l'intention ne change pas) }` + `T:Fire("GROUP_INTENT",
+  intent)` à chaque changement. Le pilote n'agit que si « Suivre le groupe » est coché et `conf ≥ 0,6`.
+* **REPLACE** (icônes de quête + « Suivi TreeAI ») : (1) le suivi TreeAI ne montre pas les quêtes en pause dans sa liste
+  (ou les range repliées dans « En pause » avec `T.Brain.Parked(q).t` comme raison), rafraîchi sur `BRAIN_PARKED` ;
+  (2) pas d'icône (ou une icône éteinte) pour une quête en pause ; (3) suivre `T.Brain.Context().main` : `taxi` →
+  compact « à l'arrivée », `dungeon` → quêtes du donjon seulement, `dead` / `ghost` → caché ; (4) si le suivi TreeAI
+  remplace celui du jeu, garder la même sémantique du suivi `C_QuestLog` (le pilote et le suivi auto par zone y écrivent).
 
 ## Sons, fenêtres, placement vivant (agent UI2)
 
