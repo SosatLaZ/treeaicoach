@@ -1246,6 +1246,7 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   PathDraw = { lite = true, desc = "Chemin de l'itinéraire dessiné sur la carte et la minimap" },
   Finder = { lite = true, desc = "Chercher : meilleur familier, rares, équipement, maîtres, vols, trésors" },
   Speed = { lite = true, desc = "Aller plus vite : mort, monture, foyer" },
+  QuickTravel = { lite = true, desc = "Raccourcis : vols, auberge, courses, outils du groupe" },
   Plain = { lite = true, desc = "Conseils de quête en mots simples" },
   Region = { lite = true, desc = "Quêtes rangées par région (ici, à côté, loin)" },
   Hub = { lite = true, desc = "Pastille de la minimap : tout TreeAI en un clic" },

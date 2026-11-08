@@ -1150,6 +1150,8 @@ function M:ReadyAsk()
   pend.ready = { v = PROTO, k = "ask", id = id }
   self._dirty = true
   T:Print("« Prêt ? » envoyé au groupe.")
+  local QT = T.QuickTravel   -- QUICK3 : la fenêtre « Tout le monde prêt ? » montre l'état de chacun
+  if type(QT) == "table" and type(QT.ShowReady) == "function" then pcall(QT.ShowReady, QT, true) end
 end
 
 function M:ReadyAnswer(yes, why)
