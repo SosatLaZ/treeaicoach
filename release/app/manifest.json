@@ -1,25 +1,25 @@
 {
- "version": "4.0.1",
+ "version": "4.0.2",
  "exe": "TreeAICoach-app.exe",
- "sha256": "6df63283ec9e266a352c69277f88dcf11f718f2239c69ec05d74fa43c4e8b803",
+ "sha256": "8de331cb7c2008f43433f58710d968fb1f395bf8752665eb3c1920cf9454e6a5",
  "chunks": [
   {
-   "name": "4.0.1/part-01.zip",
-   "size": 88000166,
-   "sha256": "4d6ea218f773fd33d47ce7cf6d087438c0967c30003f464d547869bbde5e3dfb",
+   "name": "4.0.2/part-01.zip",
+   "size": 88013178,
+   "sha256": "f0c9ade492e05073aec259074e29255445cbd44336b6c1c287185f6728d5c239",
    "files": 127
   },
   {
-   "name": "4.0.1/part-02.zip",
-   "size": 13786521,
-   "sha256": "397eb4e8221ae0d6dee2244823757bd46b966eeef3d3202c39bb702908132028",
-   "files": 673
+   "name": "4.0.2/part-02.zip",
+   "size": 13932763,
+   "sha256": "a83ac60d1bafb154855c3fff0b7044b17c6392e6ff8f32b1c95463404990abab",
+   "files": 681
   }
  ],
- "total_size": 101786687,
+ "total_size": 101945941,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "TreeAI 4.0.1 : fen\u00eatres qui restent en place, zone et boussole corrig\u00e9es, suivi auto par zone, nettoyage du journal, moins de calcul, plus d'invitations automatiques."
+ "notes": "TreeAI 4.0.2 : conseils pro, macros refaites (pastilles, pr\u00e9r\u00e9glages, TAI Aspects), ic\u00f4nes de qu\u00eates et Suivi TreeAI \u00e0 la place des autres addons, infos sur les objets, rejoindre ses amis et deviner ce que veut le groupe."
 }

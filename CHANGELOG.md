@@ -3,6 +3,25 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 4.0.2 · 8 novembre 2026
+
+- **Conseils pro** (nouvelle page, allumée en mode sûr) : 20 conseils d'expert déclenchés par ce que le jeu montre
+  vraiment (repos, familier, munitions, XP, journal, combats mesurés) — une ligne au plus dans « Maintenant », le
+  « pourquoi » chiffré au survol, rien en combat ; 42 techniques de pro expliquées pas à pas, chaque conseil ON / OFF.
+- **Macros refaites** : page d'état avec une pastille par macro (active / à mettre à jour / modifiée par toi / figée),
+  mise à jour en un clic, réglages par macro, préréglages Simple / Complet / Pro, macros Pro et « TAI Aspects »
+  (une touche : Faucon en combat ou sur une cible hostile, sinon Guépard). Une macro modifiée à la main n'est jamais réécrite.
+- **Plus besoin des autres addons** : icônes de quêtes TreeAI (« ! » à prendre, « ? » à rendre, zones d'objectifs,
+  carte + minimap), « Suivi TreeAI » à la place du suivi du jeu (distance, direction, durée en direct,
+  `/tai monsuivi`), Questie et Suivi Forever rendus silencieux en un clic (page « Mes addons »), Confort à la Leatrix
+  (vendre les gris, réparer, butin rapide, recul de caméra), fenêtre des dégâts du groupe.
+- **Infos sur les objets** : lignes vraies sous les infobulles (amélioration ou non pour toi, valeur, quête, métiers,
+  familier, d'où ça tombe).
+- **Groupe** : « Rejoindre » chaque ami au plus vite ou en « Rentable » (rendus sur le chemin, +20 % de temps max),
+  « attends-le » s'il vient vers toi, point de rencontre proposé au groupe (« J'y vais » d'un clic chez les amis
+  TreeAI), et ce que veut faire le groupe deviné à partir du chat de groupe (lu seulement, jamais écrit), des
+  déplacements et des quêtes communes, avec « Suivre le groupe ».
+
 ## 4.0.1 · 8 novembre 2026
 
 - **WoW : les fenêtres ne sautent plus dans un coin** une seconde après la connexion (une seule passe de placement,
