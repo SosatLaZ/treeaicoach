@@ -1287,6 +1287,7 @@ function M.SendRoute()
   if #stops == 0 then M:Print("Itinéraire : aucun point connu (Questie / API de quêtes).") return nil end
   local A = C and C.SPF and C.SPF()
   if A and not inCombat() and C.SPFCall(A, "NavigateRoute", "TreeAI", stops) then
+    if C.MarkRoute then C.MarkRoute("spf") end
     M:Print(("Itinéraire (%d étapes) envoyé à Shortest Path."):format(#stops))
     return "spf"
   end

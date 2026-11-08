@@ -905,6 +905,10 @@ end
 -- ===================================================================== navigation (clic seulement)
 local KIND = { pick = "pickup", turn = "turnin", obj = "objective", fly = "flightmaster", hs = "innkeeper",
   train = "trainer", vendor = "innkeeper" }
+function P:MarkSPF()  -- la boussole retire cet itinéraire SPF à la mort (pas de ligne flottante sur la fenêtre de mort)
+  local Cmp = T.modules and T.modules.Compass
+  if type(Cmp) == "table" and type(Cmp.MarkRoute) == "function" then Cmp.MarkRoute("spf") end
+end
 function P:Navigate(s)
   s = s or (self.steps and self.cursor and self.steps[self.cursor])
   if not (s and s.map and s.x) then T:Print("Pas de position connue pour cette étape.") return false end
@@ -928,9 +932,9 @@ function P:Navigate(s)
           if #stops >= 5 then break end
         end
       end
-      if #stops > 0 and try(api.NavigateRoute, "TreeAI", stops) then self.navBy = "spf" return true end
+      if #stops > 0 and try(api.NavigateRoute, "TreeAI", stops) then self.navBy = "spf" self:MarkSPF() return true end
     elseif type(api.Navigate) == "function" then
-      if try(api.Navigate, "TreeAI", s.map, x, y, label, KIND[s.k]) then self.navBy = "spf" return true end
+      if try(api.Navigate, "TreeAI", s.map, x, y, label, KIND[s.k]) then self.navBy = "spf" self:MarkSPF() return true end
     end
   end
   local tt = G("TomTom")
