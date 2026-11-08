@@ -701,11 +701,14 @@ function M:Place(tg)
   return ok and true
 end
 
-function M:Bind(tg, confirmed)
-  if needsUserAction(function() M:Bind(tg, confirmed) end) then return end
-  if inCombat() then say("Hors combat seulement.") return false end
-  if M.db.bindBlocked then say(manualText(tg)) return false end
-  if not (G.SetBinding and G.SaveBindings) then say(manualText(tg)) return false end
+-- (4.1 STRIP) quiet = appelé par « Raccourcis conseillés » des boutons rapides : rien dans le chat, pas de rescan ;
+-- renvoie vrai, ou faux + la raison (« combat », « bloqué », « api », « refusé »)
+function M:Bind(tg, confirmed, quiet)
+  local function tell(msg) if not quiet then say(msg) end end
+  if needsUserAction(function() M:Bind(tg, confirmed, quiet) end) then return end
+  if inCombat() then tell("Hors combat seulement.") return false, "combat" end
+  if M.db and M.db.bindBlocked then tell(manualText(tg)) return false, "bloqué" end
+  if not (G.SetBinding and G.SaveBindings) then tell(manualText(tg)) return false, "api" end
   if not confirmed then
     self.confirm = { id = tg.id, step = tg, t = now() }
     say(("Confirmer : lier %s à %s%s ? Reclique la ligne (ou /tai touches oui)."):format(label(tg.item),
@@ -724,15 +727,46 @@ function M:Bind(tg, confirmed)
   end)
   local got = bindingAction(tg.key)
   if blocked or not res or (G.GetBindingAction and got ~= cmd) then
-    if blocked then M.db.bindBlocked = true end
-    say((blocked and ("Le jeu a bloqué le raccourci (%s). "):format(blocked) or "Le raccourci n'a pas pris. ")
+    if blocked and M.db then M.db.bindBlocked = true end
+    tell((blocked and ("Le jeu a bloqué le raccourci (%s). "):format(blocked) or "Le raccourci n'a pas pris. ")
       .. manualText(tg))
-    self:Refresh()
-    return false
+    if not quiet then self:Refresh() end
+    return false, blocked and "bloqué" or "refusé"
   end
-  say(("%s lié à %s (enregistré)."):format(label(tg.item), M.KeyText(tg.key)))
-  self:Refresh()
+  tell(("%s lié à %s (enregistré)."):format(label(tg.item), M.KeyText(tg.key)))
+  if not quiet then self:Refresh() end
   return true
+end
+
+--- (4.1 STRIP) première touche libre d'une liste (aucune commande du jeu ni d'addon dessus), ou nil
+function M.FreeKey(keys)
+  for _, k in ipairs(type(keys) == "table" and keys or {}) do
+    if type(k) == "string" and bindingAction(k) == "" then return k end
+  end
+  return nil
+end
+--- (4.1 STRIP) « Raccourcis conseillés » : list = { { cmd, keys = { "ALT-1", … }, name } } ; pour chaque commande
+--- encore sans touche, la première touche LIBRE (jamais une touche déjà prise n'est remplacée). Clic du joueur, hors
+--- combat, par M:Bind (même chemin protégé). Renvoie { { cmd, key } }, raison d'arrêt ou nil.
+function M.ApplyKeys(list)
+  local done, why = {}, nil
+  local function run()
+    if inCombat() then why = "combat" return end
+    for _, it in ipairs(type(list) == "table" and list or {}) do
+      local cur = try(G.GetBindingKey, it.cmd)
+      if type(it.cmd) == "string" and not (type(cur) == "string" and cur ~= "") then
+        local k = M.FreeKey(it.keys)
+        if k then
+          local ok, reason = M:Bind({ id = "strip:" .. it.cmd, how = "bind", key = k,
+            item = { kind = "command", name = it.name or it.cmd, cmd = it.cmd } }, true, true)
+          if ok then done[#done + 1] = { cmd = it.cmd, key = k }
+          elseif reason then why = reason break end
+        end
+      end
+    end
+  end
+  if T.UserAction and not (T.InUserAction and T:InUserAction()) then T:UserAction(run) else run() end
+  return done, why
 end
 
 ---------------------------------------------------------------------------------------------------

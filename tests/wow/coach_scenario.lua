@@ -363,6 +363,13 @@ return function(M, ctx)
   T.API.BagChanged()
   if hunter then M.pet.level = 24 end                    -- petLevel (45) + emptyBag (40)
   M.player.rested = 9000                                 -- restedKill (45)
+  -- (4.1 STRIP) the card is off by default now (not built during the storm): another module's notice of the moment
+  -- (Pilote auto « Trajet en mode Groupe », the storm's group) is not what the card check below is about
+  if W and type(W.CARD_NOTICE) == "table" then
+    for k in pairs(W.CARD_NOTICE) do
+      if not k:find("^Coach:") and (T._suggestions or {})[k] then T:ClearSuggestion(k) end
+    end
+  end
   C.RunAll()
   local function coachLines()
     local out = {}

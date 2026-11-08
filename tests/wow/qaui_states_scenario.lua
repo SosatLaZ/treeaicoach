@@ -7,6 +7,9 @@ return function(M, ctx)
   local T = TreeAI
   local check = ctx.check
   local W, H = T.Window, T.Hub
+  -- (4.1 STRIP) the « Prochaine étape » card is off by default (the « boutons rapides » strip replaced it); this player
+  -- turns it on: its content is what is checked here
+  if W and W.db and W.db.card == false then W.db.card = true W:OnOptionChanged("card") end
   local Lb = dofile("tests/wow/qaui_lib.lua")
   Lb.instrument(M)
   local verbose = os.getenv("QAUI_VERBOSE") == "1"

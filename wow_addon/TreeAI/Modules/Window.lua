@@ -22,7 +22,8 @@ local L = T.L or setmetatable({}, { __index = function(_, k) return k end })
 local W = T:RegisterModule("Window", {
   title = "Fenêtre TreeAI",
   description = "La fenêtre « TreeAI » (pastille de la minimap ou touche) et la petite carte « Prochaine étape ».",
-  defaults = { enabled = true, card = true, replacePanel = true, cardSteps = 3, cardScale = 100 },
+  -- (4.1 STRIP) carte coupée d'office : les boutons rapides (Shortcuts.lua) prennent sa place en haut à gauche
+  defaults = { enabled = true, card = false, replacePanel = true, cardSteps = 3, cardScale = 100 },
   charDefaults = { page = "now", collapsed = {}, dungeon = nil },
   options = {
     { section = "Carte « Prochaine étape »", key = "card", type = "toggle", label = "Afficher la carte « Prochaine étape »" },
@@ -461,6 +462,12 @@ end
 local card
 local CARD_W, HERO_H, STEP_H = 280, 48, 36          -- grille de 4 px
 local function cardOn() return W:IsEnabled() and W.db and W.db.card ~= false end
+-- (4.1 STRIP) l'affichage de l'étape = la carte, ou à défaut les boutons rapides : le panneau texte reste caché
+local function hudOn()
+  if cardOn() then return true end
+  local Sc = T.Shortcuts
+  return (W:IsEnabled() and type(Sc) == "table" and type(Sc.IsHUD) == "function" and Sc.IsHUD()) and true or false
+end
 local function buildCard()
   if card or not G.CreateFrame then return card end
   card = G.CreateFrame("Frame", "TreeAICard", G.UIParent, G.BackdropTemplateMixin and "BackdropTemplate" or nil)
@@ -964,7 +971,7 @@ end
 -- le panneau texte : caché quand la carte le remplace (sauf si le joueur l'ouvre lui-même)
 local userPanel = false
 local function hidePanelForCard()
-  if not (cardOn() and W.db.replacePanel ~= false) or userPanel then return end
+  if not (hudOn() and W.db.replacePanel ~= false) or userPanel then return end
   local p = T.GetPanel and T:GetPanel()
   if p and meth(p, "IsShown") then meth(p, "Hide") end
 end
@@ -983,17 +990,17 @@ function W.ShowCard()
 end
 function W.HideCard() if card then meth(card, "Hide") end end
 --- (4.0 QA) la carte est-elle l'affichage de l'étape (le panneau texte n'apparaît que si le joueur l'a ouvert) ?
-function W.CardIsHUD() return (W._active and cardOn() and W.db.replacePanel ~= false and not userPanel) and true or false end
+function W.CardIsHUD() return (W._active and hudOn() and W.db.replacePanel ~= false and not userPanel) and true or false end
 T.CardIsHUD = function() return W.CardIsHUD() end
 --- (4.0 QA) « Réinitialiser l'interface », assistant de démarrage : la carte revient (à la place automatique du
 --- panneau si resetPos), le panneau texte se cache ; faux = la carte ne remplace pas le panneau (l'appelant le montre)
 function W.ShowHUD(resetPos)
-  if not (W._active and cardOn() and W.db.replacePanel ~= false) then return false end
+  if not (W._active and hudOn() and W.db.replacePanel ~= false) then return false end
   userPanel = false
   if resetPos and W.char then W.char.cardPos = nil end
   local p = T.GetPanel and T:GetPanel()
   if p and meth(p, "IsShown") then meth(p, "Hide") end
-  W.ShowCard()
+  if cardOn() then W.ShowCard() else T.safecall(T.Shortcuts.ShowHUD, resetPos) end
   return true
 end
 --- ligne « Zone : … » de la page Trajet (choix de la zone de travail) si elle est à l'écran, sinon nil (visite guidée)
@@ -2018,7 +2025,7 @@ if type(T.SelectTab) == "function" and not W._wrappedTab then
   W._wrappedTab = true
   local orig = T.SelectTab
   T.SelectTab = function(self, id, ...)
-    if W._active and cardOn() and W.db.replacePanel ~= false and not userPanel then
+    if W._active and hudOn() and W.db.replacePanel ~= false and not userPanel then
       local p = self.GetPanel and self:GetPanel()
       if not (p and p:IsShown()) then W.OpenTab(id) return end
     end
@@ -2045,8 +2052,12 @@ if type(T.SetEditMode) == "function" and not W._wrappedEdit then
 end
 
 function W:OnEnable()
+  -- (4.1 STRIP) une fois : la carte coupée aussi chez ceux qui l'avaient (le joueur peut la rallumer dans les options)
+  if W.db and not W.db.cardOff41 then W.db.cardOff41 = true W.db.card = false end
   if cardOn() then
     T:After(1.5, function() if W._active then W.ShowCard() end end)
+  elseif hudOn() then
+    T:After(1.5, function() if W._active then hidePanelForCard() end end)
   end
   -- (PLACEBUG) le placement automatique ne passe qu'une fois l'écran posé (1er lancement, résolution changée) : la
   -- carte non posée par le joueur suit alors la place trouvée pour le panneau

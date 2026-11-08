@@ -18,6 +18,8 @@ return function(M, ctx)
   Lb.world(M, T)
   Lb.goTo(1441, 46, 50)
   local function cardShown() return W.GetCard() and W.GetCard():IsShown() or false end
+  -- (4.1 STRIP) the « boutons rapides » strip replaced the card at the top left (card off by default)
+  local function stripShown() local f = rawget(_G, "TreeAIStrip") return f and f:IsShown() or false end
   local function card(tag)
     local c = W.GetCard()
     if not (c and c:IsShown()) then p("  card: hidden", tag or "") return end
@@ -35,10 +37,8 @@ return function(M, ctx)
     M.Advance(1, 0.25)
     p(("t=%ds panel=%s card=%s"):format(t, tostring(panel()), tostring(cardShown())))
   end
-  check(cardShown() and not panel(), "first login: the card, not the old panel")
+  check(stripShown() and not cardShown() and not panel(), "first login: the quick buttons, not the card nor the old panel (4.1)")
   card("t=4")
-  local c = W.GetCard()
-  check(c and c.steps[1] and c.steps[1]:IsShown() and c.steps[1].badge.num:GetText() == "i", "first login: the mode sûr notice on the card (UI-41)")
   M.Advance(2, 0.25)
   local wiz = T.GetWizard and T:GetWizard()
   p("== wizard shown:", tostring(wiz and wiz:IsShown()))
@@ -60,7 +60,7 @@ return function(M, ctx)
           if lbl == "Auto (scan)" or lbl == "Haut droite" or lbl == "Bas gauche" then
             b:Click("LeftButton")
             p(("     after « %s »: panel=%s card=%s"):format(lbl, tostring(panel()), tostring(cardShown())))
-            check(cardShown() and not panel(), "wizard « " .. lbl .. " » : card shown, old panel hidden (UI-05)")
+            check(stripShown() and not panel(), "wizard « " .. lbl .. " » : quick buttons shown, old panel hidden (UI-05)")
           end
         end
       end
@@ -69,7 +69,7 @@ return function(M, ctx)
     p("  wizard after Terminer: shown=" .. tostring(wiz:IsShown()) .. " onboarded=" .. tostring(T.db.onboarded))
     check(not wiz:IsShown(), "wizard closed")
   end
-  check(cardShown() and not panel(), "after the wizard: still the card")
+  check(stripShown() and not panel(), "after the wizard: still the quick buttons")
   -- the tour
   for _ = 1, 30 do
     M.Advance(1, 0.25)
