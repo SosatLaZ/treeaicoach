@@ -400,6 +400,7 @@ return function(M, ctx)
   M.AddItem(9202, { name = "Pierre polie", sellPrice = 300, classID = 15 })
   M.questChoices = { 9201 }
   calls = {}
+  T.modules.QoL.db.questTake = true   -- (4.1.2) prendre la récompense unique = option à part, coupée d'office
   fire("QUEST_COMPLETE")
   local gr = called("GetQuestReward")
   check(gr and gr[2] == 1, "une seule récompense : prise")

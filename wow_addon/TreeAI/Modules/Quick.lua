@@ -28,8 +28,6 @@ local OPTIONS = {
   { key = "btnHearth", type = "toggle", label = "Bouton : pierre de foyer", section = "Barre" },
   { key = "btnMount", type = "toggle", label = "Bouton : monture (ou Aspect du guépard)", section = "Barre" },
   { key = "btnMail", type = "toggle", label = "Bouton : prendre tout le courrier", section = "Barre" },
-  { key = "autoQuest", type = "toggle", label = "Accepter et rendre les quêtes tout seul (Maj = pause)", section = "Quêtes" },
-  { key = "autoReward", type = "toggle", label = "Choisir la récompense quand le choix est évident", section = "Quêtes" },
   { key = "skipTrivial", type = "toggle", label = "Ignorer les quêtes grises et répétables", section = "Quêtes" },
   { key = "autoGossip", type = "toggle", label = "Dialogue à un seul choix : vol, marchand, banque, maître", section = "PNJ" },
   { key = "autoSell", type = "toggle", label = "Vendre les objets gris chez le marchand", section = "Marchand et courrier" },
@@ -177,7 +175,8 @@ local function questLogFull()
   return n and n >= maxN or false
 end
 
-local function questOn() return opt("autoQuest") and not shift() end
+-- (4.1.2) la barre de quête n'accepte / ne rend / ne choisit plus rien : un seul interrupteur, Confort (QoL), coupé d'office
+local function questOn() return M.LEGACY_AUTO == true and opt("autoQuest") and not shift() end   -- tests seulement
 M.stats = { accepted = 0, turnedIn = 0, rewards = 0, gossip = 0, sold = 0, repaired = 0, mails = 0, shared = 0 }
 
 function M.OnQuestDetail()
@@ -250,7 +249,7 @@ function M.OnGossip()
   if shift() then return end
   local GI = g("C_GossipInfo") or {}
   local active, avail = gossipQuests()
-  if opt("autoQuest") then
+  if questOn() then
     for _, q in ipairs(active) do
       if type(q) == "table" and q.isComplete and q.questID and GI.SelectActiveQuest then
         try(GI.SelectActiveQuest, q.questID) return
@@ -838,7 +837,7 @@ function M.SetAuto(on)
   M.Layout()
 end
 function M.ProposeAuto()
-  if not (M.db and M._active) or M.db.autoAsked then return end
+  if not M.LEGACY_AUTO then return end   -- (4.1.2) plus de question : l'option vit dans Confort (QoL)
   if M.db.autoQuest then M.db.autoAsked = true return end                 -- déjà coché à la main
   if T.IsDismissed and T:IsDismissed(AUTO_ID, AUTO_TEXT) then              -- clic droit : non merci
     M.db.autoAsked = true
@@ -930,10 +929,12 @@ end
 function M:OnInit()
   -- (4.0 QA) une fois : les automatismes de quête / dialogue sauvés « oui » par l'ancien défaut repartent coupés
   -- (la question ci-dessus les propose ; un clic les remet)
-  if self.db and self.db.autoV ~= 1 then
-    self.db.autoV = 1
-    if not self.db.autoAsked then self.db.autoQuest, self.db.autoReward, self.db.autoGossip = false, false, false end
+  if self.db and (tonumber(self.db.autoV) or 0) < 2 then
+    self.db.autoV = 2
+    -- (4.1.2) le joueur ne pouvait plus couper : tout repart coupé, une fois, chez tout le monde
+    self.db.autoQuest, self.db.autoReward, self.db.autoGossip, self.db.autoAsked = false, false, false, true
   end
+  T:ClearSuggestion(AUTO_ID)
 end
 
 --- redemande au module Quêtes de montrer / cacher son propre bouton d'objet (un seul à l'écran)

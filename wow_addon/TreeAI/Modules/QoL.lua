@@ -22,10 +22,11 @@ local Q = T:RegisterModule("QoL", {
   description = "Ce que Leatrix Plus faisait pour toi, en légal : vendre les gris et réparer, butin instantané, "
     .. "butin automatique du jeu, recul de caméra.",
   -- (4.1 LAYOUT) dialogues de quête : coupés d'office (le joueur les allume), la récompense entourée sans rien choisir
-  defaults = { enabled = true, sellRepair = true, fastLoot = true, questAuto = false, questReward = true },
+  defaults = { enabled = true, sellRepair = true, fastLoot = true, questAuto = false, questTake = false, questReward = true },
   charDefaults = {},
   options = {
     { key = "questAuto", type = "toggle", label = "Accepter / rendre les quêtes tout seul (Maj = pas cette fois)", section = "Quêtes" },
+    { key = "questTake", type = "toggle", label = "Prendre la récompense tout seul quand il n'y en a qu'une (coupé d'office)", section = "Quêtes" },
     { key = "questReward", type = "toggle", label = "Récompense : entourer le meilleur choix (jamais choisi à ta place)", section = "Quêtes" },
     { key = "sellRepair", type = "toggle", label = "Vendre les objets gris et réparer chez le marchand (Maj = pause)", section = "Marchand" },
     { key = "fastLoot", type = "toggle", label = "Butin instantané (avec le butin automatique du jeu)", section = "Butin" },
@@ -280,6 +281,7 @@ function Q.OnQuestComplete()
     return "highlight"
   end
   if not questAuto() then return nil end
+  if not (Q.db and Q.db.questTake == true) then return nil end   -- (4.1.2) la récompense : seulement si tu l'as voulu
   if (num(try(g("GetQuestMoneyToGet"))) or 0) > 0 then return nil end
   if try(g("GetQuestReward"), n) ~= false then Q.qstats.turnedIn = Q.qstats.turnedIn + 1 return "taken" end
   return nil
@@ -347,6 +349,8 @@ end
 
 -- ===================================================================== cycle de vie
 function Q:OnEnable()
+  -- (4.1.2) une fois chez tout le monde : quêtes et récompenses automatiques coupées (le joueur ne pouvait plus couper)
+  if self.db and (tonumber(self.db.questV) or 0) < 1 then self.db.questV, self.db.questAuto, self.db.questTake = 1, false, false end
   self:RegisterEvent("MERCHANT_SHOW", function() onMerchant() end)
   self:RegisterEvent("MERCHANT_CLOSED", function() merchantOpen = false end)
   self:RegisterEvent("PLAYER_INTERACTION_MANAGER_FRAME_SHOW", function(_, _, kind)
@@ -366,3 +370,19 @@ function Q:OnEnable()
   end)
 end
 function Q:OnDisable() merchantOpen = false end
+
+-- (4.1.2) un interrupteur facile : /tai quetesauto on | off (récompense : /tai recompense on | off)
+if T.RegisterSlash then
+  T:RegisterSlash("quetesauto", function(rest)
+    if not Q.db then return end
+    rest = tostring(rest or ""):lower()
+    Q.db.questAuto = (rest == "on") or (rest == "" and not Q.db.questAuto)
+    T:Print(Q.db.questAuto and "Quêtes : accepter / rendre tout seul ACTIVÉ (Maj = pas cette fois)" or "Quêtes : accepter / rendre tout seul COUPÉ")
+  end, "accepter / rendre les quêtes tout seul : on / off")
+  T:RegisterSlash("recompense", function(rest)
+    if not Q.db then return end
+    rest = tostring(rest or ""):lower()
+    Q.db.questTake = (rest == "on") or (rest == "" and not Q.db.questTake)
+    T:Print(Q.db.questTake and "Récompense unique prise tout seul : ACTIVÉ" or "Récompense prise tout seul : COUPÉ (tu cliques)")
+  end, "prendre la récompense unique tout seul : on / off")
+end

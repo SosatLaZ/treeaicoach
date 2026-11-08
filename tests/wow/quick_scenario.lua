@@ -19,7 +19,8 @@ return function(M, ctx)
   for _, o in ipairs(X.OPTIONS) do
     check(X.db[o.key] == (not AUTO[o.key]) and o.section and o.label, "option " .. o.key .. " = " .. tostring(X.db[o.key]))
   end
-  check(X.db.autoV == 1, "migration unique faite")
+  check(X.db.autoV == 2 and X.db.autoQuest == false and X.db.autoReward == false, "migration unique faite (4.1.2 : tout coupé)")
+  X.LEGACY_AUTO = true   -- (4.1.2) l'ancien automatisme n'existe plus en jeu ; testé ici derrière ce drapeau
   -- la question, une fois : une ligne « Accepter et rendre les quêtes tout seul ? » (clic = oui)
   if X.ProposeAuto then
     X.db.autoAsked = nil
