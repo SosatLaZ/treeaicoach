@@ -69,6 +69,15 @@ local SIZES = { S = { "GameFontHighlightSmall", 10 }, M = { "GameFontHighlight",
 Th.SIZES = SIZES
 Th.SPACE = { xs = 2, s = 4, m = 8, l = 12, xl = 16 }
 Th.ROW = { h = 20, h2 = 32, head = 18, icon = 14, iconL = 18 }
+-- (UIREDO) jetons de la fenêtre TreeAI et de la carte « Prochaine étape » : tailles de texte par rôle, hauteurs des
+-- blocs (carte d'en-tête, étape numérotée, quête, ligne, en-tête de section), icônes des genres d'étape
+Th.TYPE = { title = "L", body = "M", small = "S" }
+Th.BLOCK = { hero = 66, step = 40, quest = 38, row = 24, header = 24, badge = 26, gap = 8 }
+Th.STEP_ICON = {
+  pick = "Interface\\GossipFrame\\AvailableQuestIcon", turn = "Interface\\GossipFrame\\ActiveQuestIcon",
+  fly = "Interface\\Minimap\\Tracking\\FlightMaster", boat = "Interface\\Icons\\INV_Misc_Spyglass_03",
+  hs = "Interface\\Icons\\INV_Misc_Rune_01", obj = "Interface\\Icons\\INV_Misc_Note_02",
+}
 --- étiquette « bêta » (même couleur partout : Plus → Modules, pastille, options)
 function Th:BetaTag() return "|cffb48cffbêta|r" end
 

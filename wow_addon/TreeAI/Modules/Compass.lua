@@ -874,17 +874,24 @@ local function createFrame()
     local tt = _G.GameTooltip
     if not tt then return end
     pcall(tt.SetOwner, tt, f, "ANCHOR_BOTTOM")
-    pcall(tt.AddLine, tt, "Boussole TreeAI")
+    -- (UIREDO) ce que c'est · distance + temps · pourquoi · ce que fait chaque clic (une ligne chacun)
     local t = M.Current()
     if t then
-      pcall(tt.AddLine, tt, t.title or t.label, 1, 1, 1)
-      if t.npc then pcall(tt.AddLine, tt, t.npc, 0.8, 0.8, 0.8) end
+      pcall(tt.AddLine, tt, t.title or t.label or "Cible", 1, 0.82, 0.2, true)
+      if t.npc then pcall(tt.AddLine, tt, t.npc, 0.85, 0.85, 0.85) end
       local st = M.state or {}
-      pcall(tt.AddLine, tt, "Durée : " .. (st.spf and "Shortest Path (chemin réel)" or "ta vitesse mesurée × détour de la zone"), 0.6, 0.6, 0.6)
+      if st.dist then
+        pcall(tt.AddLine, tt, (st.approx and "≈ " or "") .. G.Dist(st.dist, M.db.units) .. (st.eta and (" · " .. st.eta) or "")
+          .. (st.spf and " (chemin réel)" or " à pied"), 0.6, 0.8, 1)
+      end
+      if t.why then pcall(tt.AddLine, tt, t.why, 0.85, 0.85, 0.85, true) end
+    else
+      pcall(tt.AddLine, tt, "Boussole TreeAI : pas de cible", 1, 0.82, 0.2)
     end
-    local acc = T.NavTime and T.NavTime.AccuracyText and T.NavTime.AccuracyText()
-    if acc then pcall(tt.AddLine, tt, acc, 0.6, 0.6, 0.6) end
-    pcall(tt.AddLine, tt, "Clic : cible suivante · clic droit : précédente · Maj-clic : Aller là · molette : taille · glisser : déplacer", 0.6, 0.8, 1, true)
+    pcall(tt.AddLine, tt, "Clic : cible suivante", 0.4, 0.8, 1)
+    pcall(tt.AddLine, tt, "Clic droit : cible précédente", 0.4, 0.8, 1)
+    pcall(tt.AddLine, tt, "Maj-clic : y aller (point sur la carte)", 0.4, 0.8, 1)
+    pcall(tt.AddLine, tt, "Molette : taille · glisser : déplacer", 0.6, 0.6, 0.6)
     if T.AutoRunHint then pcall(tt.AddLine, tt, T.AutoRunHint(), 0.55, 0.55, 0.55, true) end
     pcall(tt.Show, tt)
   end)

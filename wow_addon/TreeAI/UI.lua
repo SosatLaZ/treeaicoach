@@ -1224,6 +1224,8 @@ local CHEV_W, RIGHT_MAX = 10, 110
 function TreeAI:RefreshPanel()
   if not panel then return end
   if TreeAI._PanelRendered then TreeAI:_PanelRendered() end
+  -- (UIREDO) panneau caché (la carte « Prochaine étape » le remplace) : rien à dessiner ; ShowPanel le redessine
+  if not panel:IsShown() then return end
   local s = acc()
   local width = panelWidth()
   panel:SetWidth(width)
@@ -1643,7 +1645,7 @@ local function makeAlert()
   alert:SetScript("OnEnter", function(self)
     self.hold = true
     self:SetAlpha((alertSettings() or {}).alpha or 0.95)
-    showTooltip(self, L["Important"], { { L["Clic : ouvrir le panneau · clic droit : fermer"], 0.6, 0.6, 0.6 } })
+    showTooltip(self, L["Important"], { { L["Clic : ouvrir la page · clic droit : fermer"], 0.6, 0.6, 0.6 } })
   end)
   alert:SetScript("OnLeave", function(self) self.hold = false; hideTooltip() end)
   alert:SetScript("OnHide", function() for i = #alertItems, 1, -1 do alertItems[i] = nil end end)
@@ -2094,7 +2096,8 @@ end
 --- Renvoie la table des placements { role = { point, x, y, l, b, w, h } } (aussi gardée pour /tai placer).
 function TreeAI:AutoLayout(force)
   if self:InCombat() then
-    self:RunOutOfCombat("autolayout", function() self:AutoLayout(force) end)
+    -- (UIREDO) placé après le combat = version du placement notée aussi (sinon refait à chaque contrôle)
+    self:RunOutOfCombat("autolayout", function() if self:AutoLayout(force) then layoutState().v = LAYOUT_V end end)
     return nil, "combat"
   end
   local st = layoutState()

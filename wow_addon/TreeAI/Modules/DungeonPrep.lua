@@ -188,7 +188,7 @@ function M:CreateChecklist()
   end
   W.share = button(f, "Partager les quêtes", 140, 22, function() M:ShareQuests() end, "Propose les quêtes du donjon à ceux qui ne les ont pas (hors combat)")
   W.share:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 10, 10)
-  W.tab = button(f, "Onglet Donjon", 120, 22, function() T:ShowPanel(); T:SelectTab(M.TAB) end, "Boss, butin du groupe, qui fait quoi")
+  W.tab = button(f, "Onglet Donjon", 120, 22, function() if T.Window and T.Window._active then T.Window.Open("dungeon") else T:ShowPanel(); T:SelectTab(M.TAB) end end, "Boss, butin du groupe, qui fait quoi")
   W.tab:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -10, 10)
   -- mise à jour quand elle est ouverte (ses évènements à elle ; rien quand elle est fermée)
   f:SetScript("OnEvent", function() M:QueueChecklist() end)

@@ -127,7 +127,11 @@ return function(M, ctx)
     "prio 3 : encadré dans le coin")
   T:HidePanel()
   if alert then alert:Click("LeftButton") end
-  ctx.check(T:GetPanel():IsShown() and T:GetActiveTab() == "group", "clic encadré : panneau ouvert sur Groupe")
+  -- (UIREDO) la carte « Prochaine étape » remplace le panneau : le clic ouvre la page Groupe de la fenêtre TreeAI
+  local Wn = T.Window
+  ctx.check((T:GetPanel():IsShown() and T:GetActiveTab() == "group") or (Wn and Wn.IsOpen() and Wn.CurrentPage() == "group"),
+    "clic encadré : page Groupe ouverte")
+  if Wn then Wn.Close() end
   T:Suggest("x:urg", "Autre urgence", 3, { sound = false })
   M.Advance((T.settings.alert.duration or 8) + 2, 0.5)
   ctx.check(not alert:IsShown(), "encadré disparaît après quelques secondes")

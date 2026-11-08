@@ -753,12 +753,46 @@ manuel prioritaire. Déjà inscrits : panneau, encadré d'alerte, boussole, suiv
   Questie / Shortest Path : rien ne leur est envoyé.
 * **Pastille de la minimap** (`Modules/Hub.lua`, `TreeAI.Hub`) : bouton rond enfant de `Minimap` (glisser autour
   du bord, angle sauvé, minimaps carrées via `GetMinimapShape`), aussi dans `AddonCompartmentFrame` s'il existe.
-  Clic = menu hub (Jeu : tous les onglets ; Outils : Recherche, Meilleur familier, Macros, À faire, Boussole, Radar ;
-  Réglages : Options, Profil, Erreurs, Blocages, panneau, Déplacer, Réinitialiser) ; clic droit = Options ;
+  Clic = fenêtre TreeAI (UIREDO ; sans le module Window : menu hub) ; clic droit = menu hub (Jeu : tous les onglets ;
+  Outils : Recherche, Meilleur familier, Macros, À faire, Boussole, Radar ; Réglages : Options, Profil, Erreurs,
+  Blocages, panneau, Déplacer, Réinitialiser) ;
   infobulle = prochaine étape, XP/h, niveau dans… `/tai menu` ouvre le même menu. `TreeAI:HasSlash(cmd)` (Core)
   sert à n'afficher que ce qui existe.
 * **Donjons** : fiche « joueur confirmé » (`T.Data.Dungeons.cards[key]` : `danger`, `tank`, `heal`, `dps`) →
   « Ce qui tue le groupe : … » + « <rôle> (toi) : … » (les 3 rôles en infobulle) ; textes de boss réécrits.
+
+## Fenêtre TreeAI et carte « Prochaine étape » (agent UIREDO, 4.0)
+
+`Modules/Window.lua` + `Modules/WindowPages.lua` (`TreeAI.Window`, module `Window`, mode sûr). Rendu seulement : les
+données viennent des contrats existants (`GetTabLines`, `Route:Stops(64)`, `Planner:StepLabel/Navigate`,
+`Quests.last`, `ZonePlan:HeadLines/StopMenu`, `Dungeon.Index/ForLevel/Quests/LootPlan/SetPlanned`, `Hub.Entries`,
+`TreeAI:OptionEntries()` (Options.lua : mêmes pages, même moteur TIDY)).
+* **Fenêtre** `TreeAIMainWindow` (façon Leatrix Plus) : « TreeAI » + version en haut à gauche, navigation à gauche
+  (Maintenant · Quêtes · Trajet · Groupe · Donjons · HV · Outils · Fonctions · Options ; ligne choisie surlignée),
+  grand titre de page + sous-titre, recherche en haut à droite (filtre la page : lignes, arrêts, donjons, pages
+  d'options), UN bouton d'action en bas à droite (Arrêter / Reprendre, Prévoir ce donjon, Fenêtre HV, Recharger…).
+  Redimensionnable (taille + position gardées, `settings.windows.main`), Échap ferme. Ouverte par la pastille
+  (clic gauche ; clic droit = menu rapide), la touche `TREEAI_MAIN` (« TreeAI : ouvrir / fermer la fenêtre », sans
+  touche par défaut, `TreeAI.ToggleMain()`), `/tai fenetre [page]`. Un clic qui ouvrait un onglet du panneau
+  (encadré d'alerte, pastille, « Prêt ? ») ouvre la page de la fenêtre (`Window.OpenTab(id)`).
+* **Quêtes** (façon Adventure Guide) : carte d'en-tête « Histoire : <zone> · n en cours · m proches · durée »,
+  étapes numérotées (pastille ronde + ! / ?, sous-titre gris : à prendre / objectif 3/8 · « quête » / à rendre ·
+  distance, direction, temps), quêtes à venir aux couleurs de niveau, sections repliables (À rendre, En cours ici,
+  Nettoyer mon journal, Direction <zone>, Autres conseils), état gardé par perso (`chars[k].modules.Window`).
+* **Trajet** : tous les arrêts numérotés, zone de travail / suivi / tri du producteur ; **Donjons** (façon Journal des
+  donjons) : cartes en dégradé de couleur par tranche de niveau + icône du jeu (aucune illustration copiée), badge
+  « NV a-b », « x/y quêtes » + coche, « prévu / tu y es » ; clic = détail (quêtes du donjon, boss numérotés,
+  butin pour le groupe, conseils, « Partager les quêtes ») ; **Options** : liste des pages + la page construite
+  par le moteur TIDY (`TreeAI:OptionEntries()`, `TreeAI:RefreshOptionWidgets()`), recherche dans les titres,
+  descriptions et libellés.
+* **Carte « Prochaine étape »** `TreeAICard` : remplace le panneau texte (option ; le panneau reste dans Outils et
+  s'ouvre à la main) ; posée à la place que le placement automatique a trouvée pour le panneau (`PanelChar()`),
+  descend sous un suivi de quêtes qu'elle toucherait ; déplaçable (mode édition, id `card`). En-tête (icône,
+  « Histoire : zone », résumé) + danger en rouge + 1–5 étapes numérotées. Aucune minuterie : suit les rendus du
+  panneau (≤ 1 / 2 s, clé `TreeAI:DataGen()` + étapes + position), signature comparée.
+* Jetons communs (`Theme.TYPE`, `Theme.BLOCK`, `Theme.STEP_ICON`) ; la couleur d'accent des options = l'or du thème.
+* Infobulles des points de la minimap (`MinimapPins.TipLines`) et de la boussole : ce que c'est, distance + temps,
+  pourquoi maintenant, ce que fait le clic.
 
 ## Sons, fenêtres, placement vivant (agent UI2)
 

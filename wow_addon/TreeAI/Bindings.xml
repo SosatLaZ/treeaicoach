@@ -3,4 +3,8 @@
 	<Binding name="TREEAI_AH_NEXT" header="TREEAI" category="ADDONS">
 		if TreeAI and TreeAI.AuctionNext then TreeAI.AuctionNext() end
 	</Binding>
+	<!-- La fenêtre TreeAI (Maintenant, Quêtes, Trajet, Donjons, Options). Sans touche par défaut. -->
+	<Binding name="TREEAI_MAIN" header="TREEAI" category="ADDONS">
+		if TreeAI and TreeAI.ToggleMain then TreeAI.ToggleMain() end
+	</Binding>
 </Bindings>

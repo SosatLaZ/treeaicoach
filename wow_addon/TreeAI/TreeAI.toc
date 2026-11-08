@@ -82,3 +82,5 @@ Modules\Finder.lua
 Modules\Quick.lua
 Modules\QuickFight.lua
 Modules\QuickTravel.lua
+Modules\Window.lua
+Modules\WindowPages.lua

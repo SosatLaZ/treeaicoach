@@ -100,7 +100,9 @@ return function(M, ctx)
   check(lj:find("Ici · Contreforts", 1, true) and lj:find("Zones voisines", 1, true) and lj:find("Plus loin", 1, true),
     "sections Ici · zone / Zones voisines / Plus loin")
   check((T:GetPanel().sections or 0) >= 4, "titres de section dessinés (" .. tostring(T:GetPanel().sections) .. ")")
-  -- pastille de l'onglet : nombre de quêtes
+  -- pastille de l'onglet : nombre de quêtes (pastilles relues au plus toutes les 2 s depuis 3.9.9)
+  M.Advance(2.1, 0.5)
+  T:RefreshPanel()
   local qtab
   for _, r in ipairs(T:GetTabLayout()) do if r.id == "quests" then qtab = r end end
   check(qtab and qtab.badge == "5", "onglet Quêtes : pastille « 5 » (" .. tostring(qtab and qtab.badge) .. ")")
@@ -296,8 +298,13 @@ return function(M, ctx)
       local all = table.concat(tt and tt.__lines or {}, "\n")
       check(all:find("TreeAI Coach", 1, true) and (all:find("Prochaine étape", 1, true) or all:find("Rien d'urgent", 1, true)),
         "infobulle de la pastille : résumé en direct")
+      -- (UIREDO) clic gauche = la fenêtre TreeAI, clic droit = le menu rapide
+      local Wn = T.Window
       btn:Click("LeftButton")
-      check(H.IsOpen(), "clic gauche : menu ouvert")
+      check(Wn and Wn.IsOpen(), "clic gauche : fenêtre TreeAI ouverte")
+      if Wn then Wn.Close() end
+      btn:Click("RightButton")
+      check(H.IsOpen(), "clic droit : menu ouvert")
       local heads, items = {}, {}
       for _, e in ipairs(H.layout) do
         if e.kind == "header" then heads[#heads + 1] = e.group end
@@ -312,14 +319,10 @@ return function(M, ctx)
       check(okW, "menu : libellés dans leur ligne")
       if items["tab:quests"] then
         items["tab:quests"].button:Click("LeftButton")
-        check(T:GetActiveTab() == "quests" and not H.IsOpen(), "clic sur « Quêtes » : onglet ouvert, menu fermé")
+        check(Wn and Wn.IsOpen() and Wn.CurrentPage() == "quests" and not H.IsOpen(),
+          "clic sur « Quêtes » : page Quêtes de la fenêtre, menu fermé")
+        if Wn then Wn.Close() end
       end
-      local opened
-      local oo = T.OpenOptions
-      T.OpenOptions = function() opened = true end
-      btn:Click("RightButton")
-      T.OpenOptions = oo
-      check(opened, "clic droit : options")
     end
   end
 
