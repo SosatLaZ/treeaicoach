@@ -648,7 +648,7 @@ end
 function M.ScanBags()
   local res = { need = {}, done = {}, starter = {}, upcoming = {}, useless = {}, use = {} }
   if not API.IterBags then return res end
-  local ok, iter, s, v = pcall(API.IterBags)
+  local ok, iter, s, v = pcall(API.IterBagsShared or API.IterBags)   -- (4.0.1) relevé partagé dans l'image
   if not ok or type(iter) ~= "function" then return res end
   for bag, slot, item in iter, s, v do
     local kind, e = M.Classify(item and item.itemID, nil, bag, slot)
@@ -1323,7 +1323,10 @@ local function schedule(what, delay)
       M.PushTab()
     elseif what == "bags" then
       M.RefreshBags()
-      M.PushTab()
+    elseif what == "tab" then
+      -- (4.0.1) les lignes « objets de quête » de l'onglet Quêtes : un relevé des sacs par rafale (butin, munitions…)
+      -- au lieu d'un par changement ; en combat, après (PLAYER_REGEN_ENABLED refait tout)
+      if not (T.InCombat and T:InCombat()) then M.PushTab() end
     end
   end)
 end
@@ -1341,13 +1344,15 @@ local function hookBagOpen()
 end
 
 function M:OnEnable()
-  self:RegisterEvent("BAG_UPDATE_DELAYED", function() schedule("bags", 0.05) end)
-  self:RegisterEvent("QUEST_LOG_UPDATE", function() schedule("rebuild", 0.6) end)
-  self:RegisterEvent("QUEST_ACCEPTED", function() schedule("rebuild", 0.6) end)
-  self:RegisterEvent("QUEST_TURNED_IN", function() schedule("rebuild", 0.6) end)
-  self:RegisterEvent("QUEST_REMOVED", function() schedule("rebuild", 0.6) end)
-  self:RegisterEvent("UNIT_QUEST_LOG_CHANGED", function(_, _, u) if u == "player" then schedule("rebuild", 0.6) end end)
-  self:RegisterEvent("GET_ITEM_INFO_RECEIVED", function() kindCache = {} schedule("bags", 0.3) end)
+  -- (4.0.1) l'onglet Quêtes (objets de quête des sacs) 2 s après le butin, avec les autres lecteurs des sacs
+  self:RegisterEvent("BAG_UPDATE_DELAYED", function() schedule("bags", 0.05) schedule("tab", 2) end)
+  self:RegisterEvent("QUEST_LOG_UPDATE", function() schedule("rebuild", 0.8) end)
+  self:RegisterEvent("QUEST_ACCEPTED", function() schedule("rebuild", 0.8) end)
+  self:RegisterEvent("QUEST_TURNED_IN", function() schedule("rebuild", 0.8) end)
+  self:RegisterEvent("QUEST_REMOVED", function() schedule("rebuild", 0.8) end)
+  -- (4.0.1) 0,8 s : après la relecture du journal par Quêtes (0,5 s), dans une autre image
+  self:RegisterEvent("UNIT_QUEST_LOG_CHANGED", function(_, _, u) if u == "player" then schedule("rebuild", 0.8) end end)
+  self:RegisterEvent("GET_ITEM_INFO_RECEIVED", function() kindCache = {} schedule("bags", 0.3) schedule("tab", 2) end)
   if not (T.Lite and T:Lite()) then   -- (LITE) barres de nom / cible : seulement hors profil essentiel
     self:RegisterEvent("NAME_PLATE_UNIT_ADDED", function(_, _, unit) M.UpdatePlate(unit) M.UpdateCompass() end)
     self:RegisterEvent("NAME_PLATE_UNIT_REMOVED", function(_, _, unit) M.RemovePlate(unit) M.UpdateCompass() end)

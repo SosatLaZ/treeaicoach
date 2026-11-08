@@ -990,13 +990,26 @@ local function bagQuestInfo(bag, slot)
   end
   return try(_G.GetContainerItemQuestInfo, bag, slot)
 end
+-- (4.0.1) info « objet de quête » d'une case gardée tant que l'objet et le journal (T:QuestGen) ne changent pas :
+-- chaque butin relisait les ~40 cases une à une
+local bagQ, bagQGen = {}, nil
 function M.CheckBags()
   if not API.IterBags then return {} end
   local found = {}
-  local okIter, iter, s, v = pcall(API.IterBags)
+  local okIter, iter, s, v = pcall(API.IterBagsShared or API.IterBags)   -- (4.0.1) relevé partagé dans l'image
   if not okIter or type(iter) ~= "function" then return found end
+  local g = T.QuestGen and T:QuestGen() or false
+  if g ~= bagQGen then bagQ, bagQGen = {}, g end
   for bag, slot, item in iter, s, v do
-    local _, questID, isActive = bagQuestInfo(bag, slot)
+    local key, id = bag * 1000 + slot, item and item.itemID
+    local c = bagQ[key]
+    local questID, isActive
+    if c and id and c.id == id then questID, isActive = c.qid, c.act
+    else
+      local _
+      _, questID, isActive = bagQuestInfo(bag, slot)
+      if c then c.id, c.qid, c.act = id, questID, isActive else bagQ[key] = { id = id, qid = questID, act = isActive } end
+    end
     if questID and questID > 0 and not isActive then
       local done = _G.C_QuestLog and _G.C_QuestLog.IsQuestFlaggedCompleted and try(_G.C_QuestLog.IsQuestFlaggedCompleted, questID)
       if not done then
@@ -1085,12 +1098,19 @@ function M.Update()
   M.nextText = text
   M.shownStep = shown
   M.UpdateButton()
-  M.WriteSummary()
+  -- (4.0.1) résumé pour l'appli écrit sur SUMMARY (connexion, /reload, déconnexion, niveau, zone…) : l'appli ne lit
+  -- les SavedVariables qu'à leur écriture par le jeu ; plus à chaque relecture du journal
   -- (LITE) Boussole / Suivi / À faire ne recalculent que si le journal a vraiment changé (ou toutes les 15 s)
+  -- (4.0.1) … et le rappel des 15 s seulement si le joueur a bougé (immobile : leurs distances n'ont pas changé)
   local sig = M.Signature(list)
   local t = now()
-  if T.Fire and (sig ~= M._firedSig or t - (M._firedAt or -100) >= 15) then
+  M._updAt, M._updZone = t, curZone()
+  M._updPos = M._updPos or {}
+  if T.Stamp then T:Stamp(M._updPos) end
+  M._firePos = M._firePos or {}
+  if T.Fire and (sig ~= M._firedSig or (t - (M._firedAt or -100) >= 15 and not (T.Moved and not T:Moved(M._firePos, 0.003)))) then
     M._firedSig, M._firedAt = sig, t
+    if T.Stamp then T:Stamp(M._firePos) end
     pcall(T.Fire, T, "QUESTS_UPDATED", list)  -- Boussole / Suivi (QUEST-PRO)
   end
   return a
@@ -1290,7 +1310,16 @@ function M:OnEnable()
   self:RegisterEvent("PLAYER_REGEN_ENABLED", function() M.Refresh(1) end)
   self:On("SUMMARY", function() pcall(M.WriteSummary) end)
   hookTooltips()
-  if not M.ticker then M.ticker = T:NewTicker(5, function() pcall(M.CheckNear) end) end
+  -- (4.0.1) « près de la remise » : seulement quand le joueur a bougé depuis le dernier passage (ou toutes les 5 min)
+  local nearPos, nearAt = {}, -100
+  if not M.ticker then M.ticker = T:NewTicker(5, function()
+    local t = now()
+    if t - nearAt < 300 and T.Moved and not T:Moved(nearPos, 0.002) then return end
+    nearAt = t
+    if T.Stamp then T:Stamp(nearPos) end
+    pcall(M.CheckNear)
+  end) end
+  if M.ticker and M.ticker.IdleStretch then M.ticker:IdleStretch(6) end   -- (4.0.1) immobile : 30 s
   lastZone = curZone()
   M.Refresh(1)
 end
@@ -1309,11 +1338,16 @@ T:RegisterSlash("quêtes", slash)
 T:RegisterSlash("quests", slash)
 
 -- actualisation automatique (Core:StartAutoRefresh) : journal relu, conseils recalculés
+M.autoIdleSafe = true   -- (4.0.1) voir ci-dessous : immobile et sans événement, rien (cycle sauté par le cœur)
 function M:AutoRefresh()
   if InCombatLockdown and InCombatLockdown() then return end
   -- (LITE) les événements du journal relisent déjà tout (QUEST_LOG_UPDATE, différé 0,5 s) : filet toutes les 10 s
+  -- (4.0.1) … quand le joueur bouge ; immobile, rien ne change sans événement : filet toutes les 5 min
   local t = now()
-  if t - (M._autoAt or -100) < 10 then return end
+  local last = M._updAt or -100
+  if t - last < 10 then return end
+  -- (un changement de zone change aussi la carte : T:Moved le voit, sans relire le nom de la zone)
+  if t - last < 300 and T.Moved and not T:Moved(M._updPos, 0.003) then return end
   M._autoAt = t
   pcall(M.Update)
 end

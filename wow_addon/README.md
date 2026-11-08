@@ -465,6 +465,14 @@ TreeAI:NewTicker(sec, fn[, owner])    -- retourne objet avec :Cancel() ; owner =
                                       -- (3.9.7) un seul ordonnanceur (OnUpdate du cœur) : phase propre par ticker
                                       -- (nombre d'or), ≤ 3 rappels « lourds » (période ≥ 1 s) par image, ~1,5 ms ;
                                       -- les :AutoRefresh() du cycle passent en tranches sur plusieurs images
+                                      -- (4.0.1) ticker:IdleStretch(k) : k fois moins souvent quand le joueur est immobile
+                                      -- (3 s sans bouger) ; cadence normale dès qu'il bouge. M.autoIdleSafe = true :
+                                      -- le cycle :AutoRefresh() saute ce module tant que rien n'a changé (cycles calmes)
+TreeAI:Here()                         -- (4.0.1) mapID, x, y du joueur, lus une fois par instant (valeurs secrètes écartées)
+TreeAI:Stamp(st) / TreeAI:Moved(st[, d])  -- retient la position dans st / vrai si carte changée ou écart > d (0,002)
+TreeAI:Moving([sec])                  -- a bougé ces 3 dernières s (coup d'œil 1/s de l'ordonnanceur)
+TreeAI:OnMotion(owner, fn)            -- fn() quand le joueur se remet à bouger (dormir à l'arrêt, se réveiller ici)
+TreeAI:QuestGen()                     -- compteur qui change à chaque événement du journal de quêtes (mémos par journal)
 TreeAI:CharKey()                      -- "Nom-Royaume" (en jeu uniquement)
 TreeAI:PlayerClass()                  -- "HUNTER", ...
 TreeAI:Summary()                      -- table résumé du perso (voir schéma), modifiable
@@ -485,6 +493,7 @@ API.NumBags()                 -> NUM_BAG_SLOTS (4)  -- sacs 0..NumBags()
 API.BagSlots(bag)             -> n                 API.BagFree(bag) -> free, bagType
 API.BagItem(bag, slot)        -> {itemID, count, link, quality, icon, locked, noValue} | nil
 API.IterBags()                -> for bag, slot, item in API.IterBags() do ... end
+API.IterBagsShared()          -> idem, relevé partagé dans une même image tant qu'aucun événement de sac (LECTURE seule)
 API.FreeSlots()               -> free, total  (sacs généraux)
 API.UseContainerItem(bag, slot)  -- HORS COMBAT, uniquement sur clic du joueur (marchand)
 API.Aura(unit, spellIDOrName [, filter]) -> {name, icon, count, duration, expires, spellId, source} | nil   (filter "HELPFUL" défaut)

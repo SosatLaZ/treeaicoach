@@ -159,7 +159,7 @@ function H.BetaEntries()
   out[#out + 1] = { group = "beta", id = "profile", keep = true, icon = ICON .. "INV_Misc_Book_09",
     title = prof == "sur" and "Tout allumer (bêta compris)" or "Revenir au mode sûr",
     desc = prof == "sur" and "Mode sûr actif" or "Tout est allumé",
-    tip = "Mode sûr = quêtes, trajet, boussole, carte « Prochaine étape », fenêtre TreeAI, course au corps, erreurs, macros.",
+    tip = "Mode sûr = quêtes, zone de travail, trajet (et son tracé), boussole, carte « Prochaine étape », fenêtre TreeAI, surbrillance des objets de quête, course au corps, erreurs, macros.",
     fn = act(function() T:SetModuleProfile(prof == "sur" and "tout" or "sur") end) }
   for _, n in ipairs(T.moduleOrder or {}) do
     local m = T.modules[n]

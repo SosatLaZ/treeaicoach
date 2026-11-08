@@ -48,8 +48,9 @@ end
 
 local floor, sqrt, cos, sin, abs, max, min = math.floor, math.sqrt, math.cos, math.sin, math.abs, math.max, math.min
 local STEP = 0.2                        -- minimap : ≤ 5 passes / s
-local IDLE = 0.5                        -- immobile : 2 passes / s
-local SLOW = 3                          -- relecture de la position même immobile (téléportations)
+local IDLE = 1                          -- (4.0.1) immobile : 1 coup d'œil / s (vitesse + cap, deux lectures)
+local SLOW = 15                         -- relecture de la position même immobile (téléportations : les événements de
+                                        -- zone / d'écran de chargement relancent déjà tout)
 local MAX_DOTS, MAX_DASH, MAX_STOPS = 48, 400, 16
 local CIRCLE = "Interface\\CharacterFrame\\TempPortraitAlphaMask"
 local ICON = {
@@ -323,25 +324,44 @@ function PD.MinimapTick(force)
   local P, R = T.Planner, T.Route
   local steps, cur = P and P.steps, P and P.cursor
   local len = steps and #steps
-  if not (steps and cur and cur <= len) or (R and R.char and R.char.paused) or not wantMinimap(t) then
-    if PD.dotsShown > 0 then PD.ClearMinimap() end
-    return
-  end
-  if not (trail or ensureTrail()) then return end
-  local routeChanged = steps ~= last.steps or cur ~= last.cur or len ~= last.len
+  local paused = (R and R.char and R.char.paused) and true or false
+  local routeChanged = steps ~= last.steps or cur ~= last.cur or len ~= last.len or paused ~= last.paused
   -- bouge-t-on ? (vitesse / cap : bon marché) ; sinon relecture lente de la position
   local gs, gf = rawget(_G, "GetUnitSpeed"), rawget(_G, "GetPlayerFacing")
   local speed = gs and num((gs("player"))) or 0
   local facing = gf and num((gf())) or nil
   local moving = speed > 0 or facing ~= last.facing
-  last.step = moving and STEP or IDLE     -- immobile : 2 passes / s suffisent (bon marché)
-  if not (force or routeChanged or moving or t - last.pollAt >= SLOW) then return end
+  last.step = moving and STEP or IDLE     -- immobile : 1 passe / s suffit (bon marché)
+  -- (4.0.1) en vol (taxi) : pas de traînée, rien à redessiner 5 fois par seconde ; elle revient à l'atterrissage
+  local onTaxi = rawget(_G, "UnitOnTaxi")
+  if onTaxi and try(onTaxi, "player") then
+    if PD.dotsShown > 0 then PD.ClearMinimap() end
+    last.step, last.n = IDLE, nil
+    return
+  end
+  -- (4.0.1) immobile, même trajet, même cap : rien d'autre (ni options, ni position, ni arrêts relus) ; 3 fois de
+  -- suite → l'OnUpdate s'endort (réveil : le joueur bouge / tourne, un événement, une option)
+  if not (force or routeChanged or moving or t - last.pollAt >= SLOW) then
+    PD.idleN = PD.idleN + 1
+    if PD.idleN >= 3 then PD.Sleep() end
+    return
+  end
+  PD.idleN = 0
+  last.paused = paused
+  if not (steps and cur and cur <= len) or paused or not wantMinimap(t) then
+    if PD.dotsShown > 0 then PD.ClearMinimap() end
+    last.steps, last.cur, last.len = steps, cur, len
+    return
+  end
+  if not (trail or ensureTrail()) then return end
   last.pollAt = t
   local n, w, c = playerWorld()
   if not n then if PD.dotsShown > 0 then PD.ClearMinimap() end return end
-  if routeChanged or c ~= last.c or t - last.stopsAt >= 3 then
+  -- (4.0.1) arrêts relus quand le trajet change, ou toutes les 3 s si le joueur s'est déplacé (les transports en
+  -- dépendent) ; immobile : jamais (avant : la liste de l'Itinéraire relue toutes les 3 s pour rien)
+  if routeChanged or c ~= last.c or (t - last.stopsAt >= 3 and not (last.ln and abs(n - last.ln) < 5 and abs(w - last.lw) < 5)) then
     readLegs(c)
-    last.steps, last.cur, last.len, last.stopsAt = steps, cur, len, t
+    last.steps, last.cur, last.len, last.stopsAt, last.ln, last.lw = steps, cur, len, t, n, w
     routeChanged = true
   end
   fillView()
@@ -655,7 +675,27 @@ PD.AttachMap = attachMap
 
 -- ------------------------------------------------------------------ cycle de vie
 local driver
-function PD.OnUpdate() PD.MinimapTick() end
+local acc = 0
+PD.idleN = 0
+-- (4.0.1) par image : une addition (pas d'appel) tant que la prochaine passe n'est pas due
+function PD.OnUpdate(_, el)
+  acc = acc + (el or 0)
+  if acc < last.step then return end
+  acc = 0
+  PD.MinimapTick()
+end
+-- (4.0.1) immobile : plus d'OnUpdate du tout ; réveillé par le coup d'œil du cœur (T:OnMotion), les événements de
+-- zone / zoom / réglage, le cycle des :AutoRefresh() (il tourne dès qu'un événement arrive) et les options
+function PD.Sleep()
+  if driver and not PD.asleep then driver:SetScript("OnUpdate", nil) PD.asleep = true end
+end
+function PD.Wake()
+  PD.idleN = 0
+  if driver and PD.asleep and PD._active then
+    PD.asleep, acc, last.at = false, 1, -100   -- prochaine image : une passe complète
+    driver:SetScript("OnUpdate", PD.OnUpdate)
+  end
+end
 function PD:OnEnable()
   PD._active = true
   attachMap()
@@ -666,12 +706,14 @@ function PD:OnEnable()
     try(driver.EnableMouse, driver, false)
     PD.driver = driver
   end
-  if driver then driver:SetScript("OnUpdate", PD.OnUpdate) driver:Show() end
+  if driver then driver:SetScript("OnUpdate", PD.OnUpdate) driver:Show() PD.asleep, PD.idleN = false, 0 end
   ensureTrail()
   ensureCanvas()
   for _, ev in ipairs({ "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA", "MINIMAP_UPDATE_ZOOM", "CVAR_UPDATE" }) do
-    self:RegisterEvent(ev, function() last.n, last.stopsAt, last.pollAt, mapState.dirty = nil, -100, -100, true end)
+    self:RegisterEvent(ev, function() last.n, last.ln, last.stopsAt, last.pollAt, mapState.dirty = nil, nil, -100, -100, true PD.Wake() end)
   end
+  if T.OnMotion then T:OnMotion(PD, PD.Wake) end
+  self:On("QUESTS_UPDATED", function() PD.Wake() end)
   self:RegisterEvent("PLAYER_REGEN_ENABLED", function() attachMap() ensureTrail() ensureCanvas() end)
   local wm = wmParts()
   if wm and try(wm.IsShown, wm) then PD.MapShown() end
@@ -679,13 +721,17 @@ end
 function PD:OnDisable()
   PD._active = false
   if driver then driver:SetScript("OnUpdate", nil) end
+  PD.asleep = false
   PD.ClearMinimap()
   PD.ClearMap()
   PD.MapHidden()
 end
-function PD:AutoRefresh() mapState.dirty = true end
+-- (4.0.1) carte du monde fermée : rien ; ouverte, ses propres événements (zoom, déplacement, trajet) la redessinent
+PD.autoIdleSafe = true
+function PD:AutoRefresh() mapState.dirty = true PD.Wake() end
 function PD:OnOptionChanged()
-  last.n, last.stopsAt, last.pollAt, mapState.dirty, wantAt = nil, -100, -100, true, -100
+  PD.Wake()
+  last.n, last.ln, last.stopsAt, last.pollAt, mapState.dirty, wantAt = nil, nil, -100, -100, true, -100
   PD.MinimapTick(true)
   if view and view:IsShown() then PD.MapTick(true) end
 end

@@ -19,6 +19,11 @@ return function(M, ctx)
     ids[def.id] = true
   end
   check(n >= 8, "au moins 8 genres de sons (" .. n .. ")")
+  -- (4.0.1) calme par défaut : seul le danger sonne tant que le joueur n'a rien rallumé
+  for kind in pairs(T.SOUND_KINDS) do
+    check(T:SoundKindOn(kind) == (kind == "danger"), "son par défaut : " .. kind .. (kind == "danger" and " allumé" or " coupé"))
+  end
+  for kind in pairs(T.SOUND_KINDS) do T:SetSoundKind(kind, true) end   -- le moteur se teste genres allumés
   T.settings.sound = true
   T:ResetSoundGate()
   local s0 = #M.sounds

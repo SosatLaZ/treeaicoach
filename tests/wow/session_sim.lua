@@ -14,7 +14,8 @@
 --   growth, addon memory growth (reachable from TreeAI, upvalues included), addon message rate.
 -- Fake names only. Lua 5.1:
 --   lua5.1 tests/wow/session_sim.lua [--class HUNTER] [--flavor modern] [--minutes 60] [--addon DIR] [-v]
---     [--profile essentiel|tout] (default essentiel = what a new player gets) [--fine] (CPU by function)
+--     [--profile essentiel|tout|sur] (default essentiel; sur = « mode sûr », what the player runs since 3.9.9)
+--     [--fine] (CPU by function) [--idle] (PERF4: nothing happens — standing still, no combat, no event; use --minutes 10)
 --   Hitches (SPIKE): cost of every main-client frame (timers + OnUpdate, 0.2-s step): worst / p99, the 1-Hz
 --   phase ratio, the worst frames with their top functions (-v: + the jobs that pay), KB allocated / s.
 local HERE = (arg and arg[0] or "session_sim.lua"):match("^(.*)[/\\][^/\\]*$") or "."
@@ -29,6 +30,7 @@ do
     elseif a == "--addon" then opts.addon = arg[i + 1]; i = i + 1
     elseif a == "--profile" then opts.profile = arg[i + 1]; i = i + 1
     elseif a == "--fine" then opts.fine = true
+    elseif a == "--idle" then opts.idle = true
     elseif a == "-v" then opts.verbose = true end
     i = i + 1
   end
@@ -80,6 +82,27 @@ local BUDGET = {
 -- protocol (« GRP », deltas only) at most 1 message / 5 s per client outside a join / reload minute
 BUDGET.kinstrModuleMin.Group = 150
 BUDGET.groupMsgsPerMin = 12
+-- PERF4 (4.0.1) : « mode sûr » = ce que le joueur a. Gains verrouillés (HUNTER / forever, 4.0.0 mesuré : 796 kinstr/min,
+-- pire image 66, p99 25, 33,8 Ko/s ; 4.0.1 : ≈ 546 / 51 / 21 / 25,5). Plafonds serrés pour les modules dont le coût ne
+-- dépend que de leur propre travail ; Core paie aussi la répartition (événements, minuteurs) de tous les autres.
+if opts.profile == "sur" then
+  BUDGET.kinstrTotalMin = 640
+  BUDGET.frameWorstKinstr, BUDGET.frameP99Kinstr, BUDGET.allocKBps = 58, 25, 30
+  local caps = { Core = 260, Macros = 35, Quests = 30, Highlight = 28, Detect = 25, Export = 22, PathDraw = 16, Tracker = 15,
+    Todo = 10, Window = 8, Speed = 6, Tour = 3, Glow = 3 }
+  for k, v in pairs(caps) do BUDGET.kinstrModuleMin[k] = v end
+end
+-- PERF4 : 10 min sans RIEN (--idle : immobile, hors combat, aucun événement) : ce qui attend un changement ne travaille
+-- pas. 4.0.0 : 600 kinstr/min ; 4.0.1 : ≈ 285, dont ≈ 0 pour les modules à événements (≤ 2 chacun). Le reste : l'ordonnanceur
+-- (Core) et les minuteurs à la seconde de la boussole, du trajet et du placement (Compass, Route, Planner, UI).
+if opts.idle then
+  BUDGET.kinstrTotalMin = 340
+  BUDGET.frameWorstKinstr, BUDGET.frameP99Kinstr, BUDGET.allocKBps = 32, 12, 22
+  -- (Detect et Export : appelés par la boussole et le trajet ; PathDraw : une passe au plus toutes les 30 s, puis dort)
+  local caps = { Core = 115, Export = 10, Detect = 8, PathDraw = 6, Quests = 4, Tracker = 4, Todo = 4, Speed = 3,
+    Highlight = 2, Macros = 2, Window = 2, Tour = 1, Glow = 1, Hub = 1, Shortcuts = 1, Bugs = 1 }
+  for k, v in pairs(caps) do BUDGET.kinstrModuleMin[k] = v end
+end
 
 local BASE = {}
 for k, v in pairs(_G) do BASE[k] = v end
@@ -226,7 +249,7 @@ local function hook()
     if not info then break end
     m = modOf(info.source)
     if m then
-      if opts.fine and CUR == "Arbrelune" then
+      if opts.fine and CUR == "Arbrelune" and MINUTE >= 1 then   -- PERF4: steady state (login minute apart)
         local k = m .. ":" .. info.linedefined
         -- + the first caller in another addon file (who pays for Core helpers)
         local l2 = lvl + 1
@@ -394,7 +417,13 @@ local function loadAddon(c, svString)
     if again ~= svString then fail("SavedVariables round-trip changed the data (" .. #svString .. " -> " .. #again .. " bytes)") end
   end
   if not svString then   -- (3.9.5) new players keep « tout »; « essentiel » is an explicit choice
-    rawset(env, "TreeAIDB", { profileV = 999, moduleProfile = (opts.profile == "tout") and "tout" or "essentiel" })
+    if opts.profile == "sur" then
+      -- PERF4 (4.0.1): « mode sûr » = what every player runs (3.9.9+): nothing seeded, the addon's one-time migration
+      -- sets the profile; the guided tour already seen (steady state, tour_scenario.lua tests the first run)
+      rawset(env, "TreeAIDB", { tour = { done = 999 } })
+    else
+      rawset(env, "TreeAIDB", { profileV = 999, moduleProfile = (opts.profile == "tout") and "tout" or "essentiel" })
+    end
   end
   local T = rawget(env, "TreeAI")
   c.T = T
@@ -420,7 +449,7 @@ local function loadAddon(c, svString)
   M.FireEvent("SPELLS_CHANGED")
   M.FireEvent("PLAYER_LOGIN")
   M.FireEvent("PLAYER_ENTERING_WORLD", svString == nil, svString ~= nil)
-  if not svString and opts.profile ~= "tout" and T and T.SetModuleProfile then T:SetModuleProfile("essentiel") end   -- the player picked it
+  if not svString and opts.profile ~= "tout" and opts.profile ~= "sur" and T and T.SetModuleProfile then T:SetModuleProfile("essentiel") end   -- the player picked it
   for k in pairs(env) do if not before[k] and not allowed[k] then
     if not (type(k) == "string" and (k:match("^SLASH_") or k:match("^BINDING_") or M.namedFrames[k])) then R.leaks[k] = R.leaks[k] or "?" end
   end end
@@ -905,7 +934,7 @@ local function clickPanel(c, which)
   local rows = {}
   for _, ch in ipairs({ panel:GetChildren() }) do
     -- (LITE) the one-time « Tout réactiver » notice is left alone: the run measures the profile it was asked for
-    if ch.entry and ch:IsShown() and ch.__scripts.OnClick and ch.entry.id ~= "core:lite" then rows[#rows + 1] = ch end
+    if ch.entry and ch:IsShown() and ch.__scripts.OnClick and ch.entry.id ~= "core:lite" and ch.entry.id ~= "core:safe" then rows[#rows + 1] = ch end
   end
   local r = rows[which or 1]
   if r then
@@ -1176,6 +1205,9 @@ table.sort(events, function(a, b) return a.t < b.t end)
 
 local nextFight, fightN, ev = 20, 0, 1
 local total = opts.minutes * 60
+-- PERF4 (4.0.1) --idle: the player stands still out of combat, nothing happens for the whole run (no event, no fight,
+-- the friends idle too): what TreeAI costs « in the background » when nothing changes (budget: ≈ 0)
+if opts.idle then events = {}; questing.to, questing2.to = -1, -1 end
 while simSeconds() < total do
   local s = math.floor(simSeconds())
   if events[ev] and s >= events[ev].t then
@@ -1196,7 +1228,7 @@ while simSeconds() < total do
       end
       nextFight = math.floor(simSeconds()) + 25 + (fightN % 4) * 6
     else
-      friendLife(s)
+      if not opts.idle then friendLife(s) end
       tick(1)
     end
   end
@@ -1304,8 +1336,8 @@ if opts.fine then
   local ks = {}
   for k in pairs(fine) do ks[#ks + 1] = k end
   table.sort(ks, function(a, b) return fine[a] > fine[b] end)
-  P("fine (main client, kinstr/min by Module:function line):")
-  for i = 1, math.min(opts.verbose and 300 or 80, #ks) do P(("  %-40s %7.1f"):format(ks[i], fine[ks[i]] / opts.minutes)) end
+  P("fine (main client, minutes 1+, kinstr/min by Module:function line; the hook's own work inflates every count):")
+  for i = 1, math.min(opts.verbose and 300 or 80, #ks) do P(("  %-40s %7.1f"):format(ks[i], fine[ks[i]] / math.max(1, opts.minutes - 1))) end
 end
 if totalMain / nMin > BUDGET.kinstrTotalMin then fail(("cpu: addon total %.0f kinstr/min > %d"):format(totalMain / nMin, BUDGET.kinstrTotalMin)) end
 
@@ -1424,7 +1456,7 @@ if blockedN > BUDGET.blockedMax then fail(("%d blocked actions > %d"):format(blo
 -- the session really happened
 local p = main.M.player
 P(("player: level %d, %d quests in log, %d free slots, money %d"):format(p.level, #main.M.quests, countFree(main.M), p.money))
-if p.level < 27 then fail("no level-up happened") end
+if p.level < 27 and not opts.idle then fail("no level-up happened") end
 if opts.verbose then for _, l in ipairs(S.nowLog) do P("  now " .. l) end end
 
 for _, e in ipairs(R.errors) do P(("ERROR [%s %s] x%d %s"):format(e.who, e.label, e.n, e.msg:sub(1, 400))) end

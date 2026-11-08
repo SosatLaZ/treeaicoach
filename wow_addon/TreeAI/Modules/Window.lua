@@ -735,6 +735,19 @@ function W.TopLine()
   return nil
 end
 
+-- (4.0.1) la carte suit les rendus du panneau à l'image suivante (jamais dans la même image que le calcul qui l'a
+-- changée) et au plus une fois toutes les 2 s : un changement arrivé pendant ces 2 s est redessiné à leur fin (avant,
+-- il attendait le rendu suivant, parfois longtemps)
+local cardSoon = false
+function W.RenderCardSoon()
+  if cardSoon then return end
+  cardSoon = true
+  local wait = max(0, 2 - ((try(G.GetTime) or 0) - cardAt))
+  T:After(wait, function()
+    cardSoon = false
+    if W._active and card and meth(card, "IsShown") then T.safecall(W.RenderCard) end
+  end)
+end
 function W.RenderCard(force)
   if not cardOn() then if card then meth(card, "Hide") end return end
   if not card then buildCard() end
@@ -1876,7 +1889,7 @@ if type(T.RefreshPanel) == "function" and not W._wrapped then
   T.RefreshPanel = function(self, ...)
     local r = orig(self, ...)
     if W._active then
-      if card and meth(card, "IsShown") then T.safecall(W.RenderCard) end
+      if card and meth(card, "IsShown") then W.RenderCardSoon() end
       if win and meth(win, "IsShown") then W.Dirty() end
     end
     return r

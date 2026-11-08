@@ -34,9 +34,9 @@ end
 local M = T:RegisterModule("Tour", {
   title = "Visite guidée",
   description = "Où cliquer dans TreeAI, en 60 secondes. Et une astuce au bon moment, une seule fois chacune.",
-  defaults = { enabled = true, tips = true },
+  defaults = { enabled = true, tips = false },   -- (4.0.1) calme : les astuces se rallument dans les options
   options = {
-    { key = "tips", type = "toggle", label = "Astuces au bon moment (une fois chacune, au plus une toutes les 10 min)" },
+    { key = "tips", type = "toggle", label = "Astuces au bon moment (coupées par défaut ; une fois chacune, au plus une toutes les 10 min)" },
     { type = "button", label = "Lancer la visite guidée", onClick = function() T.Tour.Start("options") end },
     { type = "button", label = "Revoir les astuces déjà vues", onClick = function() T.Tour.ResetTips() end },
   },
@@ -277,7 +277,7 @@ M.STEPS = {
     prepare = function(a) if not fromRegistry("beta") then openHub(a) end end,
     find = function() return fromRegistry("beta") or hubRow("profil") end,
     text = function() return "Testées hors du jeu seulement, donc coupées. Un clic ici pour en essayer une." end,
-    note = function() return "Par exemple : zone de travail, raccourcis, HV, groupe." end },
+    note = function() return "Par exemple : raccourcis, HV, groupe, donjon." end },   -- (4.0.1) la zone de travail est allumée d'office
   { id = "bug", title = "Un bug ?", hub = true,
     can = function() return M.targets.bug ~= nil or hasHubEntry("erreurs") end,
     prepare = function(a) if not fromRegistry("bug") then openHub(a) end end,
@@ -1048,6 +1048,13 @@ function M:OnInit()
 end
 
 function M:OnEnable()
+  -- (4.0.1) une fois pour tous : astuces coupées après la visite (la 4.0 les avait posées à « oui » d'office) ;
+  -- « Revoir les astuces » ou l'option les rallume
+  local st = store()
+  if (tonumber(st.calmV) or 0) < 1 then
+    st.calmV = 1
+    if M.db then M.db.tips = false end
+  end
   M._loginAt = now()
   M._calmSince, M._waitN, kickAt = nil, nil, nil
   self:On("COMBAT_START", function() M.Pause("combat") end)

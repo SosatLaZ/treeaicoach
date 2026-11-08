@@ -475,7 +475,18 @@ local function tagFlags(q, tid, isElite)
   return q
 end
 X.TagFlags = tagFlags
+-- (4.0.1) un relevé par image et par état du journal (T:QuestGen, avancé à chaque événement de quête) : le Planner,
+-- ZonePlan et l'export le lisaient 3 à 6 fois dans le même rafraîchissement. Lecture seule pour tous.
+local snapT, snapG, snapOut, snapN = nil, nil, nil, 0
+local logSnapshotRaw
 local function logSnapshot()
+  local t, g = now(), T.QuestGen and T:QuestGen() or nil
+  if snapOut and g and t == snapT and g == snapG then return snapOut, snapN end
+  local out, n = logSnapshotRaw()
+  snapT, snapG, snapOut, snapN = t, g, out, n
+  return out, n
+end
+logSnapshotRaw = function()
   local out, n = {}, 0
   local CQ = G("C_QuestLog")
   if type(CQ) == "table" and CQ.GetInfo and CQ.GetNumQuestLogEntries then

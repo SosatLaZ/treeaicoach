@@ -1110,9 +1110,11 @@ function D:OnEnable()
   self:RegisterEvent("UNIT_FLAGS", function(_, _, unit)
     if type(unit) == "string" and (unit:match("^party%d$") or unit:match("^raid%d+$")) then soon("grp", 1, D.CheckGroup) end
   end)
-  self:RegisterEvent("UNIT_COMBAT", function(_, _, ...) D.OnUnitCombat(...) end)
-  self:RegisterEvent("UNIT_HEALTH", function(_, _, unit) D.OnHealth(unit) end)
-  self:RegisterEvent("UNIT_THREAT_SITUATION_UPDATE", function(_, _, unit)
+  -- (4.0.1) unités filtrées par le cœur avant tout appel : la vie / les coups des membres du groupe et des barres de
+  -- nom ne coûtent plus rien ici
+  self:RegisterUnitEvent("UNIT_COMBAT", "player", "pet", function(_, _, ...) D.OnUnitCombat(...) end)
+  self:RegisterUnitEvent("UNIT_HEALTH", "player", nil, function(_, _, unit) D.OnHealth(unit) end)
+  self:RegisterUnitEvent("UNIT_THREAT_SITUATION_UPDATE", "player", nil, function(_, _, unit)
     if unit == "player" then local th = num(try(G.UnitThreatSituation, "player")) if th ~= CB.threat then CB.threat = th emit("combat", { threat = th }) end end
   end)
   self:On("COMBAT_END", function() CB.hits, CB.petHits = {}, {} end)

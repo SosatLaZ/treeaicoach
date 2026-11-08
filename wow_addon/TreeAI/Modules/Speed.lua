@@ -341,6 +341,14 @@ function S:CheckHearth(st, step, map, x, y)
   end
 end
 
+--- (4.0.1) l'astuce « pierre de foyer » a-t-elle quelque chose à surveiller ? (option, pas d'Itinéraire, foyer connu)
+function S:HearthWatch()
+  if not cfg("hearth") then return false end
+  local Rt = T.Route
+  if Rt and Rt.IsEnabled and Rt:IsEnabled() then return false end
+  return self:Bind() ~= nil
+end
+
 function S:Tick()
   local st = (T.PlayerState and T:PlayerState()) or {}
   if T.InCombat and T:InCombat() and not st.ghost then return end
@@ -370,20 +378,41 @@ function S:OnEnable()
   self:RegisterEvent("PLAYER_ENTERING_WORLD", arrived)
   self:RegisterEvent("ZONE_CHANGED", arrived)
   -- course au corps : la ligne apparaît dès la libération, s'efface dès le retour à la vie
-  self:RegisterEvent("PLAYER_DEAD", function() S:OnDead() end)
+  self:RegisterEvent("PLAYER_DEAD", function()
+    if T.InvalidatePlayerState then T:InvalidatePlayerState() end
+    S:OnDead() S:Cadence()
+  end)
   local function state()
     if T.InvalidatePlayerState then T:InvalidatePlayerState() end
     if not try(G("UnitIsDeadOrGhost"), "player") then S:ReleaseCorpse() else S:Tick() end
+    S:Cadence()
   end
   self:RegisterEvent("PLAYER_ALIVE", state)
   self:RegisterEvent("PLAYER_UNGHOST", state)
-  self.ticker = T:NewTicker(1, function()
-    local ps = T.PlayerState and T:PlayerState()
-    if (ps and ps.ghost) or S.aim or now() - (S._tickAt or -1e9) >= 3 then S._tickAt = now() S:Tick() end
-  end)
+  S:Cadence()
+end
+-- (4.0.1) 1 passage / s pendant une course au corps (fantôme, corps visé), sinon 1 toutes les 3 s ; vivant et rien en
+-- cours (ni corps, ni mort notée), seule l'astuce « pierre de foyer » reste, et l'Itinéraire la donne déjà quand il est
+-- allumé → rien à calculer (avant : un minuteur d'1 s, position + étape relues toutes les 3 s)
+function S:Cadence()
+  local ps = T.PlayerState and T:PlayerState()
+  local sec = ((ps and (ps.ghost or ps.dead)) or self.aim or self.dead) and 1 or 3
+  if self.ticker and self.tickerSec == sec then return end
+  if self.ticker then self.ticker:Cancel() end
+  self.tickerSec = sec
+  self.ticker = T:NewTicker(sec, function()
+    local st = T.PlayerState and T:PlayerState()
+    if (st and st.ghost) or S.aim then S._tickAt = now() S:Tick() return S:Cadence() end
+    if now() - (S._tickAt or -1e9) < 2.5 then return end
+    S._tickAt = now()
+    if (st and st.dead) or S.dead or S:HearthWatch() then S:Tick() end
+    S:Cadence()
+  end, self)
+  if sec > 1 and self.ticker and self.ticker.IdleStretch then self.ticker:IdleStretch(5) end   -- immobile : 15 s
 end
 function S:OnDisable()
   if self.ticker then self.ticker:Cancel() end
+  self.ticker, self.tickerSec = nil, nil
   self:ReleaseCorpse()
   self:Clear("hearth")
 end

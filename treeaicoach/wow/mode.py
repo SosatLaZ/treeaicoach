@@ -1,7 +1,8 @@
 """« Mode WoW »: TreeAI coaches World of Warcraft: Forever while WoW runs and no League game does.
 
 One daemon thread (started by the engine, :func:`attach`), cheap when idle: the process NAME list every
-``POLL_S``. When the mode turns on:
+``POLL_IDLE_S`` (10 s) while WoW is not running — nothing else, no file read —, every ``POLL_S`` while it runs.
+When the mode turns on:
 
 * the TreeAI addon is installed / updated once per session (``cfg.wow_addon_auto_update``),
 * the combat session (:mod:`treeaicoach.wow.coach`, optional) reads the game's ``Logs/WoWCombatLog.txt``
@@ -31,7 +32,8 @@ from treeaicoach.wow import optional
 
 log = logging.getLogger(__name__)
 
-POLL_S = 3.0
+POLL_S = 3.0          # WoW running: process list (WoW closed? League started?)
+POLL_IDLE_S = 10.0    # (4.0.1) WoW not running: one look at the process names every 10 s, nothing else
 TICK_S = 0.5
 DB_REFRESH_S = 30.0
 MSG_ACTIVE = "Mode WoW Forever : coach actif"
@@ -148,7 +150,7 @@ class WowMode:
                 self.step()
             except Exception:
                 log.debug("wow mode step failed", exc_info=True)
-            self._stop.wait(TICK_S if self.active else POLL_S)
+            self._stop.wait(TICK_S if self.active else POLL_IDLE_S)
 
     # -------------------------------------------------------------- one step (tests call it directly)
     def cfg(self) -> Any:

@@ -4,6 +4,7 @@ return function(M, ctx)
   local B = T and T.modules and T.modules.Boost
   ctx.check(B and B.db and B.db.enabled and B.title == "Rares", "Rares registered + enabled (internal name Boost kept)")
   if not B then return end
+  if T.SetSoundKind then T:SetSoundKind("rare", true) end   -- (4.0.1) sons coupés par défaut sauf le danger
   local S = T._suggestions
   M.LeaveCombat()
   T.settings.soundTips = true  -- rare sound is a prio-2 tip: needs the « sons aussi pour les conseils » option

@@ -4,7 +4,9 @@ Zero Lua errors (also those swallowed by the addon's pcall), zero rule violation
 « Maintenant » churn, corner alerts, duplicates by meaning, SavedVariables / memory growth, comms rate.
 HUNTER, MAGE, WARRIOR × modern / legacy API in the default « essentiel » module profile (what every player
 gets: ≤ 1.5 M Lua instructions / min for the whole addon), + HUNTER and MAGE with every module on (« tout »:
-≤ 4 M / min), + HUNTER on the faithful WoW: Forever mock (essentiel and tout, same budgets). The sessions run in
+≤ 4 M / min), + HUNTER on the faithful WoW: Forever mock (essentiel and tout, same budgets), + PERF4 (4.0.1): HUNTER /
+Forever in « mode sûr » (what the player runs: 4.0.0 measured 796 kinstr/min, now ≤ 640) and 10 minutes of pure idle in
+« mode sûr » (nothing happens: event-driven modules ≈ 0, whole addon ≤ 340, 4.0.0 measured 600). The sessions run in
 parallel. Fake names only.
 """
 from __future__ import annotations
@@ -24,14 +26,19 @@ COMBOS = [(c, f, "essentiel") for c in ("HUNTER", "MAGE", "WARRIOR") for f in ("
 COMBOS += [("HUNTER", "modern", "tout"), ("MAGE", "legacy", "tout")]
 # 4.0: the real client too — WoW: Forever on the faithful mock (FIDELITY), every budget judged as on modern
 COMBOS += [("HUNTER", "forever", "essentiel"), ("HUNTER", "forever", "tout")]
-BUDGET = {"essentiel": 2450, "tout": 4600}   # 3.9.9: +50 for 10 new light modules (see session_sim.lua)   # kilo-instructions / simulated minute, whole addon (main client)
+# PERF4 (4.0.1): « mode sûr » (the default profile) and pure idle (« sur-idle »: --idle --minutes 10)
+COMBOS += [("HUNTER", "forever", "sur"), ("HUNTER", "forever", "sur-idle")]
+EXTRA = {"sur-idle": ["--profile", "sur", "--idle", "--minutes", "10"]}
+# kilo-instructions / simulated minute, whole addon (main client); 3.9.9: +50 for 10 new light modules (session_sim.lua)
+BUDGET = {"essentiel": 2450, "tout": 4600, "sur": 640, "sur-idle": 340}
 
 pytestmark = pytest.mark.skipif(not shutil.which("lua5.1"), reason="lua5.1 not installed")
 
 
 def _start(combo):
+    prof = EXTRA.get(combo[2], ["--profile", combo[2]])
     return subprocess.Popen(["lua5.1", str(HERE / "session_sim.lua"), "--class", combo[0], "--flavor", combo[1],
-                             "--profile", combo[2], "--addon", str(ADDON)], cwd=ROOT, stdout=subprocess.PIPE,
+                             *prof, "--addon", str(ADDON)], cwd=ROOT, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True)
 
 

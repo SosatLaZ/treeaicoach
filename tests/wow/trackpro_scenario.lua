@@ -274,7 +274,9 @@ return function(M, ctx)
   M.RunSlash("/tai suivi cadre")
   check(not TR.db.standalone and not fr:IsShown(), "/tai suivi cadre toggles the frame off")
 
-  -- completion sound: only on a transition to complete, once
+  -- completion sound: only on a transition to complete, once ((4.0.1) the « quête » kind is off by default: the
+  -- player turned it on)
+  T:SetSoundKind("quest", true)
   local n0 = #M.sounds
   M.quests[3].objectives[1] = { text = "Ours enragé tué : 8/8", done = true, have = 8, need = 8 }
   M.quests[3].complete = true
