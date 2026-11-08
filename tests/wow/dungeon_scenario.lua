@@ -102,10 +102,13 @@ return function(M, ctx)
   ctx.check(tx:find("Wipe — reprise"), "wipe recovery checklist")
 
   -- yells: secret text ignored, readable keyword starts the encounter + alert
-  rawset(_G, "issecretvalue", function(v) return v == "SECRET" end)
+  -- (FIDELITY: the fake « SECRET » string chains to the client's issecretvalue, which is restored, never removed)
+  local realIsSecret = rawget(_G, "issecretvalue")
+  local function fakeSecret(v) return v == "SECRET" or (realIsSecret ~= nil and realIsSecret(v)) or false end
+  rawset(_G, "issecretvalue", fakeSecret)
   ctx.fire("CHAT_MSG_MONSTER_YELL", "SECRET", "SECRET")
   ctx.check(not D.Encounter(), "secret yell ignored")
-  rawset(_G, "issecretvalue", nil)
+  rawset(_G, "issecretvalue", realIsSecret)
   GetInstanceInfo = function() return "Monastère écarlate", "party", 1, "Normal", 5, 0, false, 189 end
   ctx.fire("ZONE_CHANGED_NEW_AREA")
   ctx.check(D.char.run.key == "SM", "new run for a new instance")
@@ -133,7 +136,7 @@ return function(M, ctx)
         { name = "Caché", totalAmount = "SECRET" } } }
     end,
   })
-  rawset(_G, "issecretvalue", function(v) return v == "SECRET" end)
+  rawset(_G, "issecretvalue", fakeSecret)
   D:UpdateMeter()
   D:Refresh(true)
   tx = text(D.lines)
@@ -141,7 +144,7 @@ return function(M, ctx)
   M.EnterCombat()
   ctx.check(D.ReadMeter(1) == nil, "meter never read in combat")
   M.LeaveCombat()
-  rawset(_G, "issecretvalue", nil)
+  rawset(_G, "issecretvalue", realIsSecret)
   rawset(_G, "C_DamageMeter", nil)
 
   -- summary + leaving: tab disappears

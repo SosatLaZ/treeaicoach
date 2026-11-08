@@ -3,12 +3,11 @@
 -- `WowMock` (test-side only; the harness whitelists it). Two API flavours:
 --   WowMock.Install("modern")  C_Container, C_ChatInfo, C_AddOns, C_Spell, C_UnitAuras…
 --   WowMock.Install("legacy")  GetContainerItemInfo & co, global SendAddonMessage, no C_Container
---   WowMock.Install("forever") "modern" + what WoW Forever 1.60.1 really changes (checked against
---     Blizzard_APIDocumentationGenerated, Gethe/wow-ui-source branch « forever », build 70862):
---     Classic-era globals removed (GetPetHappiness → C_PetInfo, GetSkillLineInfo → C_SkillInfo, spellbook
---     → C_SpellBook, GetQuestLogTitle, UnitAura, GetSpellInfo…), secret values in combat (issecretvalue;
---     arithmetic / comparison / table key on them raise), COMBAT_LOG_EVENT_UNFILTERED registration =
---     ADDON_ACTION_FORBIDDEN, CreateMacro/EditMacro/DeleteMacro only inside a hardware event (click / slash).
+--   WowMock.Install("forever") the REAL WoW: Forever client (1.60.1 build 70862, game type camelot), driven by
+--     tests/wow/forever_ref.lua (generated from Blizzard's own Forever interface code by forever_api_check.py):
+--     APIs the client lacks are absent, secret values (combat / instance) raise the client's errors, secret
+--     arguments refused, hardware-event gating, unknown events refused, async + throttled AH, quest headers…
+--     (see the « forever » section at the end of this file and research/fidelity.md).
 -- so the addon's feature tests (`if C_Container then … else … end`) are exercised both ways.
 -- Unknown methods on mocked widgets are no-ops (recorded in WowMock.unmockedMethods).
 -- ToS guards recorded as violations: CreateMacro/EditMacro/DeleteMacro/PickupMacro/SetBinding*
@@ -86,21 +85,36 @@ function M.Reset()
   M.waypoints = {}                             -- [questID] = { mapID, x, y } (C_QuestLog.GetNextWaypoint, modern)
   M.superTrack = nil
   M.loggingCombat, M.loggingChat = false, false
+  -- forever: restrictions and secret values (see the « forever » section)
+  M.encounter, M.chatLockdown, M.pvpMatch = false, false, false
+  -- "always": SecretReturns APIs (UnitHealth, UnitInRange, GetRaidTargetIndex…) secret even out of combat (the
+  -- documentation read literally); env TREEAI_WOW_SECRET_RETURNS=always runs a whole suite that way
+  M.secretReturns = (os and os.getenv and os.getenv("TREEAI_WOW_SECRET_RETURNS")) or "restricted"
+  M.secretBooleans = {}            -- secret booleans handed to addon code { fn, where } (a boolean test on one errors)
+  M.secretBoolSeen = nil           -- « fn@where » already in M.secretBooleans
+  M.questHeadersSeeded = nil
   M.SeedDefaults()
 end
 
 local function record(list, kind, msg)
-  local where, lvl = "?", 3
+  local where, lvl, chain = "?", 3, nil
   while true do
     local info = debug.getinfo(lvl, "Sl")
     if not info then break end
     local src = tostring(info.short_src)
     if info.what ~= "C" and not src:find("wowmock%.lua$") and src ~= "(tail call)" then
-      where = src .. ":" .. tostring(info.currentline)
-      break
+      local here = src .. ":" .. tostring(info.currentline)
+      if where == "?" then
+        where = here
+        if kind ~= "secret" then break end
+        chain = {}
+      elseif #chain < 4 then   -- secret: who called (where the secret value came from)
+        chain[#chain + 1] = (here:gsub("^.-([%w_]+%.lua:%d+)$", "%1"))
+      else break end
     end
     lvl = lvl + 1
   end
+  if chain and #chain > 0 then where = where .. " < " .. table.concat(chain, " < ") end
   list[#list + 1] = { kind = kind, msg = msg, where = where }
 end
 function M.Violation(kind, msg) record(M.violations, kind, msg) end
@@ -108,7 +122,8 @@ function M.Violation(kind, msg) record(M.violations, kind, msg) end
 function M.SafeCall(label, fn, ...)
   local args, n = { ... }, select("#", ...)
   local ok, err = xpcall(function() return fn(unpack(args, 1, n)) end, function(e)
-    return tostring(e) .. "\n" .. debug.traceback("", 2)
+    local named = M.SecretVmError and M.SecretVmError(e)   -- forever: « attempt to compare userdata… » = a secret
+    return tostring(named or e) .. "\n" .. debug.traceback("", 2)
   end)
   if not ok then M.errors[#M.errors + 1] = { label = label, msg = err } end
   return ok
@@ -244,15 +259,21 @@ function Widget:HookScript(what, fn)
   local old = self.__scripts[what]
   self.__scripts[what] = function(...) if old then old(...) end return fn(...) end
 end
-function Widget:RegisterEvent(ev)
+function Widget:RegisterEvent(ev, level)
   if type(ev) ~= "string" then error("RegisterEvent: event must be a string", 2) end
-  if M.flavor == "forever" and (ev == "COMBAT_LOG_EVENT_UNFILTERED" or ev == "COMBAT_LOG_EVENT") then
-    M.Violation("forbidden", "RegisterEvent(" .. ev .. ") on Forever (ADDON_ACTION_FORBIDDEN)")
-    return
+  if M.flavor == "forever" then
+    local flags = M.ref and M.ref.events[ev]
+    if (flags and flags:find("H", 1, true)) or ev == "COMBAT_LOG_EVENT_UNFILTERED" or ev == "COMBAT_LOG_EVENT" then
+      M.Violation("forbidden", "RegisterEvent(" .. ev .. ") on Forever (ADDON_ACTION_FORBIDDEN)")
+      return
+    end
+    if M.ref and flags == nil then   -- the real client: an immediate Lua error
+      error("Frame:RegisterEvent(): Attempt to register unknown event \"" .. ev .. "\"", level or 2)
+    end
   end
   self.__events[ev] = true
 end
-Widget.RegisterUnitEvent = function(self, ev) Widget.RegisterEvent(self, ev) end
+Widget.RegisterUnitEvent = function(self, ev) Widget.RegisterEvent(self, ev, 3) end
 function Widget:UnregisterEvent(ev) self.__events[ev] = nil end
 function Widget:UnregisterAllEvents() self.__events = {} end
 function Widget:RegisterAllEvents() self.__allEvents = true end
@@ -307,7 +328,11 @@ function Widget:GetAlpha() return self.__alpha end
 function Widget:SetText(t) self.__text = t end
 function Widget:GetText() return self.__text end
 function Widget:SetFormattedText(fmt, ...) self.__text = string.format(fmt, ...) end
-function Widget:GetStringWidth() return #(tostring(self.__text or "")) * 6 end
+function Widget:GetStringWidth()
+  local t = self.__text
+  if M.IsSecret and M.IsSecret(t) then return M.Secret(#tostring(M.Unsecret(t)) * 6, "number") end   -- aspect Text
+  return #(tostring(t or "")) * 6
+end
 function Widget:GetStringHeight() return 12 end
 function Widget:SetFont() return true end
 function Widget:GetFont() return "Fonts\\FRIZQT__.TTF", 12, "" end
@@ -459,7 +484,34 @@ end
 ----------------------------------------------------------------------------------------------
 -- events, time, timers
 ----------------------------------------------------------------------------------------------
+local function eventArgs(event, ...)   -- forever: payloads secret per the event documentation (forever_ref.lua)
+  if M.flavor ~= "forever" or not M.ref or not M.Secret then return ... end
+  if event == "ENCOUNTER_START" then M.encounter = true elseif event == "ENCOUNTER_END" then M.encounter = false end
+  local flags = M.ref.events[event]
+  local codes = flags and flags:match("s:(%S+)")
+  if not codes then return ... end
+  local a1 = ...
+  local u = type(a1) == "string" and a1:lower() or ""
+  local secret, keepFirst = false, false
+  for c in codes:gmatch("[^,]+") do
+    if c == "chat" and M.ChatLockdown() then secret = true
+    elseif c == "R" then secret = true
+    elseif c == "cast" and M.Restricted() and u ~= "player" and u ~= "pet" then secret, keepFirst = true, true
+    elseif c == "id" and M.Restricted() then secret = true
+    elseif c == "aura" and M.Restricted() and u ~= "player" then secret, keepFirst = true, true
+    elseif c == "power" and M.Restricted() and u ~= "player" then secret, keepFirst = true, true
+    end
+  end
+  if not secret then return ... end
+  local n, a = select("#", ...), { ... }
+  for i = keepFirst and 2 or 1, n do if a[i] ~= nil and type(a[i]) ~= "table" then a[i] = M.Secret(a[i]) end end
+  return unpack(a, 1, n)
+end
 function M.FireEvent(event, ...)
+  if M.flavor == "forever" then return M.FireEventRaw(event, eventArgs(event, ...)) end
+  return M.FireEventRaw(event, ...)
+end
+function M.FireEventRaw(event, ...)
   local n = 0
   for i = 1, #M.frames do
     local f = M.frames[i]
@@ -1151,7 +1203,11 @@ function M.Install(flavor)
       GetItemStats = function(link) return G.GetItemStats(link) end,
     }
     G.C_QuestLog = {
-      GetNumQuestLogEntries = function() return #M.quests, #M.quests end,
+      GetNumQuestLogEntries = function()
+        local q = 0
+        for _, e in ipairs(M.quests) do if not e.header then q = q + 1 end end
+        return #M.quests, q
+      end,
       GetQuestIDForLogIndex = function(i) return M.quests[i] and not M.quests[i].header and qid(i) or nil end,
       GetInfo = function(i)
         local q = M.quests[i]
@@ -1375,6 +1431,7 @@ function M.Install(flavor)
   if M.InstallAH then M.InstallAH(G, modern) end
   if M.flavor == "forever" and M.ApplyForever then M.ApplyForever(G) end
   M.InstallTaint(G, modern)
+  if M.flavor == "forever" and M.PruneForever then M.PruneForever(G) end
 end
 
 -- TAINT (strict) ------------------------------------------------------------------------------------
@@ -1470,6 +1527,12 @@ function M.Hw(fn, ...)   -- run fn as one hardware event (a player click), like 
   M.hardware, M.hwCalls = hw, n
   if not r[1] then error(r[2], 2) end
   return unpack(r, 2)
+end
+-- the macro index of a name, as GetMacroIndexByName did (absent on Forever): for scenario code
+function M.MacroIndex(name)
+  for i, m in ipairs(M.macros.global) do if m.name == name then return i end end
+  for i, m in ipairs(M.macros.char) do if m.name == name then return (rawget(_G, "MAX_ACCOUNT_MACROS") or 120) + i end end
+  return 0
 end
 function M.EnterCombat()
   M.inCombat = true
@@ -1653,10 +1716,22 @@ function M.InstallAH(G, modern)
     G.Enum.AuctionHouseSortOrder = { Price = 0, Name = 1 }
     G.ItemLocation = { CreateFromBagAndSlot = function(_, bag, slot) return { bag = bag, slot = slot } end }
     M.ah.throttleUntil = 0
+    -- forever: the server answers (round trip ~0.15 s, system busy ~0.3 s: WowMock.ahThrottleSec) and only while
+    -- the AH is open
+    local function ahDelay() return M.flavor == "forever" and (M.ahThrottleSec or 0.3) or 0.05 end
+    local function respond(fn) if M.flavor == "forever" then newTimer(math.min(0.15, ahDelay()), fn) else fn() end end
     local function throttled(fn)
-      if M.now < M.ah.throttleUntil then M.Violation("throttle", fn .. " while the AH message system is not ready") return true end
-      M.ah.throttleUntil = M.now + 0.05
-      newTimer(0.05, function() M.FireEvent("AUCTION_HOUSE_THROTTLED_SYSTEM_READY") end)
+      if M.flavor == "forever" and not M.ah.open then
+        M.ah.droppedClosed = (M.ah.droppedClosed or 0) + 1   -- AH closed: the query goes nowhere, nothing comes back
+        return true
+      end
+      if M.now < M.ah.throttleUntil then
+        M.Violation("throttle", fn .. " while the AH message system is not ready")
+        M.FireEvent("AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED")
+        return true
+      end
+      M.ah.throttleUntil = M.now + ahDelay()
+      newTimer(ahDelay(), function() M.FireEvent("AUCTION_HOUSE_THROTTLED_SYSTEM_READY") end)
       return false
     end
     AH.IsThrottledMessageSystemReady = function() return M.now >= M.ah.throttleUntil end
@@ -1664,6 +1739,7 @@ function M.InstallAH(G, modern)
     local function byID(id) for _, a in ipairs(M.ah.list) do if a.auctionID == id then return a end end end
     AH.ReplicateItems = function()
       if not M.hardware then M.Violation("automation", "ReplicateItems outside a click") end
+      if M.flavor == "forever" and not M.ah.open then return end
       if M.serverTime - (M.ah.lastReplicate or -1e9) < 900 then   -- 15 min account-wide: silently ignored
         M.ah.replicateRefused = (M.ah.replicateRefused or 0) + 1
         return
@@ -1691,7 +1767,7 @@ function M.InstallAH(G, modern)
     AH.SendBrowseQuery = function(query)
       if throttled("SendBrowseQuery") then return end
       M.ah.queries[#M.ah.queries + 1] = { browse = query and query.searchString }
-      M.FireEvent("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED")
+      respond(function() M.FireEvent("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED") end)
     end
     AH.GetBrowseResults = function()
       local agg, out = {}, {}
@@ -1728,8 +1804,10 @@ function M.InstallAH(G, modern)
       if throttled("SendSearchQuery") then return end
       M.ah.queries[#M.ah.queries + 1] = { search = key and key.itemID, hw = M.hardware }
       local id = key and key.itemID
-      if AH.GetItemCommodityStatus(id) == 2 then M.FireEvent("COMMODITY_SEARCH_RESULTS_UPDATED", id)
-      else M.FireEvent("ITEM_SEARCH_RESULTS_UPDATED", key) end
+      respond(function()
+        if AH.GetItemCommodityStatus(id) == 2 then M.FireEvent("COMMODITY_SEARCH_RESULTS_UPDATED", id)
+        else M.FireEvent("ITEM_SEARCH_RESULTS_UPDATED", key) end
+      end)
     end
     local function results(id)
       local r = {}
@@ -1779,7 +1857,10 @@ function M.InstallAH(G, modern)
       if a then return { auctionID = a.auctionID, itemKey = AH.MakeItemKey(a.id), itemLink = M.ItemLink(a.id),
         quantity = a.count, buyoutAmount = a.buyout, status = 0, timeLeftSeconds = 3600 } end
     end
-    AH.QueryOwnedAuctions = function() M.FireEvent("OWNED_AUCTIONS_UPDATED") end
+    AH.QueryOwnedAuctions = function()
+      if M.flavor == "forever" and not M.ah.open then return end
+      respond(function() M.FireEvent("OWNED_AUCTIONS_UPDATED") end)
+    end
     AH.CancelAuction = function(auctionID)
       if not ahProtected("CancelAuction") then return end
       for i, a in ipairs(M.ah.owned) do
@@ -1832,128 +1913,673 @@ end
 
 M.Reset()
 ----------------------------------------------------------------------------------------------
--- "forever" flavour: what the real WoW Forever 1.60.1 client changes on top of "modern"
+-- "forever" flavour = the REAL WoW: Forever client (1.60.1 build 70862, game type « camelot », Mainline family,
+-- Interface 16001, frFR). Driven by tests/wow/forever_ref.lua, GENERATED by tests/wow/forever_api_check.py from
+-- Blizzard's own interface code (Gethe/wow-ui-source, branch forever: API documentation + camelot FrameXML):
+--   * existence: a global function / C_ namespace member the real client lacks is REMOVED (nil), as in the game
+--     (Era globals, deprecated shims of Blizzard_Deprecated*, invented C_ members);
+--   * secret values: functions documented SecretReturns / SecretWhen*Restricted return secrets (userdata proxies
+--     carrying the real value) while their restriction is active (combat, instance map, encounter); arithmetic,
+--     comparison, #, indexing, calling, or a C function argument on a secret raises the client's error
+--     (« attempt to compare local 'hp' (a secret number value, while execution tainted by 'TreeAI') ») AND records
+--     VIOLATION [secret], even when the addon swallows the error in a pcall; type() gives the real type;
+--     concatenation, string.format, strjoin, strconcat, tostring and tonumber accept secrets and return secrets;
+--   * SecretArguments: a secret passed to an API that refuses it from addon code = error + violation;
+--   * hardware event: CreateMacro / EditMacro / DeleteMacro / SetBinding* / SaveBindings only inside a click or a
+--     typed command (else ADDON_ACTION_FORBIDDEN); SAY / YELL / EMOTE / CHANNEL chat too;
+--   * events: RegisterEvent of an event the client does not have raises « Attempt to register unknown event »;
+--     COMBAT_LOG_EVENT_UNFILTERED = ADDON_ACTION_FORBIDDEN; payloads secret per the event documentation;
+--   * UnitPosition: player / party / raid only (nil for NPCs, enemy players, and everyone in an instance);
+--     nameplates are forbidden (GetNamePlateForUnit = nil) in instances;
+--   * auction house: queries need the AH open, are throttled (~0.6 s) and answered ASYNCHRONOUSLY;
+--   * quest log: zone header entries (isHeader) before the quests, QuestInfo with every documented field.
+-- WowMock.secretReturns = "restricted" (default: SecretReturns APIs such as UnitHealth are secret while any
+-- restriction is active, the player included) | "always" (documentation read literally: always secret).
+-- Blind spots (Lua 5.1 cannot hook them): `secret == x` with a non-secret x is silently false, a boolean test on a
+-- secret boolean passes (noted in WowMock.secretBooleans), a secret table KEY is only found by WowMock.ScanSecretKeys.
 ----------------------------------------------------------------------------------------------
-local SecretMT = {}
-local function boom(what) return function() error("attempt to " .. what .. " a secret value", 2) end end
-SecretMT.__add, SecretMT.__sub, SecretMT.__mul, SecretMT.__div = boom("perform arithmetic on"), boom("perform arithmetic on"),
-  boom("perform arithmetic on"), boom("perform arithmetic on")
-SecretMT.__mod, SecretMT.__pow, SecretMT.__unm = boom("perform arithmetic on"), boom("perform arithmetic on"), boom("negate")
-SecretMT.__lt, SecretMT.__le, SecretMT.__eq = boom("compare"), boom("compare"), boom("compare")
-SecretMT.__len, SecretMT.__index, SecretMT.__newindex = boom("get length of"), boom("index"), boom("index")
-SecretMT.__call = boom("call")
-SecretMT.__concat = function(a, b)   -- allowed: concatenation gives a (secret) string; we keep it readable
-  local function s(v) return getmetatable(v) == SecretMT and "<secret>" or tostring(v) end
-  return s(a) .. s(b)
+-- session_sim: a sample whose innermost function is defined below this line is the forever layer (secrets, flags,
+-- wrappers) = C code in the real client, not counted as addon CPU; the API bodies above are counted as before
+M.FOREVER_LAYER_LINE = debug.getinfo(1, "l").currentline
+local rawtype, rawtostring, rawtonumber, rawpcall, rawxpcall = type, tostring, tonumber, pcall, xpcall
+-- one registry per Lua state (session_sim runs 4 clients side by side and they share the string / table libraries):
+-- proxy -> real value / kind, and the untouched library functions the forever flavour wraps
+local SHARED = rawget(string, "__wowmock_secrets")
+if not SHARED then
+  SHARED = { val = setmetatable({}, { __mode = "k" }), kind = setmetatable({}, { __mode = "k" }),
+    format = string.format, concat = table.concat }
+  rawset(string, "__wowmock_secrets", SHARED)
 end
-SecretMT.__tostring = function() return "<secret>" end
+local rawformat, rawconcat = SHARED.format, SHARED.concat
+local secretVal, secretKind = SHARED.val, SHARED.kind
+local secretBase = newproxy(true)          -- this mock instance's metatable: its errors go to this M
+local SecretMT = getmetatable(secretBase)
 M.SecretMT = SecretMT
-function M.Secret() return setmetatable({}, SecretMT) end
-function M.IsSecret(v) return getmetatable(v) == SecretMT end
 
--- Classic-era globals that do not exist on Forever (no C function, no deprecated shim for "camelot")
-M.FOREVER_REMOVED = {
-  "GetSpellInfo", "GetSpellCooldown", "GetItemInfo", "GetItemCount", "GetItemCooldown", "GetItemSpell", "GetItemStats",
-  "GetItemInfoInstant", "GetContainerItemInfo", "GetContainerNumSlots", "GetContainerNumFreeSlots",
-  "GetContainerItemID", "GetContainerItemLink", "UseContainerItem", "PickupContainerItem", "UnitAura",
-  "IsSpellKnown", "IsPlayerSpell", "GetPetHappiness", "GetPetLoyalty", "GetPetTrainingPoints", "GetPetFoodTypes",
-  "GetNumSkillLines", "GetSkillLineInfo", "GetQuestLogTitle", "GetNumPartyMembers", "GetNumRaidMembers",
-  "InterfaceOptions_AddCategory", "InterfaceOptionsFrame_OpenToCategory", "GetNumSpellTabs", "GetSpellTabInfo",
-  "GetSpellBookItemName", "IsPassiveSpell", "HasPetSpells", "HasAction", "CastingInfo", "UnitCharacterPoints",
-  "GetTalentTabInfo", "GetNumTalentTabs", "GetActiveTalentGroup", "GetAddOnMetadata", "IsAddOnLoaded",
-  "GetAddOnInfo", "GetNumAddOns", "SendAddonMessage", "RegisterAddonMessagePrefix", "GetQuestGreenRange",
-  "GetSpellName", "QueryAuctionItems", "GetAuctionItemInfo", "GetNumAuctionItems", "PlaceAuctionBid",
-  "PostAuction", "CancelAuction", "CanSendAuctionQuery", "ClickAuctionSellItemButton", "GetAuctionSellItemInfo",
-  "CalculateAuctionDeposit", "GetNumTradeSkills", "GetTradeSkillInfo", "GetTradeSkillLine",
-}
+local function isSecret(v) return rawtype(v) == "userdata" and secretKind[v] ~= nil end
+M.IsSecret = isSecret
+-- WowMock.Secret(value [, kind]) wraps a real value; WowMock.Secret() = an opaque secret number
+-- one proxy per (kind, value) while it lives (weak cache): reading the same secret health / name every frame does not
+-- allocate a new proxy each time (the session_sim GC budget measures the addon, not this mock)
+local proxyCache = {}
+function M.Secret(v, kind)
+  if v == nil and kind == nil then v = 0 end
+  if v == nil or isSecret(v) then return v end
+  local k = kind or rawtype(v)
+  local cacheable = (k == "number" or k == "string" or k == "boolean") and v == v
+  local byKind = cacheable and proxyCache[k]
+  if cacheable and not byKind then byKind = setmetatable({}, { __mode = "v" }) proxyCache[k] = byKind end
+  local p = byKind and byKind[v]
+  if p then return p end
+  p = newproxy(secretBase)
+  secretVal[p] = v
+  secretKind[p] = k
+  if byKind then byKind[v] = p end
+  return p
+end
+function M.Unsecret(v) if isSecret(v) then return secretVal[v] end return v end
+local wrapSecret, unwrap = M.Secret, M.Unsecret
 
-function M.ApplyForever(G)
-  local old = {}
-  for _, n in ipairs(M.FOREVER_REMOVED) do old[n] = rawget(G, n); rawset(G, n, nil) end
-  local function oldf(n) return old[n] or function() end end
-  -- C_* tables that forwarded to a removed global keep working (bound to the original function)
-  if G.C_Item then
-    G.C_Item.GetItemStats = function(link) return oldf("GetItemStats")(link) end
-    G.C_Item.GetItemSpell = G.C_Item.GetItemSpell or function(i) return oldf("GetItemSpell")(i) end
-    G.C_Item.GetItemCooldown = G.C_Item.GetItemCooldown or function(i) return oldf("GetItemCooldown")(i) end
+-- the addon name in « execution tainted by '…' »
+local function taintName() return M.addonName or "TreeAI" end
+-- like Lua's own errors: name the local / upvalue that holds the secret in the function doing the operation
+local function varinfo(level, value)
+  local info = debug.getinfo(level + 1, "f")
+  if not info then return nil end
+  local i = 1
+  while true do
+    local n, v = debug.getlocal(level + 1, i)
+    if not n then break end
+    if rawequal(v, value) and n:sub(1, 1) ~= "(" then return "local '" .. n .. "'" end
+    i = i + 1
   end
-  G.issecretvalue = function(v) return getmetatable(v) == SecretMT end
-  G.canaccessvalue = function(v) return getmetatable(v) ~= SecretMT end
-  G.WOW_PROJECT_ID = 99   -- unknown project id: the addon must not depend on it
-  -- moved APIs
+  if info and info.func then
+    i = 1
+    while true do
+      local n, v = debug.getupvalue(info.func, i)
+      if not n then break end
+      if rawequal(v, value) then return "upvalue '" .. n .. "'" end
+      i = i + 1
+    end
+  end
+end
+local function secretError(what, value, level)
+  level = (level or 1) + 1
+  local kind = secretKind[value] or "number"
+  local vi = varinfo(level, value)
+  local msg
+  if vi then
+    msg = rawformat("attempt to %s %s (a secret %s value, while execution tainted by '%s')", what, vi, kind, taintName())
+  else
+    msg = rawformat("attempt to %s a secret %s value (execution tainted by '%s')", what, kind, taintName())
+  end
+  M.Violation("secret", msg)
+  M.secretErrorSeen = (M.secretErrorSeen or 0) + 1
+  error(msg, level)
+end
+M.SecretError = secretError
+local function secretOf(a, b) if isSecret(a) then return a end return b end
+local function arith(a, b) secretError("perform arithmetic on", secretOf(a, b), 2) end
+SecretMT.__add, SecretMT.__sub, SecretMT.__mul, SecretMT.__div, SecretMT.__mod, SecretMT.__pow = arith, arith, arith, arith, arith, arith
+SecretMT.__unm = function(a) secretError("perform arithmetic on", a, 2) end
+SecretMT.__lt = function(a, b) secretError("compare", secretOf(a, b), 2) end
+SecretMT.__le = SecretMT.__lt
+SecretMT.__eq = SecretMT.__lt
+SecretMT.__len = function(a) secretError("get length of", a, 2) end
+SecretMT.__index = function(a) secretError("index", a, 2) end
+SecretMT.__newindex = function(a) secretError("index", a, 2) end
+SecretMT.__call = function(a) secretError("call", a, 2) end
+-- allowed: concatenating string / number secrets gives a secret string
+SecretMT.__concat = function(a, b) return wrapSecret(rawtostring(unwrap(a)) .. rawtostring(unwrap(b)), "string") end
+SecretMT.__tostring = function() return "<secret>" end
+SecretMT.__metatable = "secret"
+
+-- errors Lua 5.1 raises by itself on a secret (mixed-type compare, C function argument): recognisable by
+-- « userdata » (the addon never uses userdata: every userdata in the mock is a secret)
+local function secretVmError(msg)
+  if rawtype(msg) ~= "string" or not msg:find("userdata", 1, true) then return nil end
+  if msg:find("tainted by", 1, true) then return nil end
+  local where, rest = msg:match("^(.-:%d+): (.*)$")
+  rest = rest or msg
+  local what = rest:match("^attempt to (compare) ") or rest:match("^attempt to (perform arithmetic on) ")
+    or rest:match("^attempt to (concatenate) ")
+  local txt
+  if what then
+    txt = rawformat("attempt to %s a secret value (execution tainted by '%s')  [Lua 5.1: %s]", what, taintName(), rest)
+  else
+    local fn = rest:match("^bad argument #%d+ to '([^']+)'")
+    txt = rawformat("%s  [secret value passed to the C function '%s': refused from addon code]", rest, fn or "?")
+  end
+  return (where and (where .. ": ") or "") .. txt, where
+end
+M.SecretVmError = secretVmError
+local function noteSwallowed(msg)
+  local txt, where = secretVmError(msg)
+  if txt then
+    M.violations[#M.violations + 1] = { kind = "secret", msg = txt .. " (swallowed by pcall)", where = where or "?" }
+  end
+end
+M.NoteSwallowed = noteSwallowed
+
+-- restrictions ----------------------------------------------------------------------------------
+local function compound(u)  -- « targettarget », « nameplate3target », « party1target »…
+  return rawtype(u) == "string" and u:lower():match("^%a+%d*target") ~= nil and u:lower() ~= "target"
+end
+local function unitInfo(u)
+  if rawtype(u) ~= "string" then return nil, "none" end
+  local l = u:lower()
+  if l == "player" then return M.player, "player" end
+  if l == "pet" then return M.pet, "pet" end
+  if l:match("^party%d$") or l:match("^raid%d+$") then return M.group[tonumber(l:match("%d+"))], "group" end
+  if l:match("^partypet%d$") or l:match("^raidpet%d+$") then return {}, "grouppet" end
+  local d = (l == "target" and M.target and M.target.exists and M.target) or (M.units and M.units[l])
+  if d and d.isPlayer then
+    for _, g in ipairs(M.group) do if g.name == d.name then return d, "group" end end
+    return d, "enemyplayer"
+  end
+  if d then return d, "npc" end
+  return nil, "none"
+end
+M.UnitInfo = unitInfo
+local function playerControlled(u)
+  local _, k = unitInfo(u)
+  return k == "player" or k == "pet" or k == "group" or k == "grouppet" or k == "enemyplayer"
+end
+local function friendlyGroup(u)
+  local _, k = unitInfo(u)
+  return k == "player" or k == "pet" or k == "group" or k == "grouppet"
+end
+local function restricted() return M.inCombat or M.instance or M.encounter end
+function M.ChatLockdown() return M.chatLockdown or M.encounter end
+M.Restricted = restricted
+-- which arguments make a call secret, per documentation predicate (code from forever_ref.lua)
+local RULES = {   -- (a1, a2) = the call's first two arguments (unit, mob / second unit): no table per call
+  R = function() if M.secretReturns == "always" then return true end return restricted() end,
+  id = function(a1) return restricted() and not friendlyGroup(a1) end,
+  name = function(a1) return restricted() and not playerControlled(a1) end,
+  hpmax = function(a1) return restricted() and not playerControlled(a1) end,
+  power = function(a1) return restricted() and not playerControlled(a1) end,
+  powermax = function(a1) return restricted() and not playerControlled(a1) end,
+  stats = function() return M.inCombat or M.encounter end,   -- ShouldUnitStatsBeSecret(): no unit = the player too
+  aura = function(a1) return restricted() and (rawtostring(a1):lower() ~= "player" or M.secretPlayer) end,
+  cast = function(a1) local l = rawtostring(a1):lower() return restricted() and l ~= "player" and l ~= "pet" end,
+  threat = function(_, a2) return restricted() and a2 ~= nil and not friendlyGroup(a2) end,
+  threatv = function(_, a2) return restricted() and (a2 == nil or not friendlyGroup(a2)) end,
+  cmp = function(a1, a2) return (M.instance or M.encounter) and (compound(a1) or compound(a2)) end,
+  cd = function() return M.inCombat end,
+  combat = function() return M.inCombat end,
+  chat = function() return M.ChatLockdown() end,
+  loc = function(a1) return M.inCombat and rawtostring(a1):lower() ~= "player" end,
+  encounter = function() return M.encounter end,
+  pvp = function() return M.pvpMatch end,
+}
+M.SECRET_RULES = RULES
+
+local codeCache = {}
+local function secretNow(codes, a1, a2)
+  local list = codeCache[codes]
+  if not list then
+    list = {}
+    for c in codes:gmatch("[^,]+") do if RULES[c] then list[#list + 1] = RULES[c] end end
+    codeCache[codes] = list
+  end
+  for i = 1, #list do if list[i](a1, a2) then return true end end
+  return false
+end
+-- a secret boolean handed to addon code: where (3 addon frames), once per (function, place); harness notes them
+local function noteSecretBoolean(name)
+  if M.traceSecretBooleans == false then return end   -- session_sim: nobody reads them
+  local chain = {}
+  for lvl = 3, 40 do
+    local info = debug.getinfo(lvl, "Sl")
+    if not info then break end
+    if info.what ~= "C" and not rawtostring(info.short_src):find("wowmock%.lua$") then
+      chain[#chain + 1] = (rawtostring(info.short_src) .. ":" .. rawtostring(info.currentline)):gsub("^.-([%w_]+%.lua:%d+)$", "%1")
+      if #chain >= 3 then break end
+    end
+  end
+  local where = table.concat(chain, " < ")
+  local key = name .. "@" .. where
+  local seen = M.secretBoolSeen
+  if not seen then seen = {} M.secretBoolSeen = seen end
+  if seen[key] then return end
+  seen[key] = true
+  M.secretBooleans[#M.secretBooleans + 1] = { fn = name, where = where }
+end
+-- wrap every returned value (fields of a returned struct table) as secret — no table per call (varargs)
+local function secretValue(name, v)
+  local t = rawtype(v)
+  if t == "table" and not rawget(v, "__kind") then
+    local c, bools = {}, false
+    for k, x in pairs(v) do c[k] = wrapSecret(x) if rawtype(x) == "boolean" then bools = true end end
+    if bools then noteSecretBoolean(name) end
+    return c
+  elseif v ~= nil then
+    if t == "boolean" then noteSecretBoolean(name) end
+    return wrapSecret(v)
+  end
+  return nil
+end
+local function secretMap(name, n, v, ...)
+  if n <= 1 then
+    if n == 1 then return secretValue(name, v) end
+    return
+  end
+  return secretValue(name, v), secretMap(name, n - 1, ...)
+end
+local function secretReturns(name, ...) return secretMap(name, select("#", ...), ...) end
+
+-- reference -------------------------------------------------------------------------------------
+local MOCK_DIR = (debug.getinfo(1, "S").source or ""):match("^@(.*)[/\\][^/\\]*$") or "."
+function M.LoadForeverRef()
+  local cache = rawget(_G, "package") and package.loaded or {}
+  if cache.treeai_forever_ref then return cache.treeai_forever_ref end
+  local chunk, err = loadfile(MOCK_DIR .. "/forever_ref.lua")
+  if not chunk then error("wowmock: cannot load forever_ref.lua (" .. tostring(err) .. ")") end
+  local raw = chunk()
+  local ref = { build = raw.build, api = {}, globals = {}, members = {}, shim = {}, events = {}, enums = {}, ns = {} }
+  for line in raw.api:gmatch("[^\n]+") do
+    local n, f = line:match("^(%S+)%s*(%S*)")
+    ref.api[n] = (f or ""):gsub("|", " ")
+    local ns = n:match("^(C_%w+)%.")
+    if ns then ref.ns[ns] = true end
+  end
+  for w in raw.globals:gmatch("%S+") do ref.globals[w] = true end
+  for w in raw.members:gmatch("%S+") do ref.members[w] = true local ns = w:match("^(C_%w+)%.") if ns then ref.ns[ns] = true end end
+  for w in raw.shim:gmatch("%S+") do ref.shim[w] = true end
+  for line in raw.events:gmatch("[^\n]+") do
+    local n, f = line:match("^(%S+)%s*(%S*)")
+    ref.events[n] = (f or ""):gsub("|", " ")
+  end
+  for line in raw.enums:gmatch("[^\n]+") do
+    local n, vals = line:match("^(%S+)%s+(%S+)")
+    if n then
+      local t = {}
+      for k, v in vals:gmatch("([%w_]+)=(%-?%d+)") do t[k] = tonumber(v) end
+      ref.enums[n] = t
+    end
+  end
+  cache.treeai_forever_ref = ref
+  return ref
+end
+
+-- C functions that exist in every Mainline-family client but that Blizzard's camelot FrameXML never calls
+-- (so forever_ref.lua cannot see them): kept. The protected movement / cast functions stay to catch automation.
+local KEEP = {}
+for _, n in ipairs({ "issecurevariable", "strconcat", "PlaySoundFile", "SetBindingClick", "SetBindingMacro",
+  "SetBindingSpell", "SetBindingItem", "GetMacroBody", "CastSpellByName", "CastSpellByID", "UseAction", "RunMacroText",
+  "TargetUnit", "AttackTarget", "CastPetAction", "PetAttack", "MoveForwardStart", "JumpOrAscendStart", "TurnLeftStart",
+  "InteractUnit", "UseInventoryItem", "SpellStopCasting", "TargetNearestEnemy" }) do KEEP[n] = true end
+local LUA_BUILTIN = {}
+for _, n in ipairs({ "assert", "collectgarbage", "dofile", "error", "getfenv", "getmetatable", "ipairs", "load",
+  "loadfile", "loadstring", "module", "next", "pairs", "pcall", "print", "rawequal", "rawget", "rawset", "require",
+  "select", "setfenv", "setmetatable", "tonumber", "tostring", "type", "unpack", "xpcall", "newproxy", "gcinfo",
+  "CreateFrame" }) do LUA_BUILTIN[n] = true end
+
+-- install -----------------------------------------------------------------------------------------
+-- part 1, before InstallTaint: Forever-only APIs and behaviours
+function M.ApplyForever(G)
+  local ref = M.LoadForeverRef()
+  M.ref = ref
+  local old = {}
+  for _, n in ipairs({ "GetPetHappiness", "GetPetLoyalty", "GetPetTrainingPoints", "GetPetFoodTypes",
+    "GetNumSkillLines", "GetSkillLineInfo", "GetItemStats", "GetItemSpell", "GetItemCooldown", "GetSpellCooldown",
+    "IsUsableItem", "GetItemIcon", "GetSpellTexture", "GetSpellLink", "IsSpellInRange", "IsAutoRepeatSpell",
+    "IsCurrentSpell", "IsUsableSpell", "GetZonePVPInfo", "GetTrackingTexture", "GetQuestsCompleted",
+    "EquipItemByName", "PickupItem", "PickupSpell", "UnitAura", "UnitBuff", "UnitDebuff", "GetBagName",
+    "ContainerIDToInventoryID", "GetCoinTextureString", "SendChatMessage", "GuildRoster" }) do old[n] = rawget(G, n) end
+  local function oldf(n) return old[n] or function() end end
+  G.issecretvalue = isSecret
+  G.canaccessvalue = function(v) return not isSecret(v) end
+  G.canaccesssecrets = function() return false end
+  G.issecrettable = function(t)
+    if rawtype(t) ~= "table" then return false end
+    for k, v in pairs(t) do if isSecret(k) or isSecret(v) then return true end end
+    return false
+  end
+  G.canaccesstable = function(t) return not G.issecrettable(t) end
+  G.secretwrap = function(...) local n = select("#", ...) local o = { ... } for i = 1, n do o[i] = wrapSecret(o[i]) end return unpack(o, 1, n) end
+  G.scrubsecretvalues = function(...) local n = select("#", ...) local o = { ... } for i = 1, n do if isSecret(o[i]) then o[i] = nil end end return unpack(o, 1, n) end
+  G.WOW_PROJECT_CAMELOT = 99
+  G.WOW_PROJECT_ID = 99   -- unknown real number: the addon must compare with WOW_PROJECT_CAMELOT, not a literal
+  G.GetBuildInfo = function() return "1.60.1", "70862", "Nov 4 2026", 16001, "1.60.1", "Release" end
+  -- Enum: every documented enumeration (the mock's own entries kept where the docs have none)
+  G.Enum = G.Enum or {}
+  for name, t in pairs(ref.enums) do
+    local cur = rawget(G.Enum, name)
+    if rawtype(cur) == "table" then for k, v in pairs(t) do if cur[k] == nil then cur[k] = v end end
+    else G.Enum[name] = t end
+  end
+  -- moved APIs (Forever = C_ namespaces)
   G.C_PetInfo = {
     GetPetHappiness = oldf("GetPetHappiness"), GetPetLoyalty = oldf("GetPetLoyalty"),
     GetPetTrainingPoints = oldf("GetPetTrainingPoints"),
-    GetPetFoodTypes = function() return { oldf("GetPetFoodTypes")() } end,   -- a table on Forever
+    GetPetFoodTypes = function() local a, b = oldf("GetPetFoodTypes")() return { a, b } end,   -- a table on Forever
   }
   G.C_SkillInfo = {
     GetNumSkillLines = oldf("GetNumSkillLines"),
     GetSkillLineInfo = function(i)
       local name, isHeader, _, rank, _, _, maxRank = oldf("GetSkillLineInfo")(i)
-      if name then return { name = name, isHeader = isHeader and true or false, rank = rank or 0, maxRank = maxRank or 0,
-        skillID = i } end
+      if name then return { skillID = i, name = name, isHeader = isHeader and true or false, isCollapsed = false,
+        rank = rank or 0, tempPoints = 0, modifier = 0, maxRank = maxRank or 0, isAbandonable = false, stepCost = 0,
+        rankCost = 0, minLevel = 0, costType = 0, parentSkillLineID = 0, skillLineCategoryID = 0, description = "" } end   -- SkillLineAttributes
     end,
   }
   local SB = G.C_SpellBook or {}
   G.C_SpellBook = SB
   SB.IsSpellKnown = SB.IsSpellKnown or function(id) local sp = M.spells[id] return sp and sp.known or false end
-  SB.GetNumSpellBookSkillLines = SB.GetNumSpellBookSkillLines or function() return 0 end
-  SB.GetSpellBookSkillLineInfo = SB.GetSpellBookSkillLineInfo or function() return nil end
-  SB.GetSpellBookItemName = SB.GetSpellBookItemName or function() return nil end
-  SB.HasPetSpells = SB.HasPetSpells or function() return nil end
+  -- the spellbook as the client builds it from the known spells: line 1 « Général », line 2 = the class
+  local function book()
+    local ids = {}
+    for id, sp in pairs(M.spells) do if sp.known then ids[#ids + 1] = id end end
+    table.sort(ids)
+    return ids
+  end
+  SB.GetNumSpellBookSkillLines = SB.GetNumSpellBookSkillLines or function() return 2 end
+  SB.GetSpellBookSkillLineInfo = SB.GetSpellBookSkillLineInfo or function(line)
+    local n = #book()
+    if line == 1 then return { name = "Général", iconID = 136243, itemIndexOffset = 0, numSpellBookItems = 0,
+      isGuild = false, shouldHide = false, specID = nil, offSpecID = nil } end
+    if line == 2 then return { name = M.player.classLocal or "Classe", iconID = 132162, itemIndexOffset = 0,
+      numSpellBookItems = n, isGuild = false, shouldHide = false, specID = nil, offSpecID = nil } end
+  end
+  local function slotSpell(slot, bank)
+    if bank == 1 then return nil end
+    local id = book()[slot]
+    return id, id and M.spells[id]
+  end
+  SB.GetSpellBookItemName = SB.GetSpellBookItemName or function(slot, bank)
+    local _, sp = slotSpell(slot, bank)
+    if sp then return sp.name, sp.rank or "" end
+  end
+  SB.GetSpellBookItemInfo = SB.GetSpellBookItemInfo or function(slot, bank)
+    local id, sp = slotSpell(slot, bank)
+    if not sp then return nil end
+    return { actionID = id, spellID = id, itemType = 1, name = sp.name, subName = sp.rank or "", iconID = sp.icon,
+      isPassive = sp.passive and true or false, isOffSpec = false, skillLineIndex = 2 }
+  end
+  SB.GetSpellBookItemType = SB.GetSpellBookItemType or function(slot, bank)
+    local id = slotSpell(slot, bank)
+    if id then return 1, id, id end
+    return 0
+  end
+  SB.HasPetSpells = SB.HasPetSpells or function() if M.pet and M.pet.exists then return 0, "PET" end return nil end
   -- spellIdentifier = id or name (rank-agnostic): a slot only for a LEARNED spell
   SB.FindSpellBookSlotForSpell = SB.FindSpellBookSlotForSpell or function(s)
-    if type(s) == "number" then local sp = M.spells[s] if sp and sp.known then return s, 0 end return nil end
-    if type(s) == "string" then
+    if rawtype(s) == "number" then local sp = M.spells[s] if sp and sp.known then return s, 0 end return nil end
+    if rawtype(s) == "string" then
       for id, sp in pairs(M.spells) do if sp.known and sp.name == s then return id, 0 end end
     end
   end
+  G.C_Spell = G.C_Spell or {}
+  local CS = G.C_Spell
+  CS.GetSpellName = CS.GetSpellName or function(s) local i = CS.GetSpellInfo(s) return i and i.name end
+  CS.GetSpellTexture = CS.GetSpellTexture or function(s) local i = CS.GetSpellInfo(s) if i then return i.iconID, i.originalIconID end end
+  CS.GetSpellSubtext = CS.GetSpellSubtext or function(s)
+    local sp = rawtype(s) == "number" and M.spells[s]
+    if not sp then for _, x in pairs(M.spells) do if x.name == s then sp = x break end end end
+    return sp and (sp.rank or "") or nil
+  end
+  CS.GetSpellLink = CS.GetSpellLink or function(s) return oldf("GetSpellLink")(s) end
+  CS.GetSpellCooldown = CS.GetSpellCooldown or function(s)
+    local start, duration = oldf("GetSpellCooldown")(s)
+    if start == nil then return nil end
+    return { startTime = start, duration = duration, isEnabled = true, isActive = (duration or 0) > 0, modRate = 1,
+      activeCategory = nil, timeUntilEndOfStartRecovery = nil, isOnGCD = false }
+  end
+  CS.IsSpellInRange = CS.IsSpellInRange or function(s, u) local r = oldf("IsSpellInRange")(s, u) if r == nil then return nil end return r == 1 end
+  CS.IsAutoRepeatSpell = CS.IsAutoRepeatSpell or function(s) return oldf("IsAutoRepeatSpell")(s) and true or false end
+  CS.IsCurrentSpell = CS.IsCurrentSpell or function(s) return oldf("IsCurrentSpell")(s) and true or false end
+  CS.IsSpellUsable = CS.IsSpellUsable or function(s) return oldf("IsUsableSpell")(s) end
+  CS.PickupSpell = CS.PickupSpell or function(s) return oldf("PickupSpell")(s) end
+  G.C_Item = G.C_Item or {}
+  local CI = G.C_Item
+  CI.GetItemStats = function(link) return oldf("GetItemStats")(link) end
+  CI.GetItemSpell = CI.GetItemSpell or function(i) return oldf("GetItemSpell")(i) end
+  CI.GetItemCooldown = CI.GetItemCooldown or function(i) local s, d, e = oldf("GetItemCooldown")(i) return s, d, e == 1 or e == true end
+  CI.IsUsableItem = CI.IsUsableItem or function(i) return oldf("IsUsableItem")(i) end
+  CI.GetItemIconByID = CI.GetItemIconByID or function(i) return oldf("GetItemIcon")(i) end
+  CI.EquipItemByName = CI.EquipItemByName or function(...) return oldf("EquipItemByName")(...) end
+  CI.PickupItem = CI.PickupItem or function(...) return oldf("PickupItem")(...) end
+  if G.C_Container then
+    G.C_Container.GetItemCooldown = G.C_Container.GetItemCooldown or function(id) return oldf("GetItemCooldown")(id) end
+    G.C_Container.ContainerIDToInventoryID = G.C_Container.ContainerIDToInventoryID or oldf("ContainerIDToInventoryID")
+  end
+  G.C_PvP = G.C_PvP or {}
+  G.C_PvP.GetZonePVPInfo = G.C_PvP.GetZonePVPInfo or function() return oldf("GetZonePVPInfo")() end
+  G.C_Minimap = G.C_Minimap or {}
+  G.C_Minimap.GetTrackingInfo = G.C_Minimap.GetTrackingInfo or function() return nil end
+  G.C_Minimap.GetNumTrackingTypes = G.C_Minimap.GetNumTrackingTypes or function() return 0 end
+  G.C_CurrencyInfo = G.C_CurrencyInfo or {}
+  G.C_CurrencyInfo.GetCoinTextureString = G.C_CurrencyInfo.GetCoinTextureString or oldf("GetCoinTextureString")
+  G.C_GuildInfo = G.C_GuildInfo or {}
+  G.C_GuildInfo.GuildRoster = G.C_GuildInfo.GuildRoster or function() end
+  G.C_ChatInfo = G.C_ChatInfo or {}
+  -- SAY / YELL / EMOTE / CHANNEL need a hardware event (Patch 1.60.1 API changes); a party message does not
+  G.C_ChatInfo.SendChatMessage = function(msg, chatType, lang, target)
+    local ct = tostring(chatType or "SAY"):upper()
+    if (ct == "SAY" or ct == "YELL" or ct == "EMOTE" or ct == "CHANNEL") and not M.hardware then
+      M.Violation("forbidden", "C_ChatInfo.SendChatMessage(" .. ct .. ") outside a hardware event (ADDON_ACTION_FORBIDDEN)")
+      return
+    end
+    return oldf("SendChatMessage")(msg, chatType, lang, target)
+  end
+  -- addon messages: refused during encounters (C_ChatInfo.AreOutgoingAddonChatMessagesRestricted)
+  local send = G.C_ChatInfo.SendAddonMessage
+  if send then
+    G.C_ChatInfo.SendAddonMessage = function(...)
+      if M.encounter then return 11 end   -- Enum.SendAddonMessageResult.AddOnMessageLockdown (nothing sent)
+      local ok = send(...)
+      if ok == false then return 9 end    -- GeneralError
+      return 0                            -- Success (a number: always truthy, like the real client)
+    end
+  end
+  G.C_ChatInfo.AreOutgoingAddonChatMessagesRestricted = function() return M.encounter and true or false end
+  G.C_ChatInfo.InChatMessagingLockdown = function() return M.ChatLockdown() and true or false end
+  G.C_Secrets = {
+    HasSecretRestrictions = function() return restricted() and true or false end,
+    ShouldUnitIdentityBeSecret = function(u) return RULES.id(u) and true or false end,
+    ShouldUnitStatsBeSecret = function() return RULES.stats() and true or false end,
+    ShouldUnitSpellCastingBeSecret = function(u) return RULES.cast(u) and true or false end,
+    ShouldAurasBeSecret = function() return restricted() and true or false end,
+    ShouldCooldownsBeSecret = function() return M.inCombat and true or false end,
+    ShouldUnitHealthMaxBeSecret = function(u) return RULES.hpmax(u) and true or false end,
+    ShouldUnitPowerBeSecret = function(u) return RULES.power(u) and true or false end,
+    ShouldUnitComparisonBeSecret = function(a, b) return RULES.cmp(a, b) and true or false end,
+  }
+  G.C_RestrictedActions = G.C_RestrictedActions or {}
+  G.C_RestrictedActions.IsAddOnRestrictionActive = function(kind)
+    if kind == 0 then return M.inCombat and true or false end
+    return restricted() and true or false
+  end
+  G.C_RestrictedActions.InCombatLockdown = function() return M.inCombat and true or false end
   G.Constants = G.Constants or {}
   G.Constants.MacroConsts = { MAX_ACCOUNT_MACROS = 120, MAX_CHARACTER_MACROS = 30 }
-  G.MAX_CHARACTER_MACROS = 30   -- the mock's own cap follows Forever (the client has no such global)
-  G.Enum = G.Enum or {}
+  G.Constants.QuestLogConsts = { MAXIMUM_NUM_QUESTS_LOG_CAN_ACCEPT = 40 }
+  G.MAX_QUESTLOG_QUESTS, G.MAX_QUESTS = 40, 40   -- Blizzard_FrameXMLBase/Constants.lua on camelot
+  G.MAX_CHARACTER_MACROS = 30   -- the mock's own cap follows Forever
   G.Enum.SpellBookSpellBank = G.Enum.SpellBookSpellBank or { Player = 0, Pet = 1 }
   G.C_ActionBar = G.C_ActionBar or {}
-  G.C_ActionBar.HasAction = G.C_ActionBar.HasAction or function() return false end
+  G.C_ActionBar.HasAction = G.C_ActionBar.HasAction or function(slot) return M.actions[slot] ~= nil end
+  G.C_ActionBar.GetActionText = G.C_ActionBar.GetActionText or function(slot) local a = M.actions[slot] return a and a.text end
+  G.C_ActionBar.GetActionTexture = G.C_ActionBar.GetActionTexture or function(slot) return M.actions[slot] and 134400 or nil end
+  G.C_ActionBar.GetBonusBarOffset = G.C_ActionBar.GetBonusBarOffset or function() return M.bonusBar or 0 end
   G.C_ClassTalents = G.C_ClassTalents or { HasUnspentTalentPoints = function() return false, 0, 0 end }
-  G.C_CombatLog = G.C_CombatLog or { IsCombatLogRestricted = function() return true end }
-  -- secret values: in combat, other units' health / power / identity / casts / auras are secret
-  local function wrapUnit(name, secretFor)
-    local f = rawget(G, name)
-    if type(f) ~= "function" then return end
-    G[name] = function(u, ...)
-      if M.inCombat and secretFor(u) then
-        local r = { f(u, ...) }
-        if r[1] == nil then return nil end
-        for i = 1, #r do if r[i] ~= nil then r[i] = M.Secret() end end
-        return unpack(r)
+  G.C_CombatLog = G.C_CombatLog or {}
+  G.C_CombatLog.IsCombatLogRestricted = function() return true end
+  G.C_UnitAuras = G.C_UnitAuras or {}
+  G.C_UnitAuras.GetBuffDataByIndex = G.C_UnitAuras.GetBuffDataByIndex or function(u, i, f)
+    return G.C_UnitAuras.GetAuraDataByIndex(u, i, "HELPFUL" .. (f and ("|" .. f) or ""))
+  end
+  G.C_UnitAuras.GetDebuffDataByIndex = G.C_UnitAuras.GetDebuffDataByIndex or function(u, i, f)
+    return G.C_UnitAuras.GetAuraDataByIndex(u, i, "HARMFUL" .. (f and ("|" .. f) or ""))
+  end
+  -- real Forever APIs the addon calls that the old mock lacked (so those paths were never run): minimal, doc-shaped.
+  -- (World data APIs — C_TaxiMap nodes, C_AreaPoiInfo, C_QuestLog.GetQuestsOnMap — stay absent: an empty answer
+  -- would claim « no flight master here » and poison the addon's caches; scenarios give them data.)
+  local function stub(tbl, name, fn) if rawget(tbl, name) == nil then tbl[name] = fn end end
+  stub(G, "IsLoggedIn", function() return true end)
+  stub(G, "IsSwimming", function() return M.swimming and true or false end)
+  stub(G, "SetCursor", function() return true end)
+  stub(G, "ResetCursor", function() end)
+  stub(G, "UnitIsGroupAssistant", function() return false end)
+  stub(G, "UnitQuestTrivialLevelRange", function() return M.trivialRange or 5 end)
+  stub(G, "GetRaidTargetIndex", function(u) local d = unitInfo(u) return d and d.mark or nil end)
+  stub(G, "GetAddOnMemoryUsage", function() return 1024 end)
+  stub(G, "UpdateAddOnMemoryUsage", function() end)
+  stub(G, "GetPVPSessionStats", function() return 0, 0 end)
+  -- character stats (documented SecretWhenUnitStatsRestricted: secret in combat, the player included)
+  stub(G, "UnitAttackPower", function() return 120, 0, 0 end)
+  stub(G, "UnitRangedAttackPower", function() return 150, 0, 0 end)
+  stub(G, "UnitDamage", function() return 20, 30, 0, 0, 0, 0, 1 end)
+  stub(G, "UnitStat", function(_, i) return 40 + (i or 1), 40 + (i or 1), 0, 0 end)
+  stub(G, "UnitArmor", function() return 900, 900, 900, 0 end)
+  stub(G, "UnitResistance", function() return 0, 0, 0, 0 end)
+  for _, n in ipairs({ "GetCritChance", "GetRangedCritChance", "GetSpellCritChance", "GetDodgeChance", "GetParryChance",
+    "GetBlockChance", "GetHitModifier", "GetSpellHitModifier", "GetHaste", "GetMeleeHaste" }) do stub(G, n, function() return 5 end) end
+  stub(G, "GetCombatRating", function() return 0 end)
+  stub(G, "GetManaRegen", function() return 2, 1 end)
+  stub(G, "GetPowerRegen", function() return 2, 1 end)
+  local QLx = G.C_QuestLog or {}
+  stub(QLx, "ReadyForTurnIn", function(id) local q = qAt(id) return q and q.complete or false end)
+  stub(QLx, "IsFailed", function(id) local q = qAt(id) return q and q.failed or false end)
+  stub(QLx, "GetTimeAllowed", function(id) local q = qAt(id) if q and q.timer then return q.timer, 0 end end)
+  stub(QLx, "GetDistanceSqToQuest", function() return nil end)
+  stub(QLx, "IsPushableQuest", function(id) return qAt(id) ~= nil end)
+  stub(QLx, "GetMaxNumQuestsCanAccept", function() return 40 end)   -- QuestLogConstsMainlineCamelot: 40 (not 20)
+  stub(QLx, "AddQuestWatch", function() return true end)
+  stub(QLx, "RemoveQuestWatch", function() return true end)
+  local CM = G.C_Map
+  stub(CM, "GetAreaInfo", function(id) return M.areaNames and M.areaNames[id] or nil end)
+  stub(CM, "GetUserWaypoint", function() return M.userWaypoint end)
+  stub(CM, "HasUserWaypoint", function() return M.userWaypoint ~= nil end)
+  G.C_SuperTrack = G.C_SuperTrack or {}
+  stub(G.C_SuperTrack, "IsSuperTrackingUserWaypoint", function() return M.superTrackUser and true or false end)
+  stub(CI, "GetDetailedItemLevelInfo", function(i) local it = itemFromArg(i) if it then return it.ilvl, false, it.ilvl end end)
+  stub(CI, "GetItemLinkByGUID", function() return nil end)
+  stub(CI, "RequestLoadItemDataByID", function() end)
+  G.C_AddOns = G.C_AddOns or {}
+  stub(G.C_AddOns, "GetNumAddOns", function() return 1 end)
+  stub(G.C_AddOns, "GetAddOnInfo", function(i)
+    local name = M.addonName or "TreeAI"
+    if i == 1 or i == name then return name, name, "", true, nil, "INSECURE" end
+  end)
+  G.C_MerchantFrame = G.C_MerchantFrame or {}
+  stub(G.C_MerchantFrame, "GetItemInfo", function(i)
+    local it = M.merchantOpen and (M.merchantItems or {})[i]
+    if not it then return nil end
+    local d = M.items[it.id] or {}
+    return { name = d.name, texture = 134400 + it.id, price = it.price or 0, stackCount = it.stack or 1,
+      numAvailable = -1, isPurchasable = true, isUsable = true, hasExtendedCost = false, currencyID = nil,
+      spellID = nil, isQuestStartItem = false }
+  end)
+  stub(G.C_Minimap, "SetTracking", function(i, on) M.tracking = M.tracking or {} M.tracking[i] = on and true or false end)
+  G.C_GossipInfo = G.C_GossipInfo or {}
+  stub(G.C_GossipInfo, "GetOptions", function() return {} end)
+  stub(G.C_GossipInfo, "GetActiveQuests", function() return {} end)
+  stub(G.C_GossipInfo, "GetAvailableQuests", function() return {} end)
+  stub(G.C_GossipInfo, "SelectOption", function() end)
+  stub(G.C_GossipInfo, "SelectActiveQuest", function() end)
+  stub(G.C_GossipInfo, "SelectAvailableQuest", function() end)
+  G.C_MountJournal = G.C_MountJournal or {}
+  stub(G.C_MountJournal, "GetMountIDs", function() return {} end)
+  stub(G.C_MountJournal, "GetMountInfoByID", function() return nil end)
+  G.C_UIWidgetManager = G.C_UIWidgetManager or {}
+  stub(G.C_UIWidgetManager, "GetTopCenterWidgetSetID", function() return nil end)
+  stub(G.C_UIWidgetManager, "GetAllWidgetsBySetID", function() return {} end)
+  stub(G.C_UIWidgetManager, "GetIconAndTextWidgetVisualizationInfo", function() return nil end)
+  stub(G.C_PvP, "GetBattlefieldFlagPosition", function() return nil end)
+  stub(G.C_PvP, "GetScoreInfo", function() return nil end)
+  G.C_TradeSkillUI = G.C_TradeSkillUI or {}
+  stub(G.C_TradeSkillUI, "GetBaseProfessionInfo", function() return nil end)
+  stub(G.C_TradeSkillUI, "GetRecipeInfo", function() return nil end)
+  stub(G.C_TradeSkillUI, "GetRecipeSchematic", function() return nil end)
+  stub(SB, "IsSpellBookItemPassive", function(slot, bank) local _, sp = slotSpell(slot, bank) return sp and sp.passive and true or false end)
+  -- professions: GetProfessions / GetProfessionInfo (C, used by Blizzard_ProfessionsBook/Camelot: prof1, prof2,
+  -- first aid, fishing, cooking — no archaeology on Forever), built from WowMock.skills; the Era skill lines are gone
+  local LINES = { ["Travail du cuir"] = 165, Couture = 197, Forge = 164, Alchimie = 171, ["Ingénierie"] = 202,
+    Enchantement = 333, Herboristerie = 182, Minage = 186, ["Dépeçage"] = 393, ["Premiers soins"] = 129,
+    Secourisme = 129, ["Pêche"] = 356, Cuisine = 185 }
+  local function profIndex(kind)
+    local primary = 0
+    for i, sk in ipairs(M.skills or {}) do
+      local line = LINES[sk.name]
+      if line == 129 or line == 356 or line == 185 then
+        if (kind == "faid" and line == 129) or (kind == "fish" and line == 356) or (kind == "cook" and line == 185) then return i end
+      elseif line then
+        primary = primary + 1
+        if (kind == "p1" and primary == 1) or (kind == "p2" and primary == 2) then return i end
       end
-      return f(u, ...)
     end
   end
-  local function notMe(u) return u ~= "player" or M.secretPlayer end   -- M.secretPlayer: worst case
-  local function notGroup(u)
-    return not (u == "player" or u == "pet" or tostring(u):match("^party%d$") or tostring(u):match("^raid%d+$"))
-  end
-  for _, n in ipairs({ "UnitHealth", "UnitHealthMax", "UnitPower", "UnitPowerMax", "UnitCastingInfo", "UnitChannelInfo" }) do
-    wrapUnit(n, notMe)
-  end
-  for _, n in ipairs({ "UnitGUID", "UnitName", "UnitCreatureType", "UnitCreatureFamily" }) do wrapUnit(n, notGroup) end
-  wrapUnit("UnitDetailedThreatSituation", function() return true end)
-  if G.C_UnitAuras and G.C_UnitAuras.GetAuraDataByIndex then
-    local f = G.C_UnitAuras.GetAuraDataByIndex
-    G.C_UnitAuras.GetAuraDataByIndex = function(u, ...)
-      local d = f(u, ...)
-      if d and M.inCombat and (u ~= "player" or M.secretPlayer) then
-        for k in pairs(d) do d[k] = M.Secret() end
-      end
-      return d
+  stub(G, "GetProfessions", function() return profIndex("p1"), profIndex("p2"), profIndex("faid"), profIndex("fish"), profIndex("cook") end)
+  stub(G, "GetProfessionInfo", function(i)
+    local sk = (M.skills or {})[i]
+    if not sk then return nil end
+    return sk.name, 136243, sk.rank or 0, sk.max or 300, 1, 0, LINES[sk.name], 0, 0, 0, sk.name
+  end)
+  -- dual spec (Forever: level 40): GetNumSpecGroups (C, used by the camelot FrameXML) + C_SpecializationInfo
+  stub(G, "GetNumSpecGroups", function() return M.numTalentGroups or 1 end)
+  G.C_SpecializationInfo = G.C_SpecializationInfo or {}
+  stub(G.C_SpecializationInfo, "GetActiveSpecGroup", function() return M.talentGroup or 1 end)
+  -- quest log as on Forever: every documented QuestInfo field; a zone header entry before the seeded quests
+  local QL = G.C_QuestLog
+  if QL and QL.GetInfo then
+    local getInfo = QL.GetInfo
+    QL.GetInfo = function(i)
+      local q = getInfo(i)
+      if rawtype(q) ~= "table" then return q end
+      local src = M.quests[i] or {}
+      local full = { title = q.title or "", questLogIndex = i, questID = q.questID or 0, campaignID = nil,
+        level = q.level or 0, difficultyLevel = q.level or 0, suggestedGroup = q.suggestedGroup or 0,
+        frequency = src.frequency, isHeader = q.isHeader and true or false, useMinimalHeader = false,
+        sortAsNormalQuest = false, isCollapsed = src.collapsed and true or false, startEvent = false,
+        isTask = false, isBounty = false, isStory = false, isScaling = false, isOnMap = (not q.isHeader) and true or false,
+        hasLocalPOI = false, isHidden = false, isAutoComplete = false, overridesSortOrder = false,
+        readyForTranslation = true, isInternalOnly = false, isAbandonOnDisable = false, headerSortKey = nil,
+        questClassification = 7 }   -- Enum.QuestClassification.Normal
+      return full
     end
+    QL.GetLogIndexForQuestID = QL.GetLogIndexForQuestID or function(id)
+      for i, q in ipairs(M.quests) do if not q.header and (q.id or 1000 + i) == id then return i end end
+    end
+    QL.GetAllCompletedQuestIDs = QL.GetAllCompletedQuestIDs or function()
+      local out = {}
+      for id, v in pairs(M.completed or {}) do if v then out[#out + 1] = id end end
+      return out
+    end
+    QL.IsQuestFlaggedCompleted = QL.IsQuestFlaggedCompleted or function(id) return (M.completed or {})[id] and true or false end
+    QL.GetTitleForQuestID = QL.GetTitleForQuestID or function(id)
+      for i, q in ipairs(M.quests) do if not q.header and (q.id or 1000 + i) == id then return q.title end end
+    end
+    QL.GetQuestWatchType = QL.GetQuestWatchType or function() return nil end
   end
-  -- macro writes: only inside a hardware event (a click / a typed command) — else ADDON_ACTION_FORBIDDEN
+  if not M.questHeadersSeeded and M.quests[1] and not M.quests[1].header then
+    for i, q in ipairs(M.quests) do q.id = q.id or (1000 + i) end   -- real quest IDs do not move with the header
+    table.insert(M.quests, 1, { header = M.player.zone })
+    M.questHeadersSeeded = true
+  end
+  -- UnitPosition: the player and the group only (world yards: y, x, z, instanceID); never in an instance
+  G.UnitPosition = function(u)
+    if M.instance then return nil end
+    local d, k = unitInfo(u)
+    if k == "player" then
+      local p = M.pos
+      local r = p and M.mapRects[p.mapID]
+      if not r then return nil end
+      return r.top - p.y * r.h, r.left - p.x * r.w, 0, r.continent or 0
+    end
+    if (k == "group" or k == "pet") and d and d.pos then
+      local r = M.mapRects[d.pos.mapID]
+      if r then return r.top - d.pos.y * r.h, r.left - d.pos.x * r.w, 0, r.continent or 0 end
+    end
+    return nil
+  end
+  -- macro writes and key bindings: only inside a hardware event (a click / a typed command) — else
+  -- ADDON_ACTION_FORBIDDEN (« UNKNOWN() »), the call does nothing
   for _, n in ipairs({ "CreateMacro", "EditMacro", "DeleteMacro" }) do
     local f = rawget(G, n)
-    if type(f) == "function" then
+    if rawtype(f) == "function" then
       G[n] = function(...)
         if not M.hardware then
           M.Violation("forbidden", n .. "() outside a hardware event (ADDON_ACTION_FORBIDDEN « UNKNOWN() »)")
@@ -1963,6 +2589,190 @@ function M.ApplyForever(G)
       end
     end
   end
+  for _, n in ipairs({ "SetBinding", "SetBindingClick", "SetBindingMacro", "SetBindingSpell", "SetBindingItem", "SaveBindings" }) do
+    local f = rawget(G, n)
+    if rawtype(f) == "function" then
+      G[n] = function(...)
+        if not M.hardware then
+          M.Violation("forbidden", n .. "() outside a hardware event (ADDON_ACTION_FORBIDDEN)")
+          if M.FireEvent then M.FireEvent("ADDON_ACTION_FORBIDDEN", M.addonName or "TreeAI", n .. "()") end
+          return false
+        end
+        return f(...)
+      end
+    end
+  end
+  -- nameplates: forbidden frames in instances
+  local np = G.C_NamePlate
+  if np and np.GetNamePlateForUnit then
+    local gp = np.GetNamePlateForUnit
+    np.GetNamePlateForUnit = function(u, ...) if M.instance then return nil end return gp(u, ...) end
+  end
+  -- Lua with secrets: type() = real type; tostring / tonumber / string.format / strjoin / strconcat accept them
+  G.type = function(v) local t = rawtype(v) if t == "userdata" and secretKind[v] then return secretKind[v] end return t end
+  G.tostring = function(v) if isSecret(v) then return wrapSecret(rawtostring(secretVal[v]), "string") end return rawtostring(v) end
+  G.tonumber = function(v, base)
+    if isSecret(v) then local n = rawtonumber(secretVal[v], base) if n == nil then return nil end return wrapSecret(n, "number") end
+    return rawtonumber(v, base)
+  end
+  local function liftFormat(fmt, ...)
+    local n = select("#", ...)
+    local args, any = { ... }, isSecret(fmt)
+    for i = 1, n do if isSecret(args[i]) then any = true args[i] = secretVal[args[i]] end end
+    if not any then return nil end
+    return wrapSecret(rawformat(unwrap(fmt), unpack(args, 1, n)), "string")
+  end
+  string.format = function(fmt, ...)
+    local ok, r = rawpcall(rawformat, fmt, ...)
+    if ok then return r end
+    local s = liftFormat(fmt, ...)
+    if s ~= nil then return s end
+    error(r, 2)
+  end
+  G.format = string.format
+  local function joinSecrets(sep, ...)
+    local n, any = select("#", ...), false
+    local parts = { ... }
+    for i = 1, n do if isSecret(parts[i]) then any = true parts[i] = rawtostring(secretVal[parts[i]]) else parts[i] = rawtostring(parts[i]) end end
+    local s = rawconcat(parts, sep or "", 1, n)
+    if any then return wrapSecret(s, "string") end
+    return s
+  end
+  G.strjoin = function(sep, ...) return joinSecrets(sep, ...) end
+  string.join = G.strjoin
+  G.strconcat = function(...) return joinSecrets("", ...) end
+  -- table.concat is not documented as accepting secrets: a secret element is the client's error
+  table.concat = function(t, sep, i, j)
+    local ok, r = rawpcall(rawconcat, t, sep, i, j)
+    if ok then return r end
+    if rawtype(t) == "table" then
+      for k = i or 1, j or #t do if isSecret(t[k]) then secretError("concatenate", t[k], 2) end end
+    end
+    error(r, 2)
+  end
+  -- pcall / xpcall: errors on secrets swallowed by the addon still count (the feature is dead in game)
+  local function after(ok, ...)
+    if not ok then
+      local e = ...
+      noteSwallowed(e)
+      local txt = secretVmError(e)   -- the addon sees the client's wording, not Lua 5.1's « userdata »
+      if txt then return false, txt end
+    end
+    return ok, ...
+  end
+  G.pcall = function(f, ...) return after(rawpcall(f, ...)) end
+  G.xpcall = function(f, h, ...)
+    local args, n = { ... }, select("#", ...)
+    return rawxpcall(function() return f(unpack(args, 1, n)) end, function(e) noteSwallowed(e) return h and h(e) or e end)
+  end
+  -- print / chat frames take secrets (shown as « <secret> » here)
+  local pr = G.print
+  G.print = function(...)
+    local n, o = select("#", ...), { ... }
+    for i = 1, n do if isSecret(o[i]) then o[i] = "<secret>" end end
+    return pr(unpack(o, 1, n))
+  end
+  M.secretBooleans = M.secretBooleans or {}
+end
+
+-- part 2, after InstallTaint: remove what Forever does not have; wrap what it restricts
+function M.PruneForever(G)
+  local ref = M.ref or M.LoadForeverRef()
+  M.pruned = {}
+  for k, v in pairs(G) do
+    if rawtype(k) == "string" and rawtype(v) == "function" and not LUA_BUILTIN[k] and not KEEP[k]
+        and not ref.api[k] and not ref.globals[k] then
+      M.pruned[#M.pruned + 1] = k
+    end
+  end
+  for _, k in ipairs(M.pruned) do rawset(G, k, nil) end
+  for k, v in pairs(G) do
+    if rawtype(k) == "string" and k:match("^C_") and rawtype(v) == "table" then
+      if not ref.ns[k] then
+        M.pruned[#M.pruned + 1] = k
+      else
+        local gone = {}
+        for m, f in pairs(v) do
+          if rawtype(f) == "function" and not ref.api[k .. "." .. m] and not ref.members[k .. "." .. m] then gone[#gone + 1] = m end
+        end
+        for _, m in ipairs(gone) do v[m] = nil M.pruned[#M.pruned + 1] = k .. "." .. m end
+      end
+    end
+  end
+  for _, k in ipairs(M.pruned) do if not k:find("%.") and k:match("^C_") then rawset(G, k, nil) end end
+  table.sort(M.pruned)
+  -- wrap documented flags: secret arguments refused, secret returns
+  -- the secret-inspection builtins are documented « AllowedWhenUntainted » but take secrets from addons (that is
+  -- their purpose: AutoTurnIn & co call issecretvalue on map positions in combat)
+  local INSPECT = { issecretvalue = true, canaccessvalue = true, canaccesstable = true, issecrettable = true,
+    canaccessallvalues = true, hasanysecretvalues = true, scrubsecretvalues = true, scrub = true, secretwrap = true }
+  local function wrap(name, f, flags)
+    local refuse = flags:find("A", 1, true) ~= nil and not INSPECT[name]
+    local codes = flags:match("s:(%S+)")
+    if INSPECT[name] then return f end
+    return function(...)
+      local n = select("#", ...)
+      for i = 1, n do
+        local a = select(i, ...)
+        if isSecret(a) then
+          if refuse then
+            local msg = rawformat("bad argument #%d to '%s' (secret value: refused from addon code)", i, name)
+            M.Violation("secret", msg)
+            error(msg, 2)
+          end
+          -- accepted (« AllowedWhenTainted »): the client answers, with secrets
+          local args = { ... }
+          for j = 1, n do args[j] = unwrap(args[j]) end
+          return secretReturns(name, f(unpack(args, 1, n)))
+        end
+      end
+      if codes and secretNow(codes, ...) then
+        return secretReturns(name, f(...))
+      end
+      return f(...)
+    end
+  end
+  for k, v in pairs(G) do
+    if rawtype(v) == "function" and ref.api[k] then G[k] = wrap(k, v, ref.api[k]) end
+  end
+  for k, v in pairs(G) do
+    if rawtype(k) == "string" and k:match("^C_") and rawtype(v) == "table" then
+      for m, f in pairs(v) do
+        local fl = ref.api[k .. "." .. m]
+        if rawtype(f) == "function" and fl then v[m] = wrap(k .. "." .. m, f, fl) end
+      end
+    end
+  end
+end
+
+-- a secret stored as a table KEY (an immediate error in the real client): scan what the addon can reach
+function M.ScanSecretKeys(roots)
+  local seen, found = {}, {}
+  local stack = {}
+  for _, r in ipairs(roots) do stack[#stack + 1] = { r, "root" } end
+  local n = 0
+  while #stack > 0 and n < 200000 do
+    local item = table.remove(stack)
+    local t, path = item[1], item[2]
+    if rawtype(t) == "table" and not seen[t] and not rawget(t, "__kind") then
+      seen[t] = true
+      n = n + 1
+      for k, v in next, t do
+        if isSecret(k) then found[#found + 1] = path .. "[<secret>]" end
+        if rawtype(v) == "table" then stack[#stack + 1] = { v, path .. "." .. rawtostring(k) } end
+      end
+    elseif rawtype(t) == "function" and not seen[t] then
+      seen[t] = true
+      local i = 1
+      while true do
+        local nm, v = debug.getupvalue(t, i)
+        if not nm then break end
+        if rawtype(v) == "table" or rawtype(v) == "function" then stack[#stack + 1] = { v, path .. "^" .. nm } end
+        i = i + 1
+      end
+    end
+  end
+  return found
 end
 
 return M

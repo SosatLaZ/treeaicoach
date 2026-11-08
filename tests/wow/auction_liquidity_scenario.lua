@@ -10,7 +10,7 @@ return function(M, ctx)
   ctx.check(A, "Auction module registered")
   if not A then return end
   local F = A.F
-  local modern = M.flavor == "modern"
+  local modern = M.flavor ~= "legacy"   -- FIDELITY: the « forever » mock is the modern (C_AuctionHouse) family too
 
   -- pure model: same numbers as the python mirror (test_auction.py::test_liquidity_mirror_numbers)
   local function hist(meds, gone, hrs, n, sel)

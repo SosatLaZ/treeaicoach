@@ -197,6 +197,8 @@ return function(M, ctx)
       "Creature-0-0-0-0-77-" .. k, "Lion des collines", 0xa48, 0 }
     M.FireEvent("COMBAT_LOG_EVENT_UNFILTERED")
     M.combatEvent = nil
+    -- (FIDELITY) Forever: no combat log for addons, the kill reaches the addon through the XP message
+    if M.flavor == "forever" then M.FireEvent("CHAT_MSG_COMBAT_XP_GAIN", "Lion des collines meurt, vous gagnez 120 points d'expérience.") end
     M.loot = (k % 2 == 0) and { { name = "Sang de lion", count = 1, questItem = true }, { name = "Griffe" } } or { { name = "Griffe" } }
     M.FireEvent("LOOT_OPENED")
     M.FireEvent("LOOT_CLOSED")
@@ -252,11 +254,12 @@ return function(M, ctx)
   check(P.State().killCount == 1, "kill counted from the XP message")
 
   -- secret values (Forever, in combat): never compared / concatenated
-  rawset(_G, "issecretvalue", function(v) return v == "SECRET" end)
+  local realIsSecret = rawget(_G, "issecretvalue")   -- FIDELITY: chain to the client's, restore it (never remove it)
+  rawset(_G, "issecretvalue", function(v) return v == "SECRET" or (realIsSecret ~= nil and realIsSecret(v)) or false end)
   P.OnKill("SECRET", "SECRET")
   check(P.State().killCount == 1, "secret kill ignored")
   check(TR.DropTip("SECRET") == nil, "secret unit name ignored in tooltips")
-  rawset(_G, "issecretvalue", nil)
+  rawset(_G, "issecretvalue", realIsSecret)
 
   -- heavy planning only out of combat; compass hidden in combat (option)
   M.EnterCombat()

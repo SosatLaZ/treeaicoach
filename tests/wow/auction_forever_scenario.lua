@@ -6,7 +6,7 @@
 return function(M, ctx)
   local T = TreeAI
   local A = T and T:GetModule("Auction")
-  ctx.check(A and M.flavor == "modern", "Auction module on the modern (Forever) mock")
+  ctx.check(A and M.flavor ~= "legacy", "Auction module on the modern (Forever) mock")   -- FIDELITY: « forever » too
   if not A then return end
   ctx.check(A.Flavor() == "modern", "C_AuctionHouse detected: " .. tostring(A.Flavor()))
 
@@ -90,6 +90,7 @@ return function(M, ctx)
   -- passive browse (the player browsing in Blizzard's UI)
   M.Advance(0.1, 0.05)
   C_AuctionHouse.SendBrowseQuery({ searchString = "" })
+  M.Advance(0.5, 0.05)   -- (FIDELITY) the browse answer arrives a moment later, like in the game
   ctx.check(A.browse[2592] and A.browse[2592].min == 302, "browse results captured")
 
   -- targeted mini-scan under the search throttle

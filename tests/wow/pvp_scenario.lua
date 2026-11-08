@@ -2,6 +2,7 @@
 -- The generic mock has no PvP API: this scenario installs mocked battleground widgets, map POIs,
 -- scoreboard, queue status and enemy-player units, then removes them.
 return function(M, ctx)
+  local GetMacroIndexByName = rawget(_G, "GetMacroIndexByName") or M.MacroIndex   -- absent on Forever (FIDELITY)
   local T = TreeAI
   local P = T and T.modules and T.modules.PvP
   ctx.check(P and P.db and P.db.enabled, "PvP registered + enabled")
@@ -67,9 +68,10 @@ return function(M, ctx)
     "danger rating (skull = 10, same-level rogue vs hunter = 7)")
 
   -- secret values (in combat on Forever) are ignored, never compared
-  set("issecretvalue", function(v) return v == "SECRET" end)
+  local realIsSecret = rawget(_G, "issecretvalue")   -- FIDELITY: chain to the client's, restore it (never remove it)
+  set("issecretvalue", function(v) return v == "SECRET" or (realIsSecret ~= nil and realIsSecret(v)) or false end)
   ctx.check(P.ParseBGSystem("SECRET") == nil and P.ScoreFromText("SECRET") == nil, "secret values ignored")
-  set("issecretvalue", nil)
+  set("issecretvalue", realIsSecret)
 
   -- 1. PvP help OFF (default): silent, no tab
   ctx.check(not T.settings.pvp, "pvp off by default")

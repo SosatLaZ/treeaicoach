@@ -1,6 +1,7 @@
 -- Scenario for Modules/Binds.lua (agent BINDS): mock action bars + bindings, plan, conflicts, actions on click,
 -- binding blocked by the game (ADDON_ACTION_FORBIDDEN) -> instructions. Fake names only.
 return function(M, ctx)
+  local GetMacroIndexByName = rawget(_G, "GetMacroIndexByName") or M.MacroIndex   -- absent on Forever (FIDELITY)
   local T = TreeAI
   local B, Mac = T.modules.Binds, T.modules.Macros
   ctx.check(B and B.db, "Binds registered")

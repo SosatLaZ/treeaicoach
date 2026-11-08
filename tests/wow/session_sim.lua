@@ -32,6 +32,8 @@ do
     elseif a == "-v" then opts.verbose = true end
     i = i + 1
   end
+  local force = os.getenv("TREEAI_WOW_FORCE_FLAVOR")   -- FIDELITY: the whole suite on the faithful Forever mock
+  if force and force ~= "" then opts.flavor = force end
 end
 
 -- budgets ----------------------------------------------------------------------------------------
@@ -91,7 +93,8 @@ local function fail(msg) R.fails[#R.fails + 1] = msg end
 local function note(msg) R.notes[#R.notes + 1] = msg end
 local seenErr = {}
 local function addErr(list, who, label, msg)
-  local key = label .. "|" .. tostring(msg):sub(1, 160)
+  -- one entry per (kind of label, message): the same error minute after minute is counted, not repeated
+  local key = tostring(label):gsub("@%d+min", "") .. "|" .. tostring(msg):sub(1, 160)
   if seenErr[key] then seenErr[key].n = seenErr[key].n + 1 return end
   local e = { who = who, label = label, msg = tostring(msg), n = 1 }
   seenErr[key] = e
@@ -192,11 +195,23 @@ end
 local getinfo = debug.getinfo
 -- SPIKE: per-frame cost on the main client (one frame = timers + OnUpdate of one wowmock Advance step,
 -- 0.2 s on the main client). FR.acc = samples (×1000 instr) in the open frame; FR.mods = by Module:line.
-local FR = { open = false, acc = 0, mods = {}, jobs = {}, fjobs = {}, costs = {}, phase = {}, worst = {}, idx = 0, kbStart = 0, kb = {} }
+local FR = { open = false, acc = 0, mods = {}, jobs = {}, fjobs = {}, costs = {}, phase = {}, worst = {}, idx = 0, kbStart = 0, kb = {}, hookKB = 0 }
 local fine = {}             -- --fine: samples by « Module:line » of the innermost addon function (main client)
+-- FIDELITY: the forever layer of the mock (secret values, documented flags, wrappers: functions defined after
+-- WowMock.FOREVER_LAYER_LINE) is C code in the game: its samples are not addon CPU. The mock's API bodies are
+-- counted as in the other flavours (the budgets were calibrated that way).
+local MOCK_IS_C = opts.flavor == "forever"
+local FOREVER_LINE = math.huge   -- set from the first world's WowMock.FOREVER_LAYER_LINE
 local function hook()
   local lvl, m = 2, nil
-  while true do
+  -- forever: the hook's own allocations (debug.getinfo tables; the forever layer deepens the stacks it walks) are
+  -- not the addon's GC pressure
+  local kb0 = MOCK_IS_C and FR.open and collectgarbage("count")
+  if MOCK_IS_C then
+    local info = getinfo(2, "S")
+    if info and info.linedefined >= FOREVER_LINE and info.source:find("wowmock.lua", 1, true) then lvl = 1e9 end
+  end
+  while lvl < 1e9 do
     local info = getinfo(lvl, "S")
     if not info then break end
     m = modOf(info.source)
@@ -218,7 +233,7 @@ local function hook()
     end
     lvl = lvl + 1
   end
-  if FR.open then
+  if FR.open and not (MOCK_IS_C and lvl >= 1e9) then   -- forever: the mock's forever layer = C code in the game
     FR.acc = FR.acc + 1
     local mk = m or "(mock/sim)"
     local byLine = FR.mods[mk]
@@ -244,6 +259,7 @@ local function hook()
   if not byCl then byCl = {}; byMin[CUR] = byCl end
   m = m or "(mock/sim)"
   byCl[m] = (byCl[m] or 0) + 1
+  if kb0 then FR.hookKB = FR.hookKB + (collectgarbage("count") - kb0) end
 end
 
 -- clients -------------------------------------------------------------------------------------------
@@ -273,6 +289,9 @@ local function newWorld(spec, carryM)
   local chunk = assert(loadfile(HERE .. "/wowmock.lua"))
   setfenv(chunk, env)
   local M = chunk()
+  M.addonName = "TreeAI"
+  FOREVER_LINE = M.FOREVER_LAYER_LINE or FOREVER_LINE
+  M.traceSecretBooleans = false   -- forever: the harness lists secret booleans; the session does not read them
   M.Install(opts.flavor)
   if carryM then
     for k, v in pairs(carryM) do if type(v) ~= "function" and not KEEP_OUT[k] then M[k] = v end end
@@ -331,6 +350,7 @@ local function loadAddon(c, svString)
   env.pcall = function(f, ...)
     local r = { BASE.pcall(f, ...) }
     if not r[1] then
+      if M.NoteSwallowed then M.NoteSwallowed(r[2]) end   -- forever: a swallowed secret-value error is a violation
       local msg = tostring(r[2])
       if msg:find("TreeAI", 1, true) and not msg:find("wowmock", 1, true) then addErr(R.swallowed, c.name, CUR .. "@" .. MINUTE .. "min", msg) end
     end
@@ -549,11 +569,12 @@ local function frameHook(begin)
     for k in pairs(FR.fjobs) do FR.fjobs[k] = nil end
     collectgarbage("stop")
     FR.kbStart = collectgarbage("count")
+    FR.hookKB = 0
     FR.open = true
     return
   end
   FR.open = false
-  local kb = collectgarbage("count") - FR.kbStart
+  local kb = collectgarbage("count") - FR.kbStart - FR.hookKB   -- hookKB: forever only (0 otherwise)
   collectgarbage("restart")
   if not T0 then return end   -- login frames: not measured
   FR.idx = FR.idx + 1

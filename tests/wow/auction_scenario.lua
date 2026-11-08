@@ -7,7 +7,7 @@ return function(M, ctx)
   ctx.check(A, "Auction module registered")
   if not A then return end
   local F = A.F
-  local modern = M.flavor == "modern"
+  local modern = M.flavor ~= "legacy"   -- FIDELITY: the « forever » mock is the modern (C_AuctionHouse) family too
 
   -- exact math (same numbers as tests/wow/test_auction.py)
   ctx.check(F.cut(10000) == 500 and F.cut(10000, true) == 1500 and F.cut(199, true) == 29, "AH cut 5 % / 15 %")
@@ -91,12 +91,15 @@ return function(M, ctx)
   local r = rowFor(lin)
   ctx.check(r and r.btn:IsShown(), "deal row with a button")
   local nb = #M.ah.bids
-  if modern then
+  if modern then   -- (FIDELITY: the real AH answers asynchronously: the player's clicks are not instantaneous)
     r.btn:Click()                    -- 1: search (price re-check)
+    M.Advance(1, 0.05)
     ctx.check(lin.state == "ready" and lin.commodity, "modern: verified commodity: " .. tostring(lin.state))
     r.btn:Click()                    -- 2: start purchase
+    M.Advance(1, 0.05)
     ctx.check(lin.state == "confirm", "modern: price confirmed: " .. tostring(lin.state))
     r.btn:Click()                    -- 3: confirm
+    M.Advance(1, 0.05)
   else
     r.btn:Click()
   end
@@ -110,6 +113,7 @@ return function(M, ctx)
   nb = #M.ah.bids
   M.Advance(0.2, 0.05)             -- the AH search throttle frees up (real clicks are not instantaneous)
   rv.btn:Click()
+  M.Advance(1, 0.05)               -- (FIDELITY) the search answer arrives
   if modern then ctx.check(vend.state == "gone", "modern: price changed → gone") end
   ctx.check(#M.ah.bids == nb and vend.state == "gone", "changed listing not bought")
 

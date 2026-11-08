@@ -184,13 +184,24 @@ return function(M, ctx)
 
   -- 49. new spell + free action slot
   C.char.spells = { ["Tir automatique"] = true }
-  rawset(_G, "C_SpellBook", nil)
-  GetSpellTabInfo = function() return "Général", 0, 0, 2 end
-  GetSpellBookItemName = function(i) return ({ "Tir automatique", "Tir des arcanes" })[i] end
-  rawset(_G, "IsPassiveSpell", function() return false end)
-  HasAction = function(s) return s <= 6 end
+  local keepSpells, keepActions = M.spells, M.actions
+  if M.flavor == "forever" then
+    -- (FIDELITY) Forever: the spellbook is C_SpellBook (the Era globals do not exist): the faithful mock builds it
+    -- from the known spells, the bar from M.actions (C_ActionBar.HasAction)
+    M.spells = { [75] = { name = "Tir automatique", rank = "", icon = 132000, known = true },
+                 [3044] = { name = "Tir des arcanes", rank = "", icon = 132001, known = true } }
+    M.actions = {}
+    for slot = 1, 6 do M.actions[slot] = { type = "spell", id = 75 } end
+  else
+    rawset(_G, "C_SpellBook", nil)
+    GetSpellTabInfo = function() return "Général", 0, 0, 2 end
+    GetSpellBookItemName = function(i) return ({ "Tir automatique", "Tir des arcanes" })[i] end
+    rawset(_G, "IsPassiveSpell", function() return false end)
+    HasAction = function(s) return s <= 6 end
+  end
   GetBindingKey = function(b) if b == "ACTIONBUTTON7" then return "7" end end
   C:CheckSpells()
+  M.spells, M.actions = keepSpells, keepActions
   local sp = sug("Comfort:spell")
   ctx.check(sp and sp.text:find("Tir des arcanes") and sp.text:find("case 7 %(touche 7%)"), "new spell: " .. tostring(sp and sp.text))
   ctx.check(C.char.spells["Tir des arcanes"], "spell remembered")
