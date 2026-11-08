@@ -72,8 +72,8 @@ local DEFS = {
     tip = "Passe à l'étape suivante (celle-ci est faite, ou tu veux la sauter)." },
   { id = "zone", label = "Zone", icon = ICON .. "INV_Misc_Map_01", bind = "TREEAI_QB_ZONE",
     match = { "zone", "here", "ici", "all", "tout" }, page = "quests",
-    title = "Tout faire dans la zone",
-    tip = "Toutes les quêtes utiles de la zone où tu es, dans le meilleur ordre." },
+    title = "Choisir ma zone",
+    tip = "Clic : toutes les zones pour toi, classées (quêtes, trajet, XP/h, groupe) ; un clic sur une zone, le trajet y va." },
   { id = "groupe", label = "Groupe", icon = ICON .. "Spell_Holy_PrayerOfHealing", bind = "TREEAI_QB_GROUP",
     match = { "group", "groupe", "party", "team" }, page = "group",
     title = "Avec le groupe",
@@ -104,7 +104,7 @@ G.BINDING_HEADER_TREEAI = G.BINDING_HEADER_TREEAI or "TreeAI"
 G.BINDING_NAME_TREEAI_QB_TURNIN = "TreeAI : rendre mes quêtes au plus vite"
 G.BINDING_NAME_TREEAI_QB_PICKUP = "TreeAI : quêtes à prendre"
 G.BINDING_NAME_TREEAI_STRIP_SUIVANT = "TreeAI : étape suivante"
-G.BINDING_NAME_TREEAI_QB_ZONE = "TreeAI : tout faire dans la zone"
+G.BINDING_NAME_TREEAI_QB_ZONE = "TreeAI : choisir ma zone"
 G.BINDING_NAME_TREEAI_QB_GROUP = "TreeAI : avec le groupe"
 G.BINDING_NAME_TREEAI_STRIP_JOURNAL = "TreeAI : nettoyer mon journal"
 G.BINDING_NAME_TREEAI_MODE_NEXT = "TreeAI : mode de quêtes suivant"
@@ -311,6 +311,14 @@ function S.Do(id, button)
     return how
   end
   local m = button ~= "RightButton" and S.ModeFor(id) or nil
+  -- (4.1 ZONEPICK) « Zone » : « Tout faire ici » ET le choix de la zone (fenêtre, page Quêtes) — un clic, pas juste un mode
+  if id == "zone" and button ~= "RightButton" then
+    if m then setMode(m.id) end
+    local Wn = T.Window
+    if Wn and type(Wn.ToggleZonePicker) == "function" then T.safecall(Wn.ToggleZonePicker) else openPage(d.page) end
+    S.Refresh(true)
+    return "zone", m and m.id
+  end
   if m and setMode(m.id) then S.Refresh(true) return "mode", m.id end
   openPage(d.page)
   return "page"

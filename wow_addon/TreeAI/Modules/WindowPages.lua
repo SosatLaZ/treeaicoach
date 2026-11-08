@@ -107,8 +107,9 @@ function W.RenderQuestLog(Ly, skipEmpty)
       local Zp = T.ZonePlan
       Ly.empty(W.Query() ~= "" and ("Rien ne correspond à « " .. W.Query() .. " ».")
         or "Aucune quête à suivre ici. Parle aux PNJ marqués « ! », ou choisis une autre zone de quêtes.",
-        (Zp and Zp.ShowZoneMenu and Zp.IsEnabled and Zp:IsEnabled()) and { "Choisir une zone", function() Zp:ShowZoneMenu() end,
-          "Clic : la liste des zones à ton niveau" } or nil)
+        (Zp and Zp.ShowZoneMenu and Zp.IsEnabled and Zp:IsEnabled()) and { "Choisir ma zone", function()
+          if W.OpenZonePicker then W.OpenZonePicker(true) else Zp:ShowZoneMenu() end end,
+          "Clic : toutes les zones pour toi, classées" } or nil)
     end
     return any or #extra > 0
 end
@@ -118,6 +119,26 @@ end
 function W.ZonesToDo(Ly)
   local Zp = T.ZonePlan
   if not (Zp and Zp.ZonesToDo and Zp.IsEnabled and Zp:IsEnabled()) then return end
+  -- (ZONEPICK) les mêmes zones, le même classement que « Choisir ma zone » (comptes honnêtes) : les 3 premières + la liste
+  local B = T.QuestBrain
+  if type(B) == "table" and type(B.ZoneRows) == "function" and not (B.IsEnabled and not B:IsEnabled()) and W.OpenZonePicker then
+    local ok, rows = pcall(B.ZoneRows, { limit = 3 })
+    if not (ok and type(rows) == "table") then return end
+    local shown = {}
+    for _, r in ipairs(rows) do if W.Match(r.name) then shown[#shown + 1] = r end end
+    if Ly.header("Zones à faire", "route:zones", #shown, ICON .. "INV_Misc_Map_01") then
+      if rows.busy then Ly.text("Comptage des quêtes de chaque zone…", "S", "muted") end
+      for _, r in ipairs(shown) do
+        local map, name = r.map, r.name
+        Ly.row({ text = (r.on and "● " or "") .. name .. " · " .. B.ZoneCountText(r), right = r.travel,
+          kind = r.total > 0 and "quest" or "info", tooltip = B.ZoneTip and B.ZoneTip(r) or nil,
+          clickHint = r.on and "Déjà ta zone de travail" or "Clic : travailler dans cette zone (trajet refait tout de suite)",
+          onClick = (not r.on) and function() B.PickZone(map) if W.Flash then W.Flash("Zone : " .. name .. " — le trajet y va", 8) end end or nil })
+      end
+      Ly.buttons({ { "Toutes les zones…", function() W.OpenZonePicker(true) end, "Choisir ma zone : toutes, classées, avec filtres" } }, 2)
+    end
+    return
+  end
   if Zp.CountZones then pcall(Zp.CountZones, Zp) end
   local ok, list = pcall(Zp.ZonesToDo, Zp)
   if not (ok and type(list) == "table") or #list == 0 then return end
@@ -178,7 +199,8 @@ function W.RenderRoute(Ly)
       if okG and type(gg) == "table" then grp = gg end
     end
     local nStops = (grp and tonumber(grp.n)) or #st
-    local title = paused and "Trajet en pause" or fmt("Trajet %s · %s", W.MinutesText(st.total) or "< 1 min", km(st.yd))
+    -- (ZONEPICK) « Trajet prévu : 54 min · 3,2 km » : la durée du trajet préparé (pas « finir la zone en 54 min »)
+    local title = paused and "Trajet en pause" or fmt("Trajet prévu : %s · %s", W.MinutesText(st.total) or "< 1 min", km(st.yd))
     local route = P.route or {}
     local Zp = T.ZonePlan
     local zon = Zp and Zp.IsEnabled and Zp:IsEnabled()
@@ -187,7 +209,9 @@ function W.RenderRoute(Ly)
       or (T.Plain and T.Plain.RouteName and T.Plain.RouteName(route.id, route.title)) or route.title or "Trajet TreeAI"
     local th = zon and Zp.ThemeParts and select(2, pcall(Zp.ThemeParts, Zp)) or nil
     local travel = (tonumber(st.travel) or 0) > 0 and ("dont " .. (W.MinutesText(st.travel) or "") .. " de déplacement") or nil
-    local line2 = fmt("%d arrêt%s · %s", nStops, nStops > 1 and "s" or "", strip(name))
+    -- (ZONEPICK) « 12 arrêts · ordre : Finir la zone » / « 6 arrêts · mode : Rendre mes quêtes » : ce qu'est ce nom
+    local bmode = zon and Zp.BrainMode and Zp.BrainMode() or "zone"
+    local line2 = fmt("%d arrêt%s · %s : %s", nStops, nStops > 1 and "s" or "", (zon and bmode == "zone") and "ordre" or "mode", strip(name))
     if type(th) == "table" and th.full then
       Ly.hero(W.TAB_ICON.route, title, th.full, line2 .. (travel and (" · " .. travel) or ""),
         function() R:TogglePause() end, nil, paused and "Clic : reprendre" or "Clic : mettre en pause")
@@ -199,12 +223,19 @@ function W.RenderRoute(Ly)
     local headSeen = {}   -- (4.1 INTEG) les lignes du producteur reviennent dans PlanLines : une seule fois
     if Zp and Zp.HeadLines and zon then
       local ok, zl = pcall(Zp.HeadLines, Zp)
+      -- (ZONEPICK) sur la page Quêtes : « Que faire : … ▾ » = les 4 tuiles du haut et « Zone : … ▾ » = la ligne « Zone »
+      -- du haut (une seule entrée) → pas répétés ; « Mode : Finir la zone » dit ce qu'il est : l'ordre des arrêts
+      local dup = { ["qb:mode"] = W.ModeTilesShown and true or nil, ["zone:pick"] = W.ZoneBarShown and true or nil }
       for _, l in ipairs(ok and type(zl) == "table" and zl or {}) do
         if l.text then
           headSeen[l.id or strip(l.text)] = true
-          local b = Ly.row({ id = l.id, text = l.text, prio = l.prio, icon = l.icon or W.TAB_ICON.route, tooltip = l.tooltip,
-            onClick = l.onClick, onRightClick = l.onRightClick })
-          if l.id == "zone:pick" then W.zoneRow = b end   -- (ONBOARD) cible « zone » de la visite guidée
+          if not dup[l.id or ""] then
+            local txt = l.text
+            if l.id == "zone:mode" then txt = (tostring(txt):gsub("^Mode : ", "Ordre des arrêts : ")) end
+            local b = Ly.row({ id = l.id, text = txt, prio = l.prio, icon = l.icon or W.TAB_ICON.route, tooltip = l.tooltip,
+              onClick = l.onClick, onRightClick = l.onRightClick })
+            if l.id == "zone:pick" then W.zoneRow = b end   -- (ONBOARD) cible « zone » de la visite guidée
+          end
         end
       end
     end
@@ -343,7 +374,7 @@ function W.PickupRows(Ly, n)
       if tonumber(e.dist) then sub[#sub + 1] = km(e.dist) end
       if e.why and e.why ~= "" then sub[#sub + 1] = strip(e.why) end
       local qid = e.questID
-      Ly.quest(e.level, e.title, tconcat(sub, " · "), function()
+      Ly.quest((tonumber(e.level) or 0) > 0 and e.level or nil, e.title, tconcat(sub, " · "), function()   -- (sans Questie : niveau inconnu, jamais « [0] »)
         local C = T.Compass
         if C and C.SetWaypoint and e.x and e.y then pcall(C.SetWaypoint, e.x / (e.x > 1 and 100 or 1), e.y / (e.y > 1 and 100 or 1),
           e.npc or e.title, e.map, "pickup") end
@@ -370,15 +401,151 @@ function W.TurnInRows(Ly)
   end
   return true
 end
+-- ===================================================================== (ZONEPICK 4.1) « Choisir ma zone » + « Conseille-moi »
+-- UNE entrée : la ligne « Zone : … · Changer » en haut de la page Quêtes, le bouton « Zone » de la bande, /tai zone.
+-- Le choix s'ouvre DANS la page Quêtes (même fenêtre, même style) : filtres en pastilles, « Automatique », puis chaque zone
+-- en une ligne (nom, niveaux, « 12 quêtes pour toi (3 finies à rendre) », trajet réel, XP/h, groupe, pourquoi), la
+-- conseillée en tête avec une étoile. Un clic = le trajet y va (choix gardé, le pilote auto n'y touche plus).
+-- « Conseille-moi » : 3 conseils au plus, chacun s'applique d'un clic. Rien dans le chat (le pied de la fenêtre le dit).
+local STAR = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_1:13:13:0:0|t "
+local function zpBrain()
+  local B = QB()
+  if B and type(B.ZoneRows) == "function" then return B end
+end
+local hooked = false
+--- ouvre (on ≠ false) ou ferme le choix de zone, sur la page Quêtes de la fenêtre
+function W.OpenZonePicker(on)
+  W.zonePick = on ~= false
+  if W.zonePick then
+    local B = zpBrain()
+    if B and B.ZoneScan then pcall(B.ZoneScan) end      -- le comptage démarre tout de suite (découpé)
+    if not hooked then                                  -- fenêtre fermée = choix refermé (il ne revient pas tout seul)
+      local win = W.GetWindow and W.GetWindow()
+      if win and type(win.HookScript) == "function" then
+        hooked = pcall(win.HookScript, win, "OnHide", function() W.zonePick, W.zoneAdvice = false, false end)
+      end
+    end
+    if W.IsOpen() and W.CurrentPage() == "quests" then W.Render() else W.Open("quests") end
+  elseif W.IsOpen() then W.Render() end
+  return W.zonePick
+end
+--- (bande « Zone », /tai zone) : ouvre le choix ; déjà ouvert à l'écran → le referme
+function W.ToggleZonePicker()
+  local shown = W.zonePick and W.IsOpen() and W.CurrentPage() == "quests"
+  return W.OpenZonePicker(not shown)
+end
+--- « Conseille-moi » : le bloc de conseils en haut de la page Quêtes (on = false : le masquer)
+function W.ShowAdvice(on)
+  W.zoneAdvice = on ~= false
+  if W.zoneAdvice then W.zonePick = false end
+  if W.IsOpen() and W.CurrentPage() == "quests" then W.Render() else W.Open("quests") end
+  return W.zoneAdvice
+end
+local function zpDone(msg)
+  W.zonePick, W.zoneAdvice = false, false
+  if msg and W.Flash then W.Flash(msg, 8) end
+  if W.IsOpen() then W.Render() end
+end
+--- le bloc « Conseil » : 3 lignes au plus, un clic applique
+function W.AdviceRows(Ly)
+  local B = zpBrain()
+  if not (B and B.Advice) then return false end
+  local ok, list = pcall(B.Advice)
+  if not (ok and type(list) == "table") then return false end
+  Ly.header("Conseil : où aller maintenant", nil, #list, ICON .. "INV_Misc_Note_01")
+  if list.est then Ly.text("(sans Questie : estimation)", "S", "muted") end
+  for i, a in ipairs(list) do
+    local fn = a.apply
+    Ly.row({ id = "zp:advice:" .. tostring(a.id or i), text = fmt("%d. %s", i, a.text) .. (a.why and ("\n|cffa0a0a0" .. a.why .. "|r") or ""),
+      right = a.label, kind = fn and "quest" or "info", prio = i == 1 and 2 or 1,
+      tooltip = { a.why or "" }, clickHint = fn and ("Clic : " .. (a.label or "appliquer")) or nil,
+      onClick = fn and function()
+        fn()
+        zpDone("Conseil appliqué : " .. strip(a.text))
+      end or nil })
+  end
+  return true
+end
+--- la ligne « Zone » du haut de la page Quêtes : la zone de travail, qui l'a choisie, « Changer » ; + « Conseille-moi »
+function W.ZoneBar(Ly)
+  local B = zpBrain()
+  local zn = B and B.ZoneNow and select(2, pcall(B.ZoneNow)) or nil
+  if type(zn) ~= "table" then return false end
+  local b = Ly.row({ id = "zone:pick", text = "Zone : " .. strip(zn.label) .. " · " .. zn.who, right = "Changer",
+    kind = "quest", icon = ICON .. "INV_Misc_Map_01",
+    tooltip = { "Ta zone de quêtes : le trajet, la boussole et la bande la suivent.",
+      "Changer : chaque zone qui a du sens pour toi, classée, avec le trajet et l'XP/h." },
+    clickHint = "Clic : choisir ma zone", onClick = function() W.OpenZonePicker(true) end })
+  W.zoneRow = b                                        -- (ONBOARD) cible « zone » de la visite guidée
+  Ly.buttons({ { "Choisir ma zone", function() W.OpenZonePicker(true) end, "Toutes les zones pour toi, classées (/tai zone)" },
+    { W.zoneAdvice and "Masquer le conseil" or "Conseille-moi", function() W.ShowAdvice(not W.zoneAdvice) end,
+      "Où aller maintenant et pourquoi (3 lignes, un clic pour appliquer)" } }, 2)
+  if W.zoneAdvice then W.AdviceRows(Ly) end
+  return true
+end
+--- le choix de zone (page Quêtes, à la place du reste tant qu'il est ouvert)
+function W.RenderZonePicker(Ly)
+  local B = zpBrain()
+  if not B then W.zonePick = false return false end
+  local ch = B.char or {}
+  Ly.header("Choisir ma zone", nil, nil, ICON .. "INV_Misc_Map_01")
+  local zn = B.ZoneNow and select(2, pcall(B.ZoneNow)) or nil
+  if type(zn) == "table" then Ly.text("Maintenant : " .. strip(zn.label) .. " · " .. zn.who, "S", "muted") end
+  local chips = {}
+  for _, s0 in ipairs(B.ZONE_SORTS or {}) do
+    local id = s0.id
+    chips[#chips + 1] = { ((ch.zpSort or "moi") == id and "● " or "") .. s0.label, function() B.SetZoneSort(id) W.Render() end, s0.tip }
+  end
+  chips[#chips + 1] = { (ch.zpNoElite and "● " or "") .. "Pas d'élites", function() B.ToggleNoElite() W.Render() end,
+    "Ne compte pas les quêtes élites (clic : remettre)" }
+  Ly.buttons(chips, 4)
+  local ok, rows = pcall(B.ZoneRows)
+  if not (ok and type(rows) == "table") then rows = {} end
+  if rows.est then Ly.text("(sans Questie : estimation)", "S", "muted") end
+  if rows.busy then Ly.text("Comptage des quêtes de chaque zone…", "S", "muted") end
+  local auto = type(zn) == "table" and zn.by == "auto"
+  Ly.row({ id = "zp:auto", text = (auto and "● " or "") .. "Automatique — TreeAI suit ta zone et passe à la suivante quand elle est finie",
+    kind = auto and "info" or "quest", icon = ICON .. "INV_Misc_Gear_01",
+    tooltip = { "Le trajet reste dans la zone où tu es (les voisines quand elle est presque vide).",
+      "Le pilote auto choisit la zone suivante quand ton trajet n'a plus rien." },
+    clickHint = auto and "Déjà en automatique" or "Clic : laisser TreeAI choisir",
+    onClick = function() B.ZoneAuto() zpDone("Zone : automatique — TreeAI suit ta zone") end })
+  if #rows == 0 and not rows.busy then
+    Ly.text(B.HasQuestie() and "Aucune zone à ton niveau trouvée." or
+      "Sans Questie, TreeAI ne connaît que les quêtes des PNJ à qui tu as parlé : parle aux PNJ « ! ».", "S", "muted")
+  end
+  for _, r in ipairs(rows) do
+    local l1 = (r.star and (STAR .. "Conseillé — ") or "") .. (r.on and "● " or "") .. r.name
+      .. ((r.lo and r.hi) and (r.lo == r.hi and fmt(" · niv %d", r.lo) or fmt(" · niv %d-%d", r.lo, r.hi)) or "")
+    local l2 = { B.ZoneCountText(r) }
+    if (r.xph or 0) > 0 then l2[#l2 + 1] = "~" .. (T.Fmt and T.Fmt.Num and T.Fmt.Num(r.xph) or tostring(r.xph)) .. " XP/h" end
+    if r.group then l2[#l2 + 1] = r.group end
+    local map, name = r.map, r.name
+    Ly.row({ id = "zp:" .. tostring(map), text = l1 .. "\n" .. tconcat(l2, " · ") .. "\n|cffa0a0a0" .. strip(r.why or "") .. "|r",
+      right = r.travel, kind = (r.total > 0) and "quest" or "info", prio = r.star and 2 or 1,
+      tooltip = B.ZoneTip and B.ZoneTip(r) or nil,
+      clickHint = r.on and "Ta zone : clic = la garder (trajet refait)" or "Clic : aller dans cette zone (le trajet suit, choix gardé)",
+      onClick = function()
+        if B.PickZone(map) then zpDone("Zone : " .. name .. " — le trajet y va") end
+      end })
+  end
+  Ly.buttons({ { "Retour aux quêtes", function() zpDone(nil) end, "Fermer le choix de zone" },
+    { "Conseille-moi", function() W.ShowAdvice(true) end, "Où aller maintenant et pourquoi" } }, 2)
+  return true
+end
 W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = "Quêtes",
   desc = "Rendre, prendre, tout faire ici, avec le groupe : la prochaine étape, le trajet, le journal",
+  -- (ZONEPICK) « Mode : Tout faire ici · Zone : Mille pointes · trajet prévu 54 min » : chaque nombre dit ce qu'il est
   sub = function()
     local B = QB()
     local lab = B and B.Label and select(2, pcall(B.Label))
+    local parts = { type(lab) == "string" and ("Mode : " .. lab) or W.RouteSub() }
+    local zn = B and B.ZoneNow and select(2, pcall(B.ZoneNow))
+    if type(lab) == "string" and type(zn) == "table" and zn.label then parts[#parts + 1] = "Zone : " .. strip(zn.label) end
     local g = W.Guide(1)
-    local s = W.GuideSummary(g, true)
-    local head = type(lab) == "string" and ("Mode : " .. lab) or W.RouteSub()
-    return head .. (s ~= "" and (" · " .. s) or "")
+    local m = g and W.MinutesText and tonumber(g.total) and g.total > 0 and W.MinutesText(g.total)
+    if m then parts[#parts + 1] = "trajet prévu " .. m end
+    return tconcat(parts, " · ")
   end,
   badge = function()
     local n = 0
@@ -397,8 +564,12 @@ W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = 
           "Clic : son suivi se cache (dans SES options), TreeAI guide seul" } }, 2)
       Ly.gap(4)
     end
+    -- (ZONEPICK) le choix de zone ouvert : lui seul (filtres, « Automatique », les zones classées)
+    if W.zonePick and W.Query() == "" and W.RenderZonePicker(Ly) then return end
+    -- 0. la zone de travail (« Changer ») + « Conseille-moi »
+    W.ZoneBarShown = W.Query() == "" and W.ZoneBar(Ly) or false
     -- 1. les 4 modes
-    W.ModeTiles(Ly)
+    W.ModeTilesShown = W.ModeTiles(Ly)
     -- 2. prochaine étape (mort / donjon : la course au corps / le donjon d'abord, dans les actions)
     if not (ps.dead or ps.ghost or W.InDungeon()) then
       local nx = W.NextItem()

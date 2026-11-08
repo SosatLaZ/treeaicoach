@@ -20,7 +20,7 @@ local QB = T:RegisterModule("QuestBrain", {
   title = "Cerveau des quêtes",
   description = "Quatre modes d'un clic : rendre mes quêtes, quêtes à prendre, tout faire ici, avec le groupe.",
   defaults = { enabled = true, autoBack = true, pickRoute = 6 },
-  charDefaults = { mode = "zone" },
+  charDefaults = { mode = "zone", zpSort = "moi", zpNoElite = false },
   options = {
     { key = "autoBack", type = "toggle", label = "Revenir à « Tout faire ici » quand il n'y a plus rien à rendre / à prendre" },
     { key = "pickRoute", type = "range", label = "Quêtes à prendre mises dans le trajet", min = 2, max = 10, step = 1 },
@@ -680,6 +680,599 @@ function QB:CheckEmpty()
   pcall(self.Suggest, self, "qbback", txt, 1, { ttl = 8, sound = false })
 end
 
+-- ===================================================================== « Choisir ma zone » + « Conseille-moi » (ZONEPICK 4.1)
+-- « Rien n'est simple, je peux toujours pas choisir une région ou être conseillé comme je veux. » Une seule entrée : le
+-- bouton « Zone » de la bande, le haut de la page Quêtes (« Changer »), /tai zone. Chaque zone qui a du sens pour TOI
+-- maintenant, une ligne chacune, classées : nom (le jeu, en français), niveaux, « 12 quêtes pour toi (3 finies à
+-- rendre) », trajet réel (vols, bateaux / zeppelins, pierre de foyer : Route), XP/h estimée, ce que donne le groupe,
+-- et pourquoi en une ligne. Filtres : Pour moi · Pour le groupe · Rendre d'abord · Pas d'élites.
+-- HONNÊTE : une quête n'est comptée que si tu peux la prendre (niveau requis, faction / race / classe, prérequis faits,
+-- pas faite, pas dans le journal, pas grise, pas répétable, pas JcJ / raid / donjon, pas ignorée) — QuestieDB quand il
+-- est là (un passage découpé, ≤ 2 ms par tranche, hors combat, refait au passage de niveau et quand une quête est prise
+-- ou rendue) ; sinon ce que le jeu montre (« ! » de la carte) et les PNJ rencontrés (carnet des PNJ, quêtes vues chez
+-- eux), dit une fois : « (sans Questie : estimation) ». Choisir = ZonePlan:PickZone(zone, "player") — gardée, le pilote
+-- auto n'y touche plus — et le mode « Tout faire ici ». Calculé à la demande (fenêtre ouverte), jamais d'OnUpdate.
+QB.scanGen = 0
+QB.SCAN_MS = 2
+QB.ZONE_SORTS = {
+  { id = "moi", label = "Pour moi", tip = "Le plus d'XP par heure pour toi, trajet compris." },
+  { id = "groupe", label = "Pour le groupe", tip = "Quêtes communes, élites possibles à plusieurs, niveaux de tout le groupe." },
+  { id = "rendre", label = "Rendre d'abord", tip = "D'abord les zones où des quêtes finies attendent d'être rendues." },
+}
+local scan, scanJob
+local function Zp() return T.ZonePlan end
+local function outdoor(m)
+  local Z = Zp()
+  m = tonumber(m)
+  if not (Z and m and Z.OutdoorZone) then return nil end
+  return Z.OutdoorZone(m)
+end
+local function mapName(m) local Z = Zp() return Z and Z.MapName and Z.MapName(m) or ("zone " .. tostring(m)) end
+local function greyLevel(L) local E = engine() return E and E.GreyLevel(L) or (L - 6) end
+local function qxp(ql, L)
+  local E = engine()
+  if not E then return 0 end
+  return E.QuestXPEstimate(ql) * E.QuestXPFactor(L, ql)
+end
+local function raceOK(db, mask)
+  mask = tonumber(mask) or 0
+  if mask == 0 then return true end
+  local _, _, raceId = try(G("UnitRace"), "player")
+  raceId = tonumber(_ns(raceId))
+  local bit = raceId and ((db.enum and type(db.enum.raceMaskById) == "table" and tonumber(db.enum.raceMaskById[raceId])) or 2 ^ (raceId - 1))
+  if not bit then return true end
+  return floor(mask / bit) % 2 == 1
+end
+local function classOK(mask)
+  mask = tonumber(mask) or 0
+  if mask == 0 then return true end
+  local _, _, classId = try(G("UnitClass"), "player")
+  classId = tonumber(_ns(classId))
+  if not classId then return true end
+  return floor(mask / 2 ^ (classId - 1)) % 2 == 1
+end
+local function allDone(list) for _, p in ipairs(list) do p = tonumber(p) if p and not isDone(p) then return false end end return true end
+local function anyDone(list) for _, p in ipairs(list) do p = tonumber(p) if p and isDone(p) then return true end end return false end
+local function zacc(acc, z)
+  local e = acc[z]
+  if not e then e = { n = 0, xp = 0, el = 0, elXp = 0, cells = {} } acc[z] = e end
+  return e
+end
+local function addQuest(acc, z, ql, xp, elite, x, y)
+  local e = zacc(acc, z)
+  if elite then e.el, e.elXp = e.el + 1, e.elXp + xp else e.n, e.xp = e.n + 1, e.xp + xp end
+  if ql and ql > 0 then e.lo, e.hi = min(e.lo or ql, ql), max(e.hi or ql, ql) end
+  x, y = tonumber(x), tonumber(y)
+  if x and y then                                  -- le coin de la zone où les donneurs sont les plus nombreux
+    local k = floor(x / 10) * 100 + floor(y / 10)
+    local c = e.cells[k] or { n = 0, x = 0, y = 0 }
+    c.n, c.x, c.y = c.n + 1, c.x + x, c.y + y
+    e.cells[k] = c
+  end
+end
+-- point de départ d'une quête (premier PNJ donneur, dans SA zone) → x, y en %
+local function starterXY(db, id, zone)
+  local sb = db.Q(id, "startedBy")
+  local npc = type(sb) == "table" and type(sb[1]) == "table" and tonumber(sb[1][1])
+  local sp = npc and db.N(npc, "spawns")
+  if type(sp) ~= "table" then return nil end
+  for area, pts in pairs(sp) do
+    local m = db.map(tonumber(area) or -1)
+    if m and tonumber(m) == zone and type(pts) == "table" and type(pts[1]) == "table" then
+      return tonumber(pts[1][1]), tonumber(pts[1][2])
+    end
+  end
+end
+local TAG_SKIP = { [41] = true, [62] = true, [81] = true, [85] = true, [88] = true, [89] = true }
+local function rankOf(db, npc) return tonumber(npc and db.N(npc, "rank")) or 0 end
+--- QuestieDB : cette quête est-elle à prendre pour TOI ? → zone, niveau, XP, élite, x, y (sinon nil)
+function QB.ZoneQuestOK(db, id, st)
+  if st.log[id] or st.ignore[id] then return nil end
+  local area = tonumber(db.Q(id, "zoneOrSort")) or 0
+  if area <= 0 or (db.dungeon and db.dungeon(area)) then return nil end
+  local z = outdoor(db.map(area))
+  if not z then return nil end
+  local rl = tonumber(db.Q(id, "requiredLevel")) or 0
+  if rl > st.L then return nil end
+  local ql = tonumber(db.Q(id, "questLevel")) or 0
+  if ql <= 0 then ql = st.L end                      -- quête « à ton niveau » (-1 dans QuestieDB)
+  if ql <= st.grey or ql - st.L > st.gap then return nil end
+  if (tonumber(db.Q(id, "specialFlags")) or 0) % 2 == 1 then return nil end          -- répétable
+  if not (raceOK(db, db.Q(id, "requiredRaces")) and classOK(db.Q(id, "requiredClasses"))) then return nil end
+  if isDone(id) then return nil end
+  local pg = db.Q(id, "preQuestGroup")
+  if type(pg) == "table" and #pg > 0 and not allDone(pg) then return nil end
+  local ps = db.Q(id, "preQuestSingle")
+  if type(ps) == "table" and #ps > 0 and not anyDone(ps) then return nil end
+  local ex = db.Q(id, "exclusiveTo")
+  for _, x in ipairs(type(ex) == "table" and ex or {}) do
+    x = tonumber(x)
+    if x and (st.log[x] or isDone(x)) then return nil end
+  end
+  if db.doable and db.doable(id) == false then return nil end
+  local elite = false
+  local Z = Zp()
+  local tag = Z and Z.QuestTag and Z.QuestTag(id)
+  local tid = type(tag) == "table" and tonumber(tag.tagID) or nil
+  if tid and TAG_SKIP[tid] then return nil end
+  if tid == 1 or (type(tag) == "table" and tag.isElite) then elite = true end
+  local objs = db.Q(id, "objectives")
+  if type(objs) == "table" then
+    for _, e in ipairs(type(objs[1]) == "table" and objs[1] or {}) do
+      local r = rankOf(db, type(e) == "table" and tonumber(e[1]) or tonumber(e))
+      if r == 3 then return nil end                  -- un boss : c'est un donjon
+      if r == 1 or r == 2 then elite = true end
+    end
+    for _, e in ipairs(type(objs[3]) == "table" and objs[3] or {}) do
+      local item = type(e) == "table" and tonumber(e[1]) or tonumber(e)
+      local drops = item and db.I(item, "npcDrops")
+      local r = type(drops) == "table" and rankOf(db, tonumber(drops[1])) or 0
+      if r == 1 or r == 2 then elite = true end
+    end
+  end
+  local xp = tonumber(db.xp and db.xp(id)) or 0
+  local E = engine()
+  if xp <= 0 then xp = E and E.QuestXPEstimate(ql) or 0 end
+  xp = xp * (E and E.QuestXPFactor(st.L, ql) or 1)
+  local x, y = starterXY(db, id, z)
+  return z, ql, xp, elite, x, y
+end
+-- sans Questie : quêtes vues chez les PNJ (QUEST_DETAIL, dialogues), carnet des PNJ (Finder), « ! » du jeu sur ta carte
+local function learnedScan(st)
+  local acc, seen = {}, {}
+  local function add(q, map, x, y, lv)
+    q = tonumber(q)
+    if not q or seen[q] or st.log[q] or st.ignore[q] or isDone(q) then return end
+    local z = outdoor(map)
+    if not z then return end
+    lv = tonumber(lv)
+    if lv and lv > 0 and (lv <= st.grey or lv - st.L > st.gap) then return end
+    seen[q] = true
+    local ql = (lv and lv > 0) and lv or st.L
+    addQuest(acc, z, lv, qxp(ql, st.L), false, x, y)
+  end
+  local L = learned()
+  for q, e in pairs(L and L.give or {}) do
+    if type(e) == "table" and not e.triv and not e.rep then add(q, e.m, e.x, e.y, e.lv) end
+  end
+  local NB = T.NpcBook
+  local s = NB and NB.Store and try(NB.Store)
+  if type(s) == "table" and type(s.qs) == "table" and type(s.n) == "table" then
+    for q, id in pairs(s.qs) do
+      local n = s.n[id]
+      if type(n) == "table" and n.m and n.x then add(q, n.m, n.x * 100, (n.y or 0) * 100, nil) end
+    end
+  end
+  local GQ = T.GameQuests
+  local list = GQ and GQ.Available and try(GQ.Available)
+  for _, e in ipairs(type(list) == "table" and list or {}) do
+    if type(e) == "table" then add(e.questID, e.mapID, e.x and e.x * 100, e.y and e.y * 100, nil) end
+  end
+  return acc
+end
+local function scanKey()
+  local Z = Zp()
+  return fmt("%d|%d|%s|%s|%d", myLevel(), QB.scanGen, tostring(Z and Z.db and Z.db.gap), tostring(QB.HasQuestie()),
+    (function() local n = 0 for _ in pairs(Z and Z.char and Z.char.ignore or {}) do n = n + 1 end return n end)())
+end
+local function scanCtx()
+  local Z = Zp()
+  local L = myLevel()
+  return { L = L, grey = greyLevel(L), gap = tonumber(Z and Z.db and Z.db.gap) or 3, log = logSnap(),
+    ignore = (Z and Z.char and Z.char.ignore) or {} }
+end
+local function scanDone(acc, key, est)
+  scan, scanJob = { key = key, ready = true, est = est, z = acc }, nil
+  local Wn = T.Window
+  -- fenêtre ouverte sur la page Quêtes (choix de zone, « Zones à faire ») : redessinée avec les vrais comptes
+  if QB.onScan then pcall(QB.onScan)
+  elseif Wn and Wn.Dirty and Wn.IsOpen and Wn.IsOpen() and Wn.CurrentPage and Wn.CurrentPage() == "quests" then pcall(Wn.Dirty) end
+end
+--- les quêtes à prendre par zone (passage honnête) → scan { ready, est, z = { [zone] = { n, xp, el, elXp, lo, hi, cells } } }
+--- ou l'ancien (ou nil) pendant le comptage ; QB.ScanBusy() le dit
+function QB.ZoneScan()
+  local key = scanKey()
+  if scan and scan.key == key then return scan end
+  if scanJob and scanJob.key == key then return scan end
+  local Xm = X()
+  local db = Xm and Xm.Source and try(Xm.Source, Xm)
+  local st = scanCtx()
+  if not db then scanDone(learnedScan(st), key, true) return scan end
+  if scanJob and scanJob.ticker then pcall(scanJob.ticker.Cancel, scanJob.ticker) end
+  local ids = try(db.ids) or {}
+  local job = { key = key, i = 1, acc = {} }
+  scanJob = job
+  local function step()
+    if scanJob ~= job then if job.ticker then pcall(job.ticker.Cancel, job.ticker) end return end
+    if T.InCombat and T:InCombat() then return end
+    local t0 = tonumber(try(G("debugprofilestop")))
+    local k = 0
+    while job.i <= #ids do
+      local id = ids[job.i]
+      job.i, k = job.i + 1, k + 1
+      local ok, z, ql, xp, elite, x, y = pcall(QB.ZoneQuestOK, db, id, st)
+      if ok and z then addQuest(job.acc, z, ql, xp, elite, x, y) end
+      if k % 40 == 0 then
+        local t1 = tonumber(try(G("debugprofilestop")))
+        if not (t0 and t1) or t1 - t0 > QB.SCAN_MS then return end
+      end
+    end
+    if job.ticker then pcall(job.ticker.Cancel, job.ticker) end
+    scanDone(job.acc, key, false)
+  end
+  local Z = Zp()
+  job.ticker = Z and Z.SliceJob and Z.SliceJob(step) or nil   -- (découpé par ZonePlan, comme son comptage de zones)
+  if not job.ticker then while scanJob == job do step() end end
+  return scan
+end
+function QB.ScanBusy() return scanJob ~= nil end
+function QB.ScanEstimate() return (scan and scan.est) or not QB.HasQuestie() end
+
+-- ---------------------------------------------------------------- trajet réel vers une zone
+local MODE_WORD = { fly = "vol", boat = "bateau", zeppelin = "zeppelin", zep = "zeppelin", hs = "foyer" }
+--- secondes + étapes { mode, sec, to } de ta position à un point { map, x, y } (vols, bateaux, foyer : Route)
+function QB.TravelTo(pt)
+  local hp = here()
+  if not (hp and pt and pt.map and pt.x) then return nil end
+  local R = T.Route
+  if R and R.IsEnabled and R:IsEnabled() and R.Graph and R.FastestWorld and R.World then
+    local g = try(R.Graph)
+    local wa, wb = R.World(hp), R.World(pt)
+    if g and wa and wb then
+      local hs = R.HearthReady and try(R.HearthReady)
+      local bind = hs and R.BindPlace and try(R.BindPlace) or nil
+      local s, legs = R.FastestWorld(g, wa, wb, { hearth = (hs and bind) and true or false, bind = bind })
+      if tonumber(s) and s < huge then return s, legs end
+    end
+  end
+  return legSec(hp, pt), nil
+end
+--- « 6 min (vol) », « 14 min (foyer + vol) », « 3 min à pied » ; nil sans temps
+function QB.TravelText(sec, legs)
+  if not tonumber(sec) then return nil end
+  local mins = max(1, floor(sec / 60 + 0.5))
+  local words, seen = {}, {}
+  for _, l in ipairs(legs or {}) do
+    local w = MODE_WORD[l.mode or ""]
+    if w and not seen[w] then seen[w] = true; words[#words + 1] = w end
+  end
+  if #words > 0 then return fmt("%d min (%s)", mins, tconcat(words, " + ")) end
+  if legs then return fmt("%d min à pied", mins) end
+  return fmt("~%d min", mins)
+end
+local function flightTo(legs)
+  local name
+  for _, l in ipairs(legs or {}) do
+    if (l.mode == "fly" or l.mode == "boat" or l.mode == "zeppelin") and type(l.to) == "table" and type(l.to.name) == "string" then name = l.to.name end
+  end
+  return name
+end
+-- point d'arrivée d'une zone : le coin où ses donneurs sont les plus nombreux, sinon son maître de vol, sinon le centre
+local function zonePoint(z, e)
+  local best
+  for _, c in pairs(e and e.cells or {}) do if not best or c.n > best.n then best = c end end
+  if best then return { map = z, x = best.x / best.n, y = best.y / best.n } end
+  local D = T.Data and T.Data.Travel
+  local R = T.Route
+  local fac = R and R.Faction and R.Faction()
+  local pick
+  for id, r in pairs(D and D.taxi or {}) do
+    if r[5] == z and (not (R and R.FactionOK) or R.FactionOK(r[8], fac)) and (not pick or id < pick.id) then pick = { id = id, map = z, x = r[6], y = r[7] } end
+  end
+  return pick or { map = z, x = 50, y = 50 }
+end
+
+-- ---------------------------------------------------------------- les lignes du choix de zone
+local function members()
+  local n = groupSize()
+  local lv = {}
+  for i = 1, min(4, n - 1) do
+    local l = tonumber(_ns((try(G("UnitLevel"), "party" .. i))))
+    if l and l > 0 then lv[#lv + 1] = l end
+  end
+  tsort(lv)
+  return n, lv
+end
+-- journal par zone : en cours (pas finies) et finies (zone du PNJ de remise), communes avec le groupe
+local function logZones(level, group)
+  local Z = Zp()
+  local log = logSnap()
+  local recs = recsOf(exportData())
+  local out = {}
+  local function zr(z) local e = out[z] if not e then e = { open = 0, fin = 0, xp = 0, common = 0, el = 0 } out[z] = e end return e end
+  local finZ = {}
+  for _, e in ipairs(QB.TurnInList()) do
+    local z = e.map and outdoor(e.map)
+    if z then finZ[e.questID] = z end
+  end
+  for q, lq in pairs(log) do
+    if not lq.failed then
+      local rec = recs[q]
+      if lq.done == 1 then
+        local z = finZ[q]
+        if z then local e = zr(z) e.fin, e.xp = e.fin + 1, e.xp + rewardXP(q, rec, lq.lv, level) end
+      elseif Z and Z.QuestZone then
+        local ok = true
+        if Z.Accept then ok = Z:Accept(q, rec, lq, level, group) end
+        local z = ok and outdoor(Z.QuestZone(q))
+        if z then
+          local e = zr(z)
+          e.open, e.xp = e.open + 1, e.xp + rewardXP(q, rec, lq.lv, level)
+          if partyOn(q) > 0 then e.common = e.common + 1 end
+          local el = Z.Kind and Z.Kind(q, rec, lq)
+          if el then e.el = e.el + 1 end
+        end
+      end
+    end
+  end
+  return out
+end
+local QMIN = { 9, 7.5, 6.5, 6, 6 }                    -- minutes par quête à prendre (trajet dans la zone compris), selon le groupe
+--- toutes les zones qui ont du sens pour toi, classées → { rows…, est = bool, busy = bool, sort, noElite }
+--- row = { map, name, lo, hi, avail, open, fin, total, elites, sec, travel, xph, group, why, here, on, star, cross, score }
+function QB.ZoneRows(opts)
+  opts = opts or {}
+  local ch = QB.char or {}
+  local sort = opts.sort or ch.zpSort or "moi"
+  local noElite = opts.noElite
+  if noElite == nil then noElite = ch.zpNoElite and true or false end
+  local Z = Zp()
+  local level = myLevel()
+  local n, lv = members()
+  local sc = QB.ZoneScan()
+  local acc = (sc and sc.z) or {}
+  local lz = logZones(level, n)
+  local hp = here()
+  local hz = hp and outdoor(hp.map)
+  local myCont = hz and Z and Z.Cont and Z.Cont(hz)
+  local chosen = {}
+  if Z and Z.char and Z.char.mode == "zones" then for m in pairs(Z.char.zones or {}) do chosen[tonumber(m) or -1] = true end end
+  local set = {}
+  for z in pairs(acc) do set[z] = true end
+  for z in pairs(lz) do set[z] = true end
+  if hz then set[hz] = true end
+  for z in pairs(chosen) do if z > 0 then set[z] = true end end
+  local E = engine()
+  local eliteOK = n >= 3 and not noElite
+  local rows = {}
+  for z in pairs(set) do
+    local a, l = acc[z] or { n = 0, xp = 0, el = 0, elXp = 0 }, lz[z] or { open = 0, fin = 0, xp = 0, common = 0, el = 0 }
+    local avail = a.n + (eliteOK and a.el or 0)
+    local total = avail + l.open + l.fin
+    local cross = myCont and Z.Cont(z) and Z.Cont(z) ~= myCont or false
+    if (total > 0 or z == hz or chosen[z]) and not (cross and total < 3 and not chosen[z]) then
+      local r = { map = z, name = mapName(z), lo = a.lo, hi = a.hi, avail = avail, open = l.open, fin = l.fin, total = total,
+        elites = a.el, common = l.common, here = z == hz, on = chosen[z] or false, cross = cross }
+      if z == hz then r.sec = 0
+      else
+        local pt = zonePoint(z, a)
+        r.sec, r.legs = QB.TravelTo(pt)
+        r.via = flightTo(r.legs)
+      end
+      r.travel = r.here and "tu y es" or QB.TravelText(r.sec, r.legs)
+      -- XP/h estimée : quêtes à prendre (élites seulement à 3+), en cours, finies (≈ 1 min chacune), + monstres tués
+      local qmin = QMIN[min(5, n)]
+      local work = avail * qmin + (eliteOK and a.el or 0) * 4 + l.open * 6 + l.fin * 1
+      local xp = a.xp + (eliteOK and a.elXp or 0) + l.xp
+      if E then
+        local ml = r.hi and floor(((r.lo or level) + r.hi) / 2) or level
+        xp = xp + (avail + l.open) * 8 * E.KillXP(level, ml) * E.GroupShare(n)
+      end
+      -- l'heure qui vient : trajet, puis les quêtes de la zone ; s'il reste du temps, des monstres à ton niveau (une zone
+      -- de 2 quêtes n'est pas « la plus rentable » parce qu'elle se fait vite)
+      local avail0 = max(0, 60 - (tonumber(r.sec) or 600) / 60)
+      local fill = E and (2 * E.KillXP(level, level) * E.GroupShare(n)) or 0
+      local inHour = (work <= avail0) and (xp + (avail0 - work) * fill) or (xp * avail0 / max(1, work))
+      r.xp, r.work = floor(xp + 0.5), work
+      r.xph = (work > 0) and floor(inHour / 100 + 0.5) * 100 or 0
+      -- le groupe
+      if n >= 2 then
+        local g = { fmt("à %d", n) }
+        if a.el > 0 and not noElite then
+          g[#g + 1] = (n >= 3) and fmt("élite%s possible%s", a.el > 1 and "s" or "", a.el > 1 and "s" or "") or "élites risquées à 2"
+        end
+        local low = lv[1]
+        if low and r.lo and low < r.lo - 2 then g[#g + 1] = fmt("un membre trop bas (%d)", low)
+        elseif #lv > 0 and r.lo then g[#g + 1] = "tout le groupe au niveau" end
+        if l.common > 0 then g[#g + 1] = fmt("%d quête%s commune%s", l.common, l.common > 1 and "s" or "", l.common > 1 and "s" or "") end
+        r.group = (#g > 1) and (g[1] .. " : " .. tconcat(g, ", ", 2)) or nil
+        r.lowMember = low and r.lo and low < r.lo - 2 or false
+      elseif a.el > 0 and not noElite then
+        r.group = fmt("seul : %d élite%s laissée%s de côté", a.el, a.el > 1 and "s" or "", a.el > 1 and "s" or "")
+      end
+      -- score du filtre
+      local s = r.xph
+      if sort == "groupe" then
+        s = s * (1 + 0.2 * l.common) * (r.lowMember and 0.6 or 1) * ((n >= 3 and a.el > 0 and not noElite) and 1.15 or 1)
+      elseif sort == "rendre" then
+        s = l.fin * 1e7 - (tonumber(r.sec) or 0) * 1000 + r.xph / 100
+      end
+      r.score = s
+      rows[#rows + 1] = r
+    end
+  end
+  tsort(rows, function(x, y)
+    local bx, by = bucket(x.score), bucket(y.score)
+    if sort == "rendre" then bx, by = x.score, y.score end
+    if bx ~= by then return bx > by end
+    if x.here ~= y.here then return x.here end
+    if (x.sec or 0) ~= (y.sec or 0) then return (x.sec or 0) < (y.sec or 0) end
+    return x.name < y.name
+  end)
+  local out = { est = QB.ScanEstimate(), busy = QB.ScanBusy(), sort = sort, noElite = noElite }
+  local lim = tonumber(opts.limit) or 10
+  for i = 1, min(lim, #rows) do out[i] = rows[i] end
+  local top = out[1]
+  if top and (top.total > 0) then top.star = true end
+  for i, r in ipairs(out) do r.why = QB.ZoneWhy(r, i == 1 and top.star, sort) end
+  return out
+end
+local FIRST = { moi = "la plus rentable", groupe = "la meilleure à plusieurs", rendre = "le plus à rendre" }
+--- la raison en une ligne : « la plus rentable : 3 quêtes finies à rendre, Camp Taurajo à 6 min (vol) »
+function QB.ZoneWhy(r, first, sort)
+  local parts = {}
+  if r.fin > 0 then parts[#parts + 1] = fmt("%d quête%s finie%s à rendre", r.fin, r.fin > 1 and "s" or "", r.fin > 1 and "s" or "") end
+  if r.here then parts[#parts + 1] = "tu y es"
+  elseif r.via and r.travel then parts[#parts + 1] = r.via .. " à " .. r.travel
+  elseif r.travel then parts[#parts + 1] = r.travel .. " de trajet" end
+  if r.common > 0 and #parts < 3 then parts[#parts + 1] = fmt("%d quête%s commune%s avec ton groupe", r.common, r.common > 1 and "s" or "", r.common > 1 and "s" or "") end
+  if #parts < 2 and r.lo and r.hi then parts[#parts + 1] = fmt("quêtes niv %d-%d", r.lo, r.hi) end
+  if r.lowMember then parts[#parts + 1] = "un membre est trop bas" end
+  if r.total == 0 then parts = { "plus rien à faire pour toi ici" } end
+  local s = tconcat(parts, ", ")
+  if first then s = (FIRST[sort] or FIRST.moi) .. " : " .. s end
+  return s
+end
+--- « 12 quêtes pour toi (3 finies à rendre) »
+function QB.ZoneCountText(r)
+  if r.total == 0 then return "rien pour toi" end
+  local s = fmt("%d quête%s pour toi", r.total, r.total > 1 and "s" or "")
+  if r.fin > 0 then s = s .. fmt(" (%d finie%s à rendre)", r.fin, r.fin > 1 and "s" or "") end
+  return s
+end
+--- infobulle d'une ligne : le détail, d'où viennent les chiffres
+function QB.ZoneTip(r)
+  local t = { fmt("%d à prendre, %d en cours, %d finie%s à rendre", r.avail, r.open, r.fin, r.fin > 1 and "s" or "") }
+  if r.lo and r.hi then t[#t + 1] = fmt("Quêtes à prendre : niveaux %d à %d", r.lo, r.hi) end
+  if r.travel and not r.here then t[#t + 1] = "Trajet : " .. r.travel .. (r.via and (", arrivée " .. r.via) or "") end
+  if r.xph and r.xph > 0 then t[#t + 1] = fmt("~%s XP/h estimés (quêtes + monstres, trajet compris)", thousands(r.xph)) end
+  if r.group then t[#t + 1] = "Groupe " .. r.group end
+  if r.cross then t[#t + 1] = "Autre continent : bateau ou zeppelin compris" end
+  if QB.ScanEstimate() then t[#t + 1] = "Sans Questie : seulement les quêtes des PNJ rencontrés et du jeu (estimation)" end
+  return t
+end
+function QB.SetZoneSort(id)
+  if not QB.char then return false end
+  for _, s in ipairs(QB.ZONE_SORTS) do if s.id == id then QB.char.zpSort = id return true end end
+  return false
+end
+function QB.ToggleNoElite() if QB.char then QB.char.zpNoElite = not QB.char.zpNoElite end return QB.char and QB.char.zpNoElite end
+--- choisir une zone (un clic) : le trajet y va, et y reste (choix du joueur, le pilote auto n'y touche plus)
+function QB.PickZone(map, by)
+  local Z = Zp()
+  map = tonumber(map)
+  if not (Z and Z.PickZone and map) then return false end
+  if not Z:PickZone(map, by == "brain" and "brain" or "player") then return false end
+  QB.SetMode("zone", by == "brain" and "auto" or "player")
+  if T.Fire then pcall(T.Fire, T, "ZONE_PICKED", map) end
+  return true
+end
+--- « Automatique » : TreeAI suit ta zone et choisit la suivante quand elle est finie (pilote auto)
+function QB.ZoneAuto()
+  local Z = Zp()
+  if not (Z and Z.SetMode) then return false end
+  Z:SetMode("auto")
+  if Z.char then Z.char.zoneBy = nil end
+  QB.SetMode("zone", "player")
+  if T.Fire then pcall(T.Fire, T, "ZONE_PICKED", nil) end
+  return true
+end
+--- la zone de travail en clair : texte, qui l'a choisie (« toi » / « pilote auto » / « auto »), carte
+function QB.ZoneNow()
+  local Z = Zp()
+  if not (Z and Z.Allowed and Z.IsEnabled and Z:IsEnabled()) then return nil end
+  local A = try(Z.Allowed, Z)
+  if type(A) ~= "table" then return nil end
+  local ch = Z.char or {}
+  local by = (A.mode == "auto") and "auto" or (A.mode == "continent" and "région") or (ch.zoneBy == "brain" and "pilote" or "toi")
+  local map = A.mode == "zones" and next(A.maps or {}) or A.here
+  local label = A.label or "?"
+  local who = ({ auto = "automatique (ta zone)", ["région"] = "toute la région", pilote = "choisie par le pilote auto", toi = "choisie par toi" })[by]
+  return { label = label, by = by, who = who, map = map }
+end
+
+-- ---------------------------------------------------------------- « Conseille-moi » : où aller maintenant et pourquoi
+local function errands()
+  local out = {}
+  local API = T.API or {}
+  local free, total = try(API.FreeSlots)
+  free, total = tonumber(free), tonumber(total)
+  if free and total and total > 0 and free <= 2 then out[#out + 1] = free == 0 and "sacs pleins" or fmt("sacs presque pleins (%d place%s)", free, free > 1 and "s" or "") end
+  local cls = T.PlayerClass and T:PlayerClass()
+  if cls == "HUNTER" then
+    local ammo = tonumber(_ns((try(G("GetInventoryItemCount"), "player", 0))))
+    if ammo and ammo < 200 then out[#out + 1] = fmt("munitions : %d", ammo) end
+  end
+  local worst
+  for slot = 1, 18 do
+    local c, mx = try(G("GetInventoryItemDurability"), slot)
+    c, mx = tonumber(_ns(c)), tonumber(_ns(mx))
+    if c and mx and mx > 0 then local p = c * 100 / mx if not worst or p < worst then worst = p end end
+  end
+  if worst and worst < 20 then out[#out + 1] = "équipement à réparer" end
+  return out
+end
+QB.Errands = errands
+--- au plus 3 conseils classés { text, why, label, apply = function, id } construits sur les vrais chiffres (journal,
+--- zones, trajets, groupe, repos, sacs / munitions) ; chaque apply = un clic
+function QB.Advice()
+  local out = {}
+  local n, lv = members()
+  local level = myLevel()
+  local rows = QB.ZoneRows({ sort = "moi", limit = 6 })
+  local cur = QB.ZoneNow()
+  -- 1. courses qui bloquent (sacs pleins, plus de munitions, équipement rouge) : avant de partir loin
+  local er = errands()
+  if #er > 0 then
+    local CR = T.CityRun
+    out[#out + 1] = { id = "errands", text = "D'abord les courses : " .. tconcat(er, ", "),
+      why = "Sans ça, tu reviendras en ville au milieu de ta zone.",
+      label = (CR and CR.Start) and "Courses en ville" or nil,
+      apply = (CR and CR.Start) and function() CR.Start() end or nil, prio = (er[1]:find("pleins", 1, true) or er[1]:find("munitions", 1, true)) and 3 or 1 }
+  end
+  -- 2. quêtes finies : rendues d'abord quand il y en a 3+ (ou beaucoup d'XP)
+  local tl = QB.TurnInList()
+  local txp, far = 0, 0
+  for _, e in ipairs(tl) do txp = txp + (tonumber(e.xp) or 0); if (tonumber(e.eta) or 0) > far then far = e.eta end end
+  if #tl >= 3 or (#tl > 0 and txp >= 4 * (engine() and engine().QuestXPEstimate(level) or 2000)) then
+    out[#out + 1] = { id = "turnin", text = fmt("Rends tes %d quête%s finie%s : +%s XP", #tl, #tl > 1 and "s" or "", #tl > 1 and "s" or "", thousands(txp)),
+      why = fmt("Le trajet le plus court par les PNJ%s, vols et foyer compris.", far > 0 and fmt(" (la plus loin à %s)", QB.TravelText(far) or "?") or ""),
+      label = "Rendre mes quêtes", apply = function() QB.SetMode("turnin") end, prio = 2 }
+  end
+  -- 3. la meilleure zone (ou rester ici), avec le repos
+  local best = rows[1]
+  if best and best.total > 0 then
+    local rested = tonumber(_ns((try(G("GetXPExhaustion"))))) or 0
+    local rest = rested > 0 and fmt(" · repos : %s XP en double sur les monstres", thousands(rested)) or ""
+    local stay = best.here or (cur and cur.map == best.map)
+    local txt = stay and fmt("Reste à %s : %s", best.name, QB.ZoneCountText(best))
+      or fmt("Va à %s : %s", best.name, QB.ZoneCountText(best))
+    out[#out + 1] = { id = "zone", map = best.map,
+      text = txt .. (best.xph > 0 and fmt(", ~%s XP/h", thousands(best.xph)) or ""),
+      why = (best.why or "") .. rest,
+      label = stay and "Faire cette zone" or "Y aller", apply = function() QB.PickZone(best.map) end, prio = 1 }
+  end
+  -- 4. le groupe : la zone qui va à tout le monde (quêtes communes, élites à 3+, membre trop bas)
+  if n >= 2 then
+    local grows = QB.ZoneRows({ sort = "groupe", limit = 4 })
+    local g = grows[1]
+    local same = best and g and g.map == best.map
+    if g and g.total > 0 and (g.common > 0 or (n >= 3 and g.elites > 0) or not same) then
+      local bits = {}
+      if g.common > 0 then bits[#bits + 1] = fmt("%d quête%s commune%s", g.common, g.common > 1 and "s" or "", g.common > 1 and "s" or "") end
+      if n >= 3 and g.elites > 0 then bits[#bits + 1] = "élites possibles" end
+      if lv[1] and g.lo and lv[1] < g.lo - 2 then bits[#bits + 1] = fmt("attention : un membre niv %d", lv[1]) end
+      -- même zone que le conseil « zone » : le conseil du groupe, c'est le mode « Avec le groupe » ici
+      out[#out + 1] = { id = "group", map = g.map,
+        text = (same and fmt("À %d : « Avec le groupe » à %s", n, g.name) or fmt("À %d : %s", n, g.name))
+          .. (#bits > 0 and (" — " .. tconcat(bits, ", ")) or ""),
+        why = "« Avec le groupe » : vos quêtes communes d'abord, puis celles à partager.",
+        label = "Avec le groupe", apply = function() QB.PickZone(g.map) QB.SetMode("group") end, prio = 1 }
+    end
+  end
+  -- classement : courses bloquantes, quêtes finies, zone, groupe ; 3 au plus
+  for i, e in ipairs(out) do e.ord = i end
+  tsort(out, function(a, b) if a.prio ~= b.prio then return a.prio > b.prio end return a.ord < b.ord end)
+  local keep = {}
+  for i = 1, min(3, #out) do keep[i] = out[i] end
+  if #keep == 0 then
+    keep[1] = { id = "none", text = "Rien de sûr à conseiller pour l'instant",
+      why = QB.HasQuestie() and "Aucune quête à ton niveau trouvée près de toi." or "Sans Questie : parle aux PNJ « ! » pour que TreeAI connaisse leurs quêtes.", prio = 0 }
+  end
+  keep.est = QB.ScanEstimate()
+  return keep
+end
+
 -- ===================================================================== résumé (appli / IA) + cycle de vie
 function QB:WriteSummary()
   local s = T.Summary and T:Summary()
@@ -690,10 +1283,13 @@ function QB:WriteSummary()
 end
 function QB:OnEnable()
   local function bump() QB.Bump() end
+  -- (ZONEPICK) quête prise / retirée, niveau : les quêtes à prendre par zone sont à recompter (un gestionnaire par évènement)
+  local RESCAN = { QUEST_ACCEPTED = true, QUEST_REMOVED = true, PLAYER_LEVEL_UP = true }
   for _, ev in ipairs({ "QUEST_LOG_UPDATE", "QUEST_ACCEPTED", "QUEST_REMOVED", "PLAYER_LEVEL_UP", "GROUP_ROSTER_UPDATE" }) do
-    self:RegisterEvent(ev, bump)
+    self:RegisterEvent(ev, RESCAN[ev] and function() QB.scanGen = QB.scanGen + 1 QB.Bump() end or bump)
   end
   self:RegisterEvent("QUEST_TURNED_IN", function()
+    QB.scanGen = QB.scanGen + 1
     QB.Bump()
     T:After(2, function() QB:CheckEmpty() end)
   end)

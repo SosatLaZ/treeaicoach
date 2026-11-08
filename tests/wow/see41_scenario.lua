@@ -315,7 +315,12 @@ return function(M, ctx)
   end
   local nTiles = 0
   for _, r in ipairs(W.lastLay.rects) do if r.kind == "tile" then nTiles = nTiles + 1 end end
-  check(nTiles == 4 and W.lastLay.rects[1].kind == "tile", "Quêtes : les 4 modes en tête")
+  -- (4.1 ZONEPICK) en tête : la zone (« Changer ») + « Choisir ma zone » / « Conseille-moi », puis les 4 modes
+  local r1 = W.lastLay.rects[1]
+  local firstTile
+  for i, r in ipairs(W.lastLay.rects) do if r.kind == "tile" then firstTile = i break end end
+  check(nTiles == 4 and r1 and r1.kind == "row" and r1.label:find("^Zone : ") and firstTile and firstTile <= 4,
+    "Quêtes : la zone puis les 4 modes en tête (" .. tostring(r1 and r1.label) .. ")")
 
   -- ------------------------------------------------------------------ 5. the Groupe page
   W.Select("group")
