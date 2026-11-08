@@ -41,7 +41,7 @@ local BUDGET = {
   -- whole addon, avg / minute (LITE): « essentiel » (default profile) ≤ 1.5 M instr/min, everything on ≤ 4 M
   kinstrTotalMin = (opts.profile == "tout") and 4600 or 2400,   -- 3.9.5: budgets as on the hotfix branch (3.9.4: 9.9 M)
   kinstrStatsMin = 60,           -- Stats hub (Modules/Stats.lua): event-driven, nearly free
-  kinstrModuleMin = { Team = 80, PathDraw = 60, Edge2 = 80, Finder = 60, Quick = 80, QuickFight = 80, QuickTravel = 80, Auction = 80, Compass = 80, NavTime = 80, Horizon = 80, ZonePlan = 400 },   -- per-module caps (avg kinstr / minute)
+  kinstrModuleMin = { Team = 80, PathDraw = 60, Edge2 = 80, Finder = 60, Quick = 80, QuickFight = 80, Macros = 80, QuickTravel = 80, Auction = 80, Compass = 80, NavTime = 80, Horizon = 80, ZonePlan = 400 },   -- per-module caps (avg kinstr / minute)
   nowChangesPerMinMax = 12,      -- « Maintenant » changes (text skeleton, digits ignored) in any minute
   nowChangesPerMinAvg = 6,      -- a fight every ~35 s brings its own in-combat lines (aspect, pet HP…)
   alertsPer10Min = 8,            -- corner alert pops in any 10-minute window

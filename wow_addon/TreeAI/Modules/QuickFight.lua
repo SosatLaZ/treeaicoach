@@ -369,9 +369,10 @@ function M:Plan(s, o)
       end
       if a then
         local m
-        if a.travelMode then m = "/cast [combat][mod:shift] " .. hawk .. "; " .. travel
-        elseif travel then m = "/cast [nocombat,mod:shift] " .. travel .. "; " .. hawk
-        else m = "/cast " .. hawk end
+        -- « ! » (règle MACRO2) : un double clic ne coupe jamais l'aspect qu'on vient de mettre
+        if a.travelMode then m = "/cast [combat][mod:shift] !" .. hawk .. "; !" .. travel
+        elseif travel then m = "/cast [nocombat,mod:shift] !" .. travel .. "; !" .. hawk
+        else m = "/cast !" .. hawk end
         B.aspect = { useful = true, macro = m, icon = spellIcon(a.id), title = spellName(a.id) or hawk,
           tip = { a.travelMode and "Pour voyager. Maj : " .. hawk .. ". En combat : toujours " .. hawk .. "."
             or ("Avant le pull" .. (travel and (". Maj : " .. travel .. " (hors combat).") or ".")) } }

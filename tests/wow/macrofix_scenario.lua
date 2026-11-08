@@ -115,7 +115,10 @@ return function(M, ctx)
   M.RunSlash("/tai macros installer")
   ctx.check(count() == maxG + maxC, "slots full: nothing created")
   local said = false
-  for i = out0 + 1, #M.output do if tostring(M.output[i]):find("plus de place", 1, true) then said = true end end
+  for _, l in ipairs(Mc._log or {}) do if tostring(l):find("plus de place", 1, true) then said = true end end
+  for i = out0 + 1, #M.output do
+    ctx.check(not tostring(M.output[i]):find("Macros", 1, true), "no chat output from Macros")
+  end
   ctx.check(said, "slots full: clear message (perso x/y, compte x/y)")
   local fl = macroLine()
   ctx.check(fl and tostring(fl.text):find("Plus de place", 1, true), "slots full: one clickable line")
