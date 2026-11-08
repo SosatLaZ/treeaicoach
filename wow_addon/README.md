@@ -128,6 +128,16 @@ Questie / Shortest Path Forever / TomTom, jamais en doublon, aucun cadre ni fonc
   `AddWaypoint` → `C_Map.SetUserWaypoint` + `C_SuperTrack.SetSuperTrackedUserWaypoint` (non protégés),
   **uniquement sur clic / commande du joueur**. Géométrie pure : `Compass.Geo` (World, Vector, Relative,
   Dist, ETA). Base Questie : `LibQuestieDB` (addon QuestieDB, contrat 4) sinon `QuestieLoader._modules`.
+  (NAV) Flèche 64 px lissée (≤ 30 Hz en mouvement, 4 Hz à l'arrêt), couleur selon l'alignement
+  (`Geo.AlignColor`), « Derrière toi », anneau d'arrivée (`Compass.ARRIVE` : perso 12 yd, PNJ 15, zone 30),
+  cachée quand Shortest Path guide (`API.Active()`, ou `T:GuideOwner()` s'il existe) sauf option `preferTreeAI`.
+* **Temps de trajet** (`T.NavTime`, `Modules/NavTime.lua`, agent NAV) : `NavTime.Estimate(a, b)` → secondes,
+  "spf" | "modèle" ; `Speed(mode)` (mesurée hors combat, w/m/s), `Detour(mapID)` (appris aux arrivées),
+  `Model(yd, mapID)`, journal prévu/réel (`Accuracy()`, `AccuracyText()`), `summary.navTime`.
+* **Bande d'horizon** (`T.Horizon`, `Modules/Horizon.lua`) : prochains arrêts placés selon le cap (pas de
+  projection 3D dans l'API) ; suit la boussole (`Horizon.Sync(state)`).
+* **Lueurs** (`T.Glow`, `Modules/Glow.lua`) : `Glow.Ants(host, r, g, b, a, w, h)`, `Glow.Pulse(...)`,
+  `Glow.Stop(host)` — animations jouées par le client, sur nos cadres seulement (Highlight).
 * **Route sûre** (`T.SafePath`, `Modules/SafePath.lua`, agent SAFEPATH) — `/tai sur [x y]` (bascule, `/tai sur off`) :
   **aucun auto-déplacement**, le joueur marche. A* sur une grille 100 × 100 de l'uiMap (hors combat, coroutine
   ≤ 2 ms/image) ; coût = yards × (1 ou 0,8 près des maîtres de vol / PNJ amicaux) + danger : apparitions des PNJ

@@ -1206,6 +1206,8 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Tracker = { lite = true, desc = "Suivi des quêtes (onglet Quêtes)" },
   Todo = { lite = true, desc = "À faire : la liste de suivi des quêtes" },
   Compass = { lite = true, desc = "Boussole : flèche vers le prochain objectif" },
+  NavTime = { lite = true, desc = "Temps de trajet justes (vitesse et détours mesurés)" },
+  Horizon = { lite = true, desc = "Bande d'horizon : les prochains arrêts selon ton cap" },
   Planner = { lite = true, desc = "Itinéraire de quêtes optimisé" },
   Export = { lite = true, desc = "Export du perso et du plan vers TreeAI Coach" },
   Group = { lite = true, gate = "group", desc = "Synchro des quêtes avec tes amis (en groupe)" },

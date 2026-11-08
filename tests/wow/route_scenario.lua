@@ -156,7 +156,9 @@ return function(M, ctx)
   P.Refresh = Pref
 
   -- ------------------------------------------------------------ Planner leg uses the fastest path
-  check(P.Leg and near(P.Leg({ map = 1424, x = 10, y = 50 }, { map = 1424, x = 20, y = 50 }), 300 * 1.3 / 7, 0.05),
+  local gw = R.Graph()                 -- (NAV) walking = measured speed × learned detour (NavTime), prior 1.15 → 1.2
+  check(gw and gw.speed == 7 and gw.detour == 1.2, "walk model from NavTime: " .. tostring(gw and gw.speed) .. " " .. tostring(gw and gw.detour))
+  check(P.Leg and near(P.Leg({ map = 1424, x = 10, y = 50 }, { map = 1424, x = 20, y = 50 }), 300 * gw.detour / gw.speed, 0.05),
     "Planner leg = Route.LegSeconds (walk) " .. tostring(P.Leg and P.Leg({ map = 1424, x = 10, y = 50 }, { map = 1424, x = 20, y = 50 })))
 
   rawset(_G, "ShortestPathForever", nil)

@@ -296,6 +296,7 @@ return function(M, ctx)
   function API:NavigateRoute(owner, stops) spf.route = stops return true end
   rawset(_G, "ShortestPathForever", { API = API })
   C.ResetSPF()
+  T.settings.guide = "spf"   -- (NAV) SPF is an explicit opt-in: TreeAI guides alone by default
   C.SetQuestTarget(1003)
   local st2 = C.Compute()
   check(st2.spf and st2.eta == "1 min 35" and spf.est > 0, "ETA from Shortest Path Estimate: " .. tostring(st2.eta))
@@ -308,6 +309,7 @@ return function(M, ctx)
   local Rt = TreeAI.Route   -- a TreeAI plan is active → its order (Route:SPFStops), else the tracker's stops
   local want = (Rt and Rt:IsEnabled() and Rt:HasRoute() and #Rt:SPFStops() > 0) and #Rt:SPFStops() or #TR.RouteStops()
   check(spf.route and #spf.route == want and spf.route[1].map == 1424 and spf.route[1].title, "itinerary → NavigateRoute " .. tostring(spf.route and #spf.route) .. "/" .. tostring(want) .. " " .. tostring(spf.route and spf.route[1] and spf.route[1].map))
+  T.settings.guide = nil
   rawset(_G, "ShortestPathForever", nil)
   -- TomTom when SPF is absent
   local tt = { added = {} }

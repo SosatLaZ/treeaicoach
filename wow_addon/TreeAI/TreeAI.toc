@@ -36,6 +36,8 @@ Modules\Plain.lua
 Modules\Quests.lua
 Modules\Compass.lua
 Modules\SafePath.lua
+Modules\NavTime.lua
+Modules\Horizon.lua
 Modules\Detect.lua
 Modules\Stats.lua
 Modules\Macros.lua
@@ -60,6 +62,7 @@ Modules\Economy.lua
 Modules\Abandon.lua
 Modules\Auction.lua
 Modules\Prof.lua
+Modules\Glow.lua
 Modules\Highlight.lua
 Modules\PvP.lua
 Modules\Dungeon.lua

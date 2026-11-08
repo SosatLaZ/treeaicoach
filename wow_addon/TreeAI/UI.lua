@@ -2147,7 +2147,7 @@ function TreeAI:AutoLayout(force)
   hookManual(cf, "compass")
   if C and C.char and not keep("compass") then
     local k = tonumber(C.db and C.db.scale) or 1
-    local cw, chh = 150 * k, 74 * k
+    local cw, chh = (tonumber(C.W) or 150) * k, (tonumber(C.H) or 74) * k
     local l, b = bestSpot(g, cw, chh, W / 2, H - 70 - chh / 2)
     if l then
       local pt, x, y = anchorFor(l, b, cw, chh, W, H, k, true)
