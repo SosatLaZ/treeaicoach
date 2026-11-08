@@ -118,6 +118,12 @@ entraînement/réparations = niveau² × 1,5 pa si `autoReserve`, `mountGold`), 
 de TOUT l'or par objet (reventes marchand hors plafond) → `M.plan` → file `M.queue` (achats, annulations,
 poses) + boutons rapides de la fenêtre HV « Acheter la meilleure offre » / « Remettre en vente » /
 « Annuler les battues » (`M.BuyBest`, `M.RepostNext`, `M.CancelNext` : une action protégée par clic).
+**Mode rafale** (`M.RafaleNext`, gros bouton + touche `Bindings.xml` « TreeAI : action HV suivante »
+= `TreeAI.AuctionNext()`, sans touche par défaut, « Lier à une touche » via le module Touches) : chaque appui =
+la prochaine action de la file sûre (achats → mises en vente → annulations rentables), au plus UN appel protégé ;
+entre deux appuis la file est recalculée et le prix suivant revérifié ; pause si scan partiel, plus d'achats si
+réserve atteinte ; bilan « Rafale : N actions, +X attendus » (`chars[k].modules.Auction.rafale`). Pas de mode
+100 % automatique : ce serait un bot (fonctions protégées).
 Chaque affaire porte `deposit` et `relist` (= dépôt × (1 − p) / p, dépôt perdu attendu en reposant jusqu'à
 la vente). Journal par perso `chars[k].modules.Auction.ledger` (courrier HV FR/EN), `spent[date]`,
 `deposits[date]`. Résumé `summary.auction = { deals, sell, thin, realized = {today, week, total, top},

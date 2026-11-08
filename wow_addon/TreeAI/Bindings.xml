@@ -1,0 +1,6 @@
+<Bindings>
+	<!-- « Mode rafale » de l'HV : une touche = la prochaine action sûre (une action protégée par appui). Sans touche par défaut. -->
+	<Binding name="TREEAI_AH_NEXT" header="TREEAI" category="ADDONS">
+		if TreeAI and TreeAI.AuctionNext then TreeAI.AuctionNext() end
+	</Binding>
+</Bindings>

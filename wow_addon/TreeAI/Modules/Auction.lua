@@ -53,6 +53,8 @@ local M = T:RegisterModule("Auction", {
 ns.Auction = M
 
 local API = T.API or {}
+_G.BINDING_HEADER_TREEAI = _G.BINDING_HEADER_TREEAI or "TreeAI"
+_G.BINDING_NAME_TREEAI_AH_NEXT = "TreeAI : action HV suivante"
 local floor, ceil, max, min, abs = math.floor, math.ceil, math.max, math.min, math.abs
 local unpack = unpack or table.unpack
 
@@ -1687,11 +1689,11 @@ function M.BuildQueue()
   for _, d in ipairs(M.plan or {}) do
     if d.state ~= "bought" and d.state ~= "gone" then q[#q + 1] = { kind = "buy", d = d } end
   end
-  for _, a in ipairs(M.owned or {}) do
-    if a.undercut and a.worth and a.state ~= "cancelled" then q[#q + 1] = { kind = "cancel", a = a } end
-  end
   if M.ahOpen then
     for _, p in ipairs(M.PostList()) do q[#q + 1] = { kind = "post", p = p } end
+  end
+  for _, a in ipairs(M.owned or {}) do
+    if a.undercut and a.worth and a.state ~= "cancelled" then q[#q + 1] = { kind = "cancel", a = a } end
   end
   M.queue, M.qi = q, 1
   return q
@@ -1732,6 +1734,164 @@ function M.Next()
   elseif e.kind == "cancel" then ok = M.Cancel(e.a)
   else ok = M.Post(e.p) end
   M.QueueHead()
+  M.Refresh()
+  return ok
+end
+
+-- ------------------------------------------------------------------ mode rafale (« une touche = une action », style TSM)
+-- Un vrai mode automatique est IMPOSSIBLE et interdit (achat / mise en vente / annulation = fonctions protégées,
+-- une action matérielle chacune ; les enchaîner seul = un bot). La rafale fait le plus rapide permis : chaque
+-- appui (gros bouton ou touche « TreeAI : action HV suivante ») exécute LA prochaine action de la file sûre
+-- (achats sûrs dans les plafonds → mises en vente au prix calculé → annulations rentables), au plus UN appel
+-- protégé, dans le gestionnaire du clic / de la touche. Entre deux appuis (sans action protégée) : la file est
+-- recalculée et le prix de la prochaine action revérifié (recherche limitée par Blizzard), pour que l'appui
+-- suivant agisse directement. Arrêt : file vide, scan partiel, réserve d'or atteinte.
+M.raf = { n = 0, gain = 0 }
+-- petit son après chaque action réussie : système de sons du Core (genre « ah »), réglages du joueur respectés ;
+-- sans le délai anti-spam (c'est le joueur qui appuie, un son par appui)
+local function tick()
+  local s = T.settings
+  if not (s and s.sound ~= false) or not (T.SoundKindOn and T:SoundKindOn("ah")) or not T.Sound then return end
+  pcall(T.Sound, T, "ah", { preview = true })
+end
+local function qActive(e)
+  if e.kind == "buy" and M.raf.noBuy then return false end
+  if e.kind == "buy" then return not (e.d.state == "bought" or e.d.state == "gone") end
+  if e.kind == "cancel" then return e.a.state ~= "cancelled" and e.a.worth end
+  return not (e.p.state == "posted" or e.p.state == "skip")
+end
+function M.RafaleHead()
+  local q = M.queue or {}
+  for i = M.qi or 1, #q do if qActive(q[i]) then return q[i], i, #q end end
+  return nil, 0, #q
+end
+function M.RafaleText()
+  local sc = M.Scanning()
+  if sc then return ("Rafale en pause : scan en cours (%s)."):format(sc), false end
+  local e, i, n = M.RafaleHead()
+  if not e then return "Rafale : rien à faire (file vide). Appuie pour scanner.", M.ahOpen end
+  local what
+  if e.kind == "buy" then
+    local d = e.d
+    local unit = money(floor(n0(d.buyNow or d.buy) / max(1, d.count)))
+    if d.state == "confirm" then what = ("confirmer l'achat de %d × %s (%s)"):format(d.count, itemName(d.id), money(d.buyNow or d.buy))
+    elseif d.state == "search" or d.state == "starting" then what = ("vérification du prix de %s…"):format(itemName(d.id))
+    elseif M.Flavor() == "modern" and d.state ~= "ready" then what = ("vérifier puis acheter %d × %s à %s"):format(d.count, itemName(d.id), unit)
+    else what = ("acheter %d × %s à %s"):format(d.count, itemName(d.id), unit) end
+  elseif e.kind == "post" then
+    local p = e.p
+    what = p.state == "check" and ("vérification du prix de %s…"):format(itemName(p.id))
+      or ("mettre en vente %d × %s à %s/u"):format(p.count, itemName(p.id), money(p.unit))
+  else
+    what = ("annuler %d × %s (reposter %s/u)"):format(e.a.count, itemName(e.a.id), money(e.a.repost))
+  end
+  return ("Prochaine action (%d/%d) : %s"):format(i, n, what), M.ahOpen
+end
+function M.RafaleSummary()
+  local r = M.raf
+  return ("Rafale : %d action(s), +%s attendus"):format(r.n, money(r.gain))
+end
+local function rafaleStop(why)
+  local r = M.raf
+  if r.n > 0 or r.on then
+    say(("%s%s."):format(M.RafaleSummary(), why and (" — " .. why) or ""))
+    if M.char then M.char.rafale = { n = r.n, gain = r.gain, t = now() } end
+  end
+  r.on = false
+end
+-- entre deux appuis (aucune action protégée) : file recalculée + prix de la prochaine action revérifié
+function M.RafalePrefetch()
+  M.prefetchQ = nil
+  if not (M.ahOpen and M.raf.on) or M.Scanning() or M.pendingSearch then return end
+  local e = M.RafaleHead()
+  if not e or M.Flavor() ~= "modern" then return end
+  if e.kind == "buy" and (e.d.state == nil or e.d.state == "gone") and e.d.state ~= "bought" then
+    local d = e.d
+    if d.state == "gone" then return end
+    d.state, M.pendingSearch = "search", d
+    if not M.SearchItem(d.id) then d.state, M.pendingSearch = nil, nil T:After(0.5, M.RafalePrefetch) end
+  elseif e.kind == "post" and e.p.state == nil then
+    local it = M.cur[e.p.id]
+    if not it or now() - n0(it.t) > 300 then
+      e.p.state = "check"
+      if not M.SearchItem(e.p.id) then e.p.state = nil T:After(0.5, M.RafalePrefetch) end
+    end
+  end
+  M.Refresh()
+end
+local function schedulePrefetch()
+  if M.prefetchQ then return end
+  M.prefetchQ = true
+  T:After(0.3, M.RafalePrefetch)
+end
+-- UN appui = au plus UNE action protégée (appelé seulement par le OnClick du bouton ou la touche liée)
+function M.RafaleNext()
+  if not M.ahOpen then say("Rafale : ouvre l'hôtel des ventes d'abord.") return false end
+  local r = M.raf
+  if not r.on then r.on, r.n, r.gain, r.noBuy, r.t0 = true, 0, 0, false, now() M.Plan() M.BuildQueue() end
+  local sc = M.Scanning()
+  if sc then say(("Rafale en pause : scan en cours (%s)."):format(sc)) M.Refresh() return false end
+  local e = M.RafaleHead()
+  if not e then
+    M.Plan() M.BuildQueue() e = M.RafaleHead()
+  end
+  if not e then
+    if r.n > 0 then rafaleStop("file vide") M.Refresh() return false end
+    -- file vide dès le départ : cet appui lance le scan (complet si permis, sinon ciblé) — aucune action protégée d'achat
+    if M.FullCooldown() <= 0 then M.ScanAll() else M.ScanTargets() end
+    r.on = false
+    M.Refresh()
+    return false
+  end
+  if e.kind == "buy" and e.d.state ~= "confirm" and e.d.state ~= "ready" and n0(e.d.buy) > M.Gold().budget then
+    r.noBuy = true                                         -- réserve d'or atteinte : on n'achète plus
+    say("Rafale : réserve d'or atteinte, plus d'achats (mises en vente et annulations continuent).")
+    M.Refresh()
+    return false
+  end
+  local ok
+  if e.kind == "buy" then ok = M.Buy(e.d)
+  elseif e.kind == "cancel" then ok = M.Cancel(e.a)
+  else ok = M.Post(e.p) end
+  if ok then
+    r.n = r.n + 1
+    if e.kind == "buy" then r.gain = r.gain + max(0, n0(e.d.profit))
+    elseif e.kind == "cancel" then r.gain = r.gain + max(0, n0(e.a.gain)) end
+    tick()
+    if e.kind ~= "buy" then M.postRows = nil end
+    M.Plan()
+    M.BuildQueue()                                         -- file recalculée après chaque action
+  end
+  if not M.RafaleHead() and r.n > 0 then rafaleStop("file vide") end
+  schedulePrefetch()
+  M.Refresh()
+  return ok
+end
+T.AuctionNext = function() return M.RafaleNext() end      -- appelé par Bindings.xml (touche = action matérielle)
+
+-- « Lier à une touche » : même chemin que le module Touches (confirmation, hors combat, SetBinding + SaveBindings)
+local RAF_CMD = "TREEAI_AH_NEXT"
+local RAF_KEYS = { "CTRL-SPACE", "ALT-SPACE", "SHIFT-SPACE", "CTRL-B", "ALT-B" }
+M.RAF_CMD = RAF_CMD
+function M.RafaleKey()
+  local k = try(_G.GetBindingKey, RAF_CMD)
+  return type(k) == "string" and k ~= "" and k or nil
+end
+function M.BindRafale()
+  if M.RafaleKey() then say(("Rafale déjà liée à %s."):format(M.RafaleKey())) return false end
+  local B = T.GetModule and T:GetModule("Binds")
+  local key
+  for _, k in ipairs(RAF_KEYS) do
+    local a = try(_G.GetBindingAction, k, true)
+    if a == nil then a = try(_G.GetBindingAction, k) end
+    if a == nil or a == "" then key = k break end
+  end
+  if not key then say("Aucune touche libre proposée : Échap > Raccourcis > AddOns > TreeAI > « action HV suivante ».") return false end
+  local tg = { id = "ahnext", how = "bind", key = key, item = { kind = "command", name = "TreeAI : action HV suivante", cmd = RAF_CMD } }
+  if not (B and B.Bind) then say("Module Touches absent : Échap > Raccourcis > AddOns > TreeAI.") return false end
+  local confirmed = M.bindAsk and M.bindAsk.key == key and now() - M.bindAsk.t < 15
+  M.bindAsk = not confirmed and { key = key, t = now() } or nil
+  local ok = B:Bind(tg, confirmed)
   M.Refresh()
   return ok
 end
@@ -1935,6 +2095,8 @@ function M.BilanLines()
   L[#L + 1] = ("Argent immobilisé %s (en vente %s, acheté non revendu %s)"):format(money(g.invested), money(g.listed), money(g.held))
   L[#L + 1] = ("Plan : %d achat(s) pour %s → profit attendu %s (max %d %% de ton or par objet, quantité ≤ ventes de %d j)"):format(#(M.plan or {}),
     money(M.planSpend), money(M.planGain), n0(cfg("capGold", 20)), n0(cfg("qtyDays", 3)))
+  local lr = M.char and M.char.rafale
+  if lr and n0(lr.n) > 0 then L[#L + 1] = ("Dernière rafale : %d action(s), +%s attendus"):format(n0(lr.n), money(lr.gain)) end
   local deps = M.char and M.char.deposits and M.char.deposits[dateKey()]
   L[#L + 1] = ("Profit réalisé : aujourd'hui %s, 7 j %s, total %s · dépôts payés aujourd'hui %s"):format(money(r.today), money(r.week), money(r.total), money(deps))
   for i, d in ipairs(M.plan or {}) do
@@ -2104,7 +2266,7 @@ function M.CreateWindow()
   local parent = _G.UIParent
   local f = _G.CreateFrame("Frame", nil, parent, _G.BackdropTemplateMixin and "BackdropTemplate" or nil)
   M.win = f
-  f:SetSize(640, 470)
+  f:SetSize(640, 500)
   f:SetFrameStrata("HIGH")
   f:EnableMouse(true)
   f:SetMovable(true)
@@ -2171,7 +2333,7 @@ function M.CreateWindow()
     f.rows[i] = row
   end
   local prev = mkButton(f, 24, 20, "<")
-  prev:SetPoint("BOTTOMLEFT", 10, 40)
+  prev:SetPoint("BOTTOMLEFT", 10, 72)
   prev:SetScript("OnClick", function() M.page = max(1, M.page - 1) M.Refresh() end)
   local nxt = mkButton(f, 24, 20, ">")
   nxt:SetPoint("LEFT", prev, "RIGHT", 4, 0)
@@ -2181,7 +2343,7 @@ function M.CreateWindow()
   if f.status.SetWidth then f.status:SetWidth(300) end
   if f.status.SetJustifyH then f.status:SetJustifyH("LEFT") end
   f.hint = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  f.hint:SetPoint("BOTTOMLEFT", 10, 66)
+  f.hint:SetPoint("BOTTOMLEFT", 10, 98)
   if f.hint.SetWidth then f.hint:SetWidth(620) end
   if f.hint.SetJustifyH then f.hint:SetJustifyH("LEFT") end
   -- barre d'actions rapides : chaque clic = exactement UNE action protégée (achat / mise en vente / annulation)
@@ -2201,7 +2363,7 @@ function M.CreateWindow()
   end
   f.buyBtn = quick(180, "Acheter la meilleure offre", function() M.BuyBest() end,
     "Achète la meilleure affaire SÛRE du plan, un clic à la fois (prix revérifié juste avant).")
-  f.buyBtn:SetPoint("BOTTOMLEFT", 10, 8)
+  f.buyBtn:SetPoint("BOTTOMLEFT", 10, 42)
   f.postBtn = quick(150, "Remettre en vente", function() M.RepostNext() end,
     "Met en vente la pile suivante de tes sacs, 1 pc sous le moins cher (jamais sous le plancher ni ton stop-loss).")
   f.postBtn:SetPoint("LEFT", f.buyBtn, "RIGHT", 5, 0)
@@ -2209,8 +2371,18 @@ function M.CreateWindow()
     "Annule tes enchères battues quand le dépôt perdu vaut le coup ; récupère-les au courrier puis « Remettre en vente ».")
   f.cancelBtn:SetPoint("LEFT", f.postBtn, "RIGHT", 5, 0)
   local go = quick(125, "Suivant", function() M.Next() end, "Fait l'étape suivante, quelle qu'elle soit (acheter, annuler, poster).")
-  go:SetPoint("BOTTOMRIGHT", -10, 8)
+  go:SetPoint("BOTTOMRIGHT", -10, 42)
   f.nextBtn = go
+  -- mode rafale : le gros bouton (ou la touche liée) = la prochaine action de la file sûre, une par appui
+  local raf = quick(480, "Rafale : action suivante", function() M.RafaleNext() end,
+    "Un appui = une action (acheter, mettre en vente, annuler) dans l'ordre sûr. Lie-le à une touche pour aller encore plus vite.")
+  raf:SetHeight(30)
+  raf:SetPoint("BOTTOMLEFT", 10, 6)
+  f.rafBtn = raf
+  local bind = quick(135, "Lier à une touche", function() M.BindRafale() end,
+    "Lie « TreeAI : action HV suivante » à une touche libre (2 clics : proposer puis confirmer). Hors combat.")
+  bind:SetPoint("BOTTOMRIGHT", -10, 8)
+  f.bindBtn = bind
   local acc = 0
   f:SetScript("OnUpdate", function(_, el)   -- affichage seulement (compte à rebours, progression)
     acc = acc + (el or 0)
@@ -2243,7 +2415,8 @@ function M.RefreshStatus()
   local sc = M.Scanning()
   local last = M.lastScan and M.lastScan.t or (M.db and n0(M.db.lastScanT) > 0 and M.db.lastScanT)
   local age = sc and ("scan en cours (" .. sc .. ")") or (last and ("scan il y a " .. mmss(now() - last))) or "aucun scan"
-  f.status:SetText(("Page %d/%d · or %s · budget %s · %s"):format(M.page, M.pages or 1, money(g.total), money(g.budget), age))
+  f.status:SetText(("Page %d/%d · or %s · budget %s · %s%s"):format(M.page, M.pages or 1, money(g.total), money(g.budget), age,
+    M.raf.n > 0 and (" · " .. M.RafaleSummary()) or ""))
   local _, en = M.NextLabel()
   f.nextBtn:SetText("Suivant")
   if f.nextBtn.SetEnabled then f.nextBtn:SetEnabled((en and M.ahOpen) and true or false) end
@@ -2252,7 +2425,17 @@ function M.RefreshStatus()
   set(f.buyBtn, q.buy, q.buyOn)
   set(f.postBtn, q.post, q.postOn)
   set(f.cancelBtn, q.cancel, q.cancelOn)
-  if f.hint then f.hint:SetText(q.hint) end
+  local rt, ron = M.RafaleText()
+  if f.hint then f.hint:SetText(rt) end
+  if f.rafBtn then
+    local key = M.RafaleKey()
+    f.rafBtn:SetText(("Rafale : action suivante%s"):format(key and (" [" .. key .. "]") or ""))
+    if f.rafBtn.SetEnabled then f.rafBtn:SetEnabled(ron and true or false) end
+  end
+  if f.bindBtn then
+    f.bindBtn:SetText(M.bindAsk and "Confirmer la touche" or (M.RafaleKey() and "Touche liée" or "Lier à une touche"))
+    if f.bindBtn.SetEnabled then f.bindBtn:SetEnabled(not M.RafaleKey()) end
+  end
 end
 
 local lastTab = 0
@@ -2346,6 +2529,7 @@ function M.AUCTION_HOUSE_SHOW()
   if cfg("window", true) then M.ShowWindow() end
 end
 function M.AUCTION_HOUSE_CLOSED()
+  if M.raf.on then rafaleStop("HV fermé") end
   M.ahOpen, M.pendingAll, M.pendingSearch, M.mini, M.postRows = false, false, nil, nil, nil
   for _, d in ipairs(M.deals) do if d.state ~= "bought" then d.state = nil end end
   if M.win then M.win:Hide() end
