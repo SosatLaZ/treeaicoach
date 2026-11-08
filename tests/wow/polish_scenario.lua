@@ -167,6 +167,16 @@ return function(M, ctx)
   check(not T:CheckAutoLayout(), "même écran : pas de nouveau placement")
 
   -- 8. mode édition : calques, glisser aimanté, manuel prioritaire, réinitialiser = auto
+  -- (4.0 QA) la carte « Prochaine étape » est l'affichage : elle a son calque, le panneau texte ne s'ouvre pas tout seul
+  local Wn = T.Window
+  if Wn and Wn.CardIsHUD and Wn.CardIsHUD() then
+    if T:GetPanel() then T:GetPanel():Hide() end
+    check(T:SetEditMode(true) and T:IsEditMode(), "mode édition (carte)")
+    check(T:GetOverlays().card and T:GetOverlays().card:IsShown() and Wn.GetCard():IsShown(), "calque sur la carte « Prochaine étape »")
+    check(not (T:GetPanel() and T:GetPanel():IsShown()), "le panneau texte ne s'ouvre pas tout seul en mode édition")
+    T:SetEditMode(false)
+    T:ShowPanel()   -- le joueur ouvre lui-même le panneau (Outils) : il se place aussi
+  end
   check(T:SetEditMode(true) and T:IsEditMode(), "mode édition")
   local movers = T:GetMovables()
   check(movers.panel and movers.alert, "panneau et encadré déplaçables")

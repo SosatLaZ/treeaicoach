@@ -378,9 +378,8 @@ local function hideTip() local tt = _G.GameTooltip if tt then try(tt.Hide, tt) e
 function MP.Click(pin)
   local R = radar()
   if not (pin and R and R.SetTarget) then return nil end
-  local t = R.SetTarget(pin)
-  if t then MP:Print("Boussole → " .. cut(pin.label or "?", 50)) end
-  return t
+  -- (4.0 QA) la boussole qui tourne vers le point est la réponse au clic : rien dans le chat
+  return R.SetTarget(pin)
 end
 
 local function newPin(i)

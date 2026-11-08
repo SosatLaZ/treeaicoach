@@ -16,7 +16,7 @@ local R = T:RegisterModule("Region", {
   title = "Quêtes par région",
   defaults = { enabled = true, group = true, warn = true, watchButton = true, farYd = 3000, farSec = 480 },
   options = {
-    { key = "group", type = "toggle", label = "Onglet Quêtes : regrouper Ici → Zones voisines → Plus loin" },
+    { key = "group", type = "toggle", label = "Page Quêtes : regrouper Ici > Zones voisines > Plus loin" },
     { key = "warn", type = "toggle", label = "Dire quand une quête est dans une région déconseillée (et pourquoi)" },
     { key = "watchButton", type = "toggle", label = "Bouton « Suivi du jeu » (ajoute les quêtes de la zone au suivi, sur clic)" },
   },

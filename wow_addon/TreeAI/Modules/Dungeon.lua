@@ -23,7 +23,7 @@ if not T or not T.RegisterModule then return end
 local G = _G
 
 local M = T:RegisterModule("Dungeon", {
-  title = "Donjon (PvE)",
+  title = "Donjon",
   defaults = {
     enabled = true, tab = true, autoPlan = true, checklist = true, quests = true, loot = true,
     corner = true, yells = true, meter = true, wipe = true, hunter = true, marks = true,

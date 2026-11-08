@@ -14,7 +14,37 @@ return function(M, ctx)
   M.group = {}
 
   -- ------------------------------------------------------------- options : une case par réglage, rangées
-  for _, o in ipairs(X.OPTIONS) do check(X.db[o.key] == true and o.section and o.label, "option " .. o.key) end
+  -- (4.0 QA) les automatismes de quête / dialogue ne s'allument jamais tout seuls : coupés, proposés une fois
+  local AUTO = { autoQuest = true, autoReward = true, autoGossip = true }
+  for _, o in ipairs(X.OPTIONS) do
+    check(X.db[o.key] == (not AUTO[o.key]) and o.section and o.label, "option " .. o.key .. " = " .. tostring(X.db[o.key]))
+  end
+  check(X.db.autoV == 1, "migration unique faite")
+  -- la question, une fois : une ligne « Accepter et rendre les quêtes tout seul ? » (clic = oui)
+  if X.ProposeAuto then
+    X.db.autoAsked = nil
+    X.ProposeAuto()
+    local q
+    for _, e in ipairs(T:GetSuggestions()) do if e.id == X.AUTO_ID then q = e end end
+    check(q and q.onClick and q.text:find("tout seul", 1, true), "question proposée une fois : " .. tostring(q and q.text))
+    T:UserAction(q and q.onClick or function() end)
+    check(X.db.autoQuest == true and X.db.autoReward == true and X.db.autoAsked == true, "« oui » : quêtes automatiques allumées")
+    local conf, still
+    for _, e in ipairs(T:GetSuggestions()) do
+      if e.id == "Quick:auto" then conf = e end
+      if e.id == X.AUTO_ID then still = e end
+    end
+    check(conf and conf.text:find("activées", 1, true) and not still, "ligne de confirmation, question retirée")
+    X.ProposeAuto()
+    still = nil
+    for _, e in ipairs(T:GetSuggestions()) do if e.id == X.AUTO_ID then still = e end end
+    check(not still, "jamais reposée")
+    -- « Tout allumer » ne rallume pas les automatismes coupés
+    X.db.autoQuest, X.db.autoReward = false, false
+    T:SetModuleProfile("tout")
+    check(X.db.autoQuest == false and X.db.autoReward == false and X.db.autoGossip == false, "« Tout allumer » : automatismes intacts")
+  end
+  X.db.autoQuest, X.db.autoReward, X.db.autoGossip = true, true, true   -- le joueur les a cochés : la suite les teste
   local fam = T.OPTIONS_FAMILY and T.OPTIONS_FAMILY[1]
   local inFam = false
   for _, n in ipairs(fam and fam.mods or {}) do if n == "Quick" then inFam = true end end

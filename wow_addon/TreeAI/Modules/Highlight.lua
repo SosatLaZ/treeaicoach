@@ -40,7 +40,7 @@ local M = T:RegisterModule("Highlight", {
     { key = "iconSize", type = "range", label = "Taille des icônes", min = 8, max = 24, step = 1 },
     { key = "bags", type = "toggle", label = "Sacs : surbrillance des objets", section = "Sacs" },
     { key = "bagNeed", type = "toggle", label = "Objets d'objectif (x/y + barre)" },
-    { key = "bagDone", type = "toggle", label = "Objectif rempli : à rendre ✓" },
+    { key = "bagDone", type = "toggle", label = "Objectif rempli : « à rendre »" },
     { key = "bagStarter", type = "toggle", label = "Objets qui lancent une quête « ! »" },
     { key = "bagUpcoming", type = "toggle", label = "Objets utiles pour une quête à venir (Questie)" },
     { key = "bagUseless", type = "toggle", label = "Assombrir les objets de quête devenus inutiles" },

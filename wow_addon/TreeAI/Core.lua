@@ -1445,14 +1445,17 @@ function TreeAI:_BuildModulesTab()
   else head = "Tout est allumé (bêta compris) — clic : revenir au mode sûr" end
   local lines = {
     { text = head, prio = 2, id = "core:profile",
-      tooltip = "Mode sûr = quêtes, boussole, trajet, course au corps, erreurs, panneau, pastille, macros.\n"
+      tooltip = "Mode sûr = quêtes, trajet, boussole, carte « Prochaine étape », fenêtre TreeAI, course au corps, erreurs, macros.\n"
         .. "Les fonctions « bêta » n'ont été testées que hors du jeu : allume-les une par une ci-dessous.",
       onClick = function() TreeAI:SetModuleProfile(prof == "sur" and "tout" or (lite and "tout" or "sur")) end },
     -- (« mod: » : l'orage de clics du harnais laisse les bascules de profil tranquilles)
     { text = lite and "Revenir au mode sûr — clic" or "Profil léger (essentiel, moins de lag) — clic", prio = 1,
       id = "mod:profile:alt", onClick = function() TreeAI:SetModuleProfile(lite and "sur" or "essentiel") end },
-    { text = "Coût par module (/tai perf) — clic : afficher", prio = 1, id = "core:perf",
-      onClick = function() TreeAI:PrintPerf() end },
+    { text = "Coût des fonctions — clic : afficher", prio = 1, id = "core:perf",
+      onClick = function()   -- (4.0 QA) dans la page « Fonctions » de la fenêtre, jamais dans le chat
+        local Wn = TreeAI.Window
+        if not (Wn and Wn.ShowPerf and Wn.ShowPerf()) then TreeAI:PrintPerf() end
+      end },
   }
   for _, n in ipairs(self.moduleOrder) do
     local mod = self.modules[n]
@@ -1464,8 +1467,7 @@ function TreeAI:_BuildModulesTab()
     elseif mod._classOK == false then state = "|cff888888autre classe|r"
     else state = "|cff33dd33ON|r" end
     local beta = self:IsBeta(n)
-    lines[#lines + 1] = { text = state .. " " .. tostring(mod.title or n) .. (beta and " |cffb48cff(bêta)|r" or "")
-        .. (info.desc and (" — " .. info.desc) or ""),
+    lines[#lines + 1] = { text = state .. " " .. tostring(mod.title or n) .. (beta and " |cffb48cff(bêta)|r" or ""),
       prio = 1, id = "mod:" .. n, beta = beta or nil,
       tooltip = (info.desc or n) .. (beta and "\nBêta : testé hors du jeu seulement, peut se tromper." or "")
         .. "\nClic : " .. (on and "couper" or "allumer") .. " ce module (sans /reload)",
@@ -1497,7 +1499,7 @@ function TreeAI:PerfLines()
     out[#out + 1] = strformat("  %d. %s : %.1f ms/min (%d appels)", i, e.name, (e.st.ms or 0) / up * 60, e.st.calls)
   end
   if #list == 0 then out[#out + 1] = "  (rien de mesuré pour l'instant)" end
-  out[#out + 1] = "  Plus → Modules : couper ce qui ne te sert pas."
+  out[#out + 1] = "  Page « Fonctions » : couper ce qui ne te sert pas."
   return out
 end
 function TreeAI:PrintPerf()
@@ -2631,7 +2633,7 @@ TreeAI:RegisterTab("quests", L["Quêtes"], 2)
 TreeAI:RegisterTab("group", L["Groupe"], 3)
 TreeAI:RegisterTab("hv", L["HV"], 4)
 TreeAI:RegisterTab("info", L["Infos"], 5)
-TreeAI:RegisterTab("modules", L["Modules"], 9)   -- LITE : sous « Plus » : un module par ligne, clic = on / off
+TreeAI:RegisterTab("modules", L["Fonctions"], 9)   -- LITE : sous « Plus » : un module par ligne, clic = on / off
 -- « Talents » : vue du bloc Talents d'« Infos », proposée dans le sous-menu « Plus » (pas un onglet de plus)
 TreeAI.tabs.talents = { id = "talents", title = L["Talents"], order = 4.8, virtual = true,
   from = { tab = "info", source = "Talents" } }

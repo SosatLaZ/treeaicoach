@@ -82,14 +82,28 @@ end
 
 -- ------------------------------------------------------------------ résumé en direct (infobulle)
 local function plain(s) return T.PlainText and T.PlainText(s) or tostring(s or "") end
+-- (4.0 QA) un avis du cœur (« Mode sûr… », profil) n'est pas une étape ; « Arrêt 1/20 : » répète l'étiquette
+local function isNotice(e) return e.kind == "always" or tostring(e.id or ""):find("^core:") ~= nil end
 function H.Summary()
   local out = {}
   local now = T.GetTabLines and T:GetTabLines("now") or {}
-  local first
-  for _, e in ipairs(now) do if e.pin then first = e break end end
-  first = first or now[1]
-  if first and type(first.text) == "string" and not secret(first.text) then
-    out[#out + 1] = { "Prochaine étape : " .. plain(first.text), 1, 1, 1 }
+  local txt
+  -- (4.0 QA) avec la carte « Prochaine étape » : sa première ligne (course au corps, donjon, étape), la même
+  local Wn = T.Window
+  local top = Wn and Wn._active and Wn.TopLine and select(2, pcall(Wn.TopLine)) or nil
+  if type(top) == "table" and type(top.title) == "string" and not secret(top.title) then
+    txt = top.title .. ((top.sub and top.sub ~= "" and not secret(top.sub)) and (" · " .. top.sub) or "")
+  else
+    local first
+    for _, e in ipairs(now) do if e.pin and not isNotice(e) then first = e break end end
+    if not first then
+      for _, e in ipairs(now) do if not (isNotice(e) or e.header or e.control) then first = e break end end
+    end
+    if first and type(first.text) == "string" and not secret(first.text) then txt = plain(first.text) end
+  end
+  if txt then
+    txt = txt:gsub("^Arrêt %d+/%d+ : ", "")
+    out[#out + 1] = { "Prochaine étape : " .. (T.SafeText and T.SafeText(txt) or txt), 1, 1, 1 }
   else
     out[#out + 1] = { "Rien d'urgent.", 0.7, 0.7, 0.7 }
   end
@@ -110,7 +124,7 @@ local function showTip(owner)
   local tt = G("GameTooltip")
   if not tt then return end
   tt:SetOwner(owner, "ANCHOR_LEFT")
-  tt:AddLine("TreeAI Coach", 0.2, 0.8, 0.4)
+  tt:AddLine("TreeAI Coach", 1, 0.82, 0.2)
   for _, l in ipairs(H.Summary()) do tt:AddLine(l[1], l[2], l[3], l[4], true) end
   local Wn = T.Window
   if Wn and Wn._active then tt:AddLine("Clic : fenêtre TreeAI · Clic droit : menu rapide · Glisser : déplacer", 0.4, 0.8, 1, true)
@@ -121,7 +135,6 @@ local function hideTip() local tt = G("GameTooltip") if tt then tt:Hide() end en
 
 -- ------------------------------------------------------------------ entrées du menu (tout à la souris)
 local function act(fn, ...) local a = { ... } return function() T:UserAction(function() fn(unpack(a)) end) end end
-local function slashCmd(cmd) return act(function(c) T:HandleSlash(c) end, cmd) end
 local function hasSlash(c) return T.HasSlash and T:HasSlash(c:match("^(%S+)")) or false end
 -- (UIREDO) un onglet = sa page dans la fenêtre TreeAI (le panneau texte seulement si la fenêtre est coupée)
 local function tab(id)
@@ -146,7 +159,7 @@ function H.BetaEntries()
   out[#out + 1] = { group = "beta", id = "profile", keep = true, icon = ICON .. "INV_Misc_Book_09",
     title = prof == "sur" and "Tout allumer (bêta compris)" or "Revenir au mode sûr",
     desc = prof == "sur" and "Mode sûr actif" or "Tout est allumé",
-    tip = "Mode sûr = quêtes, boussole, trajet, course au corps, erreurs, panneau, pastille, macros.",
+    tip = "Mode sûr = quêtes, trajet, boussole, carte « Prochaine étape », fenêtre TreeAI, course au corps, erreurs, macros.",
     fn = act(function() T:SetModuleProfile(prof == "sur" and "tout" or "sur") end) }
   for _, n in ipairs(T.moduleOrder or {}) do
     local m = T.modules[n]
@@ -179,7 +192,7 @@ TAB_DESC = {
   finder = "Meilleur familier, rares, maîtres", stats = "Tes chiffres mesurés",
 }
 ENTRY_DESC = {
-  cherche = "Le truc qui change tout près de toi", pet = "La meilleure bête à apprivoiser", macros = "Créer et poser les macros",
+  cherche = "Familier, rares, maîtres, vols près de toi", pet = "La meilleure bête à apprivoiser", macros = "Créer et poser les macros",
   todo = "La liste complète des quêtes", boussole = "Afficher / cacher la flèche", radar = "Petit radar rond",
   options = "Taille, transparence, sons", erreurs = "Fichier d'erreurs pour l'appli", bloque = "Actions refusées par le jeu",
   panel = "Le panneau de TreeAI", edit = "Glisser les cadres, molette = taille", reset = "Tout remettre à sa place",
@@ -189,30 +202,57 @@ H.TAB_ICON, H.TAB_DESC = TAB_ICON, TAB_DESC   -- (UIREDO) mêmes icônes / descr
 function H.Entries()
   if H.mode == "beta" then return H.BetaEntries() end
   local out = {}
-  for _, t in ipairs(T.GetTabs and T:GetTabs() or {}) do
-    out[#out + 1] = { group = "jeu", id = "tab:" .. t.id, title = L[t.title or t.id], icon = TAB_ICON[t.id] or ICON .. "INV_Misc_Note_01",
-      desc = TAB_DESC[t.id], tip = "Clic : ouvrir la page « " .. L[t.title or t.id] .. " »", fn = tab(t.id) }
+  local Wn = T.Window
+  local hasWin = Wn and Wn._active and Wn.Open and type(Wn.PAGES) == "table"
+  if hasWin then
+    -- (4.0 QA) avec la fenêtre TreeAI (clic gauche sur la pastille) : « Jeu » = ses pages, une ligne chacune
+    -- (sans description : le menu tient à l'écran) ; les autres onglets sont dans Outils > Autres pages
+    for _, p in ipairs(Wn.PAGES) do
+      if not p.hidden and p.id ~= "options" then
+        local id = p.id
+        out[#out + 1] = { group = "jeu", id = "tab:" .. id, title = p.label, icon = p.icon or ICON .. "INV_Misc_Note_01",
+          tip = "Clic : ouvrir la page « " .. tostring(p.label) .. " »", fn = act(function() Wn.Open(id) end) }
+      end
+    end
+  else
+    for _, t in ipairs(T.GetTabs and T:GetTabs() or {}) do
+      out[#out + 1] = { group = "jeu", id = "tab:" .. t.id, title = L[t.title or t.id], icon = TAB_ICON[t.id] or ICON .. "INV_Misc_Note_01",
+        desc = TAB_DESC[t.id], tip = "Clic : ouvrir la page « " .. L[t.title or t.id] .. " »", fn = tab(t.id) }
+    end
   end
   local function add(g, id, title, icon, tip, fn, ok)
     if ok == false then return end
     out[#out + 1] = { group = g, id = id, title = title, icon = icon, tip = tip, fn = fn, desc = ENTRY_DESC[id] }
   end
   for _, e in ipairs(type(T.HUB_EXTRA) == "table" and T.HUB_EXTRA or {}) do   -- (UIREDO) entrées « Jeu » des modules d'abord
-    if type(e) == "table" and e.group == "jeu" and type(e.fn) == "function" and e.title then
+    if type(e) == "table" and e.group == "jeu" and type(e.fn) == "function" and e.title and not (hasWin and e.id == "window") then
       add("jeu", e.id or e.title, e.title, e.icon or ICON .. "INV_Misc_Note_01", e.tip, act(e.fn))
     end
   end
   local F, Mc, Td = T.Finder, T.modules and T.modules.Macros, T.Todo
-  add("outils", "cherche", "Recherche", ICON .. "INV_Misc_Spyglass_02", "Clic : chercher un truc qui change tout près de toi",
-    act(function() if F and F.Show then F.Show(true) else T:HandleSlash("cherche") end end), (F and F.Show or hasSlash("cherche")) and true or false)
+  -- (4.0 QA) Chercher est une fonction bêta : ouverte seulement quand elle tourne, sinon une ligne pour l'allumer
+  local fOn = F and F._active and F.Show and true or false
+  add("outils", "cherche", "Recherche", ICON .. "INV_Misc_Spyglass_02", "Clic : chercher autour de moi (familier, rares, maîtres, vols)",
+    act(function() F.Show(true) end), fOn)
   add("outils", "pet", "Meilleur familier", ICON .. "Ability_Hunter_BeastTaming", "Clic : la meilleure bête à apprivoiser maintenant",
-    slashCmd("cherche familier"), (T.PlayerClass and T:PlayerClass() == "HUNTER" and hasSlash("cherche")) and true or false)
+    act(function() F.lastQuery = "familier" F:Refresh(true) F.Show(true) end),
+    (fOn and T.PlayerClass and T:PlayerClass() == "HUNTER") and true or false)
+  if F and not fOn and F.db and T.SetModuleEnabled then
+    out[#out + 1] = { group = "outils", id = "cherche:off", title = "Chercher (bêta, coupé)", icon = ICON .. "INV_Misc_Spyglass_02",
+      desc = "Clic : l'allumer", tip = "Clic : allume « Chercher » (familier, rares, maîtres, vols près de toi), sans /reload",
+      fn = act(function() T:SetModuleEnabled("Finder", true) end) }
+  end
   add("outils", "macros", "Macros", ICON .. "INV_Misc_Note_01", "Clic : ouvrir les macros (hors combat)",
     act(function() if Mc and Mc.TogglePanel then Mc:TogglePanel() end end), (Mc and Mc.TogglePanel) and true or false)
   add("outils", "todo", "Fenêtre « À faire »", ICON .. "INV_Misc_Note_02", "Clic : la liste complète des quêtes (épingler, trier)",
     act(function() Td.Toggle() end), (Td and Td.Toggle) and true or false)
-  add("outils", "boussole", "Boussole", ICON .. "INV_Misc_Spyglass_02", "Clic : afficher / cacher la flèche", slashCmd("boussole"), hasSlash("boussole"))
-  add("outils", "radar", "Radar", ICON .. "INV_Misc_Map_01", "Clic : afficher / cacher le radar", slashCmd("radar"), hasSlash("radar"))
+  -- (4.0 QA) une vraie bascule, sans aide dans le chat
+  local Cm = T.modules and T.modules.Compass
+  add("outils", "boussole", "Boussole", ICON .. "INV_Misc_Spyglass_02", "Clic : afficher / cacher la flèche",
+    act(function() if Cm and Cm.Toggle then Cm.Toggle() end end), (Cm and Cm.Toggle and Cm._active) and true or false)
+  local Rd = T.modules and T.modules.Radar
+  add("outils", "radar", "Radar", ICON .. "INV_Misc_Map_01", "Clic : afficher / cacher le radar",
+    act(function() Rd.Show(not (Rd.db and Rd.db.shown ~= false)) end), (Rd and Rd._active and Rd.Show) and true or false)
   for _, e in ipairs(type(T.HUB_EXTRA) == "table" and T.HUB_EXTRA or {}) do   -- entrées des modules (Dungeon…)
     if type(e) == "table" and type(e.fn) == "function" and e.title and e.group ~= "jeu" then
       add(e.group or "outils", e.id or e.title, e.title, e.icon or ICON .. "INV_Misc_Note_01", e.tip, act(e.fn))
@@ -235,8 +275,11 @@ function H.Entries()
     title = ("Fonctions bêta (%d/%d)"):format(nOn, nBeta),
     tip = "Clic : la liste des fonctions bêta (testées hors du jeu seulement), un clic pour chacune",
     fn = function() H.mode = "beta" end }
-  add("reglages", "erreurs", "Erreurs", "Interface\\DialogFrame\\UI-Dialog-Icon-AlertOther", "Clic : dernières erreurs de TreeAI", slashCmd("erreurs"), hasSlash("erreurs"))
-  add("reglages", "bloque", "Blocages", "Interface\\DialogFrame\\UI-Dialog-Icon-AlertNew", "Clic : actions bloquées par le jeu (doit rester à 0)", slashCmd("bloque"), hasSlash("bloque"))
+  -- (4.0 QA) Erreurs / Blocages : le résultat dans la fenêtre TreeAI (page Infos + pied de page), pas dans le chat
+  add("reglages", "erreurs", "Erreurs", "Interface\\DialogFrame\\UI-Dialog-Icon-AlertOther", "Clic : préparer le fichier d'erreurs pour l'appli",
+    act(function() H.Errors() end), hasSlash("erreurs"))
+  add("reglages", "bloque", "Blocages", "Interface\\DialogFrame\\UI-Dialog-Icon-AlertNew", "Clic : actions bloquées par le jeu (doit rester à 0)",
+    act(function() H.Blocked() end), hasSlash("bloque"))
   add("reglages", "panel", "Afficher / cacher le panneau", ICON .. "INV_Misc_Note_06", "Clic : le panneau de TreeAI", act(function() T:TogglePanel() end))
   add("reglages", "edit", "Déplacer les cadres", ICON .. "INV_Misc_Wrench_01", "Clic : mode édition (glisser, molette = taille)",
     act(function() if T.SetEditMode then T:SetEditMode(not T:IsEditMode()) end end), T.SetEditMode and true or false)
@@ -246,6 +289,29 @@ function H.Entries()
   return out
 end
 
+-- (4.0 QA) Erreurs / Blocages : la réponse dans la fenêtre TreeAI (page « Infos » + pied de page), jamais dans le
+-- chat ; sans la fenêtre, la commande d'avant
+function H.Errors()
+  local Wn, B = T.Window, T.Bugs
+  if not (Wn and Wn._active and Wn.OpenTab and Wn.Flash) then T:HandleSlash("erreurs") return end
+  local ok = B and type(B.Build) == "function" and pcall(B.Build, true)
+  Wn.OpenTab("info")
+  Wn.Flash(ok and "Fichier d'erreurs prêt : fais /reload, TreeAI l'écrit dans TreeAI-erreurs.txt."
+    or "Erreurs : la liste est dans cette page.")
+end
+function H.Blocked()
+  local Wn = T.Window
+  if not (Wn and Wn._active and Wn.OpenTab and Wn.Flash) then T:HandleSlash("bloque") return end
+  local total, sess = 0, 0
+  if type(T.BlockedTop) == "function" then
+    local ok, _, a, b = pcall(T.BlockedTop, T, 1)
+    if ok then total, sess = tonumber(a) or 0, tonumber(b) or 0 end
+  end
+  Wn.OpenTab("info")
+  Wn.Flash(total > 0 and fmt("Blocages : %d (%d cette session) : survole la ligne « Blocages » pour le détail.", total, sess)
+    or "Blocages : aucune action bloquée par le jeu. Parfait.")
+end
+
 -- ------------------------------------------------------------------ menu (cadre à nous)
 local menu
 H.layout = {}
@@ -253,7 +319,7 @@ local TH = T.Theme
 local SP = (TH and TH.SPACE) or { xs = 2, s = 4, m = 8, l = 12, xl = 16 }
 local RW = (TH and TH.ROW) or { h = 20, h2 = 32, head = 18, icon = 14, iconL = 18 }
 local ROW, ROW2, HEAD, W = RW.h, RW.h2, RW.head, 260
-local MAXH = 560   -- au-delà, la liste bêta passe sur une deuxième colonne
+local MAXH = 560   -- au-delà (ou plus haut que l'écran − 120), le groupe suivant passe sur une autre colonne
 local function closeMenu() H.mode = "main" if menu and menu:IsShown() then menu:Hide() end end
 H.Close = closeMenu
 local function buildMenu()
@@ -280,6 +346,8 @@ local function buildMenu()
   end
   local list = G("UISpecialFrames")
   if type(list) == "table" then list[#list + 1] = "TreeAIHubMenu" end
+  -- (4.0 QA) fermé par Échap (UISpecialFrames) : le prochain menu repart du menu principal
+  menu:SetScript("OnHide", function() H.mode = "main" end)
   menu:Hide()
   return menu
 end
@@ -338,56 +406,67 @@ function H.Fill()
   for _, r in ipairs(menu.rows) do r:Hide(); r.e = nil end
   for _, h in ipairs(menu.heads) do h:Hide(); h.icon:Hide() end
   for _, s in ipairs(menu.seps) do s:Hide() end
+  -- (4.0 QA) le menu tient à l'écran quelle que soit l'échelle de l'interface : un groupe qui ne tient plus dans
+  -- la colonne passe entier dans la suivante (un groupe plus haut que l'écran continue sur la colonne d'à côté)
+  local up = G("UIParent")
+  local ph = up and tonumber((try(up.GetHeight, up))) or 0
+  if ph < 200 then ph = tonumber((try(G("GetScreenHeight")))) or 768 end   -- (même repli que le placement auto)
+  local maxH = min(MAXH, max(240, ph - 120))
+  local groupOf = {}
+  for _, g in ipairs(H.GROUPS) do groupOf[g.id] = g end
+  local entries = H.Entries()
+  local gh = {}   -- hauteur de chaque groupe (titre + lignes)
+  for _, e in ipairs(entries) do gh[e.group] = (gh[e.group] or (groupOf[e.group] and HEAD or 0)) + (e.desc and ROW2 or ROW) end
   local y, n, nh, ns, last = -5, 0, 0, 0, nil
-  local colX, colTop, colStart, minY = 0, nil, -5, -5
-  for _, e in ipairs(H.Entries()) do
-    if e.group ~= last then
-      if last then
-        ns = ns + 1
-        local s = menu.seps[ns]
-        if not s then
-          s = menu:CreateTexture(nil, "ARTWORK")
-          s:SetTexture("Interface\\Buttons\\WHITE8X8")
-          if s.SetVertexColor then s:SetVertexColor(0.78, 0.62, 0.28, 0.35) end
-          s:SetHeight(1)
-          menu.seps[ns] = s
-        end
-        s:ClearAllPoints()
-        s:SetPoint("TOPLEFT", menu, "TOPLEFT", 8, y - 3)
-        s:SetPoint("TOPRIGHT", menu, "TOPRIGHT", -8, y - 3)
-        s:Show()
-        lay[#lay + 1] = { kind = "sep", y = y - 3 }
-        y = y - 7
-      end
-      last = e.group
-      for _, g in ipairs(H.GROUPS) do
-        if g.id == e.group then
-          nh = nh + 1
-          local h = menu.heads[nh]
-          if not h then
-            h = menu:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            h:SetJustifyH("LEFT")
-            h.icon = menu:CreateTexture(nil, "ARTWORK")
-            h.icon:SetSize(12, 12)
-            menu.heads[nh] = h
-          end
-          h.icon:ClearAllPoints()
-          h.icon:SetPoint("TOPLEFT", menu, "TOPLEFT", 8, y - 2)
-          h.icon:SetTexture(g.icon)
-          h.icon:Show()
-          h:ClearAllPoints()
-          h:SetPoint("TOPLEFT", menu, "TOPLEFT", 24, y - 2)
-          h:SetText(L[g.title])
-          h:SetTextColor(0.78, 0.62, 0.28)
-          h:Show()
-          lay[#lay + 1] = { kind = "header", group = g.id, y = y }
-          y = y - HEAD
-          colStart = y
-        end
-      end
+  local colX, colRows, minY = 0, 0, -5
+  local function sep()
+    ns = ns + 1
+    local s = menu.seps[ns]
+    if not s then
+      s = menu:CreateTexture(nil, "ARTWORK")
+      s:SetTexture("Interface\\Buttons\\WHITE8X8")
+      if s.SetVertexColor then s:SetVertexColor(0.78, 0.62, 0.28, 0.35) end
+      s:SetHeight(1)
+      menu.seps[ns] = s
     end
-    if e.group == "beta" and y < -MAXH then   -- liste bêta longue : deuxième colonne (jamais plus haut que l'écran)
-      colX, colTop, y = colX + W, colTop or y, colStart
+    s:ClearAllPoints()
+    s:SetPoint("TOPLEFT", menu, "TOPLEFT", colX + 8, y - 3)
+    s:SetWidth(W - 16)
+    s:Show()
+    lay[#lay + 1] = { kind = "sep", y = y - 3, x = colX }
+    y = y - 7
+  end
+  local function header(g)
+    nh = nh + 1
+    local h = menu.heads[nh]
+    if not h then
+      h = menu:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+      h:SetJustifyH("LEFT")
+      h.icon = menu:CreateTexture(nil, "ARTWORK")
+      h.icon:SetSize(12, 12)
+      menu.heads[nh] = h
+    end
+    h.icon:ClearAllPoints()
+    h.icon:SetPoint("TOPLEFT", menu, "TOPLEFT", colX + 8, y - 2)
+    h.icon:SetTexture(g.icon)
+    h.icon:Show()
+    h:ClearAllPoints()
+    h:SetPoint("TOPLEFT", menu, "TOPLEFT", colX + 24, y - 2)
+    h:SetText(L[g.title])
+    h:SetTextColor(0.78, 0.62, 0.28)
+    h:Show()
+    lay[#lay + 1] = { kind = "header", group = g.id, y = y, x = colX }
+    y = y - HEAD
+  end
+  for _, e in ipairs(entries) do
+    local h = e.desc and ROW2 or ROW
+    if e.group ~= last then
+      if colRows > 0 and y - 7 - (gh[e.group] or h) < -maxH then colX, y, colRows = colX + W, -5, 0 end
+      if colRows > 0 then sep() end
+      last = e.group
+      if groupOf[e.group] then header(groupOf[e.group]) end
+    elseif colRows > 0 and y - h < -maxH then   -- groupe plus haut que l'écran : la suite à côté, alignée
+      colX, y, colRows = colX + W, -5 - HEAD, 0
     end
     n = n + 1
     local b = row(n)
@@ -395,7 +474,6 @@ function H.Fill()
     -- (même convention que « Plus → Modules » : l'orage de clics du harnais laisse ces bascules tranquilles)
     b.entry = { id = "mod:hub:" .. e.id }
     b:ClearAllPoints()
-    local h = e.desc and ROW2 or ROW
     b:SetHeight(h)
     b:SetPoint("TOPLEFT", menu, "TOPLEFT", colX + SP.xs, y)
     b:SetWidth(W - 2 * SP.xs)
@@ -409,10 +487,11 @@ function H.Fill()
     b.desc:SetText(e.desc or "")
     b.tag:SetText(e.state or (e.beta and ((TH and TH.BetaTag and TH:BetaTag()) or "|cffb48cffbêta|r")) or "")
     b:Show()
-    lay[#lay + 1] = { kind = "item", id = e.id, group = e.group, y = y, text = e.title, desc = e.desc, beta = e.beta,
+    lay[#lay + 1] = { kind = "item", id = e.id, group = e.group, y = y, x = colX, text = e.title, desc = e.desc, beta = e.beta,
       textW = b.text:GetStringWidth() or 0, textMax = W - 2 * SP.xs - SP.m - RW.iconL - SP.m - SP.m - 34, button = b }
     y = y - h
-    minY = math.min(minY, y)
+    colRows = colRows + 1
+    minY = min(minY, y)
   end
   menu:SetSize(colX + W, -minY + 5)
   menu:ClearAllPoints()

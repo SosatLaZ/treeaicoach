@@ -43,7 +43,12 @@ local function Th() local t = T.Theme if type(t) == "table" and t.Color then ret
 local function plain(s) return T.PlainText and T.PlainText(s) or tostring(s or "") end
 local function strip(s) return (tostring(s or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|T.-|t", "")) end
 -- glyphes absents des polices du jeu (« ▾ », « → »…) : la même table que le panneau (Core.SafeText)
-local function safe(s) s = tostring(s or "") return (type(T.SafeText) == "function" and T.SafeText(s)) or s end
+local function safe(s)
+  s = tostring(s or "")
+  if type(T.SafeText) ~= "function" then return s end
+  local ok, r = pcall(T.SafeText, s)   -- (une valeur secrète du jeu passe telle quelle : le jeu sait l'afficher)
+  return (ok and r) or s
+end
 local function ulen(s) local _, n = strip(s):gsub("[^\128-\191]", "") return n end
 local function low(s) return strip(s):lower() end
 local WHITE = "Interface\\Buttons\\WHITE8X8"
@@ -112,13 +117,14 @@ function W.Tooltip(owner, title, lines, hint)
   local tt = G.GameTooltip
   if not tt then return end
   meth(tt, "SetOwner", owner, "ANCHOR_RIGHT")
-  meth(tt, "AddLine", strip(title or ""), 1, 0.82, 0.2, true)
+  -- (4.0 QA) « → », « ✓ »… : carrés vides dans les polices du jeu → même table que le panneau (SafeText)
+  meth(tt, "AddLine", safe(strip(title or "")), 1, 0.82, 0.2, true)
   if type(lines) == "string" then
-    for l in lines:gmatch("[^\n]+") do meth(tt, "AddLine", l, 0.85, 0.85, 0.85, true) end
+    for l in lines:gmatch("[^\n]+") do meth(tt, "AddLine", safe(l), 0.85, 0.85, 0.85, true) end
   elseif type(lines) == "table" then
-    for _, l in ipairs(lines) do meth(tt, "AddLine", tostring(l), 0.85, 0.85, 0.85, true) end
+    for _, l in ipairs(lines) do meth(tt, "AddLine", safe(tostring(l)), 0.85, 0.85, 0.85, true) end
   end
-  if hint then meth(tt, "AddLine", hint, 0.4, 0.8, 1, true) end
+  if hint then meth(tt, "AddLine", safe(hint), 0.4, 0.8, 1, true) end
   meth(tt, "Show")
 end
 local function hideTip() local tt = G.GameTooltip if tt then meth(tt, "Hide") end end
@@ -206,12 +212,19 @@ local function newBadge(parent, size)
   f.mark = meth(f, "CreateTexture", nil, "OVERLAY")
   meth(f.mark, "SetSize", floor(size * 0.55), floor(size * 0.55))
   meth(f.mark, "SetPoint", "BOTTOMRIGHT", f, "BOTTOMRIGHT", 4, -3)
-  function f.Set(self2, n, mark, hot)
+  -- (4.0 QA) ligne sans numéro (pas une étape du trajet) : l'icône de la ligne dans la pastille, jamais un faux n°
+  f.icon = meth(f, "CreateTexture", nil, "ARTWORK", nil, 3)
+  meth(f.icon, "SetPoint", "TOPLEFT", f, "TOPLEFT", 6, -6)
+  meth(f.icon, "SetPoint", "BOTTOMRIGHT", f, "BOTTOMRIGHT", -6, 6)
+  meth(f.icon, "SetTexCoord", 0.08, 0.92, 0.08, 0.92)
+  meth(f.icon, "Hide")
+  function f.Set(self2, n, mark, hot, icon)
     local r, g, b = tok("gold", 1, 0.82, 0.2)
     meth(self2.ring, "SetVertexColor", r, g, b, hot and 1 or 0.7)
     meth(self2.disc, "SetVertexColor", 0.08, 0.07, 0.05, 1)
     meth(self2.num, "SetText", n and tostring(n) or "")
     if mark then meth(self2.mark, "SetTexture", mark); meth(self2.mark, "Show") else meth(self2.mark, "Hide") end
+    if icon and not n then meth(self2.icon, "SetTexture", icon); meth(self2.icon, "Show") else meth(self2.icon, "Hide") end
   end
   return f
 end
@@ -277,22 +290,34 @@ end
 
 -- arrêts du trajet : même liste que la vue « Trajet » (Route:Stops(64)), gardée 30 s tant que les étapes et le
 -- curseur ne changent pas ; la position du joueur (distances affichées) est relue à chaque fois, sans recalcul
+-- (4.0 QA, FIX-QUEST) jamais gardée au-delà d'un saut : pierre de foyer, fin de vol, entrée / sortie d'instance
+-- (W.ForgetStops sur ces évènements) ni d'un déplacement de plus de 400 yd (les trajets partent d'où tu es)
 local stopsKeep = {}
 function W.StopsCached(P, R)
   local t = try(G.GetTime) or 0
   local k = stopsKeep
   local n = P.steps and #P.steps or 0
-  local st
-  if k.steps == P.steps and k.cur == P.cursor and k.n == n and k.st and t - k.at < 30 then st = k.st
-  else
-    st = R:Stops(64) or {}
-    stopsKeep = { steps = P.steps, cur = P.cursor, n = n, st = st, at = t }
-  end
+  local here
   local Gp = T.Geo and T.Geo.Player
   if Gp and R.World then
     local m, x, y = Gp()
-    if m and x then st.here = R.World({ map = m, x = x, y = y }) or st.here end
+    if m and x then here = R.World({ map = m, x = x, y = y }) end
   end
+  local moved = false
+  if here and k.here0 then
+    if here.c ~= k.here0.c then moved = true
+    elseif here.n and k.here0.n then
+      local dn, dw = here.n - k.here0.n, (here.w or 0) - (k.here0.w or 0)
+      moved = dn * dn + dw * dw > 160000
+    end
+  end
+  local st
+  if k.steps == P.steps and k.cur == P.cursor and k.n == n and k.st and not moved and t - k.at < 30 then st = k.st
+  else
+    st = R:Stops(64) or {}
+    stopsKeep = { steps = P.steps, cur = P.cursor, n = n, st = st, at = t, here0 = here }
+  end
+  if here then st.here = here end
   return st
 end
 function W.ForgetStops() stopsKeep = {} end
@@ -310,23 +335,44 @@ function W.Guide(n, full)
   if okR and R.char and R.char.paused then g.paused = true end
   if okR and not g.paused then
     local st = W.StopsCached(P, R)
-    g.total = tonumber(st.total) or 0
-    local seenQ, k = {}, 0
-    for _, e in ipairs(st) do
+    -- (QUESTQA F7) le même horizon que l'onglet « Trajet » (1 h 30 / 30 arrêts) : une seule durée pour un trajet
+    local keepN, total = #st, tonumber(st.total) or 0
+    if type(R.Horizon) == "function" then
+      local okH, kn, tt = pcall(R.Horizon, st)
+      if okH and tonumber(kn) then keepN, total = kn, tonumber(tt) or total end
+    end
+    g.total = total
+    -- (QA-QUEST F18) mêmes numéros d'arrêt que l'onglet, la page Trajet et la carte du monde (R.Groups)
+    local grp
+    if type(R.Groups) == "function" then
+      local okG, gg = pcall(R.Groups, st, keepN)
+      if okG and type(gg) == "table" then grp = gg end
+    end
+    local seenQ, k, via = {}, 0, false
+    for i, e in ipairs(st) do
+      if i > keepN then break end
       local s = e.step
       if k < n then
         k = k + 1
-        local step = { n = k, kind = s and s.k or e.kind, q = s and s.q }
+        local step = { n = (grp and grp[i]) or k, kind = s and s.k or e.kind, q = s and s.q }
         if s then
-          step.title = strip(P:StepLabel(s))
+          -- (4.0 QA) Prendre / Rendre : le titre entier (le libellé du plan le coupe à 32 lettres) ; la carte le
+          -- raccourcit elle-même une seule fois, la page Quêtes / Maintenant a la place de l'écrire en entier
+          local full = (s.k == "pick" or s.k == "turn") and not (s.label and s.label ~= "") and s.q and questTitle(s.q)
+          step.title = full and ((s.k == "pick" and "Prendre « " or "Rendre « ") .. strip(full) .. " »") or strip(P:StepLabel(s))
           local lq = P.log and s.q and P.log[s.q]
           local o = lq and lq.obj and lq.obj[tonumber(s.o) or 0]
           local prog = (o and (o.n or 0) > 0) and fmt("%d/%d", o.have or 0, o.n) or nil
-          local where = whereTxt(st.here, e.place)
+          -- (QUESTQA F4) après un vol / un bateau / la pierre de foyer : le temps du trajet, pas une ligne droite
+          -- à pied depuis le joueur
+          local where
+          if via then
+            local m = minutesTxt(e.at)
+            where = m and ("dans " .. m) or nil
+          else where = whereTxt(st.here, e.place) end
           local parts = {}
-          if s.k == "pick" then parts[#parts + 1] = "nouvelle quête"
-          elseif s.k == "turn" then parts[#parts + 1] = "quête finie"
-          elseif s.k == "obj" then
+          -- (4.0 QA) « nouvelle quête » / « quête finie » : la pastille « ! » / « ? » le dit déjà
+          if s.k == "obj" then
             local qt = s.q and questTitle(s.q)
             parts[#parts + 1] = prog and ("objectif " .. prog) or "objectif"
             if qt then parts[#parts + 1] = "« " .. strip(qt) .. " »" end
@@ -336,16 +382,26 @@ function W.Guide(n, full)
           step.sub = tconcat(parts, " · ")
           step.mark = MARK[s.k]
           step.icon = KIND_ICON[s.k] or KIND_ICON.obj
-          step.onClick = function() P:Navigate(s) end
-          step.actionText = "guider la boussole vers cette étape"
+          -- (4.0 QA) clic offert seulement quand l'étape a une position (sinon rien à viser) ; la pierre de foyer
+          -- ne se rejoint pas à pied : pas de guidage, un rappel
+          if s.k == "hs" then
+            step.hint = "Pierre de foyer : utilise-la (sacs ou barre de quête)"
+          elseif s.map and s.x then
+            step.onClick = function() P:Navigate(s) end
+            step.actionText = "guider la boussole vers cette étape"
+          end
           local Zp = T.ZonePlan
           if Zp and Zp.StopMenu and Zp.IsEnabled and Zp:IsEnabled() then step.onRightClick = function() Zp:StopMenu(s) end end
         else
           step.title = strip(e.text or "?")
           step.sub = "trajet · " .. (minutesTxt(e.sec) or "≈ 1 min")
           step.icon = KIND_ICON[e.kind] or KIND_ICON.fly
-          local p = e.place
-          if p and p.map then
+          -- (QA-QUEST F4) vol / bateau / zeppelin : guider vers le DÉPART (maître de vol, quai : `from`), pas vers
+          -- l'arrivée ; pierre de foyer : rien à rejoindre, un rappel au survol
+          local p = e.kind ~= "hs" and (e.from or e.place) or nil
+          if e.kind == "hs" then
+            step.hint = "Pierre de foyer : utilise-la (sacs ou barre de quête)"
+          elseif p and p.map then
             step.onClick = function() P:Navigate({ k = "fly", map = p.map, x = p.x, y = p.y, label = e.text }) end
             step.actionText = "guider vers ce départ"
           end
@@ -355,22 +411,25 @@ function W.Guide(n, full)
         seenQ[s.q] = true
         local lv, t2 = questLevel(s.q)
         g.upcoming[#g.upcoming + 1] = { q = s.q, level = lv, title = questTitle(s.q) or t2 or ("Quête " .. s.q),
-          onClick = function() P:Navigate(s) end }
+          onClick = (s.map and s.x) and function() P:Navigate(s) end or nil }
       end
       local pl, h = e.place, st.here
-      if s and s.q and pl and h and pl.c == h.c and pl.n and h.n then
+      if s and s.q and not via and pl and h and pl.c == h.c and pl.n and h.n then
         local dn, dw = pl.n - h.n, pl.w - h.w
         if dn * dn + dw * dw < 490000 then g.near = g.near + 1 end     -- < 700 yd (≈ 640 m, 3 min à pied)
       end
+      if e.kind and e.kind ~= "quest" then via = true end           -- vol, bateau, zeppelin, pierre de foyer
     end
-    g.count = #st
+    g.count = keepN
   end
   if #g.steps == 0 and not g.paused then
-    -- pas de trajet : les lignes de « Maintenant » (l'étape épinglée de Quests / Planner d'abord)
+    -- pas de trajet : les lignes de « Maintenant » (l'étape épinglée de Quests / Planner d'abord), SANS numéro
+    -- (ce ne sont pas des étapes) et sans les avis du cœur (« Mode sûr… », profil) qui ne sont pas des choses à faire
     for _, e in ipairs(T.GetTabLines and T:GetTabLines("now") or {}) do
       if #g.steps >= n then break end
-      if not e.header and not e.control then
-        g.steps[#g.steps + 1] = { n = #g.steps + 1, title = strip(e.text), sub = e.right and strip(e.right) or nil,
+      local id = tostring(e.id or "")
+      if not e.header and not e.control and e.kind ~= "always" and not id:find("^core:") then
+        g.steps[#g.steps + 1] = { n = nil, title = strip(e.text), sub = e.right and strip(e.right) or nil,
           icon = e.icon, danger = (e.prio or 1) >= 3, entry = e, onClick = e.onClick, onRightClick = e.onRightClick }
       end
     end
@@ -378,12 +437,13 @@ function W.Guide(n, full)
   return g
 end
 
---- « 1 en cours · 3 proches · 3 min » (rien d'inventé : chaque morceau absent est omis)
-function W.GuideSummary(g)
+--- « 12 dans le journal · 3 arrêts proches · ≈ 3 min » (rien d'inventé : chaque morceau absent est omis) ;
+--- short = la carte (place comptée) : avec un trajet, le journal est laissé à la page « Quêtes »
+function W.GuideSummary(g, short)
   local p = {}
-  if g.inLog > 0 then p[#p + 1] = fmt("%d en cours", g.inLog) end
-  if g.near > 0 then p[#p + 1] = fmt("%d proche%s", g.near, g.near > 1 and "s" or "") end
   local m = minutesTxt(g.total)
+  if g.inLog > 0 and not (short and (g.near > 0 or m)) then p[#p + 1] = fmt("%d dans le journal", g.inLog) end
+  if g.near > 0 then p[#p + 1] = fmt("%d arrêt%s proche%s", g.near, g.near > 1 and "s" or "", g.near > 1 and "s" or "") end
   if m then p[#p + 1] = m end
   return tconcat(p, " · ")
 end
@@ -401,9 +461,11 @@ local function buildCard()
   meth(card, "SetMovable", true)
   meth(card, "EnableMouse", true)
   local th = Th()
-  if th then th:Skin(card, "card"); if th.Shadow then th:Shadow(card, 8) end else
+  -- (4.0 QA) thème refusé (Options > Thème décoché) : notre fond sombre, jamais un texte posé sur le monde
+  if not (th and th:Skin(card, "card")) then
     card.bgt = meth(card, "CreateTexture", nil, "BACKGROUND"); meth(card.bgt, "SetAllPoints", card); color(card.bgt, 0.05, 0.06, 0.08, 0.9)
   end
+  if th and th.Shadow then th:Shadow(card, 8) end
   -- en-tête : icône + titre + résumé ; clic = fenêtre TreeAI (page Quêtes), glisser = déplacer
   local hero = newButton(card)
   meth(hero, "SetPoint", "TOPLEFT", card, "TOPLEFT", 4, -4)
@@ -434,9 +496,14 @@ local function buildCard()
     if btn == "RightButton" then
       if W.char then W.char.optPage = "Window" end
       W.Open("options")
-    else W.Open("quests") end
+    else W.Open(card.mode == "dungeon" and "dungeon" or "quests") end
   end)
   meth(hero, "SetScript", "OnEnter", function(self)
+    if card.mode == "dungeon" then
+      W.Tooltip(self, "Prochaine étape", { "En donjon : le prochain boss, les objets de quête, la préparation.",
+        "Glisser : déplacer la carte" }, "Clic : ouvrir la fenêtre TreeAI (Donjons)\nClic droit : réglages de la carte")
+      return
+    end
     W.Tooltip(self, "Prochaine étape", { "Ton trajet en cours : les prochaines étapes, dans l'ordre.",
       "Glisser : déplacer la carte" }, "Clic : ouvrir la fenêtre TreeAI (Quêtes)\nClic droit : réglages de la carte")
   end)
@@ -468,6 +535,12 @@ local function buildCard()
         if sc and W.db then W.db.cardScale = floor(sc * 100 + 0.5) end
       end,
       onReset = function() if W.char then W.char.cardPos = nil end W.PlaceCard() end,
+      -- (4.0 QA) mode édition : la carte est LE cadre à placer (affichée avant que son calque soit posé)
+      show = function()
+        if not cardOn() or inCombat() then return end
+        W.RenderCard(true)
+        meth(card, "Show")
+      end,
     })
   end
   return card
@@ -492,7 +565,8 @@ local function stepRow(i)
   meth(r, "SetScript", "OnEnter", function(self)
     local s = self.step
     if not s then return end
-    local hint = s.onClick and ("Clic : " .. (s.actionText or "faire cette étape")) or nil
+    if s.entry then return entryTip(self, s.entry) end   -- ligne de « Maintenant » / du donjon : texte entier + clic
+    local hint = s.onClick and ("Clic : " .. (s.actionText or "faire cette étape")) or s.hint
     if s.onRightClick then hint = (hint and hint .. "\n" or "") .. "Clic droit : ignorer cette quête…" end
     W.Tooltip(self, s.title, s.sub and { s.sub } or (s.entry and s.entry.tooltip), hint)
   end)
@@ -515,6 +589,158 @@ local function playerBucket()
   if not (m and x) then return "" end
   return m .. ":" .. floor(x / 1.5) .. ":" .. floor(y / 1.5)     -- ≈ 1,5 % de carte : la distance affichée change
 end
+-- (4.0 QA) la carte coupe elle-même ses textes (224 px, petite police) : UNE ellipse, et dans « … » le titre de
+-- quête est raccourci en gardant le guillemet fermant (jamais « Prendre « Les salines : le venin acide de… » »)
+local CARD_TXT = 224
+local function ucut(s, n)
+  local t, k = {}, 0
+  for ch in s:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
+    k = k + 1
+    if k > n then break end
+    t[k] = ch
+  end
+  return (tconcat(t):gsub("%s+$", ""))
+end
+local function fitCard(s)
+  s = strip(s or "")
+  if ulen(s) * AVG.S <= CARD_TXT then return s end
+  local maxG = floor(CARD_TXT / AVG.S)
+  local pre, inner, post = s:match("^(.-« )(.-)( »)$")
+  if pre then
+    inner = inner:gsub("…$", "")
+    local room = maxG - ulen(pre) - ulen(post) - 1
+    if room >= 6 then return pre .. ucut(inner, room) .. "…" .. post end
+  end
+  return ucut(s:gsub("…$", ""), maxG - 1) .. "…"
+end
+W.FitCard, W.UCut = fitCard, ucut
+-- une ligne trop longue pour la carte (224 px, petite police) : début en titre, la suite en sous-titre
+local function splitLine(s)
+  s = strip(s)
+  if ulen(s) * AVG.S <= 220 then return s, nil end
+  for _, sep in ipairs({ " — ", " · ", " : " }) do
+    local a = s:find(sep, 1, true)
+    if a and a > 6 then return s:sub(1, a - 1), s:sub(a + #sep) end
+  end
+  return s, nil
+end
+local function lineRow(e, n, extra)
+  local t1, t2 = splitLine(e.text)
+  local r = { n = n, title = t1, sub = t2 or (e.right and strip(e.right)) or nil, entry = e, icon = e.icon,
+    danger = (e.prio or 1) >= 3 }
+  for k, v in pairs(extra or {}) do r[k] = v end
+  return r
+end
+-- (4.0 QA) mort / fantôme : la course au corps passe avant tout (ligne « Cadavre : … » du module Speed, contrat
+-- d'id « corpse », quelle que soit sa priorité) ; jamais une étape de quête à un fantôme
+local function deathRows(now, ps)
+  for _, e in ipairs(now) do
+    if tostring(e.id or ""):find("corpse", 1, true) and not e.header and not e.control then
+      return { lineRow(e, "!", { danger = true }) }
+    end
+  end
+  if ps.ghost then
+    return { { n = "!", title = "Fantôme : retourne à ton corps", sub = "la boussole le vise", danger = true } }
+  end
+  return { { n = "!", title = "Mort : attends un rez ou libère ton esprit", sub = "ensuite, la boussole vise ton corps",
+    danger = true } }
+end
+-- (4.0 QA) en donjon : les lignes du module Donjon (prochain boss, objets de quête, préparation), jamais les
+-- étapes de quête du dehors. Contrat : T:GetTabLines("dungeon"), une source par bloc (Dungeon.BLOCKS).
+local DG_ORDER = { ["Prochain boss"] = 1, ["Quêtes du donjon"] = 2, ["Préparation"] = 3, ["Dungeon"] = 4, ["Chasseur"] = 5 }
+local function inDungeon()
+  local D = T.Dungeon
+  if D and type(D.Instance) == "function" then
+    local ok, inInst = pcall(D.Instance)
+    return ok and inInst and true or false
+  end
+  local inInst, kind = try(G.IsInInstance)
+  return (inInst == true and (kind == "party" or kind == "raid" or kind == "scenario")) and true or false
+end
+W.InDungeon = inDungeon
+local function dungeonRows(n)
+  local D = T.Dungeon
+  if not (D and D._active) then
+    return { { title = "Suivi en donjon coupé (bêta)", sub = "clic : l'allumer (prochain boss, objets de quête)",
+      icon = ICON .. "INV_Misc_Key_03", actionText = "allumer le module Donjon (sans /reload)",
+      onClick = function() T:SetModuleEnabled("Dungeon", true) end } }
+  end
+  local cand = {}
+  for i, e in ipairs(T.GetTabLines and T:GetTabLines("dungeon") or {}) do
+    local rank = DG_ORDER[e.source or ""]
+    if rank and not e.header and not e.control and (e.source ~= "Dungeon" or (e.prio or 1) >= 3) then
+      cand[#cand + 1] = { e = e, r = rank, i = i }
+    end
+  end
+  tsort(cand, function(a, b) if a.r ~= b.r then return a.r < b.r end return a.i < b.i end)
+  local rows = {}
+  for _, c in ipairs(cand) do
+    if #rows >= n then break end
+    rows[#rows + 1] = lineRow(c.e, nil, { icon = c.e.icon or (ICON .. "INV_Misc_Key_03") })
+  end
+  return rows
+end
+local function dungeonSub()
+  local D = T.Dungeon
+  local d = D and D._active and try(D.Current)
+  if d and type(D.NextBoss) == "function" then
+    local ok, _, nk, ntot = pcall(D.NextBoss, d)
+    if ok and tonumber(ntot) and ntot > 0 then return fmt("Donjon · %d/%d boss", tonumber(nk) or 0, ntot) end
+  end
+  return "Donjon"
+end
+
+-- avis / questions d'une fois montrés en tête de la carte (badge « i ») : sans eux, des lignes disparaîtraient sans
+-- un mot (mode sûr) ou un automatisme resterait inconnu (quêtes automatiques, proposées une fois)
+W.CARD_NOTICE = {
+  ["core:safe"] = { "Mode sûr : fonctions bêta coupées", "clic : les voir et les allumer" },
+  ["mod:quick:auto"] = { "Accepter et rendre les quêtes tout seul ?", "clic : oui · clic droit : non" },
+}
+--- (4.0 QA) ce que montre la carte, calculé une fois pour tous (carte, infobulle de la pastille) :
+--- rows, mode ("route" | "dungeon" | "death"), titre, résumé, en pause. `now` = lignes de « Maintenant ».
+function W.CardModel(nSteps, now, ps)
+  now = now or (T.GetTabLines and T:GetTabLines("now")) or {}
+  ps = ps or (T.PlayerState and T:PlayerState()) or {}
+  nSteps = nSteps or 3
+  local dead = (ps.dead or ps.ghost) and true or false
+  local danger, notice
+  for _, e in ipairs(now) do
+    if not e.header and not e.control then
+      if not danger and (e.prio or 1) >= 3 then danger = e end
+      if not notice and W.CARD_NOTICE[e.id or ""] then notice = e end
+    end
+  end
+  local rows, mode, title, sum, paused = {}, "route", zoneName() or "?", nil, false
+  if dead then
+    mode, sum = "death", ps.ghost and "Fantôme : course au corps" or "Mort"
+    rows = deathRows(now, ps)
+  else
+    if notice then
+      local nt = W.CARD_NOTICE[notice.id] or {}
+      rows[#rows + 1] = lineRow(notice, "i", { notice = true, danger = false, title = nt[1], sub = nt[2] })
+    end
+    if danger then rows[#rows + 1] = lineRow(danger, "!", { danger = true }) end
+    if inDungeon() then
+      mode, sum = "dungeon", dungeonSub()
+      for _, r in ipairs(dungeonRows(nSteps)) do rows[#rows + 1] = r end
+    else
+      local g = W.Guide(nSteps)
+      paused = g.paused and true or false
+      if paused then title = "Trajet en pause" end
+      sum = W.GuideSummary(g, true)
+      if sum == "" then sum = "Aucune quête en cours ici" end
+      for _, r in ipairs(g.steps) do rows[#rows + 1] = r end
+    end
+  end
+  return rows, mode, title, sum, paused, danger, notice
+end
+--- (4.0 QA) la première vraie ligne de la carte (pas un avis) : l'infobulle de la pastille dit la même chose
+function W.TopLine()
+  local rows = W.CardModel(1)
+  for _, r in ipairs(rows) do if not r.notice then return r end end
+  return nil
+end
+
 function W.RenderCard(force)
   if not cardOn() then if card then meth(card, "Hide") end return end
   if not card then buildCard() end
@@ -524,48 +750,55 @@ function W.RenderCard(force)
   -- clé bon marché : rien n'a bougé (étapes, curseur, arrêts, lignes de « Maintenant », position) → rien à refaire
   local P, R = T.Planner, T.Route
   local Q = T.modules and T.modules.Quests
-  -- danger d'abord (mort, familier mort, sacs pleins…) : une ligne rouge au-dessus des étapes
+  -- danger d'abord (familier mort, sacs pleins…) : une ligne rouge au-dessus des étapes ; l'avis « mode sûr »
+  -- une fois en tête (badge « i ») : sans lui, les lignes des fonctions bêta disparaîtraient sans un mot
   local now = T.GetTabLines and T:GetTabLines("now") or {}     -- déjà en cache après un rendu du panneau
-  local danger
+  local ps = T.PlayerState and T:PlayerState() or {}
+  local dead = (ps.dead or ps.ghost) and true or false
+  local dg = not dead and inDungeon()
+  local danger, notice
   for _, e in ipairs(now) do
-    if (e.prio or 1) >= 3 and not e.header and not e.control then danger = e break end
+    if not e.header and not e.control then
+      if not danger and (e.prio or 1) >= 3 then danger = e end
+      if not notice and W.CARD_NOTICE[e.id or ""] then notice = e end
+    end
   end
   -- clé : avec un trajet, seules les étapes / le journal / la position / le danger comptent (pas les autres
-  -- onglets) ; sans trajet, la carte montre « Maintenant » → toute nouvelle ligne compte
+  -- onglets) ; sans trajet, la carte montre « Maintenant » → toute nouvelle ligne compte ; en donjon / mort : idem
   local routed = P and P.steps and R and R.IsEnabled and R:IsEnabled()
-  local key = (routed and "" or tostring(T.DataGen and T:DataGen())) .. tostring(P and P.steps) .. tostring(P and P.cursor)
-    .. tostring(P and P.steps and #P.steps) .. tostring(Q and Q.lastList) .. playerBucket()
-    .. tostring(R and R.char and R.char.paused) .. (danger and tostring(danger.text) or "")
+  local key = ((routed and not dg and not dead) and "" or tostring(T.DataGen and T:DataGen())) .. tostring(P and P.steps)
+    .. tostring(P and P.cursor) .. tostring(P and P.steps and #P.steps) .. tostring(Q and Q.lastList) .. playerBucket()
+    .. tostring(R and R.char and R.char.paused) .. (danger and tostring(danger.text) or "") .. (notice and "N" or "")
+    .. (ps.ghost and "G" or (ps.dead and "D" or "")) .. (dg and "I" or "")
   if not force and key == cardKey then return end
   cardKey, cardAt = key, t
   local nSteps = min(5, max(1, tonumber(W.db.cardSteps) or 3))
-  local g = W.Guide(nSteps)
-  local sigT = { g.zone, g.inLog, g.near, floor((g.total or 0) / 60), g.paused and 1 or 0, danger and danger.text or "" }
-  for _, s in ipairs(g.steps) do sigT[#sigT + 1] = (s.title or "") .. "|" .. (s.sub or "") end
+  local rows, mode, title, sum, paused = W.CardModel(nSteps, now, ps)
+  card.mode = mode
+  local sigT = { mode, title, sum }
+  for _, s in ipairs(rows) do sigT[#sigT + 1] = tostring(s.n) .. "|" .. (s.title or "") .. "|" .. (s.sub or "") end
   local sig = tconcat(sigT, "\n")
   if sig == cardSig and not force then return end
   cardSig = sig
   local hero = card.hero
-  meth(hero.title, "SetText", (g.paused and "Trajet en pause" or ("Histoire : " .. g.zone)))
-  local sum = W.GuideSummary(g)
-  meth(hero.sub, "SetText", sum ~= "" and sum or "Aucune quête en cours ici")
+  meth(hero.title, "SetText", safe(title))
+  meth(hero.sub, "SetText", safe(sum))
   local y = 4 + HERO_H + 4
-  local rows = {}
-  if danger then rows[#rows + 1] = { n = "!", title = strip(danger.text), sub = danger.right and strip(danger.right),
-    entry = danger, danger = true } end
-  for _, s in ipairs(g.steps) do rows[#rows + 1] = s end
+  local first = true
   for i, s in ipairs(rows) do
     local r = stepRow(i)
     r.step = s
     meth(r, "ClearAllPoints")
     meth(r, "SetPoint", "TOPLEFT", card, "TOPLEFT", 4, -y)
     meth(r, "SetPoint", "TOPRIGHT", card, "TOPRIGHT", -4, -y)
-    r.badge:Set(s.n, s.mark, i == 1)
-    meth(r.title, "SetText", s.title or "")
+    local lead = first and not s.danger and not s.notice
+    r.badge:Set(s.n, s.mark, i == 1 or lead, s.icon)
+    meth(r.title, "SetText", fitCard(safe(s.title or "")))
     if s.danger then meth(r.title, "SetTextColor", tok("prio3", 1, 0.3, 0.25))
-    elseif i == 1 or (danger and i == 2) then meth(r.title, "SetTextColor", tok("gold", 1, 0.82, 0.2))
+    elseif lead then meth(r.title, "SetTextColor", tok("gold", 1, 0.82, 0.2))
     else meth(r.title, "SetTextColor", tok("text", 0.92, 0.92, 0.92)) end
-    meth(r.sub, "SetText", s.sub or "")
+    if lead then first = false end
+    meth(r.sub, "SetText", fitCard(safe(s.sub or "")))
     local h = (s.sub and s.sub ~= "") and STEP_H or 24
     meth(r, "SetHeight", h)
     meth(r, "Show")
@@ -573,8 +806,9 @@ function W.RenderCard(force)
   end
   for i = #rows + 1, #card.steps do meth(card.steps[i], "Hide") end
   if #rows == 0 then
-    meth(card.empty, "SetText", g.paused and "Clique sur l'en-tête pour reprendre le trajet." or
-      "Rien à suivre ici. Clique « Ouvrir » pour choisir une zone ou un donjon.")
+    meth(card.empty, "SetText", (mode == "dungeon" and "En donjon : TreeAI n'a pas de fiche pour celui-ci.")
+      or (paused and "Trajet en pause : « Ouvrir », puis « Reprendre ».")
+      or "Rien à suivre ici : prends des quêtes (PNJ marqués « ! ») ou ouvre « Donjons ».")
     meth(card.empty, "Show")
     y = y + 32
   else meth(card.empty, "Hide") end
@@ -647,12 +881,27 @@ function W.ShowCard()
   if userPanel and p and meth(p, "IsShown") then return end   -- le joueur lit le panneau : pas les deux
   buildCard()
   if not card then return end
-  W.PlaceCard()
+  -- (4.0 QA) dessinée d'abord, posée ensuite : le garde-fou « pas sur un suivi de quêtes » mesure sa vraie taille
   W.RenderCard(true)
+  W.PlaceCard()
   meth(card, "Show")
   hidePanelForCard()
 end
 function W.HideCard() if card then meth(card, "Hide") end end
+--- (4.0 QA) la carte est-elle l'affichage de l'étape (le panneau texte n'apparaît que si le joueur l'a ouvert) ?
+function W.CardIsHUD() return (W._active and cardOn() and W.db.replacePanel ~= false and not userPanel) and true or false end
+T.CardIsHUD = function() return W.CardIsHUD() end
+--- (4.0 QA) « Réinitialiser l'interface », assistant de démarrage : la carte revient (à la place automatique du
+--- panneau si resetPos), le panneau texte se cache ; faux = la carte ne remplace pas le panneau (l'appelant le montre)
+function W.ShowHUD(resetPos)
+  if not (W._active and cardOn() and W.db.replacePanel ~= false) then return false end
+  userPanel = false
+  if resetPos and W.char then W.char.cardPos = nil end
+  local p = T.GetPanel and T:GetPanel()
+  if p and meth(p, "IsShown") then meth(p, "Hide") end
+  W.ShowCard()
+  return true
+end
 --- ligne « Zone : … » de la page Trajet (choix de la zone de travail) si elle est à l'écran, sinon nil (visite guidée)
 function W.ZoneRow()
   local b = W.zoneRow
@@ -680,12 +929,18 @@ W.NAV_W = NAV_W
 
 local function version()
   local v = T.API and T.API.AddOnMeta and T.API.AddOnMeta("TreeAI", "Version")
-  return (type(v) == "string" and v ~= "") and v or "?"
+  if not (type(v) == "string" and v ~= "") then v = T.version end
+  v = tostring(v or "?")
+  return v:match("^(%d+%.%d+)%.0$") or v           -- « 4.0.0 » → « 4.0 »
 end
+W.Version = version
 
 local pools = {}
 local content, scroll
 local function pool(kind, make) local p = pools[kind] if not p then p = newPool(make); pools[kind] = p end return p end
+-- (4.0 QA) réserve enregistrée : vidée (cachée, compteur remis à 0) à chaque rendu et à chaque changement de page
+-- → les pages (cartes de donjon…) recyclent leurs cadres au lieu d'en créer à chaque rendu
+W._pool = pool
 
 -- -------------------------------------------------- moteur de mise en page (vertical, une colonne, sans chevauchement)
 -- Lay.y avance à chaque widget ; Lay.rects garde chaque rectangle (le harnais vérifie : rien ne se chevauche).
@@ -700,6 +955,7 @@ local function newLay(width)
     local fs = acquire(pool("text" .. (size or "S"), function() return text(content, size or "S", "text") end))
     local x = PAD + (indent or 0)
     local w = Ly.col - (indent or 0)
+    str = safe(str)
     meth(fs, "SetWidth", w)
     meth(fs, "SetWordWrap", true)
     meth(fs, "SetText", str)
@@ -746,7 +1002,7 @@ local function newLay(width)
     meth(b.t, "ClearAllPoints")
     meth(b.t, "SetPoint", "LEFT", b, "LEFT", icon and 28 or 8, 0)
     meth(b.t, "SetPoint", "RIGHT", b.n, "LEFT", -6, 0)
-    meth(b.t, "SetText", str)
+    meth(b.t, "SetText", safe(str))
     meth(b.n, "SetText", count and tostring(count) or "")
     local closed = false
     if key then
@@ -798,7 +1054,7 @@ local function newLay(width)
     meth(b.t, "SetWidth", tw)
     meth(b.t, "SetText", safe(e.text))
     meth(b.t, "SetTextColor", r, g, bl)
-    meth(b.r, "SetText", e.right or "")
+    meth(b.r, "SetText", safe(e.right or ""))
     local h = max(24, measure(b.t, safe(e.text), tw, "S") + 12)
     meth(b, "SetSize", Ly.col, h)
     color(b.bg, tok("button", 0.14, 0.15, 0.19, (e.onClick and 0.55) or 0.25))
@@ -835,9 +1091,9 @@ local function newLay(width)
     border(b, tok("border", 0.78, 0.62, 0.28, 0.9))
     meth(b.icon, "SetTexture", icon or (ICON .. "INV_Misc_Book_09"))
     for _, fs in ipairs({ b.t, b.s, b.s2 }) do meth(fs, "SetWidth", Ly.col - 72) end
-    meth(b.t, "SetText", title or "")
-    meth(b.s, "SetText", sub or "")
-    meth(b.s2, "SetText", sub2 or "")
+    meth(b.t, "SetText", safe(title or ""))
+    meth(b.s, "SetText", safe(sub or ""))
+    meth(b.s2, "SetText", safe(sub2 or ""))
     b.fn, b.titleText, b.tipL, b.hint = onClick, title, tipLines, hint
     at(b, PAD, Ly.y)
     rec("hero", PAD, Ly.y, Ly.col, BLOCK.hero, title)
@@ -860,7 +1116,7 @@ local function newLay(width)
       meth(f, "SetScript", "OnEnter", function(self)
         local st = self.step
         if not st then return end
-        local hint = st.onClick and ("Clic : " .. (st.actionText or "faire cette étape")) or nil
+        local hint = st.onClick and ("Clic : " .. (st.actionText or "faire cette étape")) or st.hint
         if st.onRightClick then hint = (hint and hint .. "\n" or "") .. "Clic droit : ignorer cette quête…" end
         W.Tooltip(self, st.title, st.sub and { st.sub } or nil, hint)
       end)
@@ -875,7 +1131,7 @@ local function newLay(width)
     if s.danger then meth(b.t, "SetTextColor", tok("prio3", 1, 0.3, 0.25))
     elseif hot then meth(b.t, "SetTextColor", tok("gold", 1, 0.82, 0.2))
     else meth(b.t, "SetTextColor", tok("text", 0.92, 0.92, 0.92)) end
-    meth(b.s, "SetText", s.sub or "")
+    meth(b.s, "SetText", safe(s.sub or ""))
     local h = BLOCK.step
     meth(b, "SetSize", Ly.col, h)
     if hot then color(b.bg, 0.40, 0.30, 0.05, 0.55); border(b, tok("gold", 1, 0.82, 0.2, 0.9))
@@ -906,9 +1162,9 @@ local function newLay(width)
     if th and th.QuestDiffColor then r, g, bl = th:QuestDiffColor(level, pl) end
     local label = (level and ("[" .. level .. "] ") or "") .. strip(title)
     meth(b.t, "SetWidth", Ly.col - 52); meth(b.s, "SetWidth", Ly.col - 52)
-    meth(b.t, "SetText", label)
+    meth(b.t, "SetText", safe(label))
     meth(b.t, "SetTextColor", r, g, bl)
-    meth(b.s, "SetText", sub or "")
+    meth(b.s, "SetText", safe(sub or ""))
     meth(b, "SetSize", Ly.col, BLOCK.quest)
     color(b.bg, tok("button", 0.14, 0.15, 0.19, 0.55))
     b.fn, b.titleText = onClick, label
@@ -937,7 +1193,7 @@ local function newLay(width)
       if c == 0 and i > 1 then Ly.y = Ly.y + 28 end
       local b = acquire(p)
       meth(b, "SetSize", bw, 24)
-      meth(b.label, "SetText", it[1])
+      meth(b.label, "SetText", safe(it[1]))
       b.fn, b.tip, b.labelText = it[2], it[3], it[1]
       local x = PAD + c * (bw + 8)
       at(b, x, Ly.y)
@@ -1013,7 +1269,7 @@ function W.RenderTab(Ly, tabId, emptyText, skip, emptyAction)
       shown = shown + 1
     end
   end
-  if shown == 0 and #ctrls == 0 then
+  if shown == 0 then   -- (4.0 QA) même avec des boutons au-dessus : une phrase qui dit ce qu'il en est
     Ly.empty(query ~= "" and ("Rien ne correspond à « " .. query .. " ».") or emptyText or "Rien pour l'instant.", emptyAction)
   end
   return shown
@@ -1049,7 +1305,9 @@ local function buildWindow()
     th:Window(win, { id = "main", header = false, skin = "card",
       resize = { minW = 640, minH = 420, maxW = 1400, maxH = 1000, onResize = function() W.Render() end },
       onClose = function() W.Close() end })
-  else
+  end
+  -- (4.0 QA) thème refusé (Options > Thème décoché) : notre fond sombre quand même
+  if not (th and th.IsSkinned and th:IsSkinned(win)) then
     win.bgt = meth(win, "CreateTexture", nil, "BACKGROUND"); meth(win.bgt, "SetAllPoints", win); color(win.bgt, 0.05, 0.06, 0.08, 0.95)
   end
   if st and st.point then meth(win, "ClearAllPoints"); meth(win, "SetPoint", st.point, G.UIParent, st.point, st.x or 0, st.y or 0)
@@ -1246,7 +1504,14 @@ function W.Render()
     win.action.fn, win.action.tip, win.action.labelText = fn, tip, label
     meth(win.action, "Show")
   else meth(win.action, "Hide") end
-  meth(win.status, "SetText", p.status and (try(p.status) or "") or "")
+  local status = p.status and (try(p.status) or "") or ""
+  if W._flash and lastRender < W._flash.t then status = W._flash.text else W._flash = nil end
+  meth(win.status, "SetText", safe(status))
+end
+--- (4.0 QA) le résultat d'un clic (erreurs prêtes, blocages, combat…) dans le pied de la fenêtre, jamais dans le chat
+function W.Flash(text, sec)
+  W._flash = text and { text = tostring(text), t = (try(G.GetTime) or 0) + (tonumber(sec) or 10) } or nil
+  if win and meth(win, "IsShown") then meth(win.status, "SetText", safe(text or "")) end
 end
 --- Marque la page « à redessiner » (≤ 1 fois par seconde, fenêtre ouverte seulement).
 function W.Dirty()
@@ -1262,6 +1527,7 @@ function W.Select(id)
   if not W.pageIndex[id] then return end
   if W.char then W.char.page = id end
   query = ""
+  W._flash = nil
   if win and win.search then meth(win.search, "SetText", "") end
   if scroll then meth(scroll, "SetVerticalScroll", 0) end
   W.Render()
@@ -1271,8 +1537,9 @@ function W.Open(id)
   buildWindow()
   if not win then return end
   if id and W.pageIndex[id] and W.char then W.char.page = id end
+  local was = meth(win, "IsShown")
   meth(win, "Show")
-  W.Render()
+  if was then W.Render() end      -- fenêtre cachée : son OnShow la dessine déjà (pas deux rendus)
 end
 function W.Close() if win then local th = Th() if th then th:FadeOut(win) else meth(win, "Hide") end end end
 function W.Toggle(id)
@@ -1299,16 +1566,28 @@ local TAB_ICON = { now = ICON .. "Spell_Nature_TimeStop", quests = ICON .. "INV_
   tools = ICON .. "INV_Misc_Wrench_01", options = ICON .. "INV_Misc_Gear_01" }
 W.TAB_ICON = TAB_ICON
 
+-- (4.0 QA) « Tout va bien (…) » seulement pour ce qui est vraiment vérifié : sacs / réparation (Inventaire) et
+-- familier (Chasseur) sont des fonctions bêta, coupées en mode sûr
+local function allGoodText()
+  local chk = {}
+  local Inv, Hu = T.modules and T.modules.Inventory, T.modules and T.modules.Hunter
+  if Inv and Inv._active then chk[#chk + 1] = "sacs, réparation" end
+  if Hu and Hu._active then chk[#chk + 1] = "familier" end
+  return "Rien d'urgent : continue ton étape." .. (#chk > 0 and (" Tout va bien (" .. tconcat(chk, ", ") .. ").") or "")
+end
+W.AllGoodText = allGoodText
 W.AddPage({ id = "now", label = "Maintenant", icon = TAB_ICON.now, title = "Maintenant",
   desc = "Ce que tu peux faire tout de suite",
-  sub = function() local g = W.Guide(1) local s = W.GuideSummary(g) return (g.zone or "") .. (s ~= "" and (" · " .. s) or "") end,
+  sub = function() local g = W.Guide(1) local s = W.GuideSummary(g, true) return (g.zone or "") .. (s ~= "" and (" · " .. s) or "") end,
   badge = function()
     local n = 0
     for _, e in ipairs(T.GetTabLines and T:GetTabLines("now") or {}) do if (e.prio or 1) >= 3 then n = n + 1 end end
     return n > 0 and n or nil
   end,
   render = function(Ly)
-    local g = W.Guide(3)
+    -- mort / fantôme / en donjon : pas d'étapes de quête du dehors au-dessus (la course au corps, le donjon d'abord)
+    local ps = T.PlayerState and T:PlayerState() or {}
+    local g = (ps.dead or ps.ghost or inDungeon()) and { steps = {} } or W.Guide(3)
     local guided = #g.steps > 0 and not g.steps[1].entry
     if guided then
       Ly.header("Prochaine étape", nil, nil, ICON .. "INV_Misc_Book_09")
@@ -1317,16 +1596,16 @@ W.AddPage({ id = "now", label = "Maintenant", icon = TAB_ICON.now, title = "Main
     Ly.header("À faire maintenant", nil, nil, TAB_ICON.now)
     -- l'étape épinglée (trajet / « Étape ») est déjà dessinée au-dessus : pas deux fois
     local steps = T.STEP_SOURCES or {}
-    W.RenderTab(Ly, "now", "Rien d'urgent : continue ton étape. Tout va bien (sacs, réparation, familier).",
+    W.RenderTab(Ly, "now", allGoodText(),
       guided and function(e) return e.pin and steps[e.source or ""] and (e.prio or 1) < 3 end or nil)
   end,
   action = function()
     if W.db and W.db.card ~= false then
-      return (card and meth(card, "IsShown")) and "Cacher la carte" or "Afficher la carte",
-        function() if card and meth(card, "IsShown") then W.HideCard() else W.ShowCard() end end,
-        "La petite carte « Prochaine étape » à l'écran"
+      return "Cacher la carte", function() W.db.card = false W:OnOptionChanged("card") end,
+        "Clic : cacher la carte « Prochaine étape » (gardé au /reload)"
     end
-    return nil
+    return "Afficher la carte", function() W.db.card = true W:OnOptionChanged("card") end,
+      "Clic : afficher la carte « Prochaine étape »"
   end,
 })
 -- (Quêtes, Trajet, Donjons : WindowPages.lua, insérés ici dans l'ordre de la navigation)
@@ -1339,19 +1618,28 @@ W.AddPage({ id = "group", label = "Groupe", icon = TAB_ICON.group, title = "Grou
   end,
   render = function(Ly)
     local Q = T.QuickTravel
-    local friends = (Q and Q._active and Q.FriendsToInvite) and (try(Q.FriendsToInvite) or {}) or {}
-    W.RenderTab(Ly, "group", "Seul pour l'instant. Invite tes amis : TreeAI synchronise vos quêtes et vos trajets.", nil,
-      (#friends > 0 and Q.InviteFriends) and { ("Inviter mes amis (%d)"):format(#friends), function() Q.InviteFriends() end,
-        "Clic : invite les amis de ton dernier groupe" } or nil)
+    -- (4.0 QA) l'état vide dit la vérité : en groupe, module Groupe coupé (bêta) → un bouton pour l'allumer
+    local inG = (tonumber(try(G.GetNumGroupMembers)) or 0) > 1
+    local Gm = T.modules and T.modules.Group
+    if inG and Gm and not Gm._active then
+      W.RenderTab(Ly, "group", "Le suivi du groupe est coupé (fonction bêta) : allume-le pour voir la vie, la zone et les quêtes de tes amis.",
+        nil, { "Allumer « Groupe »", function() T:SetModuleEnabled("Group", true) end, "Clic : allume le module Groupe (sans /reload)" })
+    elseif inG then
+      W.RenderTab(Ly, "group", "Tes amis n'ont pas TreeAI : leurs quêtes n'apparaissent qu'avec l'addon.")
+    else
+      local friends = (Q and Q._active and Q.FriendsToInvite) and (try(Q.FriendsToInvite) or {}) or {}
+      W.RenderTab(Ly, "group", "Seul pour l'instant. Invite tes amis : TreeAI synchronise vos quêtes et vos trajets.", nil,
+        (#friends > 0 and Q.InviteFriends) and { ("Inviter mes amis (%d)"):format(#friends), function() Q.InviteFriends() end,
+          "Clic : invite les amis de ton dernier groupe" } or nil)
+    end
   end })
 W.AddPage({ id = "dungeon", label = "Donjons", icon = TAB_ICON.dungeon, title = "Donjons", render = function(Ly) W.RenderTab(Ly, "dungeon") end })
 W.AddPage({ id = "hv", label = "HV", icon = TAB_ICON.hv, title = "Hôtel des ventes", desc = "Achats-reventes sûrs, ventes, bilan",
   render = function(Ly)
     local A = T.modules and T.modules.Auction
+    -- (4.0 QA) « Allumer l'HV (bêta) » : le bouton du pied de page, pas deux fois le même
     W.RenderTab(Ly, "hv", (A and A._active) and "Pas encore de prix : à l'hôtel des ventes, lance un scan complet."
-      or "Le module Hôtel des ventes est coupé (fonction bêta).", nil,
-      (A and not A._active) and { "Allumer l'HV (bêta)", function() T:SetModuleEnabled("Auction", true) end,
-        "Clic : allume le module Hôtel des ventes" } or nil)
+      or "Le module Hôtel des ventes est coupé (fonction bêta) : « Allumer l'HV (bêta) », en bas à droite.")
   end,
   action = function()
     local A = T.modules and T.modules.Auction
@@ -1363,18 +1651,30 @@ local function tabTitle(id)
   local t = T.tabs and T.tabs[id]
   return t and (L[t.title or id] or t.title) or id
 end
+-- (4.0 QA) un onglet sans titre (créé par une ligne d'un module coupé) n'est pas une page à proposer
+local function hasTitle(id) local t = T.tabs and T.tabs[id] return t and type(t.title) == "string" and t.title ~= "" end
 -- Outils : le lanceur de la pastille, en cartes (icône + titre + description), groupé
 W.AddPage({ id = "tools", label = "Outils", icon = TAB_ICON.tools, title = "Outils", desc = "Recherche, macros, boussole, cadres, erreurs",
   gapAfter = false,
   render = function(Ly)
     local H = T.Hub
-    local list = H and H.Entries and (try(H.Entries) or {}) or {}
+    -- (4.0 QA) toujours les entrées du menu principal (pas la liste bêta restée ouverte dans la pastille)
+    local list = {}
+    if H and H.Entries then
+      local m = H.mode
+      H.mode = "main"
+      list = try(H.Entries) or {}
+      H.mode = m
+    end
     local groups = { { "outils", "Outils" }, { "reglages", "Réglages et diagnostic" } }
     local any = false
     for _, gp in ipairs(groups) do
       local items = {}
       for _, e in ipairs(list) do
-        if e.group == gp[1] and e.fn and e.id ~= "options" and W.Match(e.title, e.desc, e.tip) then items[#items + 1] = e end
+        -- « Afficher / cacher le panneau » : une seule fois, dans « Panneau texte (ancien) » plus bas
+        if e.group == gp[1] and e.fn and e.id ~= "options" and e.id ~= "panel" and W.Match(e.title, e.desc, e.tip) then
+          items[#items + 1] = e
+        end
       end
       if #items > 0 then
         any = true
@@ -1390,7 +1690,7 @@ W.AddPage({ id = "tools", label = "Outils", icon = TAB_ICON.tools, title = "Outi
     local covered = { now = true, quests = true, group = true, hv = true, dungeon = true, modules = true }
     local others = {}
     for _, t in ipairs(T.GetTabs and T:GetTabs() or {}) do
-      if not covered[t.id] and W.Match(tabTitle(t.id)) then others[#others + 1] = t end
+      if not covered[t.id] and hasTitle(t.id) and W.Match(tabTitle(t.id)) then others[#others + 1] = t end
     end
     if T.tabs and T.tabs.talents and not covered.talents and W.Match(tabTitle("talents")) then others[#others + 1] = T.tabs.talents end
     if #others > 0 and Ly.header("Autres pages", "tools:tabs", #others) then
@@ -1407,7 +1707,7 @@ W.AddPage({ id = "tools", label = "Outils", icon = TAB_ICON.tools, title = "Outi
         tooltip = "L'ancien panneau texte, toujours là pour qui le préfère.",
         onClick = function() userPanel = true T:TogglePanel() end, clickHint = "Clic : afficher / cacher le panneau" })
     end
-    if not any then Ly.empty("Rien ne correspond à « " .. query .. " ».") end
+    if not any and query ~= "" then Ly.empty("Rien ne correspond à « " .. query .. " ».") end
   end,
   action = function()
     if T.SetEditMode then return "Déplacer les cadres", function() T:SetEditMode(not T:IsEditMode()) end,
@@ -1431,14 +1731,38 @@ end
 W.AddPage({ id = "modules", label = "Fonctions", icon = ICON .. "INV_Misc_EngGizmos_20", title = "Fonctions",
   desc = "Allumer / couper chaque fonction (bêta comprises)", gapAfter = true,
   render = function(Ly)
-    Ly.text("Mode sûr : seules les fonctions fiables tournent. Les fonctions « bêta » sont testées hors du jeu : allume-les une par une.", "S", "muted")
+    -- (4.0 QA) l'intro suit le profil en cours (pas « Mode sûr… » quand tout est allumé)
+    local prof = T.ModuleProfile and T:ModuleProfile()
+    local intro = (prof == "tout" and "Tout est allumé, fonctions bêta comprises (testées hors du jeu seulement).")
+      or (prof == "essentiel" and "Profil léger : seul l'essentiel tourne.")
+      or "Mode sûr : seules les fonctions fiables tournent. Les fonctions « bêta » sont testées hors du jeu : allume-les une par une."
+    Ly.text(intro, "S", "muted")
+    if W._perf then   -- « Coût des fonctions » (Options, ligne de cette page) : ici, jamais dans le chat
+      local t = try(G.GetTime) or 0
+      if not W._perfLines or t - (W._perfAt or -100) > 10 then   -- mémoire des addons relue ≤ 1 fois / 10 s
+        W._perfLines, W._perfAt = T.PerfLines and (try(T.PerfLines, T) or {}) or {}, t
+      end
+      if Ly.header("Coût des fonctions", "fn:perf", nil, ICON .. "INV_Misc_PocketWatch_01") then
+        for _, l in ipairs(W._perfLines) do Ly.text(strip(l), "S", "text", 6) end
+      end
+    end
     W.RenderTab(Ly, "modules")
   end,
   action = function()
     local prof = T.ModuleProfile and T:ModuleProfile()
-    if prof == "sur" then return "Tout allumer", function() T:SetModuleProfile("tout") end, "Clic : allumer toutes les fonctions, bêta comprises" end
+    if prof == "sur" then
+      return "Tout allumer", function() T:SetModuleProfile("tout") end,
+        "Clic : allumer toutes les fonctions bêta (les automatismes de quête restent à cocher dans Options > Barre de quête)"
+    end
     return "Revenir au mode sûr", function() T:SetModuleProfile("sur") end, "Clic : seulement les fonctions fiables"
   end })
+--- (4.0 QA) « Coût des fonctions » : la page « Fonctions » de la fenêtre le montre (au lieu du chat)
+function W.ShowPerf()
+  if not W._active then return false end
+  W._perf = true
+  W.Open("modules")
+  return true
+end
 
 -- ===================================================================== Options : le moteur de mise en page de TIDY, dans notre fenêtre
 local optFrames = {}
@@ -1533,8 +1857,10 @@ W.AddPage({ id = "options", label = "Options", icon = TAB_ICON.options, title = 
     W.optSelected = sel.key
   end,
   action = function()
-    return "Recharger l'interface", function() if not inCombat() then try(G.ReloadUI) end end,
-      "Clic : recharger l'interface (certains réglages en ont besoin)"
+    return "Recharger l'interface", function()
+      if inCombat() then W.Flash("Impossible en combat : réessaie après.") return end   -- (4.0 QA) jamais muet
+      try(G.ReloadUI)
+    end, "Clic : recharger l'interface (certains réglages en ont besoin)"
   end })
 
 -- ===================================================================== branchements (gardés)
@@ -1573,7 +1899,8 @@ if type(T.ShowPanel) == "function" and not W._wrappedPanel then
   -- panneau ouvert = la carte se retire (une seule vue de l'étape, jamais l'une sur l'autre) ; caché = elle revient
   T.ShowPanel = function(self, ...)
     userPanel = true
-    if card and meth(card, "IsShown") then meth(card, "Hide") end
+    -- (4.0 QA) en mode édition, la carte reste (son calque se pose dessus) : le joueur place les deux
+    if card and meth(card, "IsShown") and not (T.IsEditMode and T:IsEditMode()) then meth(card, "Hide") end
     return orig(self, ...)
   end
   local origH = T.HidePanel
@@ -1601,7 +1928,8 @@ if type(T.SelectTab) == "function" and not W._wrappedTab then
   end
 end
 
--- mode édition : le panneau s'y montre (le placer) ; en sortant, la carte reprend sa place
+-- mode édition : la carte s'y montre avec son calque (le panneau texte seulement s'il est ouvert à la main) ; en
+-- sortant, chacun reprend son état
 if type(T.SetEditMode) == "function" and not W._wrappedEdit then
   W._wrappedEdit = true
   local orig = T.SetEditMode
@@ -1609,7 +1937,8 @@ if type(T.SetEditMode) == "function" and not W._wrappedEdit then
     local before = userPanel
     local r = orig(self, on, ...)
     userPanel = before
-    if card and on and cardOn() then meth(card, "Show") end      -- en mode édition : les deux, pour les placer
+    if on and r == false then return r end   -- (4.0 QA) refusé (combat) : rien ne bouge, la carte ne réapparaît pas
+    if card and on and cardOn() then meth(card, "Show") end
     if not on then
       if userPanel then if card then meth(card, "Hide") end else hidePanelForCard() end
     end
@@ -1627,6 +1956,9 @@ function W:OnEnable()
   -- le joueur), les changements de zone et le journal ; ≤ 1 rendu / 2 s, signature comparée
   local function soon() if card and meth(card, "IsShown") then W.RenderCard() end end
   self:RegisterEvent("ZONE_CHANGED_NEW_AREA", function() W.ForgetStops() soon() end)
+  -- (4.0 QA) pierre de foyer / instance (écran de chargement), fin de vol : les trajets repartent d'ailleurs
+  self:RegisterEvent("PLAYER_ENTERING_WORLD", function() W.ForgetStops() soon() end)
+  self:RegisterEvent("PLAYER_CONTROL_GAINED", function() W.ForgetStops() soon() end)
   self:RegisterEvent("QUEST_LOG_UPDATE", soon)
   -- (ONBOARD) la visite guidée montre NOS cadres : la carte « Prochaine étape » et la ligne « Zone » du trajet
   local Tr = T.Tour
@@ -1648,10 +1980,8 @@ function W:OnDisable()
 end
 function W:OnOptionChanged(key)
   if key == "card" or key == "replacePanel" then
-    if cardOn() then W.ShowCard() else W.HideCard()
-      local p = T.GetPanel and T:GetPanel()
-      if p and not (T.settings and T.settings.panel and T.settings.panel.shown == false) then meth(p, "Show") end
-    end
+    -- (4.0 QA) carte cachée : le panneau texte ne revient pas tout seul (il reste dans Outils, ouvert à la main)
+    if cardOn() then W.ShowCard() else W.HideCard() end
   elseif key == "cardScale" then W.PlaceCard()
   end
   W.RenderCard(true)

@@ -54,7 +54,9 @@ return function(M, ctx)
   check(g.steps[1] and g.steps[1].mark and g.steps[1].title:find("Les sangliers", 1, true), "étape 1 : à prendre, pastille « ! »")
   check(g.steps[2] and g.steps[2].sub and g.steps[2].sub:find("objectif 3/8", 1, true) and g.steps[2].sub:find("Les scorpides", 1, true),
     "étape 2 : sous-titre gris « objectif 3/8 · « Les scorpides » » (" .. tostring(g.steps[2] and g.steps[2].sub) .. ")")
-  check(g.steps[3] and g.steps[3].sub:find("quête finie", 1, true), "étape 3 : quête finie (à rendre)")
+  -- (4.0 QA) « quête finie » / « nouvelle quête » : la pastille « ? » / « ! » le dit déjà, le sous-titre garde le lieu
+  check(g.steps[3] and g.steps[3].mark == W.MARK.turn and not g.steps[3].sub:find("quête finie", 1, true),
+    "étape 3 : à rendre (pastille « ? », pas de « quête finie » redit)")
   check(#g.upcoming >= 1, "quêtes à venir sur le trajet")
   for _, s in ipairs(g.steps) do
     check(not tostring(s.sub):find("nil") and not tostring(s.title):find("nil"), "pas de « nil » dans une étape")
@@ -71,7 +73,7 @@ return function(M, ctx)
   local p = T:GetPanel()
   check(not (p and p:IsShown()), "le panneau texte est caché quand la carte le remplace")
   W.RenderCard(true)
-  check(card.hero.title:GetText() == "Histoire : Durotar", "carte : « Histoire : Durotar » (" .. tostring(card.hero.title:GetText()) .. ")")
+  check(card.hero.title:GetText() == "Durotar", "carte : le nom de la zone (" .. tostring(card.hero.title:GetText()) .. ")")
   check(card.steps[1] and card.steps[1]:IsShown() and card.steps[3] and card.steps[3]:IsShown(), "carte : 3 lignes d'étapes")
   check(card.steps[1].badge.num:GetText() == "1" and card.steps[3].badge.num:GetText() == "3", "carte : pastilles numérotées ("
     .. tostring(card.steps[1].badge.num:GetText()) .. "/" .. tostring(card.steps[1].title:GetText()) .. ")")
@@ -120,10 +122,10 @@ return function(M, ctx)
   local kinds = {}
   for _, r in ipairs(W.lastLay.rects) do kinds[r.kind] = (kinds[r.kind] or 0) + 1 end
   check(kinds.hero == 1 and (kinds.step or 0) >= 3 and (kinds.quest or 0) >= 1, "Quêtes : carte d'en-tête + étapes + quêtes à venir")
-  check(W.lastLay.rects[1].label == "Histoire : Durotar", "Quêtes : « Histoire : Durotar »")
-  check(win.action:IsShown() and win.action.label:GetText() == "Arrêter", "Quêtes : bouton « Arrêter » en bas à droite")
+  check(W.lastLay.rects[1].label == "Durotar", "Quêtes : carte d'en-tête « Durotar »")
+  check(win.action:IsShown() and win.action.label:GetText() == "Pause", "Quêtes : bouton « Pause » en bas à droite")
   win.action:GetScript("OnClick")(win.action)
-  check(R.char.paused == true and win.action.label:GetText() == "Reprendre", "Arrêter → Reprendre")
+  check(R.char.paused == true and win.action.label:GetText() == "Reprendre", "Pause → Reprendre")
   win.action:GetScript("OnClick")(win.action)
   check(not R.char.paused, "Reprendre")
   -- collapsible section remembered

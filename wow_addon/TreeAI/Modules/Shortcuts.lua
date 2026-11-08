@@ -98,7 +98,7 @@ local function tip(owner)
   meth(tt, "AddLine", "Raccourcis", 1, 0.82, 0.2)
   meth(tt, "AddLine", "Seulement les boutons utiles maintenant : quêtes, voyage, combat, familier.", 0.85, 0.85, 0.85, true)
   meth(tt, "AddLine", "Survole un bouton : ce qu'il fait, pourquoi maintenant, sa touche.", 0.85, 0.85, 0.85, true)
-  meth(tt, "AddLine", locked() and "Barre verrouillée (Options → Barre de raccourcis)" or "Glisser : déplacer (hors combat)", 0.4, 0.8, 1)
+  meth(tt, "AddLine", locked() and "Barre verrouillée (Options > Barre de raccourcis)" or "Glisser : déplacer (hors combat)", 0.4, 0.8, 1)
   meth(tt, "AddLine", "Clic droit : réglages de la barre", 0.4, 0.8, 1)
   meth(tt, "Show")
 end
@@ -176,6 +176,17 @@ local function divider(i)
   end
   return d
 end
+-- titre d'un groupe dans `w` px (petite police ≈ 5,4 px / lettre) : entier, sinon sa première partie, sinon rien
+local function fitLabel(txt, w)
+  txt = tostring(txt or "")
+  local function fits(t) local _, n = t:gsub("[^\128-\191]", "") return n * 5.4 <= w end
+  if txt == "" then return nil end
+  if fits(txt) then return txt end
+  local head = txt:match("^(.-) · ")
+  if head and fits(head) then return head end
+  return nil
+end
+S.FitLabel = fitLabel
 local function label(i)
   local l = labels[i]
   if l or not dock then return l end
@@ -248,10 +259,15 @@ function S.Layout()
         meth(f, "SetPoint", "LEFT", dock, "LEFT", x - sg.inset, 0)
         local l = label(n)
         if l then
+          -- (4.0 QA) le titre tient dans la largeur de son groupe (sinon il déborde sur le suivant) : titre court
+          -- (« Quêtes » de « Quêtes · voyage ») quand c'est étroit, rien s'il ne tient pas
+          local wl = w - sg.inset
+          local txt = fitLabel(sg.label, wl)
           meth(l, "ClearAllPoints")
           meth(l, "SetPoint", "BOTTOMLEFT", dock, "TOPLEFT", x, 3)
-          meth(l, "SetText", sg.label)
-          if showLabels then meth(l, "Show") else meth(l, "Hide") end
+          meth(l, "SetWidth", max(1, wl))
+          meth(l, "SetText", txt or "")
+          if showLabels and txt then meth(l, "Show") else meth(l, "Hide") end
         end
         x = x + (w - sg.inset)
         h = max(h, (tonumber(meth(f, "GetHeight")) or 0))
@@ -280,10 +296,15 @@ end
 S.Sig = segSig
 --- Un segment a changé (taille, affichage) : une disposition, regroupée, hors combat — seulement si quelque
 --- chose a vraiment changé (QuickFight se redessine jusqu'à 4 fois par seconde).
+local pendingAt = -10
 function S.Changed()
-  if not docking() or pending then return end
+  if not docking() then return end
+  -- (4.0 QA) un rappel perdu (demandé pendant le code d'un module coupé entre-temps : T:After le saute) ne bloque
+  -- plus la barre pour toujours : au-delà de 2 s, on redemande
+  local t = tonumber((G.GetTime and G.GetTime())) or 0
+  if pending and t - pendingAt < 2 then return end
   if segSig() == lastSig then return end
-  pending = true
+  pending, pendingAt = true, t
   T:After(0, function() pending = false S.Layout() end)
 end
 

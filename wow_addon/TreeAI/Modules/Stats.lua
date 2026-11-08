@@ -25,7 +25,7 @@ local M = T:RegisterModule("Stats", {
   charDefaults = { v = 1 },
   options = {
     { key = "learn", type = "toggle", label = "Mesurer mes stats de jeu (kills, XP/h, trajets, drops…)", section = "Mesures" },
-    { key = "tab", type = "toggle", label = "Onglet « Stats » dans « Plus »", section = "Affichage" },
+    { key = "tab", type = "toggle", label = "Page « Stats » (Outils > Autres pages)", section = "Affichage" },
   },
 })
 T.Stats = M

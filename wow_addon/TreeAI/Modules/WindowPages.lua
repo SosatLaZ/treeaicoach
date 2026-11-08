@@ -51,9 +51,10 @@ W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = 
     local g = W.Guide(5, true)
     local Q = mod("Quests")
     local a = Q and Q.last
-    local first = g.steps[1]
+    local first   -- (4.0 QA) une vraie étape du trajet (pas une ligne de « Maintenant » reprise sans trajet)
+    for _, s in ipairs(g.steps) do if not s.entry then first = s break end end
     local more = max(0, (g.count or 0) - 1)
-    Ly.hero(first and first.icon or (ICON .. "INV_Misc_Book_09"), (g.paused and "Trajet en pause" or ("Histoire : " .. g.zone)),
+    Ly.hero(first and first.icon or (ICON .. "INV_Misc_Book_09"), (g.paused and "Trajet en pause" or g.zone),
       W.GuideSummary(g) ~= "" and W.GuideSummary(g) or "Aucune quête suivie ici",
       first and (first.title .. (more > 0 and fmt(" et %d autre%s arrêt%s", more, more > 1 and "s" or "", more > 1 and "s" or "") or "")) or nil,
       function() W.Select("route") end, { "Le trajet complet, arrêt par arrêt, est dans « Trajet »." }, "Clic : voir le trajet")
@@ -64,7 +65,7 @@ W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = 
     end
     local any = false
     for i, s in ipairs(g.steps) do
-      if W.Match(s.title, s.sub) then Ly.step(s, i == 1); any = true end
+      if not s.entry and W.Match(s.title, s.sub) then Ly.step(s, i == 1); any = true end
     end
     -- quêtes à venir sur le trajet (couleur de niveau)
     for _, u in ipairs(g.upcoming) do
@@ -130,15 +131,16 @@ W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = 
   end,
   action = function()
     local R = routeOn()
-    if not R then return nil end
+    local P = T.Planner
+    if not (R and P and P.steps and #P.steps > 0) then return nil end   -- (4.0 QA) pas de trajet : rien à mettre en pause
     local paused = R.char and R.char.paused
-    return paused and "Reprendre" or "Arrêter", function() R:TogglePause() end,
+    return paused and "Reprendre" or "Pause", function() R:TogglePause() end,
       paused and "Clic : reprendre le guidage du trajet" or "Clic : mettre le trajet en pause (plus de guidage)"
   end,
   status = function()
     local Q = mod("Quests")
     local n = Q and Q.lastList and #Q.lastList or 0
-    local cap = tonumber(try(G.C_QuestLog and G.C_QuestLog.GetMaxNumQuestsCanAccept)) or 25
+    local cap = tonumber(try(G.C_QuestLog and G.C_QuestLog.GetMaxNumQuestsCanAccept)) or 20
     return fmt("Journal : %d/%d", n, cap)
   end,
 })
@@ -160,14 +162,30 @@ W.AddPage({ id = "route", label = "Trajet", icon = W.TAB_ICON.route, title = "Tr
           "Clic : TreeAI range tes quêtes en arrêts" } or nil)
       return
     end
-    local st = R:Stops(64) or {}
+    local all = R:Stops(64) or {}
     local paused = R.char and R.char.paused
-    local nQ = 0
-    for _, e in ipairs(st) do if e.step and e.step.q then nQ = nQ + 1 end end
+    -- (QUESTQA F7) même horizon que l'onglet « Trajet » et la carte : une seule durée pour un trajet
+    local keepN, total, yd, beyond, travel = #all, tonumber(all.total) or 0, all.yd, 0, all.travel
+    if type(R.Horizon) == "function" then
+      local okH, a, b, c, d, e = pcall(R.Horizon, all)
+      if okH and tonumber(a) then
+        keepN, total, yd, beyond = a, tonumber(b) or total, c or yd, tonumber(d) or 0
+        if tonumber(e) then travel = e end            -- (QA-QUEST F7) le déplacement DANS l'horizon
+      end
+    end
+    local st = { total = total, yd = yd, travel = travel, here = all.here }
+    for i = 1, keepN do st[i] = all[i] end
+    -- (QA-QUEST F18) numéros d'arrêt partagés avec l'onglet « Trajet », la carte et la carte du monde (R.Groups)
+    local grp
+    if type(R.Groups) == "function" then
+      local okG, gg = pcall(R.Groups, st, keepN)
+      if okG and type(gg) == "table" then grp = gg end
+    end
+    local nStops = (grp and tonumber(grp.n)) or #st
     local title = paused and "Trajet en pause" or fmt("Trajet %s · %s", W.MinutesText(st.total) or "< 1 min", km(st.yd))
     local route = P.route or {}
     local name = (T.Plain and T.Plain.RouteName and T.Plain.RouteName(route.id, route.title)) or route.title or "Trajet TreeAI"
-    Ly.hero(W.TAB_ICON.route, title, fmt("%d arrêt%s · %s", #st, #st > 1 and "s" or "", strip(name)),
+    Ly.hero(W.TAB_ICON.route, title, fmt("%d arrêt%s · %s", nStops, nStops > 1 and "s" or "", strip(name)),
       (tonumber(st.travel) or 0) > 0 and ("dont " .. (W.MinutesText(st.travel) or "") .. " de déplacement") or nil,
       function() R:TogglePause() end, nil, paused and "Clic : reprendre" or "Clic : mettre en pause")
     -- zone de travail, détour, suivi (lignes du producteur, sans les arrêts déjà dessinés en dessous)
@@ -195,7 +213,7 @@ W.AddPage({ id = "route", label = "Trajet", icon = W.TAB_ICON.route, title = "Tr
         "Clic : la boussole et la carte reprennent tes étapes" })
       return
     end
-    if Ly.header("Arrêts", nil, #st, W.TAB_ICON.route) then
+    if Ly.header("Arrêts", nil, nStops, W.TAB_ICON.route) then
       local shown = 0
       for k, e in ipairs(st) do
         if shown >= 30 then
@@ -211,16 +229,24 @@ W.AddPage({ id = "route", label = "Trajet", icon = W.TAB_ICON.route, title = "Tr
           local sub = s.k == "pick" and "à prendre" or s.k == "turn" and "à rendre" or s.k == "obj" and "objectif" or "étape"
           if e.sec and e.sec >= 30 then sub = sub .. " · ≈ " .. (W.MinutesText(e.sec) or "") .. " sur place" end
           if s.out then sub = sub .. " · hors zone" end
-          item = { n = k, title = strip(P:StepLabel(s)) .. prog, sub = sub, mark = W.MARK[s.k], kind = s.k,
-            onClick = function() P:Navigate(s) end, actionText = "guider vers cet arrêt" }
+          -- (4.0 QA) clic offert seulement quand l'arrêt a une position ; la pierre de foyer ne se rejoint pas à pied
+          item = { n = (grp and grp[k]) or k, title = strip(P:StepLabel(s)) .. prog, sub = sub, mark = W.MARK[s.k], kind = s.k,
+            onClick = (s.k ~= "hs" and s.map and s.x) and function() P:Navigate(s) end or nil, actionText = "guider vers cet arrêt",
+            hint = s.k == "hs" and "Pierre de foyer : utilise-la (sacs ou barre de quête)" or nil }
           if Zp and Zp.StopMenu and Zp.IsEnabled and Zp:IsEnabled() then item.onRightClick = function() Zp:StopMenu(s) end end
         else
-          local p = e.place
-          item = { n = k, title = strip(e.text), sub = "trajet · " .. (W.MinutesText(e.sec) or "≈ 1 min"), kind = e.kind,
+          -- (QA-QUEST F4) vol / bateau : guider vers le départ (`from`) ; pierre de foyer : un rappel, pas de guidage
+          local p = e.kind ~= "hs" and (e.from or e.place) or nil
+          item = { n = (grp and grp[k]) or k, title = strip(e.text), sub = "trajet · " .. (W.MinutesText(e.sec) or "≈ 1 min"), kind = e.kind,
             onClick = p and p.map and function() P:Navigate({ k = "fly", map = p.map, x = p.x, y = p.y, label = e.text }) end or nil,
-            actionText = "guider vers ce départ" }
+            actionText = "guider vers ce départ",
+            hint = e.kind == "hs" and "Pierre de foyer : utilise-la (sacs ou barre de quête)" or nil }
         end
         if W.Match(item.title, item.sub) then Ly.step(item, k == 1); shown = shown + 1 end
+      end
+      if (tonumber(beyond) or 0) > 0 and W.Query() == "" then
+        Ly.text(fmt("… et %d arrêt%s de plus, recalculé%s en route.", beyond, beyond > 1 and "s" or "", beyond > 1 and "s" or ""),
+          "S", "muted")
       end
     end
   end,
@@ -231,7 +257,7 @@ W.AddPage({ id = "route", label = "Trajet", icon = W.TAB_ICON.route, title = "Tr
     if not paused and R.Following and T.ExternalGuide and T:ExternalGuide() == "spf" then
       return "Suivre (Suivi Forever)", function() R:Follow() end, "Clic : envoyer les arrêts dans l'ordre à Shortest Path Forever"
     end
-    return paused and "Reprendre" or "Arrêter", function() R:TogglePause() end,
+    return paused and "Reprendre" or "Pause", function() R:TogglePause() end,
       paused and "Clic : reprendre le guidage" or "Clic : mettre le trajet en pause"
   end,
 })
@@ -288,7 +314,8 @@ W.DungeonQuests = dungeonQuests
 local cardPool
 local function dcardPool(content)
   if cardPool then return cardPool end
-  cardPool = W._newPool(function(parent)
+  -- (4.0 QA) W._pool : la réserve est vidée par la fenêtre à chaque rendu → 18 cartes recyclées, jamais recréées
+  cardPool = W._pool("dcard", function(parent)
     local f = W._newButton(parent)
     f.icon = meth(f, "CreateTexture", nil, "ARTWORK")
     meth(f.icon, "SetSize", 34, 34)
@@ -298,7 +325,7 @@ local function dcardPool(content)
     meth(f.name, "SetPoint", "TOPLEFT", f, "TOPLEFT", 52, -10)
     meth(f.name, "SetWordWrap", false)
     f.q = W._text(f, "S", "text")
-    meth(f.q, "SetPoint", "TOPRIGHT", f, "TOPRIGHT", -10, -12)
+    meth(f.q, "SetPoint", "BOTTOMRIGHT", f, "BOTTOMRIGHT", -10, 8)
     meth(f.q, "SetJustifyH", "RIGHT")
     f.check = meth(f, "CreateTexture", nil, "OVERLAY")
     meth(f.check, "SetSize", 14, 14)
@@ -307,8 +334,8 @@ local function dcardPool(content)
     f.lv = W._text(f, "S", "text")
     meth(f.lv, "SetPoint", "BOTTOMLEFT", f, "BOTTOMLEFT", 10, 8)
     f.tag = W._text(f, "S", "muted")
-    meth(f.tag, "SetPoint", "BOTTOMRIGHT", f, "BOTTOMRIGHT", -10, 8)
-    meth(f.tag, "SetJustifyH", "RIGHT")
+    meth(f.tag, "SetPoint", "LEFT", f.lv, "RIGHT", 8, 0)
+    meth(f.tag, "SetJustifyH", "LEFT")
     meth(f, "SetScript", "OnClick", function(self)
       if self.key and W.char then W.char.dungeon = self.key; W.Render() end
     end)
@@ -355,7 +382,7 @@ local function renderDungeonList(Ly, D)
     local hot = (planned == d) or (cur == d)
     W._border(f, W._tok(hot and "gold" or "borderSoft", 0.78, 0.62, 0.28, hot and 1 or 0.5))
     meth(f.icon, "SetTexture", ICON .. (DG_ICON[d.key] or "INV_Misc_Key_03"))
-    meth(f.name, "SetWidth", cw - 150)
+    meth(f.name, "SetWidth", cw - 62)
     meth(f.name, "SetText", d.n)
     local q = dungeonQuests(D, d)
     local qtxt
@@ -370,7 +397,7 @@ local function renderDungeonList(Ly, D)
     elseif planned == d then tags[#tags + 1] = "|cffffd100prévu|r" end
     if d.new then tags[#tags + 1] = "propre à Forever" end
     if d.faction then tags[#tags + 1] = d.faction end
-    meth(f.tag, "SetWidth", max(40, cw - 96))
+    meth(f.tag, "SetWidth", max(40, cw - 170))
     meth(f.tag, "SetWordWrap", false)
     meth(f.tag, "SetText", tconcat(tags, " · "))
     f.key, f.label = d.key, d.n
@@ -427,7 +454,7 @@ local function renderDungeonDetail(Ly, D, d)
     for i, b in ipairs(d.bosses) do
       local killed = D.Killed and D.Killed(b)
       local tip = strip(b.tip or "")
-      if #tip > 110 then tip = tip:sub(1, 107):gsub("[\128-\191]*$", "") .. "…" end
+      if #tip > 110 then tip = (W.UCut and W.UCut(tip, 100) or tip:sub(1, 100):gsub("[\192-\255][\128-\191]*$", "")) .. "…" end
       Ly.step({ n = i, title = b.n .. (killed and "  |cff33dd33(tué)|r" or ""), sub = tip }, false)
     end
   end
@@ -465,11 +492,18 @@ W.AddPage({ id = "dungeon", label = "Donjons", icon = W.TAB_ICON.dungeon, title 
         kind = "info", onClick = function() T:SetModuleEnabled("Dungeon", true) end,
         clickHint = "Clic : allumer le module Donjon (sans /reload)" })
     end
+    -- (4.0 QA) en instance : le donjon où tu es s'ouvre tout seul (une fois par entrée : « < Tous les donjons »
+    -- reste possible) et le direct (prochain boss, qui fait quoi, objets de quête) passe AVANT la fiche
+    local cur = W.InDungeon and W.InDungeon() and try(D.Current) or nil
+    if cur and W.char and W._autoDg ~= cur.key then W._autoDg = cur.key; W.char.dungeon = cur.key end
+    if not cur then W._autoDg = nil end
+    local lines = T.GetTabLines and T:GetTabLines("dungeon") or {}
+    local live = #lines > 0
+    if live and cur and Ly.header("En direct", "dg:live", nil, W.TAB_ICON.dungeon) then W.RenderTab(Ly, "dungeon") end
     local d = W.char and W.char.dungeon and D.Find(W.char.dungeon)
     if d then renderDungeonDetail(Ly, D, d) else renderDungeonList(Ly, D) end
-    -- en instance / donjon prévu : l'onglet « Donjon » en direct (prochain boss, minuteurs, bilan)
-    local lines = T.GetTabLines and T:GetTabLines("dungeon") or {}
-    if #lines > 0 and Ly.header("En direct", "dg:live", nil, W.TAB_ICON.dungeon) then W.RenderTab(Ly, "dungeon") end
+    -- hors instance (donjon prévu, bilan) : le direct sous la liste
+    if live and not cur and Ly.header("En direct", "dg:live", nil, W.TAB_ICON.dungeon) then W.RenderTab(Ly, "dungeon") end
   end,
   action = function()
     local D = T.Dungeon
