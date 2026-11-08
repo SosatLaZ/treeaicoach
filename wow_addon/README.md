@@ -6,7 +6,10 @@ créées/modifiées qu'**hors combat** (`InCombatLockdown()`).
 
 Install: copier `wow_addon/TreeAI/` dans
 `World of Warcraft/_forever_/Interface/AddOns/TreeAI/` (TreeAI Coach le fait
-automatiquement). Commandes: `/treeai` ou `/tai` (`/tai aide`).
+automatiquement). Tout se fait à la souris depuis la **pastille de la minimap** (module `Hub`) ; une
+**visite guidée** de 60 s la montre au premier lancement (module `Tour`). Commandes : `/treeai` ou `/tai`
+(`/tai aide` montre la pastille, `/tai aide tout` liste les commandes, `/tai visite` rejoue la visite).
+Démarrage rapide côté joueur (installer, 3 choses à savoir, menu, bêta, bug, FAQ) : `TUTO_FR.md`.
 
 ## Interface (TOC)
 
@@ -534,7 +537,7 @@ TreeAIDB = {
 
 ## UI / Options
 
-* Panneau compact déplaçable (sans icône minimap), **à onglets** : « Maintenant », « Quêtes »,
+* Panneau compact déplaçable (la pastille de la minimap est le module `Hub`), **à onglets** : « Maintenant », « Quêtes »,
   « Groupe », « HV », « Infos ». Chaque onglet défile à la molette (barre fine à droite, « 3-10/14 »),
   lignes colorées par prio, cliquables (`onClick`), infobulles, clic droit = masquer un conseil
   (`TreeAI:DismissSuggestion(id)` : même sens — chiffres ignorés — et même sujet caché 2 h, gardé au /reload ;
@@ -779,10 +782,47 @@ d'un quart sur un autre cadre → place libre la plus proche (≤ 300 px, `setti
 
 ## Slash
 
-`/tai` ou `/tai aide` (page « Tout » ; `aide chat` = dans le chat) · `bienvenue` · `mode calme|normal|tout`
+`/tai` ou `/tai aide` (une bulle montre la pastille de la minimap — module `Tour` ; `aide tout` = la page « Tout »,
+`aide chat` = dans le chat) · `visite` (visite guidée) · `menu` · `bienvenue` · `mode calme|normal|tout`
 · `profil perso|compte` · `edit` · `placer [doux]` · `afficher` / `cacher` / `basculer` · `mini`
 · `onglet <id>` · `alerte` · `verrou` · `reset` (= place auto) · `options` · `modules` · `module <Nom> on|off`
 · `sync` · `debug` · `statut` · `test` · + sous-commandes des modules (`RegisterSlash`).
+
+## Visite guidée et astuces : module `Tour` (agent ONBOARD, `Modules/Tour.lua`, dernier du TOC)
+
+Comprendre TreeAI en 60 secondes, à la souris. Module **sûr** (`Tour.lua` s'inscrit dans `SAFE_MODULES`), léger.
+* **Visite guidée** (`T.Tour.Start(from)`) : 7 étapes au plus, une bulle (titre, 2 lignes, « n/N », **Suivant** /
+  **Passer**) + une flèche et un halo pulsé sur le VRAI élément : pastille (`hub`), carte « Prochaine étape » ou
+  panneau (`next`), zone de travail (`zone` : ligne `zone:pick`, sinon le menu de ZonePlan), boussole (`compass`),
+  barres de raccourcis (`quick`), lignes « Fonctions bêta » (`beta`) et « Erreurs » (`bug`) du menu Hub (ouvert
+  pour l'étape, refermé après). Étape sans cible visible (module coupé, cadre caché) = sautée, le compteur suit.
+  Proposée **une fois** au premier moment calme (≥ 8 s après la connexion, assistant de démarrage fermé, 3 s sans
+  combat / mort / vol / donjon / menu du jeu / options / mode édition) ; combat ou mort = bulle cachée, reprise au
+  même endroit après. Rejouable : entrée « Visite guidée » du menu Hub (tag « nouveau » tant qu'elle n'est pas vue),
+  bouton de la page d'accueil des options (attend la fermeture des options), page du module, `/tai visite`.
+* **Cibles par contrat**, jamais par position : `T.Tour.Target(id, cadre | function() return cadre end)` passe
+  avant les repères intégrés (ids : `hub`, `next`, `zone`, `compass`, `quick`, `beta`, `bug`) ; sinon ids
+  `RegisterMovable` (`card`, `panel`, `compass`, `quick`, `quickfight`, `quicktravel`), cadres `TreeAIMinimapButton`,
+  `TreeAICard`, `TreeAICompassFrame`, lignes `H.layout` du Hub (`profil`, `erreurs`) et lignes à id dans le panneau,
+  `TreeAIMainWindow`, `TreeAICard` (champ `entry` / `e` / `line` / `data` avec `.id`, `T.Tour.FindRow(id)`).
+  Nos trois cadres (`TreeAITourCallout`, `TreeAITourGlow`, `TreeAITourArrow`) sont posés sur `UIParent` à la
+  position LUE de la cible (`T.Tour.RectOf`), jamais ancrés sur elle (pas de protection implicite) ; le halo ne
+  prend pas la souris (on clique le vrai élément à travers).
+* **Astuces au bon moment** (`T.Tour.TIPS` : `ah` mode rafale à la 1re ouverture de l'HV, `questitem` bouton d'objet
+  de quête, `dismiss` clic droit = masquer, `group` page Groupe / Fonctions bêta, `error` signaler un bug) : une fois
+  chacune (vue = OK, ou restée ≥ 8 s), **≤ 1 toutes les 10 min** (horloge du serveur, survit au /reload), pas avant
+  1 min de jeu ni 2 min après la visite, jamais en combat / mort / donjon / pendant la visite ; s'efface seule
+  après 30 s. « Couper les astuces » = réglage `tips` du module (plus jamais) ; « Revoir les astuces » remet à zéro.
+* **`/tai aide`** (et `/tai` seul) : bulle sur la pastille (« Visite guidée » / « OK ») ; en combat une ligne de chat ;
+  `/tai aide tout` = l'ancienne page « Tout » (`T:ShowHelp`), `aide chat` = dans le chat. Fait en enveloppant
+  `T.HandleSlash` (`Tour:OnInit`) ; module coupé = comportement d'origine.
+* **Branchements** (gardés) : `Hub.lua` `H.Entries` → `T.Tour.HubEntry()` (dernière entrée de Réglages) ;
+  `Options.lua` page d'accueil → `T.Tour.OptionsButton(P)` (moteur `P.button`).
+* **État** `TreeAIDB.tour` (compte) = `{ done = TOUR_V, how = "done"|"skip"|"empty", at, step (1re visite coupée
+  par un /reload), seen = { [astuce] = date }, last }`. `TOUR_V` + 1 = reproposée une fois à tout le monde.
+* **Coût** : pas d'`AutoRefresh` ; un réveil ponctuel (`T.Tour.Kick`) seulement s'il y a de quoi attendre (assistant
+  = attente de sa fermeture, pas de boucle ; astuces restantes = un regard / 30 s), ticker 1 s pendant qu'une bulle
+  est affichée. Harnais : `TreeAIDB.tour` semé « vue » sauf `--profile sur` ; `tests/wow/tour_scenario.lua`.
 
 ## Groupe à plusieurs : module `Squad` (`Modules/Squad.lua`)
 

@@ -295,6 +295,7 @@ local function buildMain(content, width)
     { L["Assistant de démarrage"], function() if TreeAI.ShowWizard then TreeAI:ShowWizard(1) end end },
     { L["Toutes les actions"], function() if TreeAI.ShowHelp then TreeAI:ShowHelp() end end },
   }, 2)
+  if TreeAI.Tour and TreeAI.Tour.OptionsButton then TreeAI.Tour.OptionsButton(P) end   -- (ONBOARD) « Visite guidée »
 
   P.header(L["Panneau"])
   P.check(L["Afficher le panneau"], function() return S.panel.shown end,

@@ -196,6 +196,9 @@ if addonName == "TreeAI" then   -- (3.9.5) « essentiel » is opt-in: seeded onl
   if db.profileV == nil and opts.profile ~= "sur" then
     db.profileV, db.moduleProfile = 999, (opts.profile == "essentiel") and "essentiel" or "tout"
   end
+  -- (ONBOARD) the first-run « Visite guidée » counts as seen (the storm still runs it via /tai visite ;
+  -- tour_scenario.lua clears it to test the first run) ; --profile sur = a new player: nothing seeded
+  if db.tour == nil and opts.profile ~= "sur" then db.tour = { done = 999 } end
 end
 
 -- drive ------------------------------------------------------------------------------------------
