@@ -155,21 +155,6 @@ def snap(wowdir: SimpleNamespace) -> dict:
     return hub.snapshot()
 
 
-def test_direct_view(snap: dict) -> None:
-    v = live.direct_view(snap)
-    assert v["title"] == "Testeur · Chasseur niveau 26" and v["zone"] == "Zone Test · Camp Factice"
-    rows = dict(v["rows"])
-    assert rows["XP par heure"].startswith("18 000 XP/h") and "(au /reload)" in rows["XP par heure"]
-    assert rows["Or par heure"] == "2 po 50 pa/h" and rows["Expérience"] == "48 % · reposé"
-    assert "3 attaquant" in rows["Dernier combat"] and rows["Morts"] == "2"
-    assert not v["live"] and "/chatlog" in v["live_text"]
-    live_snap = {**snap, "chat_age": 5, "chat": {"xp_h": 30000, "gold_h": 9000, "zone": "Forêt Factice", "xp": 0,
-                                                 "deaths": 3, "xp_series": [0, 10], "gold_series": [0, 5]}}
-    v = live.direct_view(live_snap)
-    assert v["zone"] == "Forêt Factice" and "(en direct)" in dict(v["rows"])["XP par heure"]
-    assert dict(v["rows"])["Morts"] == "3" and v["live"] and v["xp_series"] == [0, 10]
-
-
 def test_quests_view_and_abandon_reasons(snap: dict) -> None:
     v = live.quests_view(snap)
     assert v["route"][0][:2] == ("Quête Une", "Prête à rendre")
@@ -182,10 +167,11 @@ def test_quests_view_and_abandon_reasons(snap: dict) -> None:
     assert v["now"].startswith(("Rends", "Fais", "Va")) and v["why"]
     assert any("Quête En Chemin" in t and "PNJ Factice" in t for t in v["tips"])
     assert v["plan"] and "plan TreeAI" in v["plan"][0]
-    why = {a["title"]: a["why"] for a in v["abandon"]}
-    assert set(why) == {"Vieille Quête", "Élite Factice", "Longue Marche"}
-    assert why["Vieille Quête"] == "trop facile maintenant, presque pas d'XP"
-    assert "trop dure seul" in why["Élite Factice"] and "trop longue" in why["Longue Marche"]
+    assert v["abandon"] == []                     # (4.0) no home-made guess: the addon's list only
+    s = {**snap["summary"], "abandon": {"list": [{"title": "Vieille Quête", "why": "grise : presque plus d'XP"},
+                                                 {"title": "Quête Disparue", "why": "plus dans le journal"}]}}
+    assert live.quests_view({**snap, "summary": s})["abandon"] == [{"title": "Vieille Quête",
+                                                                    "why": "grise : presque plus d'XP"}]
     own = live.abandon_advice({"abandon": [{"title": "X", "why": "pas rentable ici"}, "Y"]})
     assert own == [{"title": "X", "why": "pas rentable ici"}, {"title": "Y", "why": "conseillé par l'addon"}]
 
@@ -223,15 +209,18 @@ def test_session_view(snap: dict) -> None:
 
 def test_tab_blocks_and_empty_states(snap: dict) -> None:
     for key, _t in pw.TABS:
-        assert pw.tab_blocks(key, {}) == [] or key == "quetes"
+        empty = pw.tab_blocks(key, {})
+        assert [b["id"] for b in empty] == {"trajet": ["trajet.routes"], "erreurs": ["erreurs.file"]}.get(key, []), key
         blocks = pw.tab_blocks(key, snap)
-        assert blocks and all(b["rows"] for b in blocks), key
+        assert all(b["rows"] for b in blocks), key
+        assert blocks or key == "donjon", key                          # no dungeon in the fixture
     hv = pw.tab_blocks("hv", snap)
-    assert hv[0]["title"] == "Meilleures affaires" and hv[0]["rows"][0]["value"] == "+18 pa net"
+    assert hv[0]["title"] == "Achat-revente" and hv[0]["rows"][0]["value"] == "+18 pa net"
     assert hv[0]["rows"][0]["spark"] and "commission 5 %" in hv[0]["foot"]
-    q = {b["title"]: b for b in pw.tab_blocks("quetes", snap)}
-    assert "Abandonner" in q["À retirer"]["foot"] and q["À retirer"]["rows"][0]["title"].startswith("Retire « ")
-    assert list(q)[0] == "À faire maintenant" and q["À faire maintenant"]["rows"][0]["desc"].startswith("Pourquoi ?")
+    t = {b["id"]: b for b in pw.tab_blocks("trajet", snap)}
+    stops = t["trajet.stops"]["rows"]
+    assert [r["num"] for r in stops] == ["1", "2", "3", "4"] and stops[0]["badge"] == "En cours"
+    assert pw.tab_blocks("quetes", snap) == pw.tab_blocks("trajet", snap)     # 3.9 name
 
 
 def test_read_state_with_hub(wowdir: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -267,28 +256,32 @@ def test_page_tabs_render(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, snap:
     try:
         app.show_page("wow")
         view = app.page_views["wow"]
-        assert [k for k, _t in pw.TABS] == ["direct", "quetes", "groupe", "hv", "session"]
-        view.state = {"install": None, "live": snap, "sv_age": 17 * 60, "rows": [], "mode": {}}
+        assert [k for k, _t in pw.TABS] == ["trajet", "groupe", "hv", "session", "donjon", "erreurs"]
+        view.state = {"install": None, "live": {**snap, "sv_age": 17 * 60.0}, "sv_age": 17 * 60, "rows": [], "mode": {}}
         view._render()
-        assert view.fresh.text().startswith("Données de ton dernier /reload il y a 17 min")
+        assert view.fresh.text().startswith("Données du /reload il y a")
+        assert view.hero.title.text() == "Rends « Quête Une »"
         view.tabs.changed.emit("hv")
-        assert view.current_tab() == "hv"
-        holder = view._tab_holder["hv"]
+        assert view.current_tab() == view.visible_tab() == "hv"
         qt = pw._qt_classes()
-        sparks = holder.findChildren(qt["Sparkline"])
-        assert sparks and sparks[0].series
-        sparks[0].repaint()                                          # paint path runs offscreen
+        sparks = view.tab_views["hv"].findChildren(qt["Sparkline"])
+        assert sparks and sparks[0].series and not sparks[0].pixmap().isNull()
+        sparks[0].repaint()                                          # paint path runs offscreen (C++ only)
         view.tabs.changed.emit("groupe")
-        meters = view._tab_holder["groupe"].findChildren(qt["Meter"])
-        assert [m.pct for m in meters] == [40, 100]
-        meters[0].repaint()
-        sig = view._tab_sig["hv"]
-        view._render()                                               # same data: no rebuild
-        assert view._tab_holder["hv"] is holder and view._tab_sig["hv"] == sig
+        from PySide6 import QtWidgets
+
+        bars = [b for b in view.tab_views["groupe"].findChildren(QtWidgets.QProgressBar) if not b.isHidden()]
+        assert sorted(b.value() for b in bars) == [40, 100]
+        cards = [c for c in view.tab_views["groupe"].findChildren(qt["MemberCard"]) if not c.isHidden()]
+        assert [c.name.text() for c in cards] == ["Testeur (toi)", "Alpha", "Bravo", "Charlie"]
+        hv = view.tab_views["hv"]
+        rows = list(hv.views["hv.deals"].rows)
+        view._render()                                               # same data: nothing rebuilt
+        assert hv.views["hv.deals"].rows == rows
         view.state = {"install": None, "live": {}, "rows": [], "mode": {}}
         view._render()
-        view.tabs.changed.emit("hv")                                 # hidden tabs are rebuilt when shown
-        texts = [w.text() for w in view._tab_holder["hv"].findChildren(app.QtWidgets.QLabel)]
-        assert any("hôtel des ventes" in t for t in texts)
+        view.tabs.changed.emit("hv")                                 # nothing for the HV: the empty state says why
+        assert not hv.empty.isHidden() and "hôtel des ventes" in hv.empty.title.text()
+        assert all(v.isHidden() for v in hv.views.values())
     finally:
         app.close()

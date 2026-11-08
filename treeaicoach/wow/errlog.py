@@ -152,6 +152,60 @@ def build_text(db: Any, now: float | None = None) -> str:
     return "\n".join(out).rstrip() + "\n"
 
 
+def diag_lists(db: Any, limit: int = 40) -> dict:
+    """The WoW page's « Erreurs » tab (pure, never raises): the most frequent first.
+
+    ``{"errors": [(text, tooltip, n)], "blocked": [(text, tooltip, n)], "tests": [(text, tone)],
+    "counts": {errors, errors_total, blocked}, "export": when /tai erreurs ran (epoch) or 0}``."""
+    out: dict = {"errors": [], "blocked": [], "tests": [], "counts": {"errors": 0, "errors_total": 0, "blocked": 0},
+                 "export": 0}
+    try:
+        d = _diag(db)
+        merged: dict[tuple[str, str], dict] = {}
+        for e in _seq(d.get("errors")):
+            if not isinstance(e, dict):
+                continue
+            k = (_s(e.get("module"), 30), _s(e.get("msg"), 400))
+            g = merged.setdefault(k, {"n": 0, "t": 0, "combat": False, "ctx": ""})
+            g["n"] += max(1, _i(e.get("n"), 1))
+            g["t"] = max(g["t"], _i(e.get("t")))
+            g["combat"] = g["combat"] or bool(e.get("combat"))
+            g["ctx"] = g["ctx"] or _s(e.get("ctx"), 60)
+        for (mod, msg), g in sorted(merged.items(), key=lambda kv: (-kv[1]["n"], -kv[1]["t"]))[:limit]:
+            text = f"×{g['n']}  {mod or '?'} : {_s(msg, 140)}"
+            head = f"{mod} · dernière fois le {_when(g['t'])}" + (" (en combat)" if g["combat"] else "")
+            tip = "\n".join(x for x in (head, f"pendant : {g['ctx']}" if g["ctx"] else "", msg) if x)
+            out["errors"].append((text, tip, g["n"]))
+        blocked: dict[tuple[str, str], dict] = {}
+        for e in _seq(d.get("blocked")):
+            if not isinstance(e, dict):
+                continue
+            k = (_s(e.get("func"), 80), _s(e.get("kind"), 20))
+            g = blocked.setdefault(k, {"n": 0, "t": 0, "ctx": set(), "combat": False})
+            g["n"] += max(1, _i(e.get("n"), 1))
+            g["t"] = max(g["t"], _i(e.get("t")))
+            g["ctx"].add(_s(e.get("ctx") or "?", 60))
+            g["combat"] = g["combat"] or bool(e.get("combat"))
+        for (func, kind), g in sorted(blocked.items(), key=lambda kv: (-kv[1]["n"], -kv[1]["t"]))[:limit]:
+            ctx = ", ".join(sorted(g["ctx"]))
+            text = f"×{g['n']}  {func or '?'}" + (f" ({kind})" if kind else "") + (f" · pendant : {_s(ctx, 60)}" if ctx else "")
+            tip = (f"{func} · dernière fois le {_when(g['t'])}" + (" (en combat)" if g["combat"] else "")
+                   + (f"\npendant : {ctx}" if ctx else ""))
+            out["blocked"].append((text, tip, g["n"]))
+        st = _d(d.get("selftest"))
+        for it in _seq(st.get("items")):
+            if isinstance(it, dict) and it.get("status") in ("ko", "warn"):
+                bad = it.get("status") == "ko"
+                out["tests"].append((f"{'Échec' if bad else 'À vérifier'} · {_s(it.get('label') or it.get('id'), 60)} : "
+                                     f"{_s(it.get('detail'), 160)}", "danger" if bad else "warning"))
+        out["counts"] = {"errors": len(merged), "errors_total": sum(g["n"] for g in merged.values()),
+                         "blocked": sum(g["n"] for g in blocked.values())}
+        out["export"] = _i(_d(d.get("export")).get("at"))
+    except Exception:
+        log.debug("errlog: diag lists failed", exc_info=True)
+    return out
+
+
 def default_dirs() -> list[Path]:
     """The user's TreeAI data folder, plus its ``exports`` folder when it exists."""
     try:

@@ -97,7 +97,7 @@ def test_wow_errors_buttons(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     try:
         app.show_page("wow")
         view = app.page_views["wow"]
-        assert view.err_open_btn.text() == "Erreurs WoW : ouvrir le fichier" and view.err_copy_btn.text() == "Copier"
+        assert view.err_open_btn.text() == "Ouvrir" and view.err_copy_btn.text() == "Copier"
         toasts: list[str] = []
         copied: list[str] = []
         opened: list = []
@@ -114,8 +114,11 @@ def test_wow_errors_buttons(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
         assert opened and Path(opened[-1]).name == "TreeAI-erreurs.txt"
         info = pw._errfile_info()
         assert info and info["path"].endswith("TreeAI-erreurs.txt")
-        view._render_errors(info)
-        assert "TreeAI-erreurs.txt" in view.err_row.desc.text()
+        view.state = {"install": None, "live": {}, "rows": [], "mode": {}, "errfile": info}
+        view._render()
+        view.tabs._buttons["erreurs"].click()
+        sec = view.tab_views["erreurs"].views["erreurs.file"]
+        assert view.err_open_btn.parent() is not None and "TreeAI-erreurs.txt" in sec.rows[0].desc.text()
     finally:
         app.close()
         paths._reset_cache()

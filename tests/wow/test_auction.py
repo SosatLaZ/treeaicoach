@@ -290,7 +290,8 @@ def test_app_hv_tab_shows_no_safe_flip_with_why():
     assert v["none"][0] == "Aucun achat-revente sûr pour l'instant" and "20 %" in v["rules"]
     hv = pw.tab_blocks("hv", snap)
     assert hv[0]["title"] == "Achat-revente" and hv[0]["rows"][0]["title"].startswith("Aucun achat-revente sûr")
-    snap["summary"]["auction"] = {"deals": [{"name": "Lin", "id": 2589, "count": 20, "kind": "flip", "buy": 1200,
+    snap["summary"]["auction"] = {"scanAge": 600,         # (4.0) deals only from a scan of less than 24 h
+                                  "deals": [{"name": "Lin", "id": 2589, "count": 20, "kind": "flip", "buy": 1200,
                                              "sell": 1980, "profit": 679, "deposit": 36, "sold": 47.8, "stop": 51}]}
     row = pw.tab_blocks("hv", snap)[0]["rows"][0]
     assert "se vend ~47,8/jour" in row["desc"] and "stop-loss 51 pc/u" in row["desc"]

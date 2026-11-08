@@ -37,7 +37,7 @@ __all__ = [
     "sell_through_days", "evaluate_flip", "evaluate_vendor_flip", "rank_deals", "thin_market",
     "suggest_post", "realized_profit", "money_text", "auction_summary", "auction_context", "answer_lines",
     "LIQ", "demand_class", "sold_between", "liquidity", "max_quantity", "stop_loss", "item_cap", "safe_flip",
-    "why_none", "cancel_advice",
+    "why_none", "cancel_advice", "scan_age", "STALE_TEXT",
 ]
 
 CUT_PCT = {False: 5, True: 15}          # neutral? -> % of the sale price
@@ -291,6 +291,7 @@ LIQ = {
     "min_conf": 0.70, "max_tts": 3.0, "min_roi": 0.15, "qty_days": 3, "stop_pct": 15, "cap_pct": 20,
 }
 NONE_TEXT = "Aucun achat-revente sûr pour l'instant"
+STALE_TEXT = "Pas d'achat-revente : les prix sont trop vieux"
 REASON_LABEL = {
     "nohist": "jamais vu en scan", "rare": "objet rare, presque jamais vendu", "short": "historique trop court",
     "scans": "trop peu de scans", "unmeasured": "ventes pas encore mesurées", "slow": "se vend trop peu",
@@ -637,6 +638,33 @@ def _list(v: Any) -> list:
         ks = sorted(k for k in v if isinstance(k, int))
         return [v[k] for k in ks]
     return []
+
+
+def scan_age(a: Any, data_age: Any = None, db: Any = None, now: Any = None) -> float | None:
+    """Seconds since the last AH scan, as of NOW (reader side, the WoW page): ``summary.auction.scanAge`` is the
+    age at the addon's save, so the save's own age is added; without it, the module's persisted
+    ``lastScanT`` (any scan, account or per-character settings). None when no scan is known. Never raises."""
+    try:
+        sa = _f(a.get("scanAge")) if isinstance(a, dict) else None
+        if sa is not None and sa >= 0:
+            return sa + max(0.0, _f(data_age, 0.0) or 0.0)
+        d = db if isinstance(db, dict) else {}
+        stores = [d.get("modules")]
+        chars = d.get("chars")
+        for c in (chars.values() if isinstance(chars, dict) else ()):
+            if isinstance(c, dict):
+                stores.append(c.get("moduleSettings"))
+        last = max((_f((s.get("Auction") or {}).get("lastScanT"), 0.0) or 0.0 for s in stores
+                    if isinstance(s, dict) and isinstance(s.get("Auction"), dict)), default=0.0)
+        if last > 0:
+            import time  # noqa: PLC0415
+
+            n = _f(now) or time.time()
+            if last <= n + 300:
+                return max(0.0, n - last)
+    except Exception:
+        log.debug("scan_age failed", exc_info=True)
+    return None
 
 
 def auction_summary(db_or_char: Any) -> dict:

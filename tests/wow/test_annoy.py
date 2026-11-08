@@ -104,15 +104,18 @@ def test_character_card_does_not_blink(tmp_path: Path, monkeypatch: pytest.Monke
         view = app.page_views["wow"]
         inst = SimpleNamespace(flavor_dir="X:/Jeux/World of Warcraft/_forever_", source="registre")
         rows = [("Personnage", "Chasseur niveau 26"), ("Or", "1 po")]
+        # (4.0) the character lives in the « Maintenant » card: updated in place, only the age badge changes
+        snap = {"summary": {"className": "Chasseur", "level": 26, "xp": 100, "xpMax": 1000, "zone": "Zone Test"},
+                "char_key": "Testeur-Royaume", "sv_age": 200.0}
         view.state = {"install": inst, "has_src": True, "installed": True, "log": ("ok", "x"), "rows": rows,
-                      "mode": {}, "sv_age": 200}
+                      "mode": {}, "sv_age": 200, "live": snap}
         view._render()
-        grp = view._char_group
-        assert view._age_lbl is not None and view._age_lbl.text() == "il y a 3 min"
-        view.state = {**view.state, "sv_age": 400}
+        hero, title, foot = view.hero, view.hero.title, view.hero.foot.text()
+        assert hero.badge.text() == "/reload il y a 3 min" and "Chasseur 26" in foot
+        view.state = {**view.state, "sv_age": 400, "live": {**snap, "sv_age": 400.0}}
         view._render()
-        assert view._char_group is grp                 # same card, only the age label changed
-        assert view._age_lbl.text() == "il y a 6 min"
+        assert view.hero is hero and hero.title is title and hero.foot.text() == foot   # nothing rebuilt
+        assert hero.badge.text() == "/reload il y a 6 min"
         view._installing = True
         view._render()
         assert not view.install_btn.isEnabled()        # the 3 s refresh does not re-enable it mid-install
