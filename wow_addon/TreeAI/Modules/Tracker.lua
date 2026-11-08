@@ -1286,6 +1286,8 @@ function M.RouteStops()
   return stops
 end
 function M.SendRoute()
+  local Rt = T.Route          -- a TreeAI plan is active: its order goes to SPF / the compass (Route.lua)
+  if Rt and Rt.Follow and Rt:IsEnabled() and Rt:HasRoute() and #Rt:SPFStops() > 0 then return Rt:Follow() end
   if not M.items then M.Update(true) end
   local stops = M.RouteStops()
   local C = compass()

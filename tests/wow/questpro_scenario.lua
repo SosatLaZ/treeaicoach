@@ -305,7 +305,9 @@ return function(M, ctx)
   TR.Update()
   check(TR.items[1].travel == 95, "tracker uses SPF travel time")
   M.RunSlash("/tai itineraire")
-  check(spf.route and #spf.route == #TR.RouteStops() and spf.route[1].map == 1424 and spf.route[1].title, "itinerary → NavigateRoute")
+  local Rt = TreeAI.Route   -- a TreeAI plan is active → its order (Route:SPFStops), else the tracker's stops
+  local want = (Rt and Rt:IsEnabled() and Rt:HasRoute() and #Rt:SPFStops() > 0) and #Rt:SPFStops() or #TR.RouteStops()
+  check(spf.route and #spf.route == want and spf.route[1].map == 1424 and spf.route[1].title, "itinerary → NavigateRoute " .. tostring(spf.route and #spf.route) .. "/" .. tostring(want) .. " " .. tostring(spf.route and spf.route[1] and spf.route[1].map))
   rawset(_G, "ShortestPathForever", nil)
   -- TomTom when SPF is absent
   local tt = { added = {} }

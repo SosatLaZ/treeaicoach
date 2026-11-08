@@ -22,6 +22,7 @@ Data\Dungeons.lua
 Data\Gear.lua
 Data\Talents.lua
 Data\Recipes.lua
+Data\Travel.lua
 
 Modules\Stats.lua
 Modules\Macros.lua
@@ -43,6 +44,7 @@ Modules\Predict.lua
 Modules\Export.lua
 Modules\Planner.lua
 Modules\Speed.lua
+Modules\Route.lua
 Modules\Inventory.lua
 Modules\Boost.lua
 Modules\Fight.lua

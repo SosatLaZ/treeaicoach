@@ -14,6 +14,7 @@ import logging
 import time
 from typing import Any
 
+from treeaicoach.wow.planner import transport as TR
 from treeaicoach.wow.planner import data as DM
 from treeaicoach.wow.planner import models as M
 from treeaicoach.wow.planner import solver as S
@@ -70,6 +71,31 @@ def _obj_label(pb: DM.Problem, nd: DM.Node) -> str:
     return f"{verb}{n} — « {q.title} »"
 
 
+STEP_KIND = {"fly": "fly", "boat": "boat", "zeppelin": "zep"}
+
+
+def transport_steps(pb: DM.Problem, rects: dict, hi: int, hj: int, t0: float) -> list[dict]:
+    """Plan steps for the hub leg hi → hj (flight master / boat / zeppelin; walking hops are implicit): one step
+    at the place where each transport is boarded, labelled « Vol pour X », « Zeppelin pour Y »."""
+    out: list[dict] = []
+    places = pb.hub_places
+    if not places or hi >= len(places) or hj >= len(places):
+        return out
+    cur, guard = hi, 0
+    while cur != hj and guard < 64:
+        nxt = pb.hub_next[cur][hj]
+        if nxt < 0:
+            break
+        mode = pb.hub_mode.get((cur, nxt), "walk")
+        if mode in STEP_KIND:
+            at, to = places[cur], places[nxt]
+            mid, x, y = world_to_map(pb, rects, at.c, at.x, at.y)
+            label = f"Vol pour {to.name}" if mode == "fly" else f"{TR.MODE_FR[mode]} pour {to.name}"
+            out.append({"k": STEP_KIND[mode], "map": mid, "x": x, "y": y, "label": label, "eta": int(round(t0 / 60.0))})
+        cur, guard = nxt, guard + 1
+    return out
+
+
 def build_steps(pb: DM.Problem, s: S.Solver, route: list[int], squad: bool = False,
                 grind_left: float = 0.0) -> list[dict]:
     """Plan steps of a route, with the speed techniques (speed.py) as extra steps / ``tip`` lines.
@@ -115,13 +141,7 @@ def build_steps(pb: DM.Problem, s: S.Solver, route: list[int], squad: bool = Fal
             steps.append({"k": "hs", "map": h.map, "x": h.mx, "y": h.my, "label": "Pierre de foyer",
                           "eta": eta0, "tip": SP.hearth_tip(sim.hearth_save[i])})
         elif (prev, n) in pb.via:
-            a, b = pb.via[(prev, n)]
-            pa = pb.taxi_pos.get(a)
-            if pa is not None:
-                mid, x, y = world_to_map(pb, rects, pa.c, pa.x, pa.y)
-                steps.append({"k": "fly", "map": mid, "x": x, "y": y,
-                              "label": f"Vol : {pb.taxi_names.get(a, '?')} → {pb.taxi_names.get(b, '?')}",
-                              "eta": int(round((sim.done_at[i - 1] if i else 0) / 60.0))})
+            steps.extend(transport_steps(pb, rects, *pb.via[(prev, n)], (sim.done_at[i - 1] if i else 0)))
         if sim.grind_before[i] > 0:
             steps.append(SP.gate_step(pb, nd, sim.grind_before[i], q.req, eta0))
         st: dict[str, Any] = {"k": nd.kind, "q": q.id, "map": nd.pt.map, "x": nd.pt.mx, "y": nd.pt.my, "eta": eta}
