@@ -165,7 +165,7 @@ local function ensure()
   frame.resetBtn = rb
   local p = DM.char and DM.char.pos
   if type(p) == "table" then frame:SetPoint(p.point or "RIGHT", up, p.rel or p.point or "RIGHT", p.x or -40, p.y or -120)
-  else frame:SetPoint("BOTTOMRIGHT", up, "BOTTOMRIGHT", -320, 220) end
+  else frame:SetPoint("LEFT", up, "LEFT", 40, -80) end   -- (4.1 BUGHUNT) jamais en bas à droite : la colonne des sacs
   if T.RegisterMovable then T:RegisterMovable(frame, "meter", "Dégâts", { onMoved = savePos }) end
   DM.frame = frame
   frame:Hide()
@@ -288,7 +288,8 @@ end
 function DM:OnDisable()
   DM._active = false
   listen(false)
-  if frame then if inCombat() then meth(frame, "SetAlpha", 0) else frame:Hide() end end
+  -- (4.1 BUGHUNT) coupé en combat : invisible puis VRAIMENT caché après (avant : resté montré à alpha 0, souris prise)
+  if frame then if inCombat() then meth(frame, "SetAlpha", 0) T:RunOutOfCombat("Meter:hide", function() if frame and not DM._active then frame:Hide() frame:SetAlpha(1) end end) else frame:Hide() end end
 end
 function DM:OnOptionChanged() DM.Apply() end
 if T.RegisterSlash then

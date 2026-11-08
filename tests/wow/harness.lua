@@ -180,6 +180,7 @@ setmetatable(_G, {
 -- load files -------------------------------------------------------------------------------------
 local addonTable = {}
 local loaded, skipped = 0, 0
+M.firstAddonFrame = #M.frames + 1   -- (4.1 BUGHUNT) frames created from here on belong to the addon (or its scenario)
 say(("== %s (%s) flavor=%s Interface=%s"):format(addonName, tocPath, opts.flavor, tostring(meta.Interface)))
 for _, rel in ipairs(files) do
   local path = addonDir .. "/" .. rel

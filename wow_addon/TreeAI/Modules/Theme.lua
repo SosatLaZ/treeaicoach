@@ -555,18 +555,25 @@ function Th:WindowState(id) return winState(id) end
 -- animations : alpha avec ease-out, un seul OnUpdate partagé (coupé dès que plus rien ne bouge)
 local anims, driver = {}, nil
 local function stepAnims(_, elapsed)
-  local any = false
-  for f, a in pairs(anims) do
-    a.t = a.t + (elapsed or 0.016)
-    local k = math.min(1, a.t / a.dur)
-    local e = 1 - (1 - k) * (1 - k)
-    meth(f, "SetAlpha", a.from + (a.to - a.from) * e)
-    if k >= 1 then
-      anims[f] = nil
-      if a.done then pcall(a.done, f) end
-    else any = true end
+  -- (4.1 BUGHUNT) copie : un « done » (Hide → OnHide → un autre cadre qui s'ouvre en fondu) ajoute une animation
+  -- pendant le parcours (« invalid key to 'next' ») et le pilote se coupait avec elle dedans (cadre montré à alpha 0,
+  -- qui prend les clics sans se voir)
+  local list = {}
+  for f, a in pairs(anims) do list[#list + 1] = f list[#list + 1] = a end
+  for i = 1, #list, 2 do
+    local f, a = list[i], list[i + 1]
+    if anims[f] == a then
+      a.t = a.t + (elapsed or 0.016)
+      local k = math.min(1, a.t / a.dur)
+      local e = 1 - (1 - k) * (1 - k)
+      meth(f, "SetAlpha", a.from + (a.to - a.from) * e)
+      if k >= 1 then
+        anims[f] = nil
+        if a.done then pcall(a.done, f) end
+      end
+    end
   end
-  if not any and driver then meth(driver, "SetScript", "OnUpdate", nil) end
+  if not next(anims) and driver then meth(driver, "SetScript", "OnUpdate", nil) end
 end
 Th._StepAnims = stepAnims
 function Th:Animate(frame, from, to, dur, done)

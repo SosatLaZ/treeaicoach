@@ -1395,3 +1395,136 @@ if T.RegisterSlash then
       :format(#r.need + #r.use, #r.done, #r.starter, #r.upcoming, #r.useless, M.nearCount or 0, M.rebuildCost or 0, M.bagCost or 0))
   end, "surbrillance : état de la surbrillance des objets / monstres de quête")
 end
+
+-- ===================================================================== GARDE DES SACS (4.1 BUGHUNT)
+-- « je peux plus bouger les trucs de l'inventaire » (4.0.4 → 4.0.6) : un cadre TreeAI qui prend la souris (Suivi
+-- TreeAI posé à la place du suivi du jeu et qui descend le long du bord droit, encadré d'alerte « sacs pleins » sous
+-- la minimap en strate HIGH, fenêtre « À faire » RIGHT -60, 40, suivi compact, radar, panneau placé en colonne du
+-- bord…) se trouvait SUR les sacs du jeu (colonne en bas à droite, strate MEDIUM) : le clic / le glisser d'un objet
+-- partait dans notre cadre. Les sacs sont fermés quand le placement automatique choisit les places : il ne pouvait pas
+-- les éviter. Ici, à l'ouverture des sacs (et tant qu'ils restent ouverts, 2 contrôles / s, rien sacs fermés) :
+-- chaque cadre TreeAI visible qui chevauche un sac passe SOUS les sacs (strate LOW, ses enfants aussi) et reprend
+-- sa strate à la fermeture. Uniquement nos cadres ; jamais un cadre de Blizzard touché ; en combat les cadres
+-- protégés attendent la fin du combat. Indépendant du module Surbrillance (toujours actif).
+do
+  local BG = { lowered = {}, checks = 0, moved = 0 }
+  T.BagGuard = BG
+  local RANK = { BACKGROUND = 1, LOW = 2, MEDIUM = 3, HIGH = 4, DIALOG = 5, FULLSCREEN = 6, FULLSCREEN_DIALOG = 7, TOOLTIP = 8 }
+  -- jamais rabaissés : mode édition, visite guidée (bulles qui montrent un cadre du jeu), infobulles
+  local SKIP = { TreeAIEditBar = true, TreeAITourCallout = true, TreeAITourGlow = true, TreeAITourArrow = true }
+  local function scr(f)
+    local l, b, w, h = meth(f, "GetRect")
+    l, b, w, h = tonumber(l), tonumber(b), tonumber(w), tonumber(h)
+    if not (l and b and w and h) or w <= 0 or h <= 0 then return nil end
+    local s = tonumber(meth(f, "GetEffectiveScale")) or 1
+    return { l = l * s, b = b * s, w = w * s, h = h * s }
+  end
+  local function hit(a, r) return a.l < r.l + r.w - 1 and r.l < a.l + a.w - 1 and a.b < r.b + r.h - 1 and r.b < a.b + a.h - 1 end
+  --- sacs visibles (Blizzard : ContainerFrame1-13 + sacs combinés + banque ; tiers : racines connues) : { {rect, rang} }
+  function BG.BagRects()
+    local out = {}
+    local function add(f)
+      if type(f) == "table" and meth(f, "IsVisible") then
+        local r = scr(f)
+        if r then out[#out + 1] = { r = r, rank = RANK[meth(f, "GetFrameStrata") or "MEDIUM"] or 3 } end
+      end
+    end
+    for i = 1, tonumber(rawget(G, "NUM_CONTAINER_FRAMES")) or 13 do add(rawget(G, "ContainerFrame" .. i)) end
+    add(rawget(G, "ContainerFrameCombinedBags"))
+    add(rawget(G, "BankFrame"))
+    for _, n in ipairs(BAG_ROOTS) do add(rawget(G, n)) end
+    return out
+  end
+  --- nos cadres du premier niveau (enfants d'UIParent nommés TreeAI…), relevés au plus toutes les 3 s
+  local cache, cacheAt = nil, -10
+  local function ours()
+    local t = try(G.GetTime) or 0
+    if cache and t - cacheAt < 3 then return cache end
+    local list, UIP = {}, G.UIParent
+    cache, cacheAt = list, t
+    local enum = rawget(G, "EnumerateFrames")
+    local function take(f)
+      local n = meth(f, "GetName")
+      if type(n) == "string" and n:sub(1, 6) == "TreeAI" and not SKIP[n] and meth(f, "GetParent") == UIP then list[#list + 1] = f end
+    end
+    if type(enum) == "function" then
+      local f, guard = try(enum), 0
+      while f and guard < 30000 do guard = guard + 1 take(f) f = try(enum, f) end
+    else
+      for k, v in pairs(G) do if type(k) == "string" and k:sub(1, 6) == "TreeAI" and type(v) == "table" and v.GetObjectType then take(v) end end
+    end
+    return list
+  end
+  local function lower(f, rank, depth)
+    if depth > 6 then return end
+    local st = meth(f, "GetFrameStrata")
+    if st and (RANK[st] or 3) >= rank then   -- (re)passé dessous : un module qui remet sa strate est rattrapé
+      if BG.lowered[f] == nil then BG.lowered[f] = st BG.moved = BG.moved + 1 end
+      meth(f, "SetFrameStrata", "LOW")
+    end
+    if type(f.GetChildren) == "function" then
+      local kids = { pcall(f.GetChildren, f) }
+      for k = 2, math.min(#kids, 200) do lower(kids[k], rank, depth + 1) end
+    end
+  end
+  local function restore(top)
+    for f, st in pairs(BG.lowered) do
+      local w, d, mine = f, 0, false
+      while w and d < 8 do if w == top then mine = true break end w, d = meth(w, "GetParent"), d + 1 end
+      if mine then meth(f, "SetFrameStrata", st) BG.lowered[f] = nil end
+    end
+  end
+  BG.tops = {}
+  --- un contrôle : ce qui chevauche un sac ouvert passe dessous ; le reste reprend sa strate
+  function BG.Check()
+    BG.checks = BG.checks + 1
+    local bags = BG.BagRects()
+    for top in pairs(BG.tops) do   -- cadres rabaissés : plus de sac dessous (ou cachés) → rendus, sinon gardés dessous
+      local r = scr(top)
+      local still
+      if r and meth(top, "IsVisible") then for _, bg in ipairs(bags) do if hit(r, bg.r) then still = math.min(still or 9, bg.rank) end end end
+      if not locked(top) then
+        if still then lower(top, still, 0) else restore(top) BG.tops[top] = nil end
+      end
+    end
+    if #bags == 0 then return false end
+    for _, f in ipairs(ours()) do
+      if meth(f, "IsVisible") and not BG.tops[f] then
+        local r = scr(f)
+        local rank
+        if r then for _, bg in ipairs(bags) do if hit(r, bg.r) then rank = math.min(rank or 9, bg.rank) end end end
+        if rank and not locked(f) then
+          BG.tops[f] = true
+          lower(f, rank, 0)
+        end
+      end
+    end
+    return true
+  end
+  -- sacs ouverts : un contrôle toutes les 0,5 s (un cadre qui apparaît sur les sacs passe dessous) ; fermés : rien
+  local ticking = false
+  local function tick()
+    ticking = false
+    if (not inCombat()) and BG.Check() or next(BG.tops) then
+      ticking = true
+      after(0.5, tick)
+    end
+  end
+  function BG.Soon()
+    if ticking then return end
+    ticking = true
+    after(0.05, tick)
+  end
+  local ev = G.CreateFrame and G.CreateFrame("Frame")
+  if ev then
+    for _, e in ipairs({ "BAG_UPDATE_DELAYED", "BANKFRAME_OPENED", "BANKFRAME_CLOSED", "MERCHANT_SHOW", "MAIL_SHOW",
+      "PLAYER_REGEN_ENABLED", "PLAYER_ENTERING_WORLD" }) do pcall(ev.RegisterEvent, ev, e) end
+    ev:SetScript("OnEvent", function() BG.Soon() end)
+  end
+  if type(G.hooksecurefunc) == "function" then
+    for _, fn in ipairs({ "ToggleBag", "OpenBag", "CloseBag", "OpenAllBags", "CloseAllBags", "ToggleAllBags", "OpenBackpack",
+      "CloseBackpack", "ToggleBackpack", "UpdateContainerFrameAnchors" }) do
+      if type(rawget(G, fn)) == "function" then pcall(G.hooksecurefunc, fn, function() BG.Soon() end) end
+    end
+  end
+end
