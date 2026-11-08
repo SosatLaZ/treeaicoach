@@ -1259,7 +1259,11 @@ function TreeAI:RefreshPanel()
   local tab = activeTab()
   local secUrgent = false
   for id, b in pairs(tabButtons) do
-    if id ~= MORE then
+    if id ~= MORE and id ~= tab and not b:IsShown() then
+      -- (3.9.9) onglet caché (rangée « Plus » fermée) : seule l'urgence compte, lue dans la pastille (≤ 1 fois / 2 s)
+      local bt, br = badgeOf(id)
+      if bt and br == 1 and isMoreTab(id) then secUrgent = true end
+    elseif id ~= MORE then
       local list = self:GetTabLines(id)
       local urgent = false
       for _, e in ipairs(list) do if e.prio >= 3 then urgent = true break end end
