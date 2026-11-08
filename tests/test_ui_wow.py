@@ -76,3 +76,46 @@ def test_wow_mode_puts_wow_first(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         assert view.pick_btn.isHidden()
     finally:
         app.close()
+
+
+def test_wow_errors_buttons(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """« Erreurs WoW : ouvrir le fichier » + « Copier » (TreeAI-erreurs.txt, written from the addon save)."""
+    pytest.importorskip("PySide6")
+    if str(TESTS) not in sys.path:
+        sys.path.insert(0, str(TESTS))
+    import test_launcher as tl
+
+    from treeaicoach import paths
+    from treeaicoach import ui as app_ui
+    from treeaicoach.wow import errlog
+
+    monkeypatch.setenv("TREEAICOACH_HOME", str(tmp_path / "home"))
+    paths._reset_cache()
+    errlog._reset()
+    monkeypatch.setattr(app_ui, "_report_function", lambda name: (lambda n=50: []) if name == "list_games" else None)
+    app, _v, _e = tl._build(tmp_path, start_backend=False)
+    try:
+        app.show_page("wow")
+        view = app.page_views["wow"]
+        assert view.err_open_btn.text() == "Erreurs WoW : ouvrir le fichier" and view.err_copy_btn.text() == "Copier"
+        toasts: list[str] = []
+        copied: list[str] = []
+        opened: list = []
+        monkeypatch.setattr(app, "show_toast", lambda t, level="info": toasts.append(t))
+        monkeypatch.setattr(app, "copy_text", lambda t: copied.append(t))
+        monkeypatch.setattr(errlog, "open_file", lambda p: opened.append(p) or True)
+        view._snap = {}
+        view._open_errors()
+        assert toasts[-1] == pw.ERR_EMPTY and not opened
+        view._snap = {"db": {"diag": {"errors": [{"msg": "boom-fake", "module": "Quests", "t": 1800000000}]}}}
+        view._copy_errors()
+        assert copied and "boom-fake" in copied[-1]
+        view._open_errors()
+        assert opened and Path(opened[-1]).name == "TreeAI-erreurs.txt"
+        info = pw._errfile_info()
+        assert info and info["path"].endswith("TreeAI-erreurs.txt")
+        view._render_errors(info)
+        assert "TreeAI-erreurs.txt" in view.err_row.desc.text()
+    finally:
+        app.close()
+        paths._reset_cache()

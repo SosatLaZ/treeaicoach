@@ -181,6 +181,10 @@ class WowMode:
             if now - self._db_t >= DB_REFRESH_S:
                 self._db_t = now
                 self.db = self.read_db()
+                if self.db:
+                    errlog = optional("errlog")
+                    if errlog is not None:
+                        errlog.write_report(self.db)  # « TreeAI-erreurs.txt », only when it changed
                 self._changed()
 
     def read_db(self) -> dict | None:

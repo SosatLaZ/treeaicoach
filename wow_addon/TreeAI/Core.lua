@@ -1083,6 +1083,7 @@ TreeAI.PROFILE_V = 1
 TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Theme = { lite = true, desc = "Apparence du panneau (couleurs, police)" },
   SelfTest = { lite = true, desc = "Autotest et diagnostic (/tai test)" },
+  Bugs = { lite = true, desc = "Fichier d'erreurs pour TreeAI Coach (/tai erreurs)" },
   Quests = { lite = true, desc = "Quêtes : objectifs, rendus, quêtes proches" },
   Tracker = { lite = true, desc = "Suivi des quêtes (onglet Quêtes)" },
   Todo = { lite = true, desc = "À faire : la liste de suivi des quêtes" },

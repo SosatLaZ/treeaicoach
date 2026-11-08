@@ -514,6 +514,10 @@ class LiveHub:
         from treeaicoach.wow import savedvars  # noqa: PLC0415
 
         self.db = savedvars.read_db(self.sv.path) if self.sv.sig else {}
+        if self.db:
+            from treeaicoach.wow import errlog  # noqa: PLC0415
+
+            errlog.write_report(self.db)  # « TreeAI-erreurs.txt » (never raises)
         return [LiveEvent("savedvars", "Sauvegarde de l'addon relue" if self.db else "Sauvegarde absente")]
 
     def _poll_auctionator(self) -> list[LiveEvent]:
