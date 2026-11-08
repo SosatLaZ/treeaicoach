@@ -149,7 +149,12 @@ return function(M, ctx)
   ctx.check(#M.ah.bids == nb + 1, "nothing more to buy")
 
   -- « Annuler les battues »: my lin auction beaten → one cancel per click
-  M.ah.owned = { { id = 2589, count = 20, buyout = 20 * 140, owner = M.player.name, auctionID = 990 } }
+  do   -- a really beaten lin: 300 cheaper units ahead (the 50/60 pc bargain is gone), cancelling pays
+    local rows = {}
+    for k = 1, 15 do rows[k] = { count = 20, buy = (100 + k) * 20, owner = "Vendeur" .. k } end
+    A.ApplyItemListings(2589, rows)
+  end
+  M.ah.owned = { { id = 2589, count = 20, buyout = 20 * 150, owner = M.player.name, auctionID = 990 } }
   A.CheckOwned()
   A.Refresh()
   ctx.check(A.win.cancelBtn:GetText():find("%(1%)"), "cancel button counts beaten auctions: " .. tostring(A.win.cancelBtn:GetText()))

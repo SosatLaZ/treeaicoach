@@ -521,6 +521,52 @@ function F.whyNone(rejects, candidates)
   return out
 end
 
+-- Annuler une de MES enchères battues ? (miroir de auction.cancel_advice) — comp = { {unit, count}, ... } des autres.
+-- Jamais sans données sûres ; reposte toujours à ≤ (plus bas − 1 pc) ; plus bas anormal (bradage, autre variante,
+-- < marché − 30 % ou < 1/10 de mon prix) = laisser ; annuler seulement si le gain espéré après dépôt perdu
+-- + nouveau dépôt à risque + commission dépasse max(1 pa, 5 % du net).
+function F.cancelAdvice(myUnit, count, comp, liq, vendor, neutral, hrs)
+  count, myUnit = max(1, n0(count)), n0(myUnit)
+  if not (liq and liq.ok) then
+    return { action = "none", state = "?", text = "pas assez de données de prix : laisser" }
+  end
+  local c = {}
+  for _, x in ipairs(comp or {}) do if n0(x[1]) > 0 then c[#c + 1] = { n0(x[1]), max(1, n0(x[2])) } end end
+  table.sort(c, function(a, b) return a[1] < b[1] end)
+  local low = c[1] and c[1][1]
+  if not low or low >= myUnit then
+    return { action = "keep", state = "ok", text = low and "le moins cher : garder" or "aucun concurrent : garder" }
+  end
+  local mv, vol = n0(liq.market), n0(liq.vol)
+  if low * 10 < myUnit then
+    return { action = "keep", state = "battue", text = ("laisser : ton prix est plus de 10 fois le plus bas (%s/u), vérifie l'objet"):format(money(low)) }
+  end
+  if low < mv * (1 - LIQ.maxVol) then
+    return { action = "keep", state = "battue", text = ("laisser : %s/u est anormalement bas (marché %s/u)"):format(money(low), money(mv)) }
+  end
+  local dep = F.deposit(vendor, count, hrs, neutral)
+  local floorU = max(1, mv - floor(mv * vol))
+  local vt = n0(vendor) * count
+  if vt > 0 then floorU = max(floorU, ceil(F.breakEven(vt, dep, F.pSell(liq.sold, 0, count, hrs), neutral) / count)) end
+  local repost = low - 1
+  if repost < floorU then
+    return { action = "keep", state = "battue", text = ("laisser : passer sous %s/u ne rapporte rien (plancher %s/u)"):format(money(low), money(floorU)) }
+  end
+  local ahead = 0
+  for _, x in ipairs(c) do if x[1] < myUnit then ahead = ahead + x[2] end end
+  local pKeep, pNew = F.pSell(liq.sold, ahead, count, hrs), F.pSell(liq.sold, 0, count, hrs)
+  local keepV = pKeep * F.net(myUnit * count, neutral) - dep * (1 - pKeep)
+  local cancelV = pNew * F.net(repost * count, neutral) - dep * (1 - pNew) - dep
+  local gain = floor(cancelV - keepV + 0.5)
+  local need = max(100, floor(F.net(repost * count, neutral) * 0.05))
+  if gain < need then
+    return { action = "keep", state = "battue", gain = gain, text = gain > 0 and ("laisser : annuler et reposter ne rapporte que %s"):format(money(gain))
+      or "laisser : annuler (dépôt perdu) coûterait plus qu'attendre" }
+  end
+  return { action = "cancel", state = "battue", repost = repost, gain = gain,
+    text = ("annuler, reposter %s/u (+%s espéré, dépôt %s perdu compté)"):format(money(repost), money(gain), money(dep)) }
+end
+
 -- ------------------------------------------------------------------ état / API HV
 M.cur = {}        -- [itemID] = { units = {..}, listings = { {index, unit, count, buy, owner, auctionID} }, qty, t }
 M.deals, M.thinList, M.owned, M.plan, M.queue, M.qi = {}, {}, {}, {}, {}, 1
@@ -839,6 +885,7 @@ function M.FinishScan(j)
     for id, it in pairs(cur) do M.cur[id] = it end
   end
   local dt = max(0.001, clock() - s.t0)
+  if M.db then M.db.lastScanT = t end
   M.lastScan = { src = s.src, full = s.full, rows = s.total, items = nItems, unresolved = unresolved, t = t,
     secs = floor(dt * 100 + 0.5) / 100, speed = floor(s.total / dt + 0.5), by = s.by }
   M.Prune()
@@ -936,7 +983,7 @@ function M.FindDeals(items, j)
   local all, thin, rejects, cand = {}, {}, {}, 0
   LIQ.qtyDays = max(1, n0(cfg("qtyDays", 3)))
   for id, it in pairs(items or M.cur) do
-    if #it.listings > 0 then
+    if #it.listings > 0 and not (it.odd or M.OddCached(id)) then
       local vendor = vendorPrice(id)
       local st = M.Stats(id)
       local liq
@@ -1003,7 +1050,8 @@ function M.Reserve()
   return keep + train + mount, { keep = keep, train = train, mount = mount }
 end
 function M.Gold()
-  local total = (API.Money and API.Money()) or n0(try(_G.GetMoney))
+  local total = n0(API.Money and API.Money())
+  if total <= 0 then total = n0((try(_G.GetMoney))) end   -- l'or réel (hors combat à l'HV)
   local reserve, parts = M.Reserve()
   local free = max(0, total - reserve)
   local cap = n0(cfg("budget", 0)) * 10000
@@ -1413,6 +1461,29 @@ function M.AUCTION_ITEM_LIST_UPDATE()
 end
 
 -- ------------------------------------------------------------------ mes enchères
+-- scan complet en lecture / attendu → texte « 84 % » (sinon nil)
+function M.Scanning()
+  if M.job and n0(M.job.total) > 0 then return floor(100 * M.job.rows / max(1, M.job.total)) .. " %" end
+  if M.pendingAll or M.repWait then return "attente du serveur" end
+  return nil
+end
+-- objets « spéciaux » sans vrai marché : lié quand ramassé, objet de quête, commission / commande d'artisan
+M.oddCache = {}
+function M.OddCached(id)
+  local v = M.oddCache[id]
+  if v == nil then v = M.Odd(id) or false if M.ItemInfo(id) then M.oddCache[id] = v end end
+  return v
+end
+local ODD_NAMES = { "^commission", "^crafting order", "^work order", "^commande d'artisan", "^bon de commande" }
+function M.Odd(id)
+  local name, _, _, _, _, _, _, _, _, _, _, classID, _, bindType = M.ItemInfo(id)
+  if tonumber(classID) == 12 or tonumber(bindType) == 4 then return "objet de quête" end
+  if tonumber(bindType) == 1 then return "lié quand ramassé" end
+  local nm = tostring(name or itemName(id)):lower()
+  for _, p in ipairs(ODD_NAMES) do if nm:find(p) then return "commission d'artisan" end end
+  return nil
+end
+
 function M.CheckOwned()
   local out, mine = {}, {}
   local A = modernAH()
@@ -1433,22 +1504,25 @@ function M.CheckOwned()
     end
   end
   local neutral, hrs = M.IsNeutral(), hours()
+  local scanning = M.Scanning()
   for _, a in ipairs(mine) do
     a.unit = floor(a.buy / a.count)
     local it = a.id and M.cur[a.id]
-    local low = it and it.units[1]
-    a.lowest = low
     a.depositLost = F.deposit(vendorPrice(a.id), a.count, hrs, neutral)
-    if low and low < a.unit then
-      local comp = {}
-      for _, l in ipairs(it.listings) do comp[#comp + 1] = { l.unit, l.count } end
-      local s = F.suggestPost(a.count, vendorPrice(a.id), M.Stats(a.id), comp, neutral, hrs)
-      a.undercut, a.repost = true, s.unit
-      -- annuler vaut le coup si le gain de vendre (au lieu de rester derrière) dépasse le dépôt perdu
-      a.worth = s.unit and s.better == "ah" and F.net(s.unit * a.count, neutral) * 0.5 > a.depositLost or false
-      a.advice = a.worth and ("annuler, reposter " .. money(s.unit)) or "attendre (dépôt > gain)"
+    local odd = a.id and M.Odd(a.id)
+    if scanning then
+      a.state2, a.advice = "scan…", ("scan en cours (%s) : conseil après la lecture"):format(scanning)
+    elseif odd or not a.id then
+      a.state2, a.advice = "-", "objet spécial (" .. (odd or "inconnu") .. ") : pas de conseil de prix"
     else
-      a.advice = low and "le moins cher : garder" or "pas de concurrent connu"
+      local comp = {}
+      if it then for _, l in ipairs(it.listings) do comp[#comp + 1] = { l.unit, l.count } end end
+      a.lowest = it and it.units[1]
+      local adv = F.cancelAdvice(a.unit, a.count, comp, M.Liq(a.id), vendorPrice(a.id), neutral, hrs)
+      a.state2, a.advice = adv.state, adv.text
+      a.undercut = adv.state == "battue"
+      a.worth = adv.action == "cancel"
+      a.repost, a.gain = adv.repost, adv.gain
     end
     local fl = a.id and M.char and M.char.flips and M.char.flips[a.id]
     local mk = a.id and M.liqCache[a.id] and M.liqCache[a.id].market
@@ -1460,7 +1534,7 @@ function M.CheckOwned()
   end
   M.owned = out
   local n = 0
-  for _, a in ipairs(out) do if a.undercut then n = n + 1 end end
+  for _, a in ipairs(out) do if a.worth then n = n + 1 end end
   if n > 0 and M.Suggest then M:Suggest("undercut", ("HV : %d de tes enchères sont battues (bouton « Annuler les battues » à l'HV)"):format(n), 2, { ttl = 300 }) end
   return out
 end
@@ -1468,6 +1542,7 @@ end
 function M.Cancel(a)
   if not (a and M.ahOpen) then say("Ouvre l'hôtel des ventes d'abord.") return false end
   if a.state == "cancelled" then return false end
+  if not a.worth or M.Scanning() then say("Annulation non conseillée : " .. tostring(a.advice or "pas de données")) return false end
   if M.Flavor() == "classic" then
     local r = { try(_G.GetAuctionItemInfo, "owner", a.index) }
     if tonumber(r[17]) ~= a.id or n0(r[3]) ~= a.count or n0(r[10]) ~= a.buy then
@@ -1514,7 +1589,7 @@ function M.SellAdvice()
   end
   local out = {}
   for id, count in pairs(bag) do
-    if M.Stats(id) or M.cur[id] or M.browse[id] then
+    if not M.Odd(id) and (M.Stats(id) or M.cur[id] or M.browse[id]) then
       local stack = select(8, M.ItemInfo(id))
       local s = M.PostPrice(id, min(count, max(1, n0(stack))))
       s.have = count
@@ -1532,7 +1607,7 @@ function M.PostList()
   if not API.IterBags then return out end
   for bag, slot, item in API.IterBags() do
     local id = item and item.itemID
-    if id and not item.noValue and not item.locked and (item.quality or 1) >= 1 and (M.Stats(id) or M.cur[id] or M.browse[id]) then
+    if id and not item.noValue and not item.locked and (item.quality or 1) >= 1 and not M.Odd(id) and (M.Stats(id) or M.cur[id] or M.browse[id]) then
       local s = M.PostPrice(id, max(1, n0(item.count)))
       if s.unit and s.better == "ah" then
         s.bag, s.slot, s.have = bag, slot, n0(item.count)
@@ -1548,6 +1623,8 @@ end
 function M.Post(p)
   if not (p and M.ahOpen) then say("Ouvre l'hôtel des ventes d'abord.") return false end
   if p.state == "posted" or p.state == "skip" then return false end
+  local sc = M.Scanning()
+  if sc then say(("Scan en cours (%s) : mise en vente après la lecture des prix."):format(sc)) return false end
   local item = API.BagItem and API.BagItem(p.bag, p.slot)
   if not (item and item.itemID == p.id and n0(item.count) == p.count) then
     p.state = "skip"
@@ -1637,9 +1714,11 @@ function M.NextLabel()
     local verb = (M.Flavor() == "modern" and (d.state == nil and "vérifier" or d.state == "confirm" and "confirmer")) or "acheter"
     return ("Suivant : %s %s x%d (%s)"):format(verb, itemName(d.id), d.count, money(d.buyNow or d.buy)), true
   elseif e.kind == "cancel" then
-    return ("Suivant : annuler %s x%d"):format(itemName(e.a.id), e.a.count), true
+    if M.Scanning() or not e.a.worth then return "Suivant : scan en cours…", false end
+    return ("Suivant : annuler %s x%d (reposter %s/u)"):format(itemName(e.a.id), e.a.count, money(e.a.repost)), true
   end
   local p = e.p
+  if M.Scanning() then return "Suivant : scan en cours…", false end
   return ("Suivant : %s %s x%d à %s/u"):format(p.state == "check" and "(vérif…)" or "poster", itemName(p.id), p.count, money(p.unit)), p.state ~= "check"
 end
 -- appelé UNIQUEMENT par le OnClick du bouton « Suivant » : au plus UNE action protégée, puis on avance
@@ -1725,8 +1804,10 @@ function M.ActionLabels()
   else
     hint = F.NONE_TEXT .. "."
   end
-  return { buy = buy, buyOn = buyOn and M.ahOpen, post = post, postOn = p ~= nil and p.state ~= "check" and M.ahOpen,
-    cancel = ("Annuler les battues (%d)"):format(nc), cancelOn = nc > 0 and M.ahOpen, hint = hint }
+  local sc = M.Scanning()
+  if sc then hint = ("Scan en cours (%s) : conseils de vente et d'annulation après la lecture."):format(sc) end
+  return { buy = buy, buyOn = buyOn and M.ahOpen, post = post, postOn = p ~= nil and p.state ~= "check" and M.ahOpen and not sc,
+    cancel = ("Annuler les battues (%d)"):format(nc), cancelOn = nc > 0 and M.ahOpen and not sc, hint = hint }
 end
 
 -- ------------------------------------------------------------------ journal (courrier de l'HV)
@@ -1894,8 +1975,8 @@ function M.Report(what)
   end
   for i = 1, min(6, #M.deals) do P(i .. ". " .. M.DealText(M.deals[i])) end
   local nb = 0
-  for _, a in ipairs(M.owned) do if a.undercut then nb = nb + 1 end end
-  if nb > 0 then P(nb .. " enchère(s) sapée(s) : onglet « Mes ventes ».") end
+  for _, a in ipairs(M.owned) do if a.worth then nb = nb + 1 end end
+  if nb > 0 then P(nb .. " enchère(s) battue(s) à annuler : onglet « Mes ventes ».") end
 end
 
 function M.DebugLines()
@@ -1984,7 +2065,7 @@ local function cells(tab, e)
   elseif tab == "sell" then
     return { itemName(e.id), tostring(e.count), money(e.unit), money(e.deposit), money(e.net), money(e.vendor), hours() .. " h" }
   elseif tab == "owned" then
-    local st = e.state == "cancelled" and "annulée" or (e.undercut and "sapée" or "ok")
+    local st = e.state == "cancelled" and "annulée" or e.state2 or "ok"
     return { itemName(e.id) .. " x" .. e.count, money(e.unit), e.lowest and money(e.lowest) or "-", st, e.advice or "" }
   end
   return { e.text }
@@ -1999,7 +2080,7 @@ local function buttonLabel(tab, e)
     if e.state == "confirm" then return "Confirmer", true end
     if M.Flavor() == "modern" and e.state ~= "ready" then return "Vérifier", M.ahOpen end
     return "Acheter", M.ahOpen
-  elseif tab == "owned" and e.undercut then
+  elseif tab == "owned" and e.worth then
     if e.state == "cancelled" then return "Annulée", false end
     return "Annuler", M.ahOpen
   elseif tab == "sell" then
@@ -2159,8 +2240,10 @@ function M.RefreshStatus()
   else f.scanBtn:SetText("Scan complet") end
   if f.miniBtn then f.miniBtn:SetText(M.mini and (M.mini.done .. "/" .. #M.mini.list) or "Scan ciblé") end
   local g = M.Gold()
-  local age = M.lastScan and mmss(now() - M.lastScan.t) or "jamais"
-  f.status:SetText(("Page %d/%d · budget %s · scan %s"):format(M.page, M.pages or 1, money(g.budget), age))
+  local sc = M.Scanning()
+  local last = M.lastScan and M.lastScan.t or (M.db and n0(M.db.lastScanT) > 0 and M.db.lastScanT)
+  local age = sc and ("scan en cours (" .. sc .. ")") or (last and ("scan il y a " .. mmss(now() - last))) or "aucun scan"
+  f.status:SetText(("Page %d/%d · or %s · budget %s · %s"):format(M.page, M.pages or 1, money(g.total), money(g.budget), age))
   local _, en = M.NextLabel()
   f.nextBtn:SetText("Suivant")
   if f.nextBtn.SetEnabled then f.nextBtn:SetEnabled((en and M.ahOpen) and true or false) end
