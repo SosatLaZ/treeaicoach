@@ -35,7 +35,7 @@ local M = T:RegisterModule("Compass", {
 ns.Compass = M
 T.Compass = M
 
-local floor, sqrt, atan2, pi = math.floor, math.sqrt, math.atan2, math.pi
+local floor, sqrt, atan2, pi, abs = math.floor, math.sqrt, math.atan2, math.pi, math.abs
 local YD2M = 0.9144
 local RUN = 7  -- vitesse de course (yd/s) si l'API ne donne rien
 
@@ -143,10 +143,11 @@ function G.ETA(yd, speed)
   speed = (speed and speed > 0.5) and speed or RUN
   local s = yd / speed
   if s < 60 then return floor(s + 0.5) .. " s" end
-  if s < 3600 then
-    local mn, sec = floor(s / 60), floor(s % 60)
-    return sec >= 10 and (mn .. " min " .. sec) or (mn .. " min")
+  if s < 600 then                                   -- « 1 min 05 » : les secondes comptent sur un court trajet
+    s = floor(s + 0.5)
+    return ("%d min %02d"):format(floor(s / 60), s % 60)
   end
+  if s < 3600 then return floor(s / 60 + 0.5) .. " min" end
   return ("%d h %02d"):format(floor(s / 3600), floor((s % 3600) / 60))
 end
 
@@ -179,6 +180,8 @@ end
 
 local speedAvg
 function M.Speed()
+  local NT = T.NavTime                               -- vitesse mesurée (à pied / monté) si le module est là
+  if NT and NT.Speed then return (NT.Speed()) end
   local s = _ns((try(_G.GetUnitSpeed, "player")))
   s = tonumber(s) or 0
   if s > 0.5 then speedAvg = speedAvg and (speedAvg * 0.8 + s * 0.2) or s end
@@ -214,6 +217,7 @@ M.SPFCall = spfCall
 function M.ResetSPF() spfColon = nil end
 -- temps de trajet (s) a → b ; nil si pas de SPF / en combat / inaccessible
 function M.Travel(a, b)
+  if not M.SPFOptIn() then return nil end           -- notre modèle calibré (NavTime) par défaut
   local A = M.SPF()
   if not (A and a and b and a.mapID and b.mapID) or inCombat() then return nil end
   local sec = tonumber((spfCall(A, "Estimate", a.mapID, a.x, a.y, b.mapID, b.x, b.y)))
@@ -226,7 +230,7 @@ function M.Pin(t)
   if not (t and t.mapID and t.x) then return nil end
   local title = cut(t.label or t.title or "TreeAI", 60)
   local A = M.SPF()
-  if A and not inCombat() and spfCall(A, "Navigate", "TreeAI", t.mapID, t.x, t.y, title) then return "spf" end
+  if A and M.SPFOptIn() and not inCombat() and spfCall(A, "Navigate", "TreeAI", t.mapID, t.x, t.y, title) then return "spf" end
   local TT = rawget(_G, "TomTom")
   if type(TT) == "table" and type(TT.AddWaypoint) == "function" then
     if M.tomtomUID and type(TT.RemoveWaypoint) == "function" then pcall(TT.RemoveWaypoint, TT, M.tomtomUID) end
@@ -273,7 +277,7 @@ function M.OtherGuide(t)
       if not (type(arrow) == "table" and arrow.IsVisible) or try(arrow.IsVisible, arrow) then return "tomtom" end
     elseif M.guide.how == "spf" then
       local A = M.SPF()
-      local active = A and (type(A.IsNavigating) ~= "function" or spfCall(A, "IsNavigating"))
+      local active = A and (type(A.Active) ~= "function" or spfCall(A, "Active"))
       if active then return "spf" end
     elseif M.guide.how == "blizzard" then
       if not (CM and CM.HasUserWaypoint) or try(CM.HasUserWaypoint) then return "blizzard" end
@@ -683,6 +687,8 @@ function M.ClearWaypoint()
 end
 
 -- état calculé pour l'affichage (pur sauf lectures d'API)
+local ARRIVE = { custom = 12, turnin = 15, objective = 30, zone = 0 }
+M.ARRIVE = ARRIVE
 function M.Compute()
   local t = M.Current()
   local me = M.Player()
@@ -692,34 +698,116 @@ function M.Compute()
   if me and t.mapID then
     local d, bearing, approx = G.Vector(me, t)
     st.dist, st.bearing, st.approx = d, bearing, approx
-    local facing = try(_G.GetPlayerFacing)
+    local facing = _ns(try(_G.GetPlayerFacing))
     st.facing = facing
     st.rel = G.Relative(bearing, facing)
+    -- coordonnées monde de la cible : la flèche suit le joueur entre deux calculs (UnitPosition, sans table)
+    st.tc, st.tn, st.tw = G.World(t.mapID, t.x, t.y)
     local tnow = now()
     if t ~= M.travelT or tnow - (M.travelAt or 0) > 3 then
       M.travelT, M.travelAt, M.travelSec = t, tnow, M.Travel(me, t)
     end
-    if M.travelSec then st.eta, st.spf = G.ETA(M.travelSec * RUN, RUN), true
-    else st.eta = d and G.ETA(d, M.Speed()) end
+    local NT = T.NavTime
+    if M.travelSec then st.sec, st.spf = M.travelSec, true
+    elseif d then
+      st.sec = (NT and NT.Model) and NT.Model(d, t.mapID) or d / M.Speed()
+    end
+    st.eta = st.sec and G.ETA(st.sec * RUN, RUN)
     t.dist = d or t.dist
-    if d and d < 12 and t.kind == "custom" then st.arrived = true end
+    t.arrive = t.arrive or ARRIVE[t.kind] or 15
+    if d and d <= t.arrive then st.arrived = true end
+    if NT and NT.Track and d and not approx then pcall(NT.Track, t, me, d) end
   end
   return st
 end
 
 -- ------------------------------------------------------------------ cadre (le nôtre, jamais Blizzard)
-local frame, arrow, label, info
+-- Inspiré des meilleures flèches (idées seulement) : TomTom (grande flèche, couleur selon l'alignement,
+-- demi-tour), Shortest Path (une seule flèche, durée réelle), Questie / Zygor / RXP (étape en sous-titre,
+-- arrivée claire). Rotation lissée ≤ 30 Hz seulement quand tu bouges ou tournes ; 4 Hz à l'arrêt ; textes 1 Hz.
+local W, H = 200, 112
+M.W, M.H = W, H
+local frame, arrow, shadow, ring, check, dist, label, tag
 local ARROW = "Interface\\Minimap\\MinimapArrow"
+local RING = "Interface\\CHARACTERFRAME\\TempPortraitAlphaMask"
+local CHECK = "Interface\\RaidFrame\\ReadyCheck-Ready"
+local BEHIND = 2.55          -- ~146° : « derrière toi »
 local function savePos()
   if not frame or not M.char then return end
   local p, _, _, x, y = frame:GetPoint(1)
   M.char.point, M.char.x, M.char.y = p or "TOP", x or 0, y or -120
 end
 
+-- couleur selon l'écart (0 = en face → vert ; 90° → jaune ; 180° → rouge), sans table
+function G.AlignColor(rel)
+  if not rel then return 1, 0.85, 0.2 end
+  local a = rel % (2 * pi)
+  if a > pi then a = 2 * pi - a end
+  local k = a / pi                                  -- 0..1
+  if k < 0.5 then return 0.25 + 1.5 * k, 1, 0.25 end -- vert → jaune
+  return 1, 1 - 1.5 * (k - 0.5) * 1.33, 0.2          -- jaune → rouge
+end
+-- plus court chemin angulaire de a vers b (−pi..pi)
+function G.Shortest(a, b)
+  local d = (b - a) % (2 * pi)
+  if d > pi then d = d - 2 * pi end
+  return d
+end
+
+local shown, target, lastFacing, acc, full, busy = nil, nil, nil, 0, 0, false
+local lastR, lastLabel, lastInfo, lastTag
+local function paint(rel)
+  if rel == lastR then return end
+  lastR = rel
+  if arrow.SetRotation then arrow:SetRotation(rel) end
+  if shadow.SetRotation then shadow:SetRotation(rel) end
+  local r, g, b = G.AlignColor(rel)
+  arrow:SetVertexColor(r, g, b)
+end
+M.Paint = function(rel) if arrow then paint(rel) end end
+
+local function setTag(s, r, g, b)
+  if s == lastTag then return end
+  lastTag = s
+  tag:SetText(s or "")
+  if s then tag:SetTextColor(r, g, b) end
+end
+
+--- un pas d'animation : cible d'angle (cap absolu de la cible − orientation), approche lissée
+function M.Step(dt)
+  local st = M.state
+  if not (frame and st and st.bearing and frame:IsShown() and not st.arrived) then busy = false return end
+  local facing = _ns(try(_G.GetPlayerFacing))
+  if not facing then busy = false return end
+  local bearing = st.bearing
+  if st.tn and st.tc then                            -- position fine sans allocation (UnitPosition)
+    local py, px, _, inst = try(_G.UnitPosition, "player")
+    py, px, inst = _ns(py), _ns(px), _ns(inst)
+    if py and px and (inst == nil or inst == st.tc) then
+      local n, w = st.tn - py, st.tw - px
+      if n * n + w * w > 4 then bearing = atan2(w, n) st.bearing = bearing end
+    end
+  end
+  local moved = facing ~= lastFacing
+  lastFacing = facing
+  target = (bearing - facing) % (2 * pi)
+  st.facing, st.rel = facing, target
+  if not shown then shown = target end
+  local d = G.Shortest(shown, target)
+  if abs(d) < 0.004 then shown = target
+  else shown = (shown + d * math.min(1, (dt or 0.033) * 14)) % (2 * pi) end
+  paint(shown)
+  local behind = target > BEHIND and target < 2 * pi - BEHIND
+  st.behind = behind
+  if behind then setTag("Derrière toi", 1, 0.35, 0.3) else setTag(nil) end
+  busy = moved or abs(d) >= 0.004 or (T.NavTime and T.NavTime.moving) or false
+end
+M.Spin = function() M.Step(0.1) end
+
 local function createFrame()
   if frame or type(_G.CreateFrame) ~= "function" then return frame end
   frame = _G.CreateFrame("Button", "TreeAICompassFrame", _G.UIParent)
-  frame:SetSize(150, 74)
+  frame:SetSize(W, H)
   frame:SetPoint(M.char.point or "TOP", _G.UIParent, M.char.point or "TOP", M.char.x or 0, M.char.y or -120)
   frame:SetFrameStrata("MEDIUM")
   frame:SetClampedToScreen(true)
@@ -750,100 +838,163 @@ local function createFrame()
     if t then
       pcall(tt.AddLine, tt, t.title or t.label, 1, 1, 1)
       if t.npc then pcall(tt.AddLine, tt, t.npc, 0.8, 0.8, 0.8) end
-      pcall(tt.AddLine, tt, "Source : " .. (t.src or "zone"), 0.6, 0.6, 0.6)
+      local st = M.state or {}
+      pcall(tt.AddLine, tt, "Durée : " .. (st.spf and "Shortest Path (chemin réel)" or "ta vitesse mesurée × détour de la zone"), 0.6, 0.6, 0.6)
     end
-    pcall(tt.AddLine, tt, "Clic : cible suivante · clic droit : précédente · Maj-clic : Aller là (Shortest Path / TomTom / carte) · molette : taille · glisser : déplacer", 0.6, 0.8, 1, true)
+    local acc = T.NavTime and T.NavTime.AccuracyText and T.NavTime.AccuracyText()
+    if acc then pcall(tt.AddLine, tt, acc, 0.6, 0.6, 0.6) end
+    pcall(tt.AddLine, tt, "Clic : cible suivante · clic droit : précédente · Maj-clic : Aller là · molette : taille · glisser : déplacer", 0.6, 0.8, 1, true)
     if T.AutoRunHint then pcall(tt.AddLine, tt, T.AutoRunHint(), 0.55, 0.55, 0.55, true) end
     pcall(tt.Show, tt)
   end)
   frame:SetScript("OnLeave", function() if _G.GameTooltip then pcall(_G.GameTooltip.Hide, _G.GameTooltip) end end)
   local bg = frame:CreateTexture(nil, "BACKGROUND")
   bg:SetAllPoints(frame)
-  bg:SetColorTexture(0, 0, 0, 0.35)
-  arrow = frame:CreateTexture(nil, "ARTWORK")
-  arrow:SetSize(36, 36)
-  arrow:SetPoint("TOP", frame, "TOP", 0, -2)
+  bg:SetColorTexture(0, 0, 0, 0.3)
+  ring = frame:CreateTexture(nil, "BORDER")
+  ring:SetSize(70, 70)
+  ring:SetPoint("TOP", frame, "TOP", 0, -2)
+  ring:SetTexture(RING)
+  ring:SetVertexColor(0.3, 1, 0.4, 0.45)
+  ring:Hide()
+  local rg = ring.CreateAnimationGroup and ring:CreateAnimationGroup()
+  if rg then                                         -- pulsation jouée par le client (aucun Lua par image)
+    local a = rg:CreateAnimation("Alpha")
+    if a and a.SetFromAlpha then a:SetFromAlpha(0.25) a:SetToAlpha(0.9) end
+    if a and a.SetDuration then a:SetDuration(0.6) end
+    local s = rg:CreateAnimation("Scale")
+    if s and s.SetScaleFrom then s:SetScaleFrom(0.85, 0.85) s:SetScaleTo(1.08, 1.08)
+    elseif s and s.SetScale then s:SetScale(1.25, 1.25) end
+    if s and s.SetDuration then s:SetDuration(0.6) end
+    if rg.SetLooping then rg:SetLooping("BOUNCE") end
+    ring.ag = rg
+  end
+  shadow = frame:CreateTexture(nil, "ARTWORK")
+  shadow:SetSize(66, 66)
+  shadow:SetPoint("TOP", frame, "TOP", 2, -6)
+  shadow:SetTexture(ARROW)
+  shadow:SetVertexColor(0, 0, 0, 0.55)
+  arrow = frame:CreateTexture(nil, "OVERLAY")
+  arrow:SetSize(64, 64)
+  arrow:SetPoint("TOP", frame, "TOP", 0, -4)
   arrow:SetTexture(ARROW)
+  check = frame:CreateTexture(nil, "OVERLAY")
+  check:SetSize(36, 36)
+  check:SetPoint("CENTER", ring, "CENTER")
+  check:SetTexture(CHECK)
+  check:Hide()
+  tag = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  tag:SetPoint("TOP", frame, "TOP", 0, -50)
+  dist = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
+  dist:SetPoint("TOP", frame, "TOP", 0, -70)
+  dist:SetWidth(W - 4)
   label = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  label:SetPoint("TOP", arrow, "BOTTOM", 0, -1)
-  label:SetWidth(146)
-  info = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  info:SetPoint("TOP", label, "BOTTOM", 0, -1)
+  label:SetPoint("TOP", dist, "BOTTOM", 0, -2)
+  label:SetWidth(W - 8)
+  if label.SetWordWrap then label:SetWordWrap(false) end
   do  -- thème commun (visuel seulement)
     local Th = T and T.Theme
-    if Th then Th:Skin(frame, "hud", { bg = bg }); Th:Font(label, "S", "gold"); Th:Font(info, "S") end
+    if Th then Th:Skin(frame, "hud", { bg = bg }); Th:Font(label, "S", "gold"); Th:Font(dist, "L") end
   end
+  if dist.SetFont then pcall(dist.SetFont, dist, "Fonts\\FRIZQT__.TTF", 16, "OUTLINE") end
+  if tag.SetFont then pcall(tag.SetFont, tag, "Fonts\\FRIZQT__.TTF", 11, "OUTLINE") end
   frame:SetScale(tonumber(M.db.scale) or 1)
-  -- (LITE) la flèche tourne avec le joueur (10 Hz, seulement si l'orientation change) ; cible, distance et
-  -- textes 1 fois par seconde (flèche : 10 Hz)
-  local acc, full = 0, 0
-  frame:SetScript("OnUpdate", function(_, dt)
-    acc, full = acc + (dt or 0), full + (dt or 0)
-    if acc < 0.1 then return end
+  frame:SetScript("OnUpdate", function(_, el)
+    el = el or 0
+    acc, full = acc + el, full + el
+    if acc < (busy and 0.033 or 0.25) then return end
+    local step = acc
     acc = 0
-    if full >= 1 or not (M.state and M.state.bearing) then full = 0; M.Refresh(); return end
-    M.Spin()
+    if full >= 1 then full = 0 M.Refresh() end    -- calcul complet 1 fois par seconde, même sans cap
+    M.Step(step)
   end)
   return frame
 end
+M.CreateFrame = createFrame
 
-local GREEN, GOLD = { 0.3, 1, 0.3 }, { 1, 0.85, 0.2 }
-local lastRel, lastLabel, lastInfo
-local function setArrow(rel)
-  if rel == lastRel then return end
-  lastRel = rel
-  if arrow.SetRotation then pcall(arrow.SetRotation, arrow, rel) end
-  local col = (rel < 0.35 or rel > 2 * pi - 0.35) and GREEN or GOLD
-  arrow:SetVertexColor(col[1], col[2], col[3])
+-- TreeAI est le seul guide par défaut (choix du joueur : « SPF m'induit en erreur ») : Shortest Path ne sert —
+-- durées ET effacement de la boussole — que si le joueur a choisi « Guidage : Suivi Forever » (réglage commun
+-- `settings.guide == "spf"`, ou arbitre `T:GuideOwner()` s'il existe).
+function M.SPFOptIn()
+  if T.GuideOwner then
+    local o = try(T.GuideOwner, T)
+    if o ~= nil then return o == "spf" end
+  end
+  local s = T.settings
+  return type(s) == "table" and s.guide == "spf" or false
 end
---- entre deux calculs complets : seulement l'orientation du joueur -> rotation de la flèche
-function M.Spin()
-  local st = M.state
-  if not (frame and arrow and st and st.bearing and frame:IsShown()) then return end
-  local gf = _G.GetPlayerFacing
-  if not gf then return end
-  local ok, facing = pcall(gf)
-  if not ok or facing == nil or facing == st.facing then return end
-  st.facing = facing
-  st.rel = G.Relative(st.bearing, facing)
-  if st.rel then setArrow(st.rel) end
+function M.SPFGuiding()
+  if not M.SPFOptIn() then return false end
+  local A = M.SPF()
+  if not (A and type(A.Active) == "function") then return false end
+  return spfCall(A, "Active") == true
 end
 
-function M.Refresh()
+local OFF = { none = true, hidden = true, off = true }
+local function refresh()
+  local want = M.db and M.db.shown ~= false and M:IsEnabled()
+  local Hz = T.Horizon
+  local wantHz = Hz and Hz.db and Hz.db.shown ~= false and Hz:IsEnabled()
+  local fight = M.db and M.db.hideCombat ~= false and inCombat()
+  -- (NAV) rien à montrer (boussole et bande coupées, ou combat) : aucun calcul, aucune lecture d'API
+  if frame and (fight or not (want or wantHz)) then
+    if frame:IsShown() then frame:Hide() end
+    if ring.ag and ring.ag.Stop then ring.ag:Stop() end
+    return OFF
+  end
   local st = M.Compute()
   M.state = st
   if not frame then return st end
-  local want = M.db and M.db.shown ~= false and M:IsEnabled()
-  st.dup = (M.db and M.db.hideDup ~= false and not st.none) and M.OtherGuide(st.target) or nil
-  -- mort / fantôme : la fenêtre de mort de Blizzard (haut-centre) reste lisible, la course au corps a son guide
-  local ps = T.PlayerState and T:PlayerState()
-  st.hiddenDead = ps and (ps.dead or ps.ghost) or nil
-  if st.hiddenDead then M.ClearRouteOnDeath() end
-  if not want or st.hidden or st.none or st.dup or st.hiddenDead or (M.db.hideCombat ~= false and inCombat()) then
-    -- caché : instance / pas de position / pas de cible ; on garde le OnUpdate via un ticker léger
+  local visible = want and not (st.hidden or st.none)
+  if visible or wantHz then
+    -- mort / fantôme : la fenêtre de mort de Blizzard (haut-centre) reste lisible, la course au corps a son guide
+    st.hiddenDead = _ns(try(_G.UnitIsDeadOrGhost, "player")) and true or nil   -- un seul appel (pas tout l'état)
+    if st.hiddenDead then M.ClearRouteOnDeath() end
+    if not (st.hiddenDead or st.none) then
+      st.dup = (M.db.hideDup ~= false) and M.OtherGuide(st.target) or nil
+      if not st.dup and M.SPFGuiding() then st.dup = "spf" end
+    end
+  end
+  if not want or st.hidden or st.none or st.dup or st.hiddenDead then
     if frame:IsShown() then frame:Hide() end
+    if ring.ag and ring.ag.Stop then ring.ag:Stop() end
     return st
   end
   if not frame:IsShown() then frame:Show() end
   local t = st.target
-  local lt = cut(t.label or t.title or "Cible", 34)
+  local lt = cut(t.label or t.title or "Cible", 40)
   if lt ~= lastLabel then lastLabel = lt; label:SetText(lt) end
-  if st.rel then
-    arrow:Show()
-    setArrow(st.rel)
+  if st.arrived then
+    arrow:Hide() shadow:Hide()
+    ring:Show() check:Show()
+    if ring.ag and ring.ag.Play and not (ring.ag.IsPlaying and ring.ag:IsPlaying()) then ring.ag:Play() end
+    setTag(t.kind == "objective" and "Dans la zone" or "Arrivé", 0.3, 1, 0.4)
   else
-    arrow:Hide()
+    if ring:IsShown() then ring:Hide() check:Hide() if ring.ag and ring.ag.Stop then ring.ag:Stop() end end
+    if st.rel then
+      arrow:Show() shadow:Show()
+      if not shown then shown = st.rel end
+      paint(shown)
+      if lastTag == "Arrivé" or lastTag == "Dans la zone" then setTag(nil) end
+    else
+      arrow:Hide() shadow:Hide()
+    end
   end
+  local s
   if st.dist then
-    local s = (st.approx and "≈" or "") .. G.Dist(st.dist, M.db.units)
-    if st.eta then s = s .. " · " .. st.eta end
+    s = (st.approx and "≈" or "") .. G.Dist(st.dist, M.db.units)
+    if st.eta and not st.arrived then s = s .. "  ·  " .. st.eta end
     if not st.facing then s = s .. " " .. G.Cardinal(st.bearing) end
-    if st.arrived then s = "Arrivé !" end
-    if s ~= lastInfo then lastInfo = s; info:SetText(s) end
   else
-    local s = t.zone and ("Zone : " .. cut(t.zone, 28)) or ""
-    if s ~= lastInfo then lastInfo = s; info:SetText(s) end
+    s = t.zone and ("Zone : " .. cut(t.zone, 28)) or ""
   end
+  if s ~= lastInfo then lastInfo = s; dist:SetText(s) end
+  return st
+end
+function M.Refresh()
+  local st = refresh()
+  local Hz = T.Horizon                               -- bande d'horizon : suit la boussole (même règle d'un seul guide)
+  if Hz and Hz.Sync then pcall(Hz.Sync, st) end
   return st
 end
 
@@ -865,7 +1016,7 @@ function M.WriteSummary()
     mapID = M.me and M.me.mapID, custom = (M.char and M.char.custom) and true or nil,
     target = t and { kind = t.kind, questID = t.questID, title = cut(t.title, 60), label = cut(t.label, 60),
       zone = t.zone, src = t.src, dist = t.dist and floor(t.dist + 0.5) or nil,
-      distText = t.dist and G.Dist(t.dist, units) or nil, eta = t.dist and G.ETA(t.dist, M.Speed()) or nil } or nil,
+      distText = t.dist and G.Dist(t.dist, units) or nil, eta = st.eta or (t.dist and G.ETA(t.dist, M.Speed())) or nil } or nil,
   }
 end
 
@@ -896,6 +1047,11 @@ function M:OnEnable()
     end)
   end
   self:On("SUMMARY", function() pcall(M.WriteSummary) end)
+  -- Shortest Path commence / arrête de guider : la boussole s'efface / revient tout de suite (une seule flèche)
+  local A = M.SPF()
+  if A and type(A.Subscribe) == "function" and not M._spfSub then
+    M._spfSub = spfCall(A, "Subscribe", function() if frame then pcall(M.Refresh) end end) or true
+  end
   self:On("QUESTS_UPDATED", function() rebuildSoon() end)
   -- ticker : flèche même cadre caché (pour réapparaître en sortant d'instance), cibles toutes les 10 s
   if not M.ticker then

@@ -23,7 +23,7 @@ local COLOR_HELP = "1 or · 2 vert · 3 bleu · 4 violet · 5 rouge · 6 orange 
 local M = T:RegisterModule("Highlight", {
   title = "Surbrillance quêtes",
   defaults = {
-    enabled = true, intensity = 8, anim = true, popup = true, iconSize = 14,
+    enabled = true, intensity = 8, anim = true, ants = true, popup = true, iconSize = 14,
     bags = true, bagNeed = true, bagDone = true, bagStarter = true, bagUpcoming = true, bagUseless = true,
     thirdParty = true,
     colNeed = 7, colDone = 2, colStarter = 1, colUpcoming = 4, colMob = 7, uselessDim = 6,
@@ -35,6 +35,7 @@ local M = T:RegisterModule("Highlight", {
   options = {
     { key = "intensity", type = "range", label = "Intensité de la lueur", min = 1, max = 10, step = 1, section = "Général" },
     { key = "anim", type = "toggle", label = "Lueur animée (pulsation)" },
+    { key = "ants", type = "toggle", label = "Contour qui tourne + halo pulsé (objets de quête, butin, infobulle)" },
     { key = "popup", type = "toggle", label = "« +1 » quand un objectif avance" },
     { key = "iconSize", type = "range", label = "Taille des icônes", min = 8, max = 24, step = 1 },
     { key = "bags", type = "toggle", label = "Sacs : surbrillance des objets", section = "Sacs" },
@@ -473,6 +474,7 @@ local function hideOverlay(owner)
   local ov = owner and overlays[owner]
   if ov then
     if ov.ag and ov.ag.Stop then ov.ag:Stop() end
+    if T.Glow then T.Glow.Stop(ov) end
     softHide(ov)
     active[ov] = nil
   end
@@ -528,14 +530,26 @@ function M.Apply(owner, kind, e, label)
     ov.shade:SetVertexColor(0, 0, 0, dim) ov.shade:Show()
     ov.text:SetText("×") ov.text:SetTextColor(0.7, 0.7, 0.7)
   end
-  if glow then
+  -- (NAV) « hyper surbrillance » : contour qui tourne + halo pulsé, joués par le client (Glow.lua)
+  local GL = T.Glow
+  local hyper = GL and glow and animate and opt("anim") ~= false and opt("ants") ~= false
+  if hyper then
+    ov.glow:Hide()
+    if ov.ag and ov.ag.Stop then ov.ag:Stop() end
+    GL.Ants(ov, r, g, b, math.min(1, I + 0.2), meth(owner, "GetWidth"), meth(owner, "GetHeight"))
+    GL.Pulse(ov, r, g, b, I)
+  elseif glow then
+    if GL then GL.Stop(ov) end
     ov.glow:SetVertexColor(r, g, b, I) ov.glow:Show()
     if ov.ag then
       if animate and opt("anim") ~= false then
         if not (ov.ag.IsPlaying and ov.ag:IsPlaying()) and ov.ag.Play then ov.ag:Play() end
       elseif ov.ag.Stop then ov.ag:Stop() end
     end
-  elseif ov.ag and ov.ag.Stop then ov.ag:Stop() end
+  else
+    if GL then GL.Stop(ov) end
+    if ov.ag and ov.ag.Stop then ov.ag:Stop() end
+  end
   -- « +1 » quand le compteur vient de monter (≤ 3 s)
   if e and e.key and bumped[e.key] and opt("popup") ~= false then
     local t = try(G.GetTime) or 0
@@ -617,6 +631,7 @@ function M.RefreshBags()
   local stats = {}
   for _, rec in ipairs(M.BlizzardBagButtons()) do applySlot(rec[1], rec[2], rec[3], stats) end
   if on("thirdParty") then
+    M.ScanBagRoots()
     for btn, rec in pairs(ext) do
       if meth(btn, "IsVisible") then applySlot(btn, rec[1], rec[2], stats) end
     end
@@ -752,6 +767,43 @@ local function hookThirdParty()
 end
 M.HookThirdParty = hookThirdParty
 M.External = function() return ext end
+
+-- (NAV) addons de sacs sans API d'objet connue (BetterBags, ArkInventory…) + filet pour les autres : on parcourt
+-- les enfants de LEUR cadre racine visible (lecture seule, profondeur ≤ 6, ≤ 400 cadres) et on retient les boutons
+-- d'objet (GetBagID ou parent:GetID(), GetID() = case). Seulement à l'ouverture des sacs / BAG_UPDATE_DELAYED.
+local BAG_ROOTS = { "BetterBagsBagBackpack", "BetterBagsBagBank", "ARKINV_Frame1", "ElvUI_ContainerFrame",
+  "BagnonInventoryFrame1", "BagnonInventory1", "AdiBagsContainer1", "Baganator_SingleViewBackpackViewFrame",
+  "Baganator_CategoryViewBackpackViewFrameelvui", "Baganator_CategoryViewBackpackViewFrameblizzard" }
+M.BAG_ROOTS = BAG_ROOTS
+local function walk(f, depth, seen)
+  if seen.n > 400 or depth > 6 or type(f) ~= "table" then return end
+  seen.n = seen.n + 1
+  local slot = tonumber(meth(f, "GetID"))
+  if slot and slot > 0 and (type(f.GetBagID) == "function" or meth(f, "GetObjectType") == "ItemButton"
+      or meth(f, "GetObjectType") == "Button") then
+    local bag = tonumber(meth(f, "GetBagID"))
+    if not bag then bag = tonumber(meth(meth(f, "GetParent"), "GetID")) end
+    if bag and bag >= -3 and bag <= 12 and not ext[f] and meth(f, "IsVisible") and slotItem(bag, slot) ~= nil then
+      ext[f] = { bag, slot }
+    end
+  end
+  if type(f.GetChildren) == "function" then
+    local kids = { pcall(f.GetChildren, f) }
+    for k = 2, #kids do walk(kids[k], depth + 1, seen) end
+  end
+end
+function M.ScanBagRoots()
+  local found = 0
+  for _, name in ipairs(BAG_ROOTS) do
+    local root = rawget(G, name)
+    if type(root) == "table" and meth(root, "IsVisible") then
+      local seen = { n = 0 }
+      walk(root, 0, seen)
+      found = found + seen.n
+    end
+  end
+  return found
+end
 
 -- ------------------------------------------------------------------ butin + jets de dés
 local lootInfo
@@ -1159,7 +1211,30 @@ function M.OnItemTooltip(tt, data)
   local r, g, b = color(KIND_COL[kind] or "colNeed")
   if kind == "useless" then r, g, b = 0.6, 0.6, 0.6 end
   addLine(tt, txt, r, g, b)
+  M.TooltipGlow(tt, kind, r, g, b)
   return txt
+end
+-- (NAV) l'infobulle d'un objet de quête s'entoure du même contour qui tourne (notre cadre, ancré sur l'infobulle)
+local tipGlow
+function M.TooltipGlow(tt, kind, r, g, b)
+  local GL = T.Glow
+  if not (GL and tt and G.CreateFrame and opt("ants") ~= false and opt("anim") ~= false) then return nil end
+  if kind ~= "need" and kind ~= "use" and kind ~= "starter" then return nil end
+  if not tipGlow then
+    tipGlow = G.CreateFrame("Frame", nil, G.UIParent)
+    if tipGlow.EnableMouse then tipGlow:EnableMouse(false) end
+    if tt.HookScript then pcall(tt.HookScript, tt, "OnHide", function() if tipGlow then GL.Stop(tipGlow) tipGlow:Hide() end end) end
+  end
+  if locked(tipGlow, tt) then return nil end
+  tipGlow:ClearAllPoints()
+  tipGlow:SetPoint("TOPLEFT", tt, "TOPLEFT", 2, -2)
+  tipGlow:SetPoint("BOTTOMRIGHT", tt, "BOTTOMRIGHT", -2, 2)
+  if tipGlow.SetFrameStrata then tipGlow:SetFrameStrata("TOOLTIP") end
+  if tipGlow.SetFrameLevel then tipGlow:SetFrameLevel((tonumber(meth(tt, "GetFrameLevel")) or 1) + 5) end
+  tipGlow:Show()
+  -- l'infobulle grandit encore après nous (lignes ajoutées) : marge, le surplus est découpé
+  GL.Ants(tipGlow, r, g, b, 1, (tonumber(meth(tt, "GetWidth")) or 250) + 80, (tonumber(meth(tt, "GetHeight")) or 80) + 160)
+  return tipGlow
 end
 function M.OnUnitTooltip(tt)
   if not M.TooltipActive() or inCombat() then return nil end

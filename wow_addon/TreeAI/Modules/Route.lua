@@ -295,9 +295,17 @@ local function learnedFlights()
 end
 function R.Graph()
   local faction, known = R.Faction(), R.KnownTaxi()
-  local key = tostring(faction) .. "|" .. tconcat(known, ",") .. "|" .. tostring(opt("transports"))
+  -- (NAV) marche = TA vitesse mesurée × détour appris de la zone (NavTime), arrondis pour garder le cache
+  local NT, speed, detour = T.NavTime, nil, nil
+  if NT and NT.Speed then
+    speed = floor(NT.Speed("w") * 2 + 0.5) / 2
+    local m = try(C("C_Map", "GetBestMapForUnit"), "player")
+    detour = floor(NT.Detour(m) * 10 + 0.5) / 10
+  end
+  local key = tostring(faction) .. "|" .. tconcat(known, ",") .. "|" .. tostring(opt("transports")) .. "|"
+    .. tostring(speed) .. "|" .. tostring(detour)
   if hubCache and hubCache.key == key then return hubCache.g end
-  local g = R.BuildHubs(faction, known, { flights = learnedFlights() })
+  local g = R.BuildHubs(faction, known, { flights = learnedFlights(), speed = speed, detour = detour })
   hubCache = { key = key, g = g }
   R.legCache = {}
   return g
@@ -603,6 +611,7 @@ function R:StopsRaw(n)
   local prev = world((pm and px) and { map = pm, x = px, y = py } or nil)
   local first = true
   local quests, prevKind = 0, nil
+  local spfN, Cm = 0, T.Compass
   for i = cur, #steps do
     local s = steps[i]
     if not s._done and not s._other then
@@ -613,8 +622,16 @@ function R:StopsRaw(n)
         if g then sec, legs = R.FastestWorld(g, prev, here, o) end
         if not sec or sec == huge then
           local d = (prev.c == here.c) and sqrt((prev.n - here.n) ^ 2 + (prev.w - here.w) ^ 2) or nil
-          sec = d and d * 1.3 / 7 or 0
+          local NT = T.NavTime
+          sec = d and ((NT and NT.Model) and NT.Model(d, here.map) or d * 1.3 / 7) or 0
           legs = { { mode = "walk", sec = sec, yd = d or 0, to = here } }
+        end
+        -- (NAV) les 3 premiers trajets à pied : la durée navmesh de Shortest Path quand il est là (hors combat)
+        if spfN < 3 and legs and #legs == 1 and legs[1].mode == "walk" and Cm and Cm.Travel and prev.map and here.map then
+          spfN = spfN + 1
+          local ss = Cm.Travel({ mapID = prev.map, x = prev.x / 100, y = prev.y / 100 },
+            { mapID = here.map, x = here.x / 100, y = here.y / 100 })
+          if ss then sec = ss legs[1].sec = ss end
         end
         for _, lg in ipairs(legs or {}) do
           if lg.mode == "walk" then out.yd = out.yd + (lg.yd or 0)
