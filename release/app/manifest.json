@@ -1,25 +1,25 @@
 {
- "version": "4.0.0",
+ "version": "4.0.1",
  "exe": "TreeAICoach-app.exe",
- "sha256": "360fcbebbc0e6ac346f3694dac38b8b663923a7b0024b7bd5a1e14d60362b4b0",
+ "sha256": "6df63283ec9e266a352c69277f88dcf11f718f2239c69ec05d74fa43c4e8b803",
  "chunks": [
   {
-   "name": "4.0.0/part-01.zip",
-   "size": 87999264,
-   "sha256": "6c1acdd0750a83c540739106d1e0adb6b47d9f7dc4dee01a139a9de73e76b863",
+   "name": "4.0.1/part-01.zip",
+   "size": 88000166,
+   "sha256": "4d6ea218f773fd33d47ce7cf6d087438c0967c30003f464d547869bbde5e3dfb",
    "files": 127
   },
   {
-   "name": "4.0.0/part-02.zip",
-   "size": 13722559,
-   "sha256": "a13545162e438a2ab581d72a77a5f31204d419ab4ae016246d5842210b98a494",
-   "files": 670
+   "name": "4.0.1/part-02.zip",
+   "size": 13786521,
+   "sha256": "397eb4e8221ae0d6dee2244823757bd46b966eeef3d3202c39bb702908132028",
+   "files": 673
   }
  ],
- "total_size": 101721823,
+ "total_size": 101786687,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "TreeAI 4.0 : nouvelle interface WoW (fen\u00eatre + carte Prochaine \u00e9tape), suivi de qu\u00eates autonome par zone, groupe, chasseur, HV fiable, mode s\u00fbr, app sans gel et vraiment \u00e0 jour."
+ "notes": "TreeAI 4.0.1 : fen\u00eatres qui restent en place, zone et boussole corrig\u00e9es, suivi auto par zone, nettoyage du journal, moins de calcul, plus d'invitations automatiques."
 }

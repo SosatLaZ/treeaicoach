@@ -3,6 +3,20 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 4.0.1 · 8 novembre 2026
+
+- **WoW : les fenêtres ne sautent plus dans un coin** une seconde après la connexion (une seule passe de placement,
+  écran stable ; tout cadre que tu déplaces reste où tu l'as mis).
+- **Trajet et boussole** : la zone choisie filtre vraiment (au plus proche, 1 h max, « Autres zones : … » à part,
+  jamais de quête de donjon à 1-2) ; la boussole vise toujours l'étape 1, ne disparaît plus pour rien, se met à
+  jour vite en marchant et ne fait rien à l'arrêt ; suivi auto des quêtes de ta zone ; modes de trajet ; zones à
+  faire ; journal de la boussole dans le fichier d'erreurs.
+- **Journal** : « Nettoyer mon journal » (raisons tirées du jeu, abandon en 2 clics) ; donjons déjà faits détectés.
+- **Moins de calcul** (~30 %, moitié moins à l'arrêt), sons seulement pour un danger, astuces coupées.
+- Chemin dessiné, trajet par zone et surbrillance des objets de quête allumés d'office.
+- **Invitations** : TreeAI n'invite plus jamais personne ; il propose seulement (ami de ta liste, dans ta zone, avant
+  une quête où il faut tuer) — clic pour inviter, clic droit pour refuser.
+
 ## 4.0.0 · 8 novembre 2026
 
 **WoW Forever : la grande refonte.** Tout a été revu, assemblé, relu par 4 relecteurs et testé sur un WoW simulé

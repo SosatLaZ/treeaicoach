@@ -1,6 +1,6 @@
 {
-  "version": "4.0.0",
+  "version": "4.0.1",
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334,
-  "notes": "TreeAI 4.0 : nouvelle interface WoW (fenêtre + carte Prochaine étape), suivi de quêtes autonome par zone, groupe, chasseur, HV fiable, mode sûr, app sans gel et vraiment à jour."
+  "notes": "TreeAI 4.0.1 : fenêtres qui restent en place, zone et boussole corrigées, suivi auto par zone, nettoyage du journal, moins de calcul, plus d'invitations automatiques."
 }
