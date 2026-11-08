@@ -120,9 +120,14 @@ return function(M, ctx)
   A.db.budget = 0
 
   -- my auctions undercut → cancel (one click)
-  M.ah.owned = { { id = 2589, count = 20, buyout = 2400, owner = me, auctionID = 900 } }
+  do   -- a really beaten lin: 300 cheaper units ahead (the 50/60 pc bargain is gone), cancelling pays
+    local rows = {}
+    for k = 1, 15 do rows[k] = { count = 20, buy = (106 + k) * 20, owner = "Vendeur" .. k } end
+    A.ApplyItemListings(2589, rows)
+  end
+  M.ah.owned = { { id = 2589, count = 20, buyout = 3000, owner = me, auctionID = 900 } }
   A.CheckOwned()
-  ctx.check(A.owned[1] and A.owned[1].undercut and A.owned[1].repost, "undercut detected")
+  ctx.check(A.owned[1] and A.owned[1].undercut and A.owned[1].repost, "undercut detected: " .. tostring(A.owned[1] and A.owned[1].advice))
   A.tab = "owned" A.Refresh()
   local ro = rowFor(A.owned[1])
   ro.btn:Click()

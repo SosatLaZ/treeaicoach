@@ -37,7 +37,7 @@ __all__ = [
     "sell_through_days", "evaluate_flip", "evaluate_vendor_flip", "rank_deals", "thin_market",
     "suggest_post", "realized_profit", "money_text", "auction_summary", "auction_context", "answer_lines",
     "LIQ", "demand_class", "sold_between", "liquidity", "max_quantity", "stop_loss", "item_cap", "safe_flip",
-    "why_none",
+    "why_none", "cancel_advice",
 ]
 
 CUT_PCT = {False: 5, True: 15}          # neutral? -> % of the sale price
@@ -484,6 +484,51 @@ def why_none(rejects: dict, candidates: int) -> list[str]:
     out = [f"{_i(candidates)} affaire(s) apparente(s) écartée(s) :"]
     out += [f"{REASON_LABEL.get(k, k)} ({n})" for k, n in top[:3]]
     return out
+
+
+def cancel_advice(my_unit: Any, count: Any, competitors: Iterable[Any], liq: dict | None, vendor_unit: Any = 0,
+                  neutral: bool = False, hours: int = 24) -> dict:
+    """Cancel one of MY beaten auctions? {action: none|keep|cancel, state, text[, repost, gain]}.
+    Never without safe data; repost always ≤ lowest − 1 pc; an abnormal lowest (< market − 30 % or < 1/10 of my
+    price) → keep; cancel only when the expected gain after the lost deposit, the new deposit at risk and the
+    cut beats keeping by ≥ max(1 pa, 5 % of the net)."""
+    count, mine = max(1, _i(count, 1)), _i(my_unit)
+    if not liq or not liq.get("ok"):
+        return {"action": "none", "state": "?", "text": "pas assez de données de prix : laisser"}
+    comp = sorted((_i(u), max(1, _i(c, 1))) for u, c in (competitors or []) if _i(u) > 0)
+    low = comp[0][0] if comp else None
+    if low is None or low >= mine:
+        return {"action": "keep", "state": "ok",
+                "text": "le moins cher : garder" if low is not None else "aucun concurrent : garder"}
+    mv, vol = _i(liq.get("market")), _f(liq.get("vol"), 0.0) or 0.0
+    if low * 10 < mine:
+        return {"action": "keep", "state": "battue",
+                "text": f"laisser : ton prix est plus de 10 fois le plus bas ({money_text(low)}/u), vérifie l'objet"}
+    if low < mv * (1 - LIQ["max_vol"]):
+        return {"action": "keep", "state": "battue",
+                "text": f"laisser : {money_text(low)}/u est anormalement bas (marché {money_text(mv)}/u)"}
+    dep = deposit(vendor_unit, count, hours, neutral)
+    floor_u = max(1, mv - int(math.floor(mv * vol)))
+    vt = _i(vendor_unit) * count
+    if vt > 0:
+        floor_u = max(floor_u, -(-break_even(vt, dep, p_sell(liq.get("sold"), 0, count, hours), neutral) // count))
+    repost = low - 1
+    if repost < floor_u:
+        return {"action": "keep", "state": "battue", "text": f"laisser : passer sous {money_text(low)}/u ne rapporte "
+                                                              f"rien (plancher {money_text(floor_u)}/u)"}
+    ahead = sum(c for u, c in comp if u < mine)
+    pk, pn = p_sell(liq.get("sold"), ahead, count, hours), p_sell(liq.get("sold"), 0, count, hours)
+    keep_v = pk * net_sale(mine * count, neutral) - dep * (1 - pk)
+    cancel_v = pn * net_sale(repost * count, neutral) - dep * (1 - pn) - dep
+    gain = _round(cancel_v - keep_v)
+    need = max(100, net_sale(repost * count, neutral) * 5 // 100)
+    if gain < need:
+        txt = (f"laisser : annuler et reposter ne rapporte que {money_text(gain)}" if gain > 0 else
+               "laisser : annuler (dépôt perdu) coûterait plus qu'attendre")
+        return {"action": "keep", "state": "battue", "gain": gain, "text": txt}
+    return {"action": "cancel", "state": "battue", "repost": repost, "gain": gain,
+            "text": f"annuler, reposter {money_text(repost)}/u (+{money_text(gain)} espéré, dépôt "
+                    f"{money_text(dep)} perdu compté)"}
 
 
 # ---------------------------------------------------------------------------------------- selling

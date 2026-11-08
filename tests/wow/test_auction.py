@@ -294,3 +294,32 @@ def test_app_hv_tab_shows_no_safe_flip_with_why():
                                              "sell": 1980, "profit": 679, "deposit": 36, "sold": 47.8, "stop": 51}]}
     row = pw.tab_blocks("hv", snap)[0]["rows"][0]
     assert "se vend ~47,8/jour" in row["desc"] and "stop-loss 51 pc/u" in row["desc"]
+
+
+def test_cancel_advice():
+    """Mirror of F.cancelAdvice (tests/wow/auction_owned_scenario.lua asserts the same numbers)."""
+    q = A.liquidity(_hist([100] * 5, gone=40, hrs=12))
+    comp = [(100 + k, 20) for k in range(1, 16)]
+    c = A.cancel_advice(150, 20, comp, q, 13)
+    assert c["action"] == "cancel" and c["repost"] == 100 and c["gain"] == 1346 and c["repost"] <= comp[0][0] - 1
+    odd = A.cancel_advice(9500, 1, [(325, 1)], q)                  # the user's screen: 95 pa vs 3 pa 25 pc
+    assert odd["action"] == "keep" and "plus de 10 fois" in odd["text"]
+    assert "anormalement bas" in A.cancel_advice(150, 20, [(50, 20)] + comp, q, 13)["text"]
+    small = A.cancel_advice(150, 20, [(101, 20)], q, 13)
+    assert small["action"] == "keep" and small["gain"] == -1058 and "dépôt perdu" in small["text"]
+    assert A.cancel_advice(150, 20, comp, {"ok": False})["action"] == "none"
+    assert A.cancel_advice(100, 20, [(120, 20)], q)["text"] == "le moins cher : garder"
+    for mine in (102, 120, 150, 300):                               # never repost above the lowest
+        r = A.cancel_advice(mine, 20, comp, q, 13)
+        assert r["action"] != "cancel" or r["repost"] <= 100
+
+
+@needs_lua
+@pytest.mark.parametrize("flavor", ["modern", "legacy", "forever"])
+def test_lua_owned_scenario(flavor):
+    """The user's « Mes ventes » screen: no advice mid-scan, no price advice on special items, sane cancels."""
+    r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--flavor", flavor, "--scenario",
+                        "tests/wow/auction_owned_scenario.lua", str(ADDON)],
+                       cwd=ROOT, capture_output=True, text=True, timeout=180)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "RESULT ok" in r.stdout
