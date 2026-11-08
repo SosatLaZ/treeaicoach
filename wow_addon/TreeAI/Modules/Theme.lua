@@ -827,7 +827,42 @@ if type(T.ShowAlert) == "function" and not Th._wrappedAlert then
   end
 end
 
+-- (UIREDO) raccourcis : la touche liée s'affiche sur le bouton (coin haut gauche, comme les barres d'action) et
+-- l'infobulle dit « Touche : X » ou comment en choisir une. Lecture seule (GetBindingKey) : jamais SetBinding.
+Th._hotkeys = setmetatable({}, { __mode = "k" })   -- bouton -> nom de liaison (« CLICK TreeAIQuickItem:LeftButton »)
+function Th:BindingOf(b)
+  local name = b and meth(b, "GetName")
+  return type(name) == "string" and ("CLICK " .. name .. ":LeftButton") or nil
+end
+function Th:KeyText(b)
+  local bind = self:BindingOf(b)
+  local key = bind and type(G.GetBindingKey) == "function" and select(2, pcall(G.GetBindingKey, bind)) or nil
+  if type(key) ~= "string" or key == "" then return nil end
+  local short = type(G.GetBindingText) == "function" and select(2, pcall(G.GetBindingText, key, true)) or nil
+  return (type(short) == "string" and short ~= "") and short or key
+end
+--- Pose / met à jour l'étiquette de touche d'un bouton de raccourci.
+function Th:HotKey(b)
+  if type(b) ~= "table" then return nil end
+  if not b.hotkey then
+    b.hotkey = meth(b, "CreateFontString", nil, "OVERLAY", "NumberFontNormalSmallGray")
+    if b.hotkey then meth(b.hotkey, "SetPoint", "TOPLEFT", b, "TOPLEFT", 2, -2); meth(b.hotkey, "SetJustifyH", "LEFT") end
+  end
+  self._hotkeys[b] = true
+  local k = self:KeyText(b)
+  if b.hotkey then meth(b.hotkey, "SetText", k or "") end
+  return k
+end
+--- Ligne d'infobulle : la touche, ou où la choisir.
+function Th:KeyHint(b)
+  local k = self:KeyText(b)
+  if k then return "Touche : " .. k end
+  return "Touche : aucune (Échap → Options → Raccourcis → TreeAI)"
+end
+function Th:RefreshHotKeys() for b in pairs(self._hotkeys) do self:HotKey(b) end end
+
 function M:OnEnable()
+  self:RegisterEvent("UPDATE_BINDINGS", function() Th:RefreshHotKeys() end)
   pcall(skinCore)
   T:After(1, function() pcall(skinCore) end)  -- alert box is built lazily
 end

@@ -546,10 +546,13 @@ local function createButton(key)
     local w = self.want or {}
     local lines = {}
     for _, l in ipairs(w.tip or {}) do lines[#lines + 1] = l end
-    lines[#lines + 1] = "|cff999999Touche : macro « /click TreeAIQuick_" .. key .. " ».|r"
+    -- (UIREDO) la touche liée (ou où la choisir), plus de « /click » à écrire soi-même
+    local Th = T.Theme
+    lines[#lines + 1] = "|cff66ccff" .. ((Th and Th.KeyHint) and Th:KeyHint(self) or ("Touche : /click TreeAIQuick_" .. key)) .. "|r"
     tooltip(self, w.title or key, lines)
   end)
   b:SetScript("OnLeave", hideTip)
+  if T.Theme and T.Theme.HotKey then T.Theme:HotKey(b) end   -- (UIREDO) touche liée affichée sur le bouton
   -- après le clic (code non sécurisé, sans effet sur l'action) : mémorise le repas pour le minuteur
   b:SetScript("PostClick", function(self) M:OnUsed(self.key, self.want) end)
   b:Hide()

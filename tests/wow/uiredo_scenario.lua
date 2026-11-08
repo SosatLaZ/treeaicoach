@@ -54,7 +54,7 @@ return function(M, ctx)
   check(g.steps[1] and g.steps[1].mark and g.steps[1].title:find("Les sangliers", 1, true), "étape 1 : à prendre, pastille « ! »")
   check(g.steps[2] and g.steps[2].sub and g.steps[2].sub:find("objectif 3/8", 1, true) and g.steps[2].sub:find("Les scorpides", 1, true),
     "étape 2 : sous-titre gris « objectif 3/8 · « Les scorpides » » (" .. tostring(g.steps[2] and g.steps[2].sub) .. ")")
-  check(g.steps[3] and g.steps[3].sub:find("à rendre", 1, true), "étape 3 : à rendre")
+  check(g.steps[3] and g.steps[3].sub:find("quête finie", 1, true), "étape 3 : quête finie (à rendre)")
   check(#g.upcoming >= 1, "quêtes à venir sur le trajet")
   for _, s in ipairs(g.steps) do
     check(not tostring(s.sub):find("nil") and not tostring(s.title):find("nil"), "pas de « nil » dans une étape")

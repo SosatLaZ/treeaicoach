@@ -7,4 +7,14 @@
 	<Binding name="TREEAI_MAIN" header="TREEAI" category="ADDONS">
 		if TreeAI and TreeAI.ToggleMain then TreeAI.ToggleMain() end
 	</Binding>
+	<!-- Raccourcis (boutons sécurisés de TreeAI : l'action part de TA touche, comme un clic). Sans touche par défaut. -->
+	<Binding name="CLICK TreeAIQuickItem:LeftButton" header="TREEAI" category="ADDONS"/>
+	<Binding name="CLICK TreeAIQuickTarget:LeftButton" header="TREEAI" category="ADDONS"/>
+	<Binding name="CLICK TreeAIQuickMount:LeftButton" header="TREEAI" category="ADDONS"/>
+	<Binding name="CLICK TreeAIQuickHearth:LeftButton" header="TREEAI" category="ADDONS"/>
+	<Binding name="CLICK TreeAIQuick_pull:LeftButton" header="TREEAI" category="ADDONS"/>
+	<Binding name="CLICK TreeAIQuick_pet:LeftButton" header="TREEAI" category="ADDONS"/>
+	<Binding name="CLICK TreeAIQuick_mend:LeftButton" header="TREEAI" category="ADDONS"/>
+	<Binding name="CLICK TreeAIQuick_eat:LeftButton" header="TREEAI" category="ADDONS"/>
+	<Binding name="CLICK TreeAIQuick_bandage:LeftButton" header="TREEAI" category="ADDONS"/>
 </Bindings>

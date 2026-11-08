@@ -1382,10 +1382,14 @@ function TreeAI:_SafeNotice()
   self._safeNotice = nil
   self:Suggest("core:safe", "Mode sûr : les fonctions bêta sont à activer dans le menu", 2, {
     ttl = 900, tab = "now", sound = false, kind = "always",
-    tooltip = "Clic : Plus → Modules (un clic par fonction). Aussi : pastille de la minimap → Fonctions bêta.",
+    tooltip = "Clic : la liste des fonctions (un clic par fonction). Aussi : pastille de la minimap → Fonctions bêta.",
     onClick = function()
-      if TreeAI.ShowPanel then TreeAI:ShowPanel() end
-      if TreeAI.SelectTab then TreeAI:SelectTab("modules") end
+      local Wn = TreeAI.Window   -- (UIREDO) la page « Fonctions » de la fenêtre TreeAI, sinon le panneau
+      if Wn and Wn._active and Wn.Open then Wn.Open("modules")
+      else
+        if TreeAI.ShowPanel then TreeAI:ShowPanel() end
+        if TreeAI.SelectTab then TreeAI:SelectTab("modules") end
+      end
       TreeAI:ClearSuggestion("core:safe")
     end })
 end

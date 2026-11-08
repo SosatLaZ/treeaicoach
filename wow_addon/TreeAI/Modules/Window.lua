@@ -310,8 +310,8 @@ function W.Guide(n, full)
           local prog = (o and (o.n or 0) > 0) and fmt("%d/%d", o.have or 0, o.n) or nil
           local where = whereTxt(st.here, e.place)
           local parts = {}
-          if s.k == "pick" then parts[#parts + 1] = "à prendre"
-          elseif s.k == "turn" then parts[#parts + 1] = "à rendre"
+          if s.k == "pick" then parts[#parts + 1] = "nouvelle quête"
+          elseif s.k == "turn" then parts[#parts + 1] = "quête finie"
           elseif s.k == "obj" then
             local qt = s.q and questTitle(s.q)
             parts[#parts + 1] = prog and ("objectif " .. prog) or "objectif"
@@ -417,7 +417,10 @@ local function buildCard()
     W.SaveCardPosition()
   end)
   meth(hero, "SetScript", "OnClick", function(_, btn)
-    if btn == "RightButton" then W.Open("options") else W.Open("quests") end
+    if btn == "RightButton" then
+      if W.char then W.char.optPage = "Window" end
+      W.Open("options")
+    else W.Open("quests") end
   end)
   meth(hero, "SetScript", "OnEnter", function(self)
     W.Tooltip(self, "Prochaine étape", { "Ton trajet en cours, les 3 prochaines étapes.",
@@ -1226,6 +1229,14 @@ function W.GetWindow() return win end
 function W.CurrentPage() return selectedPage() end
 T.ToggleMain = function(id) return W.Toggle(id) end   -- appelé par Bindings.xml
 _G.BINDING_NAME_TREEAI_MAIN = "TreeAI : ouvrir / fermer la fenêtre"
+-- noms lisibles des raccourcis (Bindings.xml : CLICK <bouton>:LeftButton), groupés par usage
+for btn, label in pairs({
+  TreeAIQuickItem = "Raccourci quête : utiliser l'objet de quête", TreeAIQuickTarget = "Raccourci quête : cibler l'objectif",
+  TreeAIQuickMount = "Raccourci voyage : monture", TreeAIQuickHearth = "Raccourci voyage : pierre de foyer",
+  TreeAIQuick_pull = "Raccourci combat : tirer (marque + familier)", TreeAIQuick_pet = "Raccourci combat : familier (appeler / ressusciter)",
+  TreeAIQuick_mend = "Raccourci combat : soigner le familier", TreeAIQuick_eat = "Raccourci combat : manger / boire",
+  TreeAIQuick_bandage = "Raccourci combat : bandage",
+}) do _G["BINDING_NAME_CLICK " .. btn .. ":LeftButton"] = label end
 _G.BINDING_HEADER_TREEAI = _G.BINDING_HEADER_TREEAI or "TreeAI"
 
 -- ===================================================================== pages simples
