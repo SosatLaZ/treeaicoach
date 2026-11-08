@@ -86,6 +86,11 @@ return function(M, ctx)
 
   -- ---------------------------------------------------------------- compass
   if C.ClearWaypoint then C.ClearWaypoint() end   -- the event storm may have clicked a minimap pin (manual target)
+  -- (ZONEFIX 4.0.1) with a route the compass aims at its stop 1 (zonefix_scenario.lua); the quest targets themselves
+  -- (nearest, labels, Questie sources) are checked here with the option « La boussole vise l'arrêt en cours » off
+  local Zp = T.ZonePlan
+  local zpCompass = Zp and Zp.db and Zp.db.compass
+  if Zp and Zp.db then Zp.db.compass = false end
   C.Rebuild("init")
   local t1 = C.Current()
   check(t1 and t1.kind == "turnin" and t1.questID == 1004 and t1.npc == "Fermier", "nearest target = turn-in at the farmer: " .. tostring(t1 and t1.label))
@@ -219,7 +224,13 @@ return function(M, ctx)
   C.Rebuild()
   check(C.dirty, "compass rebuild deferred in combat")
   C.Refresh()
-  check(not fr:IsShown(), "compass hidden in combat")
+  -- (ZONEFIX 4.0.1) the compass stays in combat, arrow only (no text); hidden only with « Cacher en combat »
+  local wd = C.Widgets and C.Widgets()
+  check(fr:IsShown() and wd and not wd.dist:IsShown(), "compass kept in combat, arrow only")
+  C.db.hideCombat = true
+  C.Refresh()
+  check(not fr:IsShown(), "compass hidden in combat (option)")
+  C.db.hideCombat = false
   check(TR.DropTip("Lion des collines") == nil, "no tooltip work in combat")
   M.LeaveCombat()
   M.FireEvent("PLAYER_REGEN_ENABLED")
@@ -291,4 +302,5 @@ return function(M, ctx)
 
   mapAPI.GetAreaInfo = oldArea
   rawset(_G, "QuestieLoader", nil)
+  if Zp and Zp.db then Zp.db.compass = zpCompass end
 end

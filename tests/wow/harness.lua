@@ -341,6 +341,18 @@ local function storm()
   -- the profile they asked for
   local T = rawget(_G, "TreeAI")
   if T and T.SetModuleProfile and addonName == "TreeAI" then T:SetModuleProfile((opts.profile == "tout" or opts.profile == "sur") and opts.profile or "essentiel"); M.Advance(2, 0.5) end
+  -- (ZONEFIX) …and from the defaults of what one click toggles (route paused, zone and mode of the route, the card,
+  -- the compass): the storm clicked every row, some once, some twice — the end state depended on how many rows
+  local mods = T and addonName == "TreeAI" and T.modules
+  if mods then
+    local R, Z, W, C = mods.Route, mods.ZonePlan, mods.Window, mods.Compass
+    if R and R.char then R.char.paused = false end
+    if Z and Z.char then Z.char.mode, Z.char.zones, Z.char.style, Z.char.ignore, Z.char.extra = "auto", {}, 1, {}, {} end
+    if Z and Z.db then Z.db.autoWatch = true end
+    if W and W.db then W.db.card = true end
+    if C and C.db then C.db.shown = true end
+    M.Advance(2, 0.5)
+  end
 end
 
 if opts.storm then storm() end

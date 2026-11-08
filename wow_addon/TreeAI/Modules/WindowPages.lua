@@ -156,6 +156,35 @@ W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = 
   end,
 })
 
+-- (ZONEFIX) « Zones à faire » : tes zones à ton niveau (niveaux des quêtes, à prendre / en cours, trajet pour y aller,
+-- « déjà finie »), un clic = travailler dans cette zone (le trajet est refait tout de suite)
+function W.ZonesToDo(Ly)
+  local Zp = T.ZonePlan
+  if not (Zp and Zp.ZonesToDo and Zp.IsEnabled and Zp:IsEnabled()) then return end
+  if Zp.CountZones then pcall(Zp.CountZones, Zp) end
+  local ok, list = pcall(Zp.ZonesToDo, Zp)
+  if not (ok and type(list) == "table") or #list == 0 then return end
+  local rows = {}
+  for _, e in ipairs(list) do
+    local text, right = Zp.ZoneRowText(e)
+    if W.Match(text) then rows[#rows + 1] = { e = e, text = text, right = right } end
+  end
+  if #rows == 0 then return end
+  if Ly.header("Zones à faire", "route:zones", #rows, ICON .. "INV_Misc_Map_01") then
+    if Zp._counting then Ly.text("Comptage des quêtes de chaque zone…", "S", "muted") end
+    for _, r in ipairs(rows) do
+      local e = r.e
+      local tip = { e.done and "Plus de quête à ton niveau ici : toutes faites." or
+        fmt("%d quête%s à prendre à ton niveau, %d dans ton journal.", e.avail, e.avail > 1 and "s" or "", e.inLog) }
+      if e.cross then tip[#tip + 1] = "Autre continent : bateau ou zeppelin compris dans le trajet." end
+      Ly.row({ text = (e.on and "● " or "") .. r.text, right = r.right, kind = e.done and "info" or "quest",
+        prio = e.here and 2 or 1, tooltip = tip,
+        clickHint = e.on and "Déjà ta zone de travail" or "Clic : travailler dans cette zone (trajet refait tout de suite)",
+        onClick = (not e.on) and function() Zp:PickZone(e.map) end or nil })
+    end
+  end
+end
+
 -- ===================================================================== Trajet (tous les arrêts, zone, choix)
 W.AddPage({ id = "route", label = "Trajet", icon = W.TAB_ICON.route, title = "Trajet",
   desc = "Tous les arrêts dans l'ordre, la zone de travail, les vols",
@@ -195,13 +224,23 @@ W.AddPage({ id = "route", label = "Trajet", icon = W.TAB_ICON.route, title = "Tr
     local nStops = (grp and tonumber(grp.n)) or #st
     local title = paused and "Trajet en pause" or fmt("Trajet %s · %s", W.MinutesText(st.total) or "< 1 min", km(st.yd))
     local route = P.route or {}
-    local name = (T.Plain and T.Plain.RouteName and T.Plain.RouteName(route.id, route.title)) or route.title or "Trajet TreeAI"
-    Ly.hero(W.TAB_ICON.route, title, fmt("%d arrêt%s · %s", nStops, nStops > 1 and "s" or "", strip(name)),
-      (tonumber(st.travel) or 0) > 0 and ("dont " .. (W.MinutesText(st.travel) or "") .. " de déplacement") or nil,
-      function() R:TogglePause() end, nil, paused and "Clic : reprendre" or "Clic : mettre en pause")
-    -- zone de travail, détour, suivi (lignes du producteur, sans les arrêts déjà dessinés en dessous)
     local Zp = T.ZonePlan
-    if Zp and Zp.HeadLines and Zp.IsEnabled and Zp:IsEnabled() then
+    local zon = Zp and Zp.IsEnabled and Zp:IsEnabled()
+    -- (ZONEFIX) le mode du trajet (pas « Le plus rapide » pour tous) et le thème en cours en sous-titre
+    local name = (zon and Zp.StyleName and Zp:StyleName())
+      or (T.Plain and T.Plain.RouteName and T.Plain.RouteName(route.id, route.title)) or route.title or "Trajet TreeAI"
+    local th = zon and Zp.ThemeParts and select(2, pcall(Zp.ThemeParts, Zp)) or nil
+    local travel = (tonumber(st.travel) or 0) > 0 and ("dont " .. (W.MinutesText(st.travel) or "") .. " de déplacement") or nil
+    local line2 = fmt("%d arrêt%s · %s", nStops, nStops > 1 and "s" or "", strip(name))
+    if type(th) == "table" and th.full then
+      Ly.hero(W.TAB_ICON.route, title, th.full, line2 .. (travel and (" · " .. travel) or ""),
+        function() R:TogglePause() end, nil, paused and "Clic : reprendre" or "Clic : mettre en pause")
+    else
+      Ly.hero(W.TAB_ICON.route, title, line2, travel, function() R:TogglePause() end, nil,
+        paused and "Clic : reprendre" or "Clic : mettre en pause")
+    end
+    -- mode, zone de travail, autres zones, détour, suivi (lignes du producteur, sans les arrêts dessinés en dessous)
+    if Zp and Zp.HeadLines and zon then
       local ok, zl = pcall(Zp.HeadLines, Zp)
       for _, l in ipairs(ok and type(zl) == "table" and zl or {}) do
         if l.text then
@@ -225,34 +264,15 @@ W.AddPage({ id = "route", label = "Trajet", icon = W.TAB_ICON.route, title = "Tr
       return
     end
     if Ly.header("Arrêts", nil, nStops, W.TAB_ICON.route) then
-      local shown = 0
+      -- (ZONEFIX) la MÊME ligne que la carte « Prochaine étape » (W.StopItem) : un seul format, plus de « ≈ ≈ »
+      local shown, via = 0, false
       for k, e in ipairs(st) do
         if shown >= 30 then
           Ly.text(fmt("… et %d autres arrêts, affichés au fur et à mesure.", #st - k + 1), "S", "muted")
           break
         end
-        local s = e.step
-        local item
-        if s then
-          local lq = P.log and s.q and P.log[s.q]
-          local o = lq and lq.obj and lq.obj[tonumber(s.o) or 0]
-          local prog = (o and (o.n or 0) > 0) and fmt(" (%d/%d)", o.have or 0, o.n) or ""
-          local sub = s.k == "pick" and "à prendre" or s.k == "turn" and "à rendre" or s.k == "obj" and "objectif" or "étape"
-          if e.sec and e.sec >= 30 then sub = sub .. " · ≈ " .. (W.MinutesText(e.sec) or "") .. " sur place" end
-          if s.out then sub = sub .. " · hors zone" end
-          -- (4.0 QA) clic offert seulement quand l'arrêt a une position ; la pierre de foyer ne se rejoint pas à pied
-          item = { n = (grp and grp[k]) or k, title = strip(P:StepLabel(s)) .. prog, sub = sub, mark = W.MARK[s.k], kind = s.k,
-            onClick = (s.k ~= "hs" and s.map and s.x) and function() P:Navigate(s) end or nil, actionText = "guider vers cet arrêt",
-            hint = s.k == "hs" and "Pierre de foyer : utilise-la (sacs ou barre de quête)" or nil }
-          if Zp and Zp.StopMenu and Zp.IsEnabled and Zp:IsEnabled() then item.onRightClick = function() Zp:StopMenu(s) end end
-        else
-          -- (QA-QUEST F4) vol / bateau : guider vers le départ (`from`) ; pierre de foyer : un rappel, pas de guidage
-          local p = e.kind ~= "hs" and (e.from or e.place) or nil
-          item = { n = (grp and grp[k]) or k, title = strip(e.text), sub = "trajet · " .. (W.MinutesText(e.sec) or "≈ 1 min"), kind = e.kind,
-            onClick = p and p.map and function() P:Navigate({ k = "fly", map = p.map, x = p.x, y = p.y, label = e.text }) end or nil,
-            actionText = "guider vers ce départ",
-            hint = e.kind == "hs" and "Pierre de foyer : utilise-la (sacs ou barre de quête)" or nil }
-        end
+        local item = W.StopItem(P, e, k, st, grp, via, k)
+        if e.kind and e.kind ~= "quest" then via = true end
         if W.Match(item.title, item.sub) then Ly.step(item, k == 1); shown = shown + 1 end
       end
       if (tonumber(beyond) or 0) > 0 and W.Query() == "" then
@@ -260,6 +280,7 @@ W.AddPage({ id = "route", label = "Trajet", icon = W.TAB_ICON.route, title = "Tr
           "S", "muted")
       end
     end
+    W.ZonesToDo(Ly)
   end,
   action = function()
     local R = routeOn()

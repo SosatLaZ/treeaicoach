@@ -312,15 +312,75 @@ function W.StopsCached(P, R)
     end
   end
   local st
-  if k.steps == P.steps and k.cur == P.cursor and k.n == n and k.st and not moved and t - k.at < 30 then st = k.st
+  if k.steps == P.steps and k.cur == P.cursor and k.n == n and k.rev == P.stepsRev and k.st and not moved and t - k.at < 30 then
+    st = k.st
   else
     st = R:Stops(64) or {}
-    stopsKeep = { steps = P.steps, cur = P.cursor, n = n, st = st, at = t, here0 = here }
+    stopsKeep = { steps = P.steps, cur = P.cursor, n = n, rev = P.stepsRev, st = st, at = t, here0 = here }
   end
   if here then st.here = here end
   return st
 end
 function W.ForgetStops() stopsKeep = {} end
+--- (ZONEFIX) UNE ligne d'arrêt, la même sur la carte « Prochaine étape » et sur la page Trajet (avant : deux
+--- formats, et « objectif · ≈ ≈ 5 min sur place » sur la page). e = entrée de Route:Stops ; via = un transport (vol,
+--- bateau, foyer) avant elle ; k = rang affiché. Titre : « Prendre « Titre entier » », « Ramasse « X » » ; sous-titre :
+--- « objectif 0/4 · « Quête » · 640 m au nord · ≈ 3 min » pour l'arrêt 1, « … · dans ≈ 12 min » ensuite (le temps du
+--- trajet, transports compris : jamais une ligne droite à pied vers un arrêt lointain).
+function W.StopItem(P, e, i, st, grp, via, k)
+  local s = e.step
+  local step = { n = (grp and grp[i]) or k, kind = s and s.k or e.kind, q = s and s.q }
+  if s then
+    -- (4.0 QA) Prendre / Rendre : le titre entier (le libellé du plan le coupe à 32 lettres) ; la carte le
+    -- raccourcit elle-même une seule fois, la page Quêtes / Maintenant a la place de l'écrire en entier
+    local full = (s.k == "pick" or s.k == "turn") and not (s.label and s.label ~= "") and s.q and questTitle(s.q)
+    step.title = full and ((s.k == "pick" and "Prendre « " or "Rendre « ") .. strip(full) .. " »") or strip(P:StepLabel(s))
+    local lq = P.log and s.q and P.log[s.q]
+    local o = lq and lq.obj and lq.obj[tonumber(s.o) or 0]
+    local prog = (o and (o.n or 0) > 0) and fmt("%d/%d", o.have or 0, o.n) or nil
+    local where
+    if via or (k or 1) > 1 then
+      local m = minutesTxt(max(0, (tonumber(e.at) or 0) - (tonumber(e.sec) or 0)))
+      where = m and ("dans " .. m) or nil
+    else where = whereTxt(st.here, e.place) end
+    local parts = {}
+    -- (4.0 QA) « nouvelle quête » / « quête finie » : la pastille « ! » / « ? » le dit déjà
+    if s.k == "obj" then
+      local qt = s.q and questTitle(s.q)
+      parts[#parts + 1] = prog and ("objectif " .. prog) or "objectif"
+      if qt then parts[#parts + 1] = "« " .. strip(qt) .. " »" end
+    end
+    if where then parts[#parts + 1] = where end
+    if s.out then parts[#parts + 1] = s.onWay and "hors zone, en chemin" or "hors zone" end
+    step.sub = tconcat(parts, " · ")
+    step.mark = MARK[s.k]
+    step.icon = KIND_ICON[s.k] or KIND_ICON.obj
+    -- (4.0 QA) clic offert seulement quand l'étape a une position (sinon rien à viser) ; la pierre de foyer ne se
+    -- rejoint pas à pied : pas de guidage, un rappel
+    if s.k == "hs" then
+      step.hint = "Pierre de foyer : utilise-la (sacs ou barre de quête)"
+    elseif s.map and s.x then
+      step.onClick = function() P:Navigate(s) end
+      step.actionText = (k or 1) == 1 and "la boussole vise cet arrêt" or "guider la boussole vers cette étape"
+    end
+    local Zp = T.ZonePlan
+    if Zp and Zp.StopMenu and Zp.IsEnabled and Zp:IsEnabled() then step.onRightClick = function() Zp:StopMenu(s) end end
+  else
+    step.title = strip(e.text or "?")
+    step.sub = "trajet · " .. (minutesTxt(e.sec) or "≈ 1 min")
+    step.icon = KIND_ICON[e.kind] or KIND_ICON.fly
+    -- (QA-QUEST F4) vol / bateau / zeppelin : guider vers le DÉPART (maître de vol, quai : `from`), pas vers
+    -- l'arrivée ; pierre de foyer : rien à rejoindre, un rappel au survol
+    local p = e.kind ~= "hs" and (e.from or e.place) or nil
+    if e.kind == "hs" then
+      step.hint = "Pierre de foyer : utilise-la (sacs ou barre de quête)"
+    elseif p and p.map then
+      step.onClick = function() P:Navigate({ k = "fly", map = p.map, x = p.x, y = p.y, label = e.text }) end
+      step.actionText = "guider vers ce départ"
+    end
+  end
+  return step
+end
 --- Le guide en cours : { zone, inLog, near, total (s), paused, steps = { {n, title, sub, mark, icon, kind, q,
 --- onClick, onRightClick} }, count, upcoming = { {q, level, title} } }. `n` = nombre d'étapes voulues.
 function W.Guide(n, full)
@@ -354,58 +414,7 @@ function W.Guide(n, full)
       local s = e.step
       if k < n then
         k = k + 1
-        local step = { n = (grp and grp[i]) or k, kind = s and s.k or e.kind, q = s and s.q }
-        if s then
-          -- (4.0 QA) Prendre / Rendre : le titre entier (le libellé du plan le coupe à 32 lettres) ; la carte le
-          -- raccourcit elle-même une seule fois, la page Quêtes / Maintenant a la place de l'écrire en entier
-          local full = (s.k == "pick" or s.k == "turn") and not (s.label and s.label ~= "") and s.q and questTitle(s.q)
-          step.title = full and ((s.k == "pick" and "Prendre « " or "Rendre « ") .. strip(full) .. " »") or strip(P:StepLabel(s))
-          local lq = P.log and s.q and P.log[s.q]
-          local o = lq and lq.obj and lq.obj[tonumber(s.o) or 0]
-          local prog = (o and (o.n or 0) > 0) and fmt("%d/%d", o.have or 0, o.n) or nil
-          -- (QUESTQA F4) après un vol / un bateau / la pierre de foyer : le temps du trajet, pas une ligne droite
-          -- à pied depuis le joueur
-          local where
-          if via then
-            local m = minutesTxt(e.at)
-            where = m and ("dans " .. m) or nil
-          else where = whereTxt(st.here, e.place) end
-          local parts = {}
-          -- (4.0 QA) « nouvelle quête » / « quête finie » : la pastille « ! » / « ? » le dit déjà
-          if s.k == "obj" then
-            local qt = s.q and questTitle(s.q)
-            parts[#parts + 1] = prog and ("objectif " .. prog) or "objectif"
-            if qt then parts[#parts + 1] = "« " .. strip(qt) .. " »" end
-          end
-          if where then parts[#parts + 1] = where end
-          if s.out then parts[#parts + 1] = "hors zone" end
-          step.sub = tconcat(parts, " · ")
-          step.mark = MARK[s.k]
-          step.icon = KIND_ICON[s.k] or KIND_ICON.obj
-          -- (4.0 QA) clic offert seulement quand l'étape a une position (sinon rien à viser) ; la pierre de foyer
-          -- ne se rejoint pas à pied : pas de guidage, un rappel
-          if s.k == "hs" then
-            step.hint = "Pierre de foyer : utilise-la (sacs ou barre de quête)"
-          elseif s.map and s.x then
-            step.onClick = function() P:Navigate(s) end
-            step.actionText = "guider la boussole vers cette étape"
-          end
-          local Zp = T.ZonePlan
-          if Zp and Zp.StopMenu and Zp.IsEnabled and Zp:IsEnabled() then step.onRightClick = function() Zp:StopMenu(s) end end
-        else
-          step.title = strip(e.text or "?")
-          step.sub = "trajet · " .. (minutesTxt(e.sec) or "≈ 1 min")
-          step.icon = KIND_ICON[e.kind] or KIND_ICON.fly
-          -- (QA-QUEST F4) vol / bateau / zeppelin : guider vers le DÉPART (maître de vol, quai : `from`), pas vers
-          -- l'arrivée ; pierre de foyer : rien à rejoindre, un rappel au survol
-          local p = e.kind ~= "hs" and (e.from or e.place) or nil
-          if e.kind == "hs" then
-            step.hint = "Pierre de foyer : utilise-la (sacs ou barre de quête)"
-          elseif p and p.map then
-            step.onClick = function() P:Navigate({ k = "fly", map = p.map, x = p.x, y = p.y, label = e.text }) end
-            step.actionText = "guider vers ce départ"
-          end
-        end
+        local step = W.StopItem(P, e, i, st, grp, via, k)
         g.steps[#g.steps + 1] = step
       elseif full and s and s.k == "pick" and s.q and not seenQ[s.q] and #g.upcoming < 8 then
         seenQ[s.q] = true
@@ -492,16 +501,38 @@ local function buildCard()
     meth(card, "StopMovingOrSizing")
     W.SaveCardPosition()
   end)
-  meth(hero, "SetScript", "OnClick", function(_, btn)
+  -- (ZONEFIX) en trajet : clic = mode suivant (Le plus rapide → Finir la zone → Par histoire → Récompenses → Groupe) ;
+  -- « Ouvrir » ouvre la fenêtre ; en donjon / mort : la fenêtre, comme avant
+  local function styleable() local Zp = T.ZonePlan return card.mode == "route" and card.routed and Zp and Zp.CycleStyle and Zp end
+  meth(hero, "SetScript", "OnClick", function(self, btn)
     if btn == "RightButton" then
       if W.char then W.char.optPage = "Window" end
       W.Open("options")
+      return
+    end
+    local Zp = styleable()
+    if Zp then
+      T:UserAction(function() Zp:CycleStyle() end)
+      W.RenderCard(true)
+      local oe = self and self:GetScript("OnEnter")
+      if oe and self.IsMouseOver and self:IsMouseOver() then oe(self) end
     else W.Open(card.mode == "dungeon" and "dungeon" or "quests") end
   end)
   meth(hero, "SetScript", "OnEnter", function(self)
     if card.mode == "dungeon" then
       W.Tooltip(self, "Prochaine étape", { "En donjon : le prochain boss, les objets de quête, la préparation.",
         "Glisser : déplacer la carte" }, "Clic : ouvrir la fenêtre TreeAI (Donjons)\nClic droit : réglages de la carte")
+      return
+    end
+    local Zp = styleable()
+    if Zp then
+      local th = Zp.ThemeParts and select(2, pcall(Zp.ThemeParts, Zp))
+      local lines = {}
+      if type(th) == "table" and th.full then lines[#lines + 1] = th.full end
+      for l in tostring(Zp.StyleTip and Zp:StyleTip() or ""):gmatch("[^\n]+") do lines[#lines + 1] = l end
+      lines[#lines + 1] = "Glisser : déplacer la carte"
+      W.Tooltip(self, "Mode du trajet : " .. tostring(Zp:StyleName()), lines,
+        "Clic : mode suivant\nOuvrir : la fenêtre TreeAI · Clic droit : réglages de la carte")
       return
     end
     W.Tooltip(self, "Prochaine étape", { "Ton trajet en cours : les prochaines étapes, dans l'ordre.",
@@ -721,10 +752,40 @@ function W.CardModel(nSteps, now, ps)
       if paused then title = "Trajet en pause" end
       sum = W.GuideSummary(g, true)
       if sum == "" then sum = "Aucune quête en cours ici" end
+      -- (ZONEFIX) en-tête = le thème en cours (« Orneval · Bois-brisé : la flamme sacrée (3 quêtes) », raccourci pour
+      -- tenir) ; résumé = le mode du trajet (clic sur l'en-tête : le suivant) + la durée
+      local first = g.steps[1]
+      local Zp = T.ZonePlan
+      if not paused and first and not first.entry and Zp and Zp.ThemeParts then
+        local ok, th = pcall(Zp.ThemeParts, Zp)
+        title = (ok and W.CardTitle(th)) or title
+        local style = Zp.StyleName and Zp:StyleName()
+        local tm = minutesTxt(g.total)
+        if style then sum = style .. (tm and (" · " .. tm) or "") end
+      end
       for _, r in ipairs(g.steps) do rows[#rows + 1] = r end
     end
   end
   return rows, mode, title, sum, paused, danger, notice
+end
+--- (ZONEFIX) titre de la carte : le thème le plus complet qui tient sur la ligne (zone · camp : histoire (n), puis
+--- camp : histoire, histoire (n quêtes), zone · camp, zone) ; th = ZonePlan:ThemeParts()
+local TITLE_PX = 166
+function W.CardTitle(th)
+  if type(th) ~= "table" or not th.full then return nil end
+  local z, hub, story, n = th.zone, th.hub, th.story, th.n
+  local cands = {}
+  if th.full then cands[#cands + 1] = th.full end
+  if hub and story then cands[#cands + 1] = hub .. " : " .. story .. ((n and n >= 2) and fmt(" (%d)", n) or "") end
+  if story then
+    local cap = story:gsub("^%l", string.upper)
+    cands[#cands + 1] = cap .. ((n and n >= 2) and fmt(" (%d quêtes)", n) or "")
+    cands[#cands + 1] = cap
+  end
+  if z and hub then cands[#cands + 1] = z .. " · " .. hub end
+  if z then cands[#cands + 1] = z end
+  for _, c in ipairs(cands) do if ulen(c) * (AVG.M or 7) <= TITLE_PX then return c end end
+  return cands[#cands]
 end
 --- (4.0 QA) la première vraie ligne de la carte (pas un avis) : l'infobulle de la pastille dit la même chose
 function W.TopLine()
@@ -767,6 +828,8 @@ function W.RenderCard(force)
   local nSteps = min(5, max(1, tonumber(W.db.cardSteps) or 3))
   local rows, mode, title, sum, paused = W.CardModel(nSteps, now, ps)
   card.mode = mode
+  card.routed = false                                -- de vrais arrêts numérotés (pas des lignes de « Maintenant »)
+  for _, r in ipairs(rows) do if type(r.n) == "number" and not r.entry then card.routed = true break end end
   local sigT = { mode, title, sum }
   for _, s in ipairs(rows) do sigT[#sigT + 1] = tostring(s.n) .. "|" .. (s.title or "") .. "|" .. (s.sub or "") end
   local sig = tconcat(sigT, "\n")

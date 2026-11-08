@@ -161,12 +161,18 @@ return function(M, ctx)
 
   -- 5. one waypoint arrow only
   local C = T.modules.Compass
+  -- (ZONEFIX) « une seule flèche » seulement si la flèche du jeu vise le MÊME endroit (à 20 m près)
   M.superTrack = 4242
-  if C_SuperTrack then   -- (legacy clients: no supertracking API)
-    check(C.OtherGuide({ questID = 4242, key = "obj:4242" }) == "blizzard", "quête suivie par Blizzard : flèche en double détectée")
+  local tgt = { questID = 4242, key = "obj:4242", mapID = 1424, x = 0.40, y = 0.40 }
+  if C_SuperTrack and C_QuestLog and C_QuestLog.GetNextWaypoint then   -- (legacy clients: no supertracking API)
+    M.waypoints[4242] = { 1424, 0.4002, 0.40 }
+    check(C.OtherGuide(tgt) == "blizzard", "quête suivie par Blizzard, même point : flèche en double détectée")
+    M.waypoints[4242] = { 1424, 0.60, 0.40 }
+    check(C.OtherGuide(tgt) == nil, "quête suivie par Blizzard, flèche ailleurs (600 yd) : notre flèche reste")
+    M.waypoints[4242] = nil
   end
   M.superTrack = 0
-  check(C.OtherGuide({ questID = 4242, key = "obj:4242" }) == nil, "pas d'autre guide : notre flèche reste")
+  check(C.OtherGuide(tgt) == nil, "pas d'autre guide : notre flèche reste")
   C.guide = { key = "obj:7", how = "tomtom" }
   check(C.OtherGuide({ key = "obj:7" }) == "tomtom" and C.OtherGuide({ key = "obj:8" }) == nil, "TomTom posé par nous : même cible seulement")
   C.guide = nil

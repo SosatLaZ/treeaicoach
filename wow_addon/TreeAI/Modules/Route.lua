@@ -409,7 +409,9 @@ function R.Select(cands, ctx)
   end
   return keep, drop
 end
-function R.ProposalText(keep, drop)
+-- (ZONEFIX) accord : « 9 trop dures », « 2 élites » (« trop loin » ne s'accorde pas)
+local WHY_PL = { ["trop dure"] = "trop dures", ["élite"] = "élites" }
+function R.ProposalText(keep, drop, zone)
   if not (drop and #drop > 0) then return nil end
   local n = {}
   local order = {}
@@ -418,15 +420,17 @@ function R.ProposalText(keep, drop)
     n[d.why] = n[d.why] + 1
   end
   local why
-  if #order == 1 then why = order[1] == "élite" and "élites, en groupe seulement" or order[1]
+  if #order == 1 then why = order[1] == "élite" and "élites, en groupe seulement" or ((#drop > 1 and WHY_PL[order[1]]) or order[1])
   else
     local parts = {}
-    for _, w in ipairs(order) do parts[#parts + 1] = n[w] .. " " .. w end
+    for _, w in ipairs(order) do parts[#parts + 1] = n[w] .. " " .. ((n[w] > 1 and WHY_PL[w]) or w) end
     why = tconcat(parts, ", ")
   end
   local k = #(keep or {})
-  -- (QA-QUEST) « Garde 8 quêtes, mets-en 1 de côté (trop loin) » (avant : « laisse cette 1 »)
-  return fmt("Garde %d quête%s, mets-en %d de côté (%s)", k, k > 1 and "s" or "", #drop, why)
+  -- (QA-QUEST) « Garde 8 quêtes, mets-en 1 de côté (trop loin) » (avant : « laisse cette 1 ») ; (ZONEFIX) les quêtes
+  -- comptées sont celles de la zone choisie : « Orneval : garde 12 quêtes, … » (avant : « Garde 27 quêtes » sur 4 zones)
+  local head = fmt("%s %d quête%s", zone and "garde" or "Garde", k, k > 1 and "s" or "")
+  return fmt("%s%s, mets-en %d de côté (%s)", zone and (cut(zone, 30) .. " : ") or "", head, #drop, why)
 end
 
 -- Planner:BuildAuto → requêtes filtrées (quêtes laissées adoptées) + proposition calculée sur le reste
@@ -620,19 +624,40 @@ end
 -- place = où l'entrée mène (arrêt, ou ARRIVÉE du vol / bateau) ; from = (QA-QUEST F4) départ d'un vol / bateau /
 -- zeppelin (maître de vol, quai : là où marcher), nil pour le foyer ; at / ydAt / trAt = secondes, yards de marche,
 -- secondes de déplacement cumulées depuis maintenant à la fin de l'entrée.
--- (LITE) mémorisé 5 s pour le même plan / la même étape (le panneau se redessine souvent, le trajet bouge peu)
+-- (LITE) mémorisé 5 s pour le même plan / la même étape (le panneau se redessine souvent, le trajet bouge peu) ;
+-- (ZONEFIX, PERF4) immobile (même position, revue au plus une fois par seconde) : gardé jusqu'à 5 min
 local stopsMemo = {}                 -- (QUESTQA) un mémo par n (1 = 1er arrêt, 64 = vue) : plus de recalcul en ping-pong
+R.STOPS_IDLE_S = 300
+local function idleNoHs() local Zp = T.ZonePlan return Zp and Zp.noHearth or false end
+local function graphNow() return opt("transports") and R.Graph() or false end
 function R:Stops(n)
   local P = T.Planner
   local tnow = now()
   local m = stopsMemo[n or 0] or {}
-  if P and m.steps == P.steps and m.cur == P.cursor and m.len == #(P.steps or {})
-      and m.skipN == (P.char and P.char.skip and next(P.char.skip) and true or false) and tnow - (m.at or -100) < 5 then
-    return m.out
+  if P and m.steps == P.steps and m.cur == P.cursor and m.len == #(P.steps or {}) and m.rev == P.stepsRev
+      and m.skipN == (P.char and P.char.skip and next(P.char.skip) and true or false) then
+    local age = tnow - (m.at or -1e9)
+    if age < 5 then return m.out end
+    -- immobile : même position, mêmes étapes faites (Evaluate), mêmes vols connus (graphe), même pierre de foyer,
+    -- même règle « sans foyer »
+    if age < R.STOPS_IDLE_S and m.ev == P.evalRev and m.src == P.src and m.noHs == idleNoHs() then
+      if tnow - (m.chk or -1e9) < 1 then return m.out end
+      local Gp = Geo.Player
+      local pm, px, py
+      if Gp then pm, px, py = Gp() end
+      if pm and pm == m.pm and px == m.px and py == m.py and m.hs == R.HearthReady() and m.g == graphNow() then
+        m.chk = tnow
+        return m.out
+      end
+    end
   end
   local out = self:StopsRaw(n)
-  stopsMemo[n or 0] = { steps = P and P.steps, cur = P and P.cursor, len = P and #(P.steps or {}) or 0,
-    skipN = (P and P.char and P.char.skip and next(P.char.skip) and true or false), at = tnow, out = out }
+  local pm, px, py
+  if Geo.Player then pm, px, py = Geo.Player() end
+  stopsMemo[n or 0] = { steps = P and P.steps, cur = P and P.cursor, len = P and #(P.steps or {}) or 0, rev = P and P.stepsRev,
+    skipN = (P and P.char and P.char.skip and next(P.char.skip) and true or false), at = tnow, chk = tnow, out = out,
+    pm = pm, px = px, py = py, g = graphNow(), src = P and P.src, noHs = idleNoHs(), hs = R.HearthReady(),
+    ev = P and P.evalRev }
   R.firstKind = out[1] and out[1].kind or nil
   return out
 end
@@ -705,10 +730,66 @@ function R:StopsRaw(n)
   out.here = world((pm and px) and { map = pm, x = px, y = py } or nil)
   return out
 end
+-- ===================================================================== cible de la boussole = arrêt 1
+-- (ZONEFIX) la boussole vise TOUJOURS l'arrêt 1 de la carte « Prochaine étape » : même liste (R:Stops), même objet.
+-- (QA-QUEST F4) 1er trajet = un transport (foyer, vol, bateau, zeppelin) : la boussole vise CE départ (maître de vol /
+-- quai à pied, ou « Pierre de foyer vers … » sans flèche), jamais la quête lointaine en ligne droite.
+local function withDist(t, me, map, x, y)
+  if me and me.mapID and me.x and Geo.Dist then
+    local mx, my = me.x, me.y
+    if mx <= 1 and my <= 1 then mx, my = mx * 100, my * 100 end
+    t.dist = Geo.Dist(me.mapID, mx, my, map, x, y)
+  end
+  return t
+end
+function R.LegTarget(me)
+  if not R:IsEnabled() then return nil end
+  local ok, st = pcall(R.Stops, R, 1)
+  local f = ok and type(st) == "table" and st[1] or nil
+  if not f or f.step then return nil end
+  if f.kind == "hs" then
+    local name = cut((f.place and f.place.name) or "l'auberge", 28)
+    local label = "Pierre de foyer vers " .. name
+    return { key = "plan:hs:" .. name, kind = "zone", plan = true, leg = "hs", title = label, label = label,
+      note = "Lance ta pierre de foyer", src = "trajet" }
+  end
+  local p = f.from or f.place
+  if not (p and p.map and p.x and p.y) then return nil end
+  local label = (T.SafeText and T.SafeText(tostring(f.text or "Trajet"))) or tostring(f.text or "Trajet")
+  return withDist({ key = fmt("plan:%s:%s:%d:%d", tostring(f.kind), tostring(p.map), floor(p.x * 10), floor(p.y * 10)),
+    kind = "travel", plan = true, leg = f.kind, title = label, label = label, mapID = p.map, x = p.x / 100, y = p.y / 100,
+    src = "trajet" }, me, p.map, p.x, p.y)
+end
+--- cible de la boussole (Compass.BuildTargets) : nil sans trajet, en pause, ou boussole détachée du trajet (option)
+function R:CompassTarget(me)
+  if not (self:IsEnabled() and self.char) or self.char.paused then return nil end
+  local Zp = T.ZonePlan
+  if Zp and Zp.db and Zp.db.compass == false then return nil end
+  local P = T.Planner
+  local s = P and P.steps and P.cursor and P.steps[P.cursor]
+  if not (s and not s._done and not s._other) then return nil end
+  local lt = R.LegTarget(me)
+  if lt then return lt end
+  local label = P.StepLabel and P:StepLabel(s) or "Arrêt"
+  local key = "plan:" .. tostring(s.k) .. ":" .. tostring(s.q or "") .. ":" .. tostring(s.o or "")
+  if not (s.map and s.x) then
+    -- pas de lieu connu (sans Questie, pas de point du jeu) : l'arrêt 1 quand même, sans flèche (« Zone : … »), jamais
+    -- une autre quête du journal à sa place
+    local Zp = T.ZonePlan
+    local zm = s.map or (Zp and Zp.QuestZone and Zp.QuestZone(s.q))
+    local zone = zm and Zp and Zp.MapName and Zp.MapName(zm) or nil
+    return { key = key, kind = "zone", plan = true, questID = s.q, step = s, title = label, label = label, zone = zone,
+      src = "trajet" }
+  end
+  return withDist({ key = key, kind = s.k == "turn" and "turnin" or "objective", plan = true, questID = s.q, step = s,
+    title = label, label = label, mapID = s.map, x = s.x / 100, y = s.y / 100, src = "trajet" }, me, s.map, s.x, s.y)
+end
+
 -- (QUESTQA) horizon du trajet affiché : 1 h 30 ou 30 arrêts au plus (jamais « Trajet 307 min · 75 arrêts ») ;
 -- la suite est refaite en route depuis le journal. → nombre d'entrées gardées, durée, yards, arrêts au-delà,
 -- (QA-QUEST F7) secondes de déplacement dans l'horizon : LE total du trajet, le même partout (onglet, page, carte)
-R.HORIZON_S, R.HORIZON_STOPS = 90 * 60, 30
+-- (ZONEFIX) 1 h au plus (était 1 h 30) : « Trajet ≈ 1 h 27 · 22 arrêts » sur 4 zones n'était pas un trajet à suivre
+R.HORIZON_S, R.HORIZON_STOPS = 60 * 60, 30
 function R.Horizon(st)
   local keep, quests = 0, 0
   for i, e in ipairs(st) do
@@ -805,7 +886,7 @@ function R:PlanLines(P)
   end
   -- tri des quêtes
   local sel = self.selection
-  local prop = sel and R.ProposalText(sel.keep, sel.drop)
+  local prop = sel and R.ProposalText(sel.keep, sel.drop, sel.zone)
   if prop then
     -- (QA-QUEST F23) 8 lignes au plus dans l'infobulle, puis « … et 22 autres »
     local tip = {}

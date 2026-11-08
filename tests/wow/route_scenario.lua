@@ -7,6 +7,10 @@ return function(M, ctx)
   local check = ctx.check
   local R, P = T.Route, T.Planner
   check(R and P and T.Data and T.Data.Travel, "Route + Planner + Data/Travel loaded")
+  -- the generic event storm clicks every row (zone menu, « Mode », « Pause »…): start from the defaults
+  if R.char then R.char.paused = false end
+  local Zp = T.ZonePlan
+  if Zp and Zp.char then Zp.char.mode, Zp.char.zones, Zp.char.style = "auto", {}, 1 end
   if not (R and P and T.Data and T.Data.Travel) then return end
   local function near(a, b, eps) return a and b and math.abs(a - b) <= (eps or 1e-4) end
   local function modes(legs) local t = {} for _, l in ipairs(legs or {}) do t[#t + 1] = l.mode end return table.concat(t, ",") end

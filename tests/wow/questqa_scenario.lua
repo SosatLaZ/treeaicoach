@@ -52,7 +52,7 @@ return function(M, ctx)
   local LOG = {
     { header = "Mille pointes" },
     { id = 5101, title = "Le cavalier céleste", level = 29, map = 1441, objectives = { obj("Œuf de wyverne de Haut-perchoir : 0/10", 0, 10, "item") } },
-    { id = 5102, title = "Hypercapaciteur bidulotron", level = 30, tag = ELITE, elite = true, map = 1441,
+    { id = 5182, title = "Hypercapaciteur bidulotron", level = 30, tag = ELITE, elite = true, map = 1441,
       objectives = { obj("Hypercapaciteur bidulotron : 0/1", 0, 1, "item") } },
     { id = 5104, title = "L'œuf étrange", level = 26, complete = true, map = 1441, objectives = {} },
     { id = 5105, title = "ON RECHERCHE : Arnak Sinistre", level = 29, complete = true, map = 1441, objectives = {} },
@@ -111,7 +111,7 @@ return function(M, ctx)
     quests = {
       -- in the log
       [5101] = quest("Le cavalier céleste", 29, 24, 400, 610, 610, nil, { 8101 }),
-      [5102] = quest("Hypercapaciteur bidulotron", 30, 25, 400, 611, 611, nil, { 8102 }),
+      [5182] = quest("Hypercapaciteur bidulotron", 30, 25, 400, 611, 611, nil, { 8102 }),
       [5103] = quest("Broie-l'acier", 30, 25, 1638, 620, 620),
       [5104] = quest("L'œuf étrange", 26, 22, 400, 612, 612),
       [5105] = quest("ON RECHERCHE : Arnak Sinistre", 29, 25, 400, 612, 612),
@@ -342,7 +342,7 @@ return function(M, ctx)
   local qs = {}
   for _, s in ipairs(P.steps or {}) do if s.q and not s._other then qs[s.q] = true end end
   check(qs[5110], "« La flamme sacrée » (Lac Mystral, Orneval) is in the in-game route")
-  check(not qs[5112] and not qs[5116] and not qs[5117] and not qs[5118] and not qs[5119] and not qs[5102],
+  check(not qs[5112] and not qs[5116] and not qs[5117] and not qs[5118] and not qs[5119] and not qs[5182],
     "no dungeon / PvP / elite quest in the solo route")
   inv("A stale plan")
   -- summary for the app: the plan is marked stale with the reason
@@ -373,7 +373,10 @@ return function(M, ctx)
   check(masked[5112] == "donjon" and masked[5118] == "JcJ" and masked[5119] == "élite", "app plan: dungeon / PvP / elite steps masked (same rules)")
   check(find("^Trop long : ~250 min"), "verdict said once: « Trop long : ~250 min … »")
   local head = find("^Trajet %d+ min")
-  check(head and tostring(head.tooltip):find("arrêts? de plus", 1, false), "head: the rest is announced in the tooltip (" .. tostring(head and head.tooltip) .. ")")
+  -- (ZONEFIX) the rest is announced when there IS a rest (on the 20-quest client the 40 picks wait for room in the log)
+  local _, _, _, beyondN = R.Horizon(R:Stops(64))
+  check(head and (beyondN == 0 or tostring(head.tooltip):find("arrêts? de plus", 1, false)),
+    "head: the rest is announced in the tooltip (" .. tostring(head and head.tooltip) .. ")")
   local zone = find("^Zone : ")
   check(zone and tostring(zone.tooltip):find("Hors trajet : 1 de donjon, 1 élite, 1 JcJ", 1, true), "zone tooltip says what is left out: " .. tostring(zone and zone.tooltip))
   inv("B long app plan")
@@ -478,7 +481,7 @@ return function(M, ctx)
   exportNow(); replan()
   qs = {}
   for _, s in ipairs(P.steps or {}) do if s.q and not s._other then qs[s.q] = true end end
-  check(qs[5102], "in a group of 4 the elite « Hypercapaciteur » is planned")
+  check(qs[5182], "in a group of 4 the elite « Hypercapaciteur » is planned")
   inv("E group")
   M.group = {}
   M.FireEvent("GROUP_ROSTER_UPDATE")
