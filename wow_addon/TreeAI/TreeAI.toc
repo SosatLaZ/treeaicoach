@@ -46,6 +46,7 @@ Modules\Export.lua
 Modules\Planner.lua
 Modules\Speed.lua
 Modules\Route.lua
+Modules\PathDraw.lua
 Modules\Inventory.lua
 Modules\Boost.lua
 Modules\Fight.lua

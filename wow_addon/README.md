@@ -48,6 +48,18 @@ loin / trop dure / élite en solo), un clic adopte (rien n'est abandonné ; tout
 `/tai route` (suivre) · `pause` · `garde` · `tout`. Planner : `leg()` → `Route.LegSeconds`, `BuildAuto` →
 `Route:FilterRequests`. `T.Geo.World(map, x, y)` renvoie le repère de `UnitPosition` (1er = nord, suit le y de la carte).
 
+`Modules/PathDraw.lua` (agent PATH, juste après Route.lua) : le trajet de `Route:Stops(64)` **dessiné**. Carte du
+monde : tirets entre arrêts consécutifs (objets `Line` via `CreateLine` + `SetStartPoint/SetEndPoint`, sinon points),
+pastilles numérotées (n° = n° d'arrêt du panneau) + icône vol / bateau / zeppelin / foyer, sur NOTRE calque enfant
+d'UIParent posé en coordonnées absolues sur `WorldMapFrame.ScrollContainer(.Child)` (lecture seule, coupe ce qui
+dépasse) ; prévenu par `WorldMapFrame:AddDataProvider(CreateFromMixins(MapCanvasDataProviderMixin))`, sinon
+`HookScript` OnShow/OnHide ; arrêts d'une autre carte convertis par `T.Geo.FromWorld` (même continent). Minimap :
+1–2 prochaines étapes en points fixes dans le monde, projection `MinimapPins` (yards/zoom, rotation, forme), ≤ 5 Hz
+en mouvement, 2 Hz immobile, réserve de 48 textures, aucune table par passe. Rien sans trajet actif (pause = rien) ;
+option « Guidage » d'un module `Guide` respectée si présent ; SPF qui guide → carte gardée, traînée minimap
+seulement avec « Garder la traînée minimap quand Shortest Path guide ». Options : carte, minimap, couleur,
+épaisseur. Budget `session_sim` : ≤ 60 kinstr/min. `/tai chemin` (statut).
+
 `Modules/Quests.lua` (agent Q): aide aux quêtes PvE — à rendre par zone, « finis ici avant de partir »,
 toasts de progression, quêtes grises (clic = ouvrir, l'abandon reste manuel), « à faire à 4 » (+ Group),
 bouton sécurisé d'objet de quête (créé/modifié hors combat), ligne « Étape : … », `/tai quetes`,

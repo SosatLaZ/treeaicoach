@@ -1123,6 +1123,7 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Stats = { lite = true, desc = "Statistiques mesurées du perso (sur événement)" },
   Team = { lite = true, gate = "group", desc = "Groupe : tous les membres, même sans TreeAI (en groupe)" },
   Route = { lite = true, desc = "Itinéraire le plus rapide entre les étapes" },
+  PathDraw = { lite = true, desc = "Chemin de l'itinéraire dessiné sur la carte et la minimap" },
   Speed = { lite = true, desc = "Aller plus vite : mort, monture, foyer" },
   Plain = { lite = true, desc = "Conseils de quête en mots simples" },
   Detect = { lite = true, desc = "Détection : rares, trésors, monstres de quête, services proches" },
