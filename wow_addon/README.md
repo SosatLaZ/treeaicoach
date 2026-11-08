@@ -710,6 +710,28 @@ et clics du joueur seulement ; aucune sélection dans le journal de quêtes, auc
   session={start,duration,turned,missions,abandoned,deaths,titles,levels,events,goal={kind,text,pct,eta,done},
   leaderboard,loot}}` → `ai_context.py` (`missions_groupe`, noms remplacés par « Classe niveau »).
 
+## Équipe, même sans TreeAI : module `Team` (`Modules/Team.lua`, après Missions)
+
+Conseils sur **chaque membre du groupe** (party1..4, pas en raid) à partir des seules API Blizzard : niveau,
+classe, rôle (`UnitGroupRolesAssigned`, sinon deviné : guerrier tank, prêtre soigneur), PV / mana % hors
+combat (valeurs secrètes ignorées), mort / fantôme / AFK / hors ligne / loin (`UnitInRange`, sinon
+`CheckInteractDistance`) / autre zone (`C_Map.GetBestMapForUnit`), buffs de classe manquants (Robustesse,
+Intelligence, Marque du fauve, Bénédiction : « Lance … sur X » si tu l'as, sinon « X (classe) peut la donner »),
+affections à dissiper (`dispelName` / `UnitAura`), quêtes de ton journal qu'ils n'ont pas
+(`C_QuestLog.IsUnitOnQuest(unit, id)`, repli `IsUnitOnQuest(index, unit)` ; « X n'a pas « Q » : partage-la
+(Journal > Partager) »), quêtes rouges pour eux (niveau +5), équipement par inspection (`NotifyInspect` →
+`INSPECT_READY`, hors combat, à portée, un à la fois, ≤ 1 / 10 s, cache 10 min, jamais si la fenêtre
+d'inspection est ouverte : arme grise / blanche, emplacements vides, niveau d'objet moyen) et « Avant de
+tirer, attends : … » quand tu cibles un monstre hors combat.
+* Sortie : `SetTabLines("group", lines, "Team")` ; lignes prio ≥ 2 en `pin` (« Maintenant » si actionnable,
+  mode simple respecté). Aucun chat, rien d'automatique (partage / buff / dissipation = consignes).
+* Fusion : membre connu de Squad (il a TreeAI) → état, quêtes et « prêt à tirer » laissés à Squad / Missions ;
+  Team ne garde pour lui que buffs, dissipation et équipement.
+* Coût : événementiel (recalcul regroupé ≥ 2 s, quêtes ≥ 15 s, PV / mana seulement onglet « Groupe » visible
+  ou cible hostile, rien en combat) ; `session_sim` plafonne Team à 80 kinstr/min.
+* Résumé `summary.team = {v=1, members={{class, level, role, addon, dead, far, otherZone, ilvl, missingSlots,
+  greyWeapon}}}` (sans noms). Options : status, pull, buffs, cleanse, quests, levels, gear.
+
 ## Comms : limites de WoW Forever (Core)
 
 ~10 messages d'addon par préfixe en rafale puis 1/s, sinon le message est **perdu** (code de retour) ;
