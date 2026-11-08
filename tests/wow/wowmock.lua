@@ -237,6 +237,7 @@ local WidgetMT = {
   end,
 }
 
+M.Widget = Widget   -- PLACEBUG: tests/wow/geometry.lua (opt-in real-client frame geometry) extends the widgets
 local function newWidget(kind, name, parent)
   local w = setmetatable({
     __kind = kind, __name = name, __parent = parent, __scripts = {}, __events = {},
@@ -537,6 +538,7 @@ function M.Advance(seconds, step)
     M.now = M.now + dt
     M.serverTime = M.serverTime + dt
     if M.FrameHook then M.FrameHook(true) end   -- SPIKE: per-frame cost (timers + OnUpdate) measured by session_sim
+    if M.GeoTick then M.GeoTick(dt) end         -- PLACEBUG: geometry engine (screen laid out, UI scale applied…)
     -- timers
     local due = {}
     for i = #M.timers, 1, -1 do

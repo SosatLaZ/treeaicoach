@@ -76,18 +76,28 @@ function T:ShortcutDocked(frame) return S.Docked(frame) end
 
 -- ===================================================================== cadre
 local function locked() return (S.db and S.db.locked) or (T.FramesLocked and T:FramesLocked()) or false end
+local function okAnchor(p, x, y) return T.ValidAnchor and T.ValidAnchor(p, x, y) or false end
 local function savePos()
   if not dock then return end
+  -- (PLACEBUG 4.0.1) le crochet du cœur a reposé la barre sur UIParent depuis son rectangle réel (ancrage explicite) ;
+  -- sans lui, même calcul ici — jamais l'ancrage du client relu tel quel, jamais « nil → 0 »
+  if T.AnchorFromRect then T:AnchorFromRect(dock) end
   local pt, _, rp, x, y = meth(dock, "GetPoint")
-  if pt and S.char then S.char.pos = { pt, rp or pt, floor((x or 0) + 0.5), floor((y or 0) + 0.5) } end
+  if S.char and okAnchor(pt, x, y) then S.char.pos = { pt, okAnchor(rp, 0, 0) and rp or pt, floor(x + 0.5), floor(y + 0.5) } end
 end
 local function placeDock()
   if not dock or inCombat() then return end
   local p = S.char and S.char.pos
-  meth(dock, "ClearAllPoints")
-  if type(p) == "table" and p[1] then meth(dock, "SetPoint", p[1], G.UIParent, p[2] or p[1], p[3] or 0, p[4] or 0)
-  else meth(dock, "SetPoint", "BOTTOM", G.UIParent, "BOTTOM", 0, 190) end
   meth(dock, "SetScale", max(0.7, math.min(1.5, (tonumber(S.db and S.db.scale) or 100) / 100)))
+  -- (PLACEBUG) place incomplète / invalide = la place par défaut ; un SetPoint raté ne laisse jamais la barre sans ancrage
+  if type(p) == "table" and not okAnchor(p[1], p[3], p[4]) then S.char.pos, p = nil, nil end
+  if type(p) == "table" then
+    local rp = okAnchor(p[2], 0, 0) and p[2] or p[1]
+    meth(dock, "ClearAllPoints")
+    if pcall(dock.SetPoint, dock, p[1], G.UIParent, rp, p[3], p[4]) then return end
+  end
+  if T.SetAnchor then T:SetAnchor(dock, "BOTTOM", 0, 190)
+  else meth(dock, "ClearAllPoints") meth(dock, "SetPoint", "BOTTOM", G.UIParent, "BOTTOM", 0, 190) end
 end
 S.Place = placeDock
 
@@ -156,6 +166,8 @@ local function ensureDock()
         if sc and S.db then S.db.scale = floor(sc * 100 + 0.5) end
       end,
       onReset = function() if S.char then S.char.pos = nil end placeDock() end,
+      -- (PLACEBUG) glissée par sa poignée (même avant 4.0.1) = posée par le joueur : rien ne la reprend
+      isPlaced = function() return S.char and type(S.char.pos) == "table" or false end,
     })
   end
   meth(f, "Hide")

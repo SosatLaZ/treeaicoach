@@ -251,7 +251,8 @@ return function(M, ctx)
   check(not (T:Reflow(true) or {}).panel, "chevauchement voulu par le joueur : pas de reflow")
   fake("ChatFrame1", 30, 75, 420, 260)                -- le chat change de taille → obstacle nouveau
   moved = T:Reflow()
-  check(moved and moved.panel, "chat agrandi : le panneau s'écarte quand même")
+  -- (PLACEBUG 4.0.1) posé par le joueur = il reste où il l'a mis, même quand un cadre grandit dessous
+  check(not (moved and moved.panel), "chat agrandi : le panneau posé par le joueur ne bouge pas")
   T.settings.snapFree = true
   T:ResetMovable("panel")
   T:ResetReflow()

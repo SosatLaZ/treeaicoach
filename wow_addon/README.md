@@ -705,6 +705,18 @@ suivi de quêtes (ou côté opposé), barres tir auto / pièges au-dessus des ba
 dans leurs SV). Hors combat (sinon après), au 1er lancement et sur `UI_SCALE_CHANGED` /
 `DISPLAY_SIZE_CHANGED` (`CheckAutoLayout`, signature `LayoutSignature()` dans `chars[key].layout.sig`).
 Cadre déplacé à la main (`layout.manual[role]`) = gardé ; `force` / « réinitialiser » rendent l'auto.
+**4.0.1 (PLACEBUG)** : UN seul pilote (`TreeAI:RequestLayout(kind)`) — jamais de placement sur un écran pas posé :
+taille d'UIParent valide (`screenSize()` = nil sinon, plus de repli 1920×1080) et identique 1,5 s, 3 s après
+l'entrée dans le monde, hors combat ; puis `CheckAutoLayout(strict)` : même écran = rien ne bouge, 1er lancement /
+résolution vraiment changée (> 1 case et > 2 %, `TreeAI._ScreenChanged`) = placement des seuls cadres automatiques
+(`AutoLayout(force, strict)` : `strict` = jamais sur un scan vide). `TreeAI:IsPlayerPlaced(id)` (glissé par n'importe
+quelle poignée — crochet `StartMoving` / `StopMovingOrSizing` sur nos cadres —, mode édition, `opts.isPlaced`) :
+jamais repris par l'auto ni écarté par le reflow. Après un glisser, la place est relue du rectangle réel et reposée
+sur UIParent avec un point explicite (`TreeAI:AnchorFromRect(f)`, `TreeAI:SetAnchor(f, point, x, y)` : point valide,
+nombres finis, ancrage d'avant remis si SetPoint échoue ; `TreeAI.ValidAnchor`) ; jamais de coin d'écran pour une
+place auto (sauf disposition « Coins ») ; place sauvegardée hors écran = remise (`_SanitizePlacements`).
+`TreeAI:ScreenStable()` = écran posé et contrôlé (le reflow attend). Tests : `tests/wow/geometry.lua` (harness
+`--geometry`, géométrie et connexion du vrai client) + `tests/wow/test_placement.py`.
 Depuis 3.9.1 (`TreeAI.LAYOUT_VERSION` = 2, `layout.v`) : préfixes `TreeAI.LAYOUT_SCAN_PREFIX` (LibDBIcon10_,
 Questie_, Details, Recount, CompactRaid/Party, PartyMemberFrame), suivis de quêtes réservés sur toute leur colonne
 (ils grandissent), cadres de groupe réservés même cachés ; ordre : **radar** sous la minimap si libre sinon à sa
@@ -848,7 +860,8 @@ du HUD au bord de la bande centrale 16:9) ; `ReservedRects` (centre + personnage
 `TreeAI:Reflow(force)` toutes les 2 s hors combat (`settings.reflow`) — passage léger sur les cadres connus ; un
 cadre TreeAI recouvert par un cadre nouveau / qui a changé (suivi Questie qui grandit, groupe…) glisse vers la
 place libre la plus proche (`IsDisplaced(id)`), puis rentre chez lui quand c'est libre ; les chevauchements que le
-joueur a choisis (cadre déposé là) restent acceptés tant que l'obstacle ne change pas. `CommitMove` : déposé à plus
+joueur a choisis (cadre déposé là) restent acceptés tant que l'obstacle ne change pas. (4.0.1) Seulement les cadres
+placés automatiquement, seulement quand `ScreenStable()` : un cadre posé par le joueur ne bouge jamais. `CommitMove` : déposé à plus
 d'un quart sur un autre cadre → place libre la plus proche (≤ 300 px, `settings.snapFree`), zone 3×3 apprise
 (`movers[id].zone`, `TreeAI.ZoneOf`).
 

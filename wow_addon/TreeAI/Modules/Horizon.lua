@@ -169,7 +169,12 @@ local function create()
   frame:Hide()
   if T.RegisterMovable then
     pcall(T.RegisterMovable, T, frame, "horizon", "Bande d'horizon", {
-      onMoved = function(point, x, y) if Hz.char then Hz.char.point, Hz.char.x, Hz.char.y = point, x, y end end })
+      onMoved = function(point, x, y) if Hz.char then Hz.char.point, Hz.char.x, Hz.char.y = point, x, y end end,
+      -- (PLACEBUG 4.0.1) remise à sa place par défaut (réinitialiser, place sauvegardée hors de l'écran)
+      onReset = function()
+        if Hz.char then Hz.char.point, Hz.char.x, Hz.char.y = nil, nil, nil end
+        if T.SetAnchor then T:SetAnchor(frame, "TOP", 0, -18) end
+      end })
   end
   return frame
 end

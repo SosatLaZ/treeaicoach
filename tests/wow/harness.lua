@@ -7,6 +7,7 @@
 --   --allow NAME              extra allowed global (repeatable)
 --   --class CLASS --level N   player class file (HUNTER, MAGE…) and level
 --   --no-storm                skip the generic event storm (only load + login + logout)
+--   --geometry SPEC           real-client frame geometry + login race (tests/wow/geometry.lua; SPEC = default | k=v,…)
 --   -q                        quiet: only the summary
 -- Generic: discovers the TOC and its files at run time; a missing file is SKIPPED with a note
 -- (other modules may not be merged yet). Exit 0 = ok, 1 = failure (Lua error, ToS/API violation,
@@ -31,6 +32,7 @@ do
     elseif a == "--level" then opts.level = tonumber(argv[i + 1]); i = i + 1
     elseif a == "--no-storm" then opts.storm = false
     elseif a == "--profile" then opts.profile = argv[i + 1]; i = i + 1
+    elseif a == "--geometry" then opts.geometry = argv[i + 1]; i = i + 1
     elseif a == "-q" then opts.quiet = true
     else target = a end
     i = i + 1
@@ -137,6 +139,8 @@ end
 local M = dofile(here .. "/wowmock.lua")
 M.addonName = addonName
 M.Install(opts.flavor)
+-- PLACEBUG: frames anchored / measured like the real client, login race (UIParent unsized, UI scale after login)
+if opts.geometry then dofile(here .. "/geometry.lua")(M, opts.geometry) end
 M.tocMeta = { [addonName] = meta }
 if opts.class then M.player.class = opts.class:upper() end
 if opts.level then M.player.level = opts.level end

@@ -793,6 +793,8 @@ local function buildBar()
   f:SetMovable(true)
   f:EnableMouse(true)
   f:RegisterForDrag("LeftButton")
+  -- (PLACEBUG 4.0.1) glissée = posée par le joueur (ancrage explicite sur UIParent, le placement auto la laisse)
+  if TreeAI._HookMoves then TreeAI._HookMoves(f, "barPos") end
   f:SetScript("OnDragStart", function(s) if IsShiftKeyDown and IsShiftKeyDown() then s:StartMoving() end end)
   f:SetScript("OnDragStop", function(s)
     s:StopMovingOrSizing()

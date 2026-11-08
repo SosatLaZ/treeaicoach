@@ -6,6 +6,13 @@ if not TreeAI then return end
 local _G = _G
 local L = TreeAI.L
 local tostring, type, ipairs, pairs, floor, max, min = tostring, type, ipairs, pairs, math.floor, math.max, math.min
+-- (PLACEBUG 4.0.1) ancrages sûrs : un point valide et des nombres finis, sinon rien ne bouge — jamais un cadre
+-- laissé sans point d'ancrage (ClearAllPoints puis SetPoint raté), jamais un décalage nil → 0 → coin de l'écran
+local POINTS = { TOPLEFT = true, TOP = true, TOPRIGHT = true, LEFT = true, CENTER = true, RIGHT = true,
+  BOTTOMLEFT = true, BOTTOM = true, BOTTOMRIGHT = true }
+local function finite(v) return type(v) == "number" and v == v and v > -100000 and v < 100000 end
+local function validAnchor(point, x, y) return POINTS[point] == true and finite(x) and finite(y) end
+TreeAI.ValidAnchor = validAnchor
 
 local PRIO_COLORS = {
   [1] = { 0.85, 0.85, 0.85 },
@@ -274,15 +281,20 @@ local function isMini() local c = char(); return c and c.mini and true or false 
 local function savePosition()
   local c = char()
   if not (panel and c) then return end
+  -- (PLACEBUG) relu depuis le rectangle réel et reposé avec un ancrage explicite sur UIParent (jamais l'ancrage que
+  -- le client met après StopMovingOrSizing, jamais « nil → 0 »)
+  if TreeAI._PlayerMoved then TreeAI._PlayerMoved(panel, "panel") end
   local point, _, _, x, y = panel:GetPoint(1)
-  c.point, c.x, c.y = point or "CENTER", x or 0, y or 0
+  if validAnchor(point, x, y) then c.point, c.x, c.y = point, x, y end
 end
 
 local function applyPosition()
   local s, c = acc(), char()
   if not (panel and s and c) then return end
+  -- (PLACEBUG) place incomplète (x / y absents, point inconnu) : la place par défaut, jamais « 0, 0 » (un coin)
+  if not validAnchor(c.point, c.x, c.y) then c.point, c.x, c.y = "CENTER", 300, 120 end
   panel:ClearAllPoints()
-  panel:SetPoint(c.point or "CENTER", _G.UIParent, c.point or "CENTER", c.x or 0, c.y or 0)
+  panel:SetPoint(c.point, _G.UIParent, c.point, c.x, c.y)
   panel:SetScale(s.scale or 1)
   panel:SetAlpha(s.alpha or 0.9)
   panel:SetWidth(panelWidth())
@@ -1599,6 +1611,7 @@ function TreeAI:SetPanelPosition(spot)
   local p, c = self.PANEL_SPOTS[spot], char()
   if not (p and c) then return false end
   c.point, c.x, c.y = p[1], p[2], p[3]
+  c.manual = true   -- (PLACEBUG) le choix du joueur (assistant) : aucun placement automatique ne le reprend
   if not panel then self:CreatePanel() end
   applyPosition()
   return true
@@ -1683,9 +1696,10 @@ function TreeAI:ApplyAlertSettings()
   local s = alertSettings()
   if not (alert and s) then return end
   alert:ClearAllPoints()
-  local pos = type(s.pos) == "table" and s.pos.point and s.pos.corner == s.corner and s.pos  -- auto / édition
+  if type(s.pos) == "table" and not validAnchor(s.pos.point, s.pos.x, s.pos.y) then s.pos = nil end  -- (PLACEBUG) incomplète
+  local pos = type(s.pos) == "table" and s.pos.corner == s.corner and s.pos  -- auto / édition
   if pos then
-    alert:SetPoint(pos.point, _G.UIParent, pos.point, pos.x or 0, pos.y or 0)
+    alert:SetPoint(pos.point, _G.UIParent, pos.point, pos.x, pos.y)
   else
     local corner = CORNERS[s.corner] and s.corner or "TOPRIGHT"
     local off = CORNERS[corner]
@@ -1811,15 +1825,36 @@ local function call(f, m, ...)
   if ok then return a, b, c, d end
 end
 
+--- (PLACEBUG) pose f à (point, x, y) d'UIParent (même point des deux côtés) ; échec = l'ancrage d'avant est remis
+local function setAnchor(f, point, x, y, scale)
+  if type(f) ~= "table" or type(f.SetPoint) ~= "function" or not validAnchor(point, x, y) then return false end
+  if finite(scale) and scale > 0.05 and scale < 10 then call(f, "SetScale", scale) end
+  local keep = {}
+  for i = 1, math.min(tonumber(call(f, "GetNumPoints")) or 0, 8) do
+    local ok, a, b, c, d, e = pcall(f.GetPoint, f, i)
+    if ok and a then keep[#keep + 1] = { a, b, c, d, e } end
+  end
+  call(f, "ClearAllPoints")
+  local ok = pcall(f.SetPoint, f, point, _G.UIParent, point, x, y)
+  if not ok then for _, p in ipairs(keep) do pcall(f.SetPoint, f, p[1], p[2], p[3], p[4], p[5]) end end
+  return ok
+end
+TreeAI.SetAnchor = function(_, f, point, x, y, scale) return setAnchor(f, point, x, y, scale) end
+
+--- taille d'UIParent en unités d'interface, ou nil tant qu'elle n'est pas valide (à la connexion, UIParent n'a
+--- pas encore sa taille : jamais de repli inventé « 1920×1080 » sur lequel placer quoi que ce soit)
 local function screenSize()
   local P = _G.UIParent
   local w, h = call(P, "GetWidth"), call(P, "GetHeight")
-  if not (w and h and w > 200 and h > 200) then
-    w = (_G.GetScreenWidth and _G.GetScreenWidth()) or 1920
-    h = (_G.GetScreenHeight and _G.GetScreenHeight()) or 1080
+  if not (finite(w) and finite(h) and w > 200 and h > 200) then
+    local okW, sw = pcall(_G.GetScreenWidth or error)
+    local okH, sh = pcall(_G.GetScreenHeight or error)
+    w, h = okW and tonumber(sw) or nil, okH and tonumber(sh) or nil
+    if not (finite(w) and finite(h) and w > 200 and h > 200) then return nil end
   end
   return w, h
 end
+TreeAI._ScreenSize = screenSize
 
 local function layoutState()
   local c = TreeAI.db and TreeAI:CharKey() ~= "?" and TreeAI:CharDB() or nil
@@ -1833,6 +1868,7 @@ end
 
 local function isOurs(f)
   if f == panel or f == alert then return true end
+  if type(f) == "table" and rawget(f, "_taiOurs") then return true end   -- (PLACEBUG) nos cadres sans nom (calques)
   local n = call(f, "GetName")
   return type(n) == "string" and n:sub(1, 6) == "TreeAI"
 end
@@ -1881,8 +1917,10 @@ TreeAI._GuideRect = guideRect
 TreeAI._discovered = TreeAI._discovered or {}   -- noms de cadres d'addons trouvés par préfixe (reflow léger)
 
 --- Scan lecture seule. Renvoie { W=, H=, rects = { {l,b,w,h,name}... }, named = { [name] = rect } }.
+--- (PLACEBUG) écran pas encore posé (connexion) : { W = 0, H = 0, rects = {}, named = {}, notReady = true }.
 function TreeAI:ScanScreen()
   local W, H = screenSize()
+  if not W then return { W = 0, H = 0, rects = {}, named = {}, notReady = true } end
   local rects, named, seen = {}, {}, {}
   local function add(f, name)
     if seen[f] then return end
@@ -1954,6 +1992,9 @@ local function newGrid(scan)
     local S, W1 = g.sum, g.W1
     return S[(y + h) * W1 + x + w] - S[y * W1 + x + w] - S[(y + h) * W1 + x] + S[y * W1 + x]
   end
+  -- (PLACEBUG) le rectangle de cases touche deux bords perpendiculaires = un coin de l'écran : jamais une place
+  -- automatique (le symptôme de 4.0.0), sauf la disposition « Coins » qui les veut
+  function g.corner(x, y, w, h) return (x <= 0 or x + w >= cols) and (y <= 0 or y + h >= rowsN) end
   function g.freeIn(c0, c1, r0, r1)
     local n, f = 0, 0
     for y = math.max(0, r0), math.min(rowsN - 1, r1) do
@@ -1966,7 +2007,7 @@ local function newGrid(scan)
 end
 
 -- meilleur emplacement libre pour un rectangle w×h (unités UI) près de (tx, ty) ; renvoie l, b, score
-local function bestSpot(g, w, h, tx, ty)
+local function bestSpot(g, w, h, tx, ty, allowCorner)
   local cw, ch = math.ceil(w / CELL), math.ceil(h / CELL)
   if cw > g.cols or ch > g.rows then return nil end
   -- (LITE) une case sur deux puis affinage autour du meilleur (balayage complet si rien trouvé)
@@ -1974,7 +2015,7 @@ local function bestSpot(g, w, h, tx, ty)
   local function scan(x0, x1, y0, y1, step)
     for y = math.max(0, y0), math.min(g.rows - ch, y1), step do
       for x = math.max(0, x0), math.min(g.cols - cw, x1), step do
-        if g.used(x, y, cw, ch) == 0 then
+        if g.used(x, y, cw, ch) == 0 and (allowCorner or not (g.corner and g.corner(x, y, cw, ch))) then
           local cx, cy = (x + cw / 2) * CELL, (y + ch / 2) * CELL
           local d = math.sqrt((cx - tx) ^ 2 + (cy - ty) ^ 2)
           if not best or d < best then best, bx, by = d, x, y end
@@ -2007,12 +2048,114 @@ local function moduleFrame(modName, frameName)
   return m, (type(f) == "table") and f or nil
 end
 
--- les cadres de nos modules : un déplacement à la main = place gardée (crochet sur notre propre cadre)
-local hooked = {}
-local function hookManual(f, role)
-  if not f or hooked[f] or not f.HookScript then return end
-  hooked[f] = true
-  pcall(f.HookScript, f, "OnDragStop", function() layoutState().manual[role] = true end)
+---------------------------------------------------------------------------
+-- (PLACEBUG 4.0.1) LA PLACE POSÉE PAR LE JOUEUR EST SACRÉE.
+-- 4.0.0 : seul un glisser sur le cadre lui-même marquait la place « à la main » ; la carte (glissée par son en-tête),
+-- la barre « Raccourcis » (par sa poignée), le suivi (par ses lignes), la barre du chasseur… restaient « auto » et
+-- le placement automatique les reprenait à la connexion suivante ; la position était relue avec GetPoint() après
+-- StopMovingOrSizing (le client y met SON ancrage : point / relatif / écran au lieu d'UIParent) puis reposée avec un
+-- seul point → ailleurs, voire hors écran (collée au bord / dans un coin par SetClampedToScreen).
+-- Maintenant : un crochet sur StartMoving / StopMovingOrSizing de CHAQUE cadre à nous (quelle que soit la poignée)
+-- relit le rectangle réel, repose le cadre sur UIParent avec un point explicite (le même des deux côtés, celui du
+-- quart d'écran), le note « posé par le joueur » (CharDB().movers + layout.manual) et le module garde sa copie
+-- (onMoved). Le cache de mise en page du client (layout-local.txt) n'est plus utilisé pour nos cadres.
+---------------------------------------------------------------------------
+local movables, moverOrder = {}, {}       -- id -> { frame, id, label, opts } (TreeAI:RegisterMovable, plus bas)
+
+local function moverDB()
+  if not (TreeAI.db and TreeAI:CharKey() ~= "?") then
+    TreeAI._moverTmp = TreeAI._moverTmp or {}
+    return TreeAI._moverTmp
+  end
+  local c = TreeAI:CharDB()
+  c.movers = type(c.movers) == "table" and c.movers or {}
+  return c.movers
+end
+
+-- rectangle d'un de nos cadres en unités d'UIParent (GetRect × échelle relative) ou nil
+local function ourRect(f)
+  local l, b, w, h = call(f, "GetRect")
+  if not (finite(l) and finite(b) and finite(w) and finite(h)) then return nil end
+  local k = (call(f, "GetEffectiveScale") or 1) / (call(_G.UIParent, "GetEffectiveScale") or 1)
+  return l * k, b * k, w * k, h * k
+end
+
+local playerPlaced, hookManual   -- (définies juste dessous)
+do
+  local function frameId(f)
+    for id, m in pairs(movables) do if m.frame == f then return id end end
+    return nil
+  end
+
+  --- vrai si le joueur a posé ce cadre lui-même (glisser, mode édition) : aucun placement automatique, aucun
+  --- écartement ne le bouge ; seuls « Réinitialiser l'interface », « Placer automatiquement », « Tout remettre auto »,
+  --- le clic droit du mode édition ou une disposition le rendent au placement automatique
+  function playerPlaced(id)
+    if type(id) ~= "string" then return false end
+    if layoutState().manual[id] then return true end
+    local rec = moverDB()[id]
+    if type(rec) == "table" and validAnchor(rec.point, rec.x, rec.y) then return true end
+    local m = movables[id]
+    if m and m.opts and type(m.opts.isPlaced) == "function" then
+      local ok, v = pcall(m.opts.isPlaced)
+      if ok and v then return true end
+    end
+    return false
+  end
+  TreeAI.IsPlayerPlaced = function(_, id) return playerPlaced(id) end
+
+  --- repose un de nos cadres sur UIParent depuis son rectangle RÉEL (point du quart d'écran, le même des deux côtés,
+  --- décalages dans l'échelle du cadre) ; renvoie point, x, y, l, b, w, h (unités d'UIParent) ou nil
+  local function anchorFromRect(f, forceTop)
+    local W, H = screenSize()
+    local l, b, w, h = ourRect(f)
+    if not (W and l and w > 0 and h > 0) then return nil end
+    local k = tonumber(call(f, "GetScale")) or 1
+    local point, x, y = anchorFor(l, b, w, h, W, H, k, forceTop)
+    if not setAnchor(f, point, x, y) then return nil end
+    if type(f.SetUserPlaced) == "function" then pcall(f.SetUserPlaced, f, false) end
+    return point, x, y, l, b, w, h
+  end
+  function TreeAI:AnchorFromRect(f, forceTop) return anchorFromRect(f, forceTop) end
+
+  --- le joueur vient de lâcher le cadre : ancrage explicite sur UIParent depuis son rectangle réel, place notée
+  local function playerMoved(f, role)
+    local id = frameId(f) or role
+    if type(id) ~= "string" then return nil end
+    local point, x, y, l, b, w, h = anchorFromRect(f, id == "panel")
+    if not point then return nil end
+    local W, H = screenSize()
+    local k = tonumber(call(f, "GetScale")) or 1
+    local rec = { point = point, x = x, y = y, scale = k, l = l, b = b, zone = TreeAI.ZoneOf(l, b, w, h, W, H) }
+    moverDB()[id] = rec
+    layoutState().manual[id] = true
+    if TreeAI._displaced then TreeAI._displaced[id] = nil end
+    local m = movables[id]
+    if m and m.opts and m.opts.onMoved then TreeAI.safecall(m.opts.onMoved, point, x, y, k) end
+    return rec
+  end
+  TreeAI._PlayerMoved = playerMoved
+
+  -- crochet posé sur chacun de nos cadres déplaçables (une fois)
+  local hooked, movingNow = {}, setmetatable({}, { __mode = "k" })
+  function hookManual(f, role)
+    if type(f) ~= "table" or hooked[f] then return end
+    hooked[f] = role or true
+    local hook = _G.hooksecurefunc
+    if type(hook) == "function" and type(f.StartMoving) == "function" and type(f.StopMovingOrSizing) == "function" then
+      pcall(hook, f, "StartMoving", function(self) movingNow[self] = true end)
+      pcall(hook, f, "StopMovingOrSizing", function(self)
+        if not movingNow[self] then return end         -- un StopMovingOrSizing sans glisser (fin de redimension…) : rien
+        movingNow[self] = nil
+        TreeAI.safecall(playerMoved, self, type(hooked[self]) == "string" and hooked[self] or nil)
+      end)
+    elseif f.HookScript then
+      pcall(f.HookScript, f, "OnDragStop", function() if role then layoutState().manual[role] = true end end)
+    end
+    -- la place est dans NOS sauvegardes : le client ne la garde pas en double (et ne la repose pas à sa façon)
+    if type(f.SetDontSavePosition) == "function" then pcall(f.SetDontSavePosition, f, true) end
+  end
+  TreeAI._HookMoves = hookManual
 end
 
 local PANEL_W = { 360, 340, 320, 300 }
@@ -2034,14 +2177,14 @@ TreeAI._FitsAt = fitsAt
 -- meilleur emplacement libre selon une fonction de score (plus petit = mieux)
 -- (LITE) une case sur deux, puis affinage autour du meilleur : 4× moins de calculs au placement ; rien
 -- trouvé ainsi -> balayage complet (un trou étroit n'est jamais raté)
-local function bestBy(g, w, h, score)
+local function bestBy(g, w, h, score, allowCorner)
   local cw, ch = math.ceil(w / CELL), math.ceil(h / CELL)
   if cw > g.cols or ch > g.rows then return nil end
   local best, bx, by
   local function scan(x0, x1, y0, y1, step)
     for y = math.max(0, y0), math.min(g.rows - ch, y1), step do
       for x = math.max(0, x0), math.min(g.cols - cw, x1), step do
-        if g.used(x, y, cw, ch) == 0 then
+        if g.used(x, y, cw, ch) == 0 and (allowCorner or not (g.corner and g.corner(x, y, cw, ch))) then
           local d = score(x * CELL, y * CELL)
           if not best or d < best then best, bx, by = d, x, y end
         end
@@ -2112,17 +2255,34 @@ local function gapBetween(a, l, b, w, h)
 end
 
 --- Place nos cadres. force = oublie les déplacements manuels (bouton « Placer automatiquement »).
+--- strict = passage automatique (connexion, résolution changée) : jamais sur un scan vide (cadres du jeu pas encore
+--- mesurables) — renvoie nil, "scan" et le pilote réessaie. Écran pas encore posé : nil, "screen" (refait plus tard).
 --- Renvoie la table des placements { role = { point, x, y, l, b, w, h } } (aussi gardée pour /tai placer).
-function TreeAI:AutoLayout(force)
+function TreeAI:AutoLayout(force, strict)
   if self:InCombat() then
     -- (UIREDO) placé après le combat = version du placement notée aussi (sinon refait à chaque contrôle)
     self:RunOutOfCombat("autolayout", function() if self:AutoLayout(force) then layoutState().v = LAYOUT_V end end)
     return nil, "combat"
   end
-  local st = layoutState()
-  if force then st.manual = {} end
-  if self.ResetReflow then self:ResetReflow() end   -- les nouvelles places deviennent « chez lui »
   local scan = self:ScanScreen()
+  if scan.notReady then
+    -- (PLACEBUG) UIParent sans taille (connexion) : aucun placement sur des mesures vides, refait dès qu'il en a une
+    if self.RequestLayout then self:RequestLayout(force and "force" or "check") end
+    return nil, "screen"
+  end
+  if strict and #scan.rects == 0 then return nil, "scan" end
+  local st = layoutState()
+  if force then
+    -- « Placer automatiquement » : toutes les places posées par le joueur sont oubliées (cadres sans rôle compris)
+    st.manual = {}
+    local db = moverDB()
+    for k in pairs(db) do db[k] = nil end
+    for _, id in ipairs(moverOrder) do
+      local m = movables[id]
+      if m and m.opts and m.opts.onReset then TreeAI.safecall(m.opts.onReset) end
+    end
+  end
+  if self.ResetReflow then self:ResetReflow() end   -- les nouvelles places deviennent « chez lui »
   local W, H = scan.W, scan.H
   local g = newGrid(scan)
   -- le centre de l'écran et le personnage restent au jeu (UI2) ; en 21:9 la bande centrale 16:9
@@ -2132,7 +2292,18 @@ function TreeAI:AutoLayout(force)
   local inset = TreeAI.ScreenInset(W, H)
   local placed = {}
   local named = scan.named
-  local function keep(role) return st.manual[role] and not force end
+  -- (PLACEBUG) un cadre posé par le joueur (glisser par n'importe quelle poignée, mode édition) ne bouge jamais, et
+  -- les cadres automatiques ne se posent pas dessus
+  local function keep(role) return not force and playerPlaced(role) end
+  if not force and TreeAI._FrameRect then
+    for _, id in ipairs(moverOrder) do
+      local m = movables[id]
+      if m and m.frame and call(m.frame, "IsShown") and playerPlaced(id) then
+        local l, b, w, h = TreeAI._FrameRect(m.frame, W, H)
+        if l then g.mark({ l = l, b = b, w = w, h = h }, 4) end
+      end
+    end
+  end
   local mm = named.MinimapCluster or named.Minimap or named.MMHolder or named.ElvUI_MinimapHolder
   local party = {}
   for _, n in ipairs(PARTY_NAMES) do if named[n] then party[#party + 1] = named[n] end end
@@ -2161,7 +2332,7 @@ function TreeAI:AutoLayout(force)
     if l then
       local pt, x, y = anchorFor(l, b, sz, sz, W, H, k, true)
       R.char.point, R.char.x, R.char.y = pt, x, y
-      if rf then call(rf, "ClearAllPoints"); call(rf, "SetPoint", pt, _G.UIParent, pt, x, y) end
+      if rf then setAnchor(rf, pt, x, y) end
       placed.radar = { point = pt, x = x, y = y, l = l, b = b, w = sz, h = sz }
       g.mark({ l = l, b = b, w = sz, h = sz }, 6)
     end
@@ -2193,7 +2364,7 @@ function TreeAI:AutoLayout(force)
     if l then
       local pt, x, y = anchorFor(l, b, cw, chh, W, H, k, true)
       C.char.point, C.char.x, C.char.y = pt, x, y
-      if cf then call(cf, "ClearAllPoints"); call(cf, "SetPoint", pt, _G.UIParent, pt, x, y) end
+      if cf then setAnchor(cf, pt, x, y) end
       placed.compass = { point = pt, x = x, y = y, l = l, b = b, w = cw, h = chh }
       g.mark({ l = l, b = b, w = cw, h = chh }, 4)
     end
@@ -2236,7 +2407,7 @@ function TreeAI:AutoLayout(force)
       for wi, pw in ipairs(widths) do
         for li, lines in ipairs(linesList) do
           local w, h = pw * k, heightFor(lines)
-          local l, b, d = bestBy(grid, w, h, function(x, y) return score(x, y, w, h) end)
+          local l, b, d = bestBy(grid, w, h, function(x, y) return score(x, y, w, h) end, style == "coins")
           if l then
             local sc = d + (wi - 1) * 20 + (li - 1) * 45     -- garder la taille si possible
             if not bestScore or sc < bestScore then bestL, bestB, bestScore, bw, bl = l, b, sc, pw, lines end
@@ -2282,7 +2453,7 @@ function TreeAI:AutoLayout(force)
     if l then
       local pt, x, y = anchorFor(l, b, tw, th, W, H, k, true)
       TR.char.point, TR.char.x, TR.char.y = pt, x, y
-      if tf then call(tf, "ClearAllPoints"); call(tf, "SetPoint", pt, _G.UIParent, pt, x, y) end
+      if tf then setAnchor(tf, pt, x, y) end
       placed.tracker = { point = pt, x = x, y = y, l = l, b = b, w = tw, h = th }
       g.mark({ l = l, b = b, w = tw, h = th }, 4)
     end
@@ -2316,38 +2487,143 @@ function TreeAI:AutoLayout(force)
   return placed
 end
 
+--- "LxH@échelle" de l'écran, ou nil tant qu'UIParent n'a pas sa taille
 function TreeAI:LayoutSignature()
   local W, H = screenSize()
+  if not W then return nil end
   local sc = call(_G.UIParent, "GetEffectiveScale") or 1
-  return ("%dx%d@%.2f"):format(math.floor(W + 0.5), math.floor(H + 0.5), sc)
+  return ("%dx%d@%.2f"):format(math.floor(W + 0.5), math.floor(H + 0.5), tonumber(sc) or 1)
 end
-
--- premier lancement (rien de placé) ou résolution / échelle changée : placement auto (places manuelles gardées)
-function TreeAI:CheckAutoLayout()
-  local st = layoutState()
-  if st.sig == self:LayoutSignature() and (tonumber(st.v) or 0) >= LAYOUT_V then return false end
-  -- nouvelle version du placement : refait UNE fois (les cadres déplacés à la main gardent leur place)
-  if (tonumber(st.v) or 0) < LAYOUT_V then
-    local P = self.settings and self.settings.panel
-    if P and (tonumber(P.width) or 0) < MIN_W then P.width = DEFAULT_W end
-  end
-  local placed = self:AutoLayout(false)
-  if placed then st.v = LAYOUT_V end
-  return true
-end
-
-
 
 do
-  local owner = {}
-  local pending = false
-  local function later()
-    if pending then return end
-    pending = true
-    TreeAI:After(1, function() pending = false; TreeAI:CheckAutoLayout() end)
+  -- (PLACEBUG) « la résolution a vraiment changé » : la taille d'UIParent (unités d'interface) a bougé de plus d'une
+  -- case ET de 2 % ; un arrondi d'échelle ne compte pas (nos ancrages suivent les bords d'UIParent)
+  local function sigWH(sig) local w, h = tostring(sig or ""):match("^(%d+)x(%d+)") return tonumber(w), tonumber(h) end
+  local function screenChanged(old, new)
+    local w1, h1 = sigWH(old)
+    local w2, h2 = sigWH(new)
+    if not (w1 and h1 and w2 and h2) then return old ~= new end
+    return math.abs(w1 - w2) > math.max(CELL, w2 * 0.02) or math.abs(h1 - h2) > math.max(CELL, h2 * 0.02)
   end
-  for _, ev in ipairs({ "UI_SCALE_CHANGED", "DISPLAY_SIZE_CHANGED" }) do TreeAI:RegisterEvent(ev, owner, later) end
-  TreeAI:On("READY", owner, function() TreeAI:After(6, function() TreeAI:CheckAutoLayout() end) end)
+  TreeAI._ScreenChanged = screenChanged
+
+  --- Premier lancement (rien de placé), nouvelle version du placement ou résolution VRAIMENT changée : un placement
+  --- automatique — les cadres posés par le joueur ne bougent jamais. Même écran : rien. Renvoie vrai si placé.
+  function TreeAI:CheckAutoLayout(strict)
+    local sig = self:LayoutSignature()
+    if not sig then
+      if self.RequestLayout then self:RequestLayout("check") end
+      return false, "screen"
+    end
+    local st = layoutState()
+    local first = st.sig == nil or (tonumber(st.v) or 0) < LAYOUT_V
+    if not first and not screenChanged(st.sig, sig) then
+      st.sig = sig   -- même écran (arrondi d'échelle…) : rien ne bouge
+      return false
+    end
+    -- nouvelle version du placement : refait UNE fois (les cadres posés par le joueur gardent leur place)
+    if (tonumber(st.v) or 0) < LAYOUT_V then
+      local P = self.settings and self.settings.panel
+      if P and (tonumber(P.width) or 0) < MIN_W then P.width = DEFAULT_W end
+    end
+    local placed, why = self:AutoLayout(false, strict)
+    if placed then st.v = LAYOUT_V end
+    return placed and true or false, why
+  end
+end
+
+--- le placement automatique a-t-il déjà tourné pour ce personnage (une place auto existe) ?
+function TreeAI:LayoutPlaced() return layoutState().sig ~= nil end
+
+---------------------------------------------------------------------------
+-- (PLACEBUG 4.0.1) UN SEUL passage automatique, quand l'écran est vraiment posé.
+-- 4.0.0 (« au lancement tout est bien placé, une seconde après tout se remet dans un coin ») : 1 s après
+-- UI_SCALE_CHANGED / DISPLAY_SIZE_CHANGED — que le vrai client envoie pendant la connexion — puis 6 s après READY,
+-- CheckAutoLayout comparait une signature d'écran lue en pleine connexion (UIParent pas encore à sa taille, échelle
+-- d'interface pas encore appliquée, cadres du jeu pas encore mesurables) ; elle différait → AutoLayout replaçait tout
+-- ce qui n'était pas marqué « à la main », sur un scan vide (minimap, suivis, barres inconnus) : encadré / radar dans
+-- le coin en haut à droite, carte collée au bord gauche… et encore une fois à +6 s ; le placement vivant écartait
+-- en plus les cadres posés par le joueur.
+-- Maintenant : on attend une taille d'UIParent valide et IDENTIQUE pendant 1,5 s, 3 s de calme après l'entrée dans
+-- le monde (le mode édition de Blizzard a reposé ses cadres) et hors combat, puis UN contrôle : même écran = rien ne
+-- bouge ; premier lancement / résolution vraiment changée = un placement des seuls cadres automatiques.
+---------------------------------------------------------------------------
+do
+  local SETTLE, STABLE, POLL, PATIENCE = 3, 1.5, 0.5, 6
+  local drv = { pending = nil, key = nil, since = 0, notBefore = 0, quietUntil = 0, polling = false, stable = false,
+    firstTry = nil }
+  TreeAI._layoutDriver = drv
+  local function nowT()
+    local ok, t = pcall(_G.GetTime or error)
+    return (ok and tonumber(t)) or 0
+  end
+  local function sizeKey()
+    local W, H = screenSize()
+    if not W then return nil end
+    return math.floor(W + 0.5) .. "x" .. math.floor(H + 0.5)
+  end
+  local poll
+  local function schedule()
+    if drv.polling then return end
+    drv.polling = true
+    -- minuterie du cœur (jamais attribuée au module qui a demandé, donc jamais sautée s'il est coupé)
+    local run = TreeAI._RunAs or function(_, fn) fn() end
+    run(nil, function() TreeAI:After(POLL, poll) end)
+  end
+  poll = function()
+    drv.polling = false
+    if not drv.pending then return end
+    local t = nowT()
+    local key = sizeKey()
+    if key ~= drv.key then drv.key, drv.since = key, t end
+    if key and t - drv.since >= STABLE and t >= drv.notBefore and not TreeAI:InCombat() then
+      local kind = drv.pending
+      drv.pending = nil
+      -- cadres créés depuis (boussole, suivi…) : inscrits = leurs glisser sont notés comme les autres
+      if TreeAI._RegisterCoreMovables then TreeAI.safecall(TreeAI._RegisterCoreMovables) end
+      -- scan vide = cadres du jeu pas encore mesurables : on patiente (6 s au plus, puis on place quand même)
+      drv.firstTry = drv.firstTry or t
+      local strict = t - drv.firstTry < PATIENCE
+      local _, why
+      if kind == "force" then _, why = TreeAI:AutoLayout(true, false)
+      else _, why = TreeAI:CheckAutoLayout(strict) end
+      if why == "scan" or why == "screen" or why == "combat" then
+        drv.pending = drv.pending or kind
+      else
+        drv.firstTry, drv.stable = nil, true
+        if TreeAI._SanitizePlacements then TreeAI.safecall(TreeAI._SanitizePlacements, TreeAI) end
+      end
+    end
+    if drv.pending then schedule() end
+  end
+  --- demande un contrôle du placement : fusionné (un seul passage), fait quand l'écran est posé et stable, hors combat
+  function TreeAI:RequestLayout(kind)
+    if kind == "force" or not drv.pending then drv.pending = kind or "check" end
+    drv.stable = false
+    schedule()
+  end
+  --- l'écran est posé, stable et contrôlé (le placement vivant peut alors écarter les cadres automatiques)
+  function TreeAI:ScreenStable()
+    return (drv.stable and not drv.pending and nowT() >= drv.quietUntil) and true or false
+  end
+  local owner = {}
+  local function changed()
+    drv.key = nil                 -- la taille doit de nouveau rester la même 1,5 s avant tout contrôle
+    TreeAI:RequestLayout("check")
+  end
+  for _, ev in ipairs({ "UI_SCALE_CHANGED", "DISPLAY_SIZE_CHANGED" }) do TreeAI:RegisterEvent(ev, owner, changed) end
+  -- écran de chargement (connexion, /reload, instance, pierre de foyer) : les cadres du jeu se reposent → calme
+  TreeAI:RegisterEvent("PLAYER_ENTERING_WORLD", owner, function()
+    local t = nowT()
+    drv.notBefore = math.max(drv.notBefore, t + SETTLE)
+    drv.quietUntil = math.max(drv.quietUntil, t + SETTLE + STABLE)
+  end)
+  TreeAI:On("READY", owner, function()
+    local t = nowT()
+    drv.notBefore = math.max(drv.notBefore, t + SETTLE)
+    drv.quietUntil = math.max(drv.quietUntil, t + SETTLE + STABLE)
+    TreeAI:RequestLayout("check")
+  end)
 end
 
 TreeAI:RegisterSlash("placer", function(rest)
@@ -2367,26 +2643,11 @@ end, "placer automatiquement les cadres TreeAI dans les zones libres de l'écran
 --            minScale = 0.5, maxScale = 2, show = function() end, hide = function() end }
 -- Positions manuelles gardées PAR PERSONNAGE (CharDB().movers) ; elles passent avant le placement auto.
 ---------------------------------------------------------------------------
-local movables, moverOrder = {}, {}
 local editing, editBar = false, nil
 local SNAP, EDGE, NEAR = 10, 12, 8
 
-local function moverDB()
-  if not (TreeAI.db and TreeAI:CharKey() ~= "?") then
-    TreeAI._moverTmp = TreeAI._moverTmp or {}
-    return TreeAI._moverTmp
-  end
-  local c = TreeAI:CharDB()
-  c.movers = type(c.movers) == "table" and c.movers or {}
-  return c.movers
-end
-
-local function placeFrame(f, point, x, y, scale)
-  if not f then return end
-  if scale then call(f, "SetScale", scale) end
-  call(f, "ClearAllPoints")
-  call(f, "SetPoint", point, _G.UIParent, point, x, y)
-end
+-- (PLACEBUG) un ancrage valide ou rien (jamais ClearAllPoints sans SetPoint réussi)
+local function placeFrame(f, point, x, y, scale) return setAnchor(f, point, x, y, scale) end
 
 function TreeAI:RegisterMovable(frame, id, label, opts)
   if type(frame) ~= "table" or type(id) ~= "string" then return false end
@@ -2397,21 +2658,16 @@ function TreeAI:RegisterMovable(frame, id, label, opts)
   if frame.SetMovable then pcall(frame.SetMovable, frame, true) end
   if frame.SetClampedToScreen then pcall(frame.SetClampedToScreen, frame, true) end   -- jamais hors écran
   local saved = moverDB()[id]
-  if type(saved) == "table" and saved.point and not opts.onMoved then
-    placeFrame(frame, saved.point, saved.x or 0, saved.y or 0, saved.scale)
+  if type(saved) == "table" and not validAnchor(saved.point, saved.x, saved.y) then
+    moverDB()[id] = nil   -- (PLACEBUG) donnée incomplète (x / y absents…) : jamais « nil → 0 → coin de l'écran »
+    saved = nil
   end
+  if type(saved) == "table" and not opts.onMoved then placeFrame(frame, saved.point, saved.x, saved.y, saved.scale) end
   hookManual(frame, id)
   if editing and self._BuildOverlay then self._BuildOverlay(m) end
   return true
 end
 function TreeAI:GetMovables() return movables, moverOrder end
-
-local function ourRect(f)
-  local l, b, w, h = call(f, "GetRect")
-  if not l then return nil end
-  local k = (call(f, "GetEffectiveScale") or 1) / (call(_G.UIParent, "GetEffectiveScale") or 1)
-  return l * k, b * k, w * k, h * k
-end
 
 -- aimantation : grille de 10, bords de l'écran, bords des autres cadres TreeAI
 function TreeAI.SnapRect(l, b, w, h, W, H, others)
@@ -2433,6 +2689,7 @@ function TreeAI:CommitMove(id, l, b, scale)
   if not (m and m.frame) then return nil end
   local f = m.frame
   local W, H = screenSize()
+  if not W then return nil end
   local _, _, w, h = ourRect(f)
   if not w then
     local k0 = scale or call(f, "GetScale") or 1
@@ -2461,7 +2718,7 @@ function TreeAI:CommitMove(id, l, b, scale)
     if area > 0.25 * w * h then
       local g = newGrid(self:ScanScreen())
       for _, o in ipairs(others) do g.mark(o, 2) end
-      local nl, nb = bestSpot(g, w, h, l + w / 2, b + h / 2)
+      local nl, nb = bestSpot(g, w, h, l + w / 2, b + h / 2, true)   -- le joueur décide : coin permis
       if nl and math.abs(nl - l) + math.abs(nb - b) <= 300 then l, b = nl, nb end
     end
   end
@@ -2531,6 +2788,7 @@ local function buildOverlay(m)
   if not o then
     local template = _G.BackdropTemplateMixin and "BackdropTemplate" or nil
     o = _G.CreateFrame("Button", nil, _G.UIParent, template)
+    o._taiOurs = true          -- (PLACEBUG) notre calque : jamais un obstacle pour le placement
     o:SetFrameStrata("DIALOG")
     o:SetMovable(true)
     o:EnableMouse(true)
@@ -2706,6 +2964,9 @@ local function registerCore()
         if c then c.point, c.x, c.y, c.manual = point, x, y, true end
         if s and sc then s.scale = sc end
       end,
+      -- (PLACEBUG) glissé à la main (même avant 4.0.1) = posé par le joueur ; remis = place automatique
+      isPlaced = function() local c = char() return c and c.manual and true or false end,
+      onReset = function() local c = char() if c then c.manual = nil end end,
     })
   end
   if not movables.alert and (alert or makeAlert()) then
@@ -2806,23 +3067,61 @@ do
     if ok then return pt, rel, rp, x, y end
   end
   -- rectangle d'un cadre à nous (GetRect, sinon depuis son point d'ancrage sur UIParent)
-  local function frameRect(f, W, H)
-    local l, b, w, h = ourRect(f)
-    if l and w and w > 0 then return l, b, w, h end
-    local k = call(f, "GetScale") or 1
-    w, h = (call(f, "GetWidth") or 0) * k, (call(f, "GetHeight") or 0) * k
-    if w <= 0 or h <= 0 then return nil end
+  -- rectangle VOULU par l'ancrage (point d'UIParent + décalages × échelle), sans le rabattement à l'écran
+  local function anchorRect(f, W, H)
+    if not W then return nil end
+    local k = tonumber(call(f, "GetScale")) or 1
+    local w, h = (tonumber(call(f, "GetWidth")) or 0) * k, (tonumber(call(f, "GetHeight")) or 0) * k
+    if not (finite(w) and finite(h)) or w <= 0 or h <= 0 then return nil end
+    if (tonumber(call(f, "GetNumPoints")) or 1) > 1 then return nil end
     local pt, rel, rp, x, y = pointOf(f)
-    if not pt or (rel and rel ~= _G.UIParent) then return nil end
-    rp = rp or pt
-    x, y = (x or 0) * k, (y or 0) * k
+    if type(pt) ~= "string" or not POINTS[pt] or (rel and rel ~= _G.UIParent) then return nil end
+    rp = POINTS[rp] and rp or pt
+    x, y = (tonumber(x) or 0) * k, (tonumber(y) or 0) * k
     local ax = (rp:find("LEFT") and 0) or (rp:find("RIGHT") and W) or W / 2
     local ay = (rp:find("TOP") and H) or (rp:find("BOTTOM") and 0) or H / 2
     local ox = (pt:find("LEFT") and 0) or (pt:find("RIGHT") and w) or w / 2
     local oy = (pt:find("TOP") and h) or (pt:find("BOTTOM") and 0) or h / 2
     return ax + x - ox, ay + y - oy, w, h
   end
+  TreeAI._AnchorRect = anchorRect
+  local function frameRect(f, W, H)
+    local l, b, w, h = ourRect(f)
+    if l and w and w > 0 then return l, b, w, h end
+    return anchorRect(f, W, H)
+  end
   TreeAI._FrameRect = frameRect
+
+  --- (PLACEBUG) une place sauvegardée qui met le cadre HORS de l'écran (plus de la moitié dehors : ancrage relu de
+  --- travers par 4.0.0, donnée d'un autre client…) n'est pas une place : le cadre revient à sa place automatique /
+  --- par défaut. Les places sur l'écran ne sont jamais touchées. Renvoie le nombre de cadres remis.
+  function TreeAI:_SanitizePlacements()
+    local W, H = screenSize()
+    if not W or self:InCombat() then return 0 end
+    local n = 0
+    local db = moverDB()
+    for id, rec in pairs(db) do   -- place du mode édition incomplète (x / y absents) : jamais lue « 0, 0 »
+      if type(rec) ~= "table" or not validAnchor(rec.point, rec.x, rec.y) then db[id] = nil end
+    end
+    for _, id in ipairs(moverOrder) do
+      local m = movables[id]
+      local f = m and m.frame
+      local l, b, w, h
+      if f then l, b, w, h = anchorRect(f, W, H) end
+      if l then
+        local ox = math.max(0, math.min(l + w, W) - math.max(l, 0))
+        local oy = math.max(0, math.min(b + h, H) - math.max(b, 0))
+        if ox * oy < 0.5 * w * h then
+          moverDB()[id] = nil
+          layoutState().manual[id] = nil
+          if m.opts and m.opts.onReset then TreeAI.safecall(m.opts.onReset) end
+          n = n + 1
+        end
+      end
+    end
+    if n > 0 then self:AutoLayout(false) end
+    return n
+  end
 
   local function rsig(r) return ("%d,%d,%d,%d"):format(math.floor(r.l / 16), math.floor(r.b / 16), math.floor(r.w / 16), math.floor(r.h / 16)) end
   local function overlap(a, l, b, w, h)
@@ -2864,6 +3163,7 @@ do
   --- Le joueur dépose un cadre : ce qu'il recouvre déjà est accepté (sa décision), la zone est apprise.
   function TreeAI:_AcceptOverlaps(id, l, b, w, h)
     local W, H = screenSize()
+    if not W then return end
     local acc = {}
     for _, r in ipairs(lightRects(W, H)) do
       if overlap(r, l, b, w, h) > 0 then acc[r.name or "?"] = rsig(r) end
@@ -2890,6 +3190,7 @@ do
     if not S or S.reflow == false or editing then return nil end
     if self:InCombat() then return nil end
     local W, H = screenSize()
+    if not W then return nil end
     local rects = lightRects(W, H)
     local parts = {}
     for _, r in ipairs(rects) do parts[#parts + 1] = tostring(r.name) .. "=" .. rsig(r) end
@@ -2902,7 +3203,8 @@ do
     for _, id in ipairs(moverOrder) do
       local m = movables[id]
       local f = m and m.frame
-      if id ~= "alert" and f and call(f, "IsShown") and not (m.opts and m.opts.noReflow) then
+      -- (PLACEBUG) seulement les cadres placés automatiquement : un cadre posé par le joueur reste où il l'a mis
+      if id ~= "alert" and f and call(f, "IsShown") and not (m.opts and m.opts.noReflow) and not playerPlaced(id) then
         local l, b, w, h = frameRect(f, W, H)
         if l then
           local home = displaced[id]
@@ -2918,20 +3220,22 @@ do
             local g = grid
             for _, o in ipairs(shownMovers(id, W, H)) do g.mark(o, 4) end
             local nl, nb = bestSpot(g, w, h, hl + w / 2, hb + h / 2)
-            if nl and (math.abs(nl - l) > 2 or math.abs(nb - b) > 2) then
+            local hp, _, hrp, hx, hy = pointOf(f)
+            -- (PLACEBUG) jamais écarté sans une vraie place où revenir (pas de « CENTER 0,0 » inventé)
+            if nl and (math.abs(nl - l) > 2 or math.abs(nb - b) > 2) and (home or validAnchor(hp, hx, hy)) then
               if not home then
-                local pt, _, rp, x, y = pointOf(f)
-                displaced[id] = { point = pt or "CENTER", rp = rp or pt or "CENTER", x = x or 0, y = y or 0, l = l, b = b }
+                displaced[id] = { point = hp, rp = POINTS[hrp] and hrp or hp, x = hx, y = hy, l = l, b = b }
               end
               local k = call(f, "GetScale") or 1
               local pt, x, y = anchorFor(nl, nb, w, h, W, H, k, id == "panel")
-              placeFrame(f, pt, x, y)
-              moved[id] = { l = nl, b = nb, w = w, h = h }
+              if placeFrame(f, pt, x, y) then moved[id] = { l = nl, b = nb, w = w, h = h } end
             end
             grid = nil   -- les marques de ce cadre ne doivent pas gêner le suivant
           elseif home then
-            call(f, "ClearAllPoints")
-            call(f, "SetPoint", home.point, _G.UIParent, home.rp, home.x, home.y)
+            if validAnchor(home.point, home.x, home.y) and POINTS[home.rp] then
+              if home.rp == home.point then setAnchor(f, home.point, home.x, home.y)
+              else call(f, "ClearAllPoints"); call(f, "SetPoint", home.point, _G.UIParent, home.rp, home.x, home.y) end
+            end
             displaced[id] = nil
             moved[id] = { home = true, l = home.l, b = home.b, w = w, h = h }
           end
@@ -2953,6 +3257,8 @@ do
     TreeAI:NewTicker(5, function()
       local S = TreeAI.settings
       if not (S and S.reflow ~= false) or TreeAI:InCombat() then return end
+      -- (PLACEBUG) jamais pendant la connexion / un écran de chargement : l'écran doit être posé et contrôlé
+      if TreeAI.ScreenStable and not TreeAI:ScreenStable() then return end
       if quiet >= 3 then
         skip = not skip
         if skip then return end

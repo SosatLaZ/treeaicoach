@@ -535,6 +535,8 @@ local function buildCard()
         if sc and W.db then W.db.cardScale = floor(sc * 100 + 0.5) end
       end,
       onReset = function() if W.char then W.char.cardPos = nil end W.PlaceCard() end,
+      -- (PLACEBUG) glissée par son en-tête (même avant 4.0.1) = posée par le joueur : rien ne la reprend
+      isPlaced = function() return W.char and type(W.char.cardPos) == "table" or false end,
       -- (4.0 QA) mode édition : la carte est LE cadre à placer (affichée avant que son calque soit posé)
       show = function()
         if not cardOn() or inCombat() then return end
@@ -807,12 +809,22 @@ function W.RenderCard(force)
   meth(card, "SetHeight", y + 2)
 end
 
--- position : celle que le placement automatique a choisie pour le panneau (zone libre d'un bord, loin des
--- suivis de quêtes et des cadres de groupe), sauf si le joueur a glissé la carte ; vérifiée contre les suivis
+-- position : la place posée par le joueur (glissée, mode édition) ; sinon celle que le placement automatique a
+-- choisie pour le panneau (zone libre d'un bord, loin des suivis de quêtes et des cadres de groupe) ; sinon sa place
+-- par défaut. (PLACEBUG 4.0.1) Jamais une place incomplète lue « 0, 0 », jamais ClearAllPoints sans SetPoint réussi.
+local function okAnchor(p, x, y) return T.ValidAnchor and T.ValidAnchor(p, x, y) or false end
+local function anchorTo(f, p, x, y)
+  if T.SetAnchor then return T:SetAnchor(f, p, x, y) end
+  meth(f, "ClearAllPoints")
+  return meth(f, "SetPoint", p, G.UIParent, p, x, y) ~= false
+end
 function W.SaveCardPosition()
   if not card then return end
+  -- le crochet du cœur (StopMovingOrSizing) a déjà reposé la carte sur UIParent avec un ancrage explicite ; sans lui
+  -- (client sans hooksecurefunc), même calcul ici depuis le rectangle réel — jamais l'ancrage du client relu tel quel
+  if T.AnchorFromRect then T:AnchorFromRect(card) end
   local pt, _, _, x, y = meth(card, "GetPoint")
-  if W.char and pt then W.char.cardPos = { point = pt, x = floor((x or 0) + 0.5), y = floor((y or 0) + 0.5) } end
+  if W.char and okAnchor(pt, x, y) then W.char.cardPos = { point = pt, x = floor(x + 0.5), y = floor(y + 0.5) } end
 end
 local function overlapsGuide()
   if not (card and T.ScanScreen) then return false end
@@ -832,30 +844,27 @@ function W.PlaceCard()
   local k = (tonumber(W.db and W.db.cardScale) or 100) / 100
   meth(card, "SetScale", k)
   local pos = W.char and W.char.cardPos
-  meth(card, "ClearAllPoints")
-  if type(pos) == "table" and pos.point then
-    meth(card, "SetPoint", pos.point, G.UIParent, pos.point, pos.x or 0, pos.y or 0)
-    return
-  end
+  if type(pos) == "table" and not okAnchor(pos.point, pos.x, pos.y) then W.char.cardPos, pos = nil, nil end
+  if type(pos) == "table" then anchorTo(card, pos.point, pos.x, pos.y) return end   -- posée par le joueur
   local c = T.PanelChar and T:PanelChar()
-  if c and c.point then
-    meth(card, "SetPoint", c.point, G.UIParent, c.point, (c.x or 0), (c.y or 0))
-  else
-    meth(card, "SetPoint", "RIGHT", G.UIParent, "RIGHT", -40, 60)
-  end
-  -- garde-fou : posée sur un suivi de quêtes (Questie, Suivi Forever…) → descend sous lui, sinon côté opposé
+  -- la place automatique du panneau seulement si le placement a déjà tourné (sinon la place par défaut du
+  -- panneau, au centre, n'est pas une place pour la carte) ou si le joueur a placé le panneau
+  local auto = c and okAnchor(c.point, c.x, c.y) and (c.manual or not T.LayoutPlaced or T:LayoutPlaced())
+  if not (auto and anchorTo(card, c.point, c.x, c.y)) then anchorTo(card, "RIGHT", -40, 60) end
+  -- garde-fou : posée sur un suivi de quêtes (Questie, Suivi Forever…) → descend sous lui, sinon côté opposé ;
+  -- seulement quand l'écran est posé et contrôlé (à la connexion, les suivis ne sont pas encore mesurables), et
+  -- jamais vers une place hors de l'écran ou dans un coin
+  if T.ScreenStable and not T:ScreenStable() then return end
   local hit, r = overlapsGuide()
   if hit and r then
     local P = G.UIParent
-    local Wd = tonumber(meth(P, "GetWidth")) or 1920
+    local Wd, Hd = tonumber(meth(P, "GetWidth")) or 0, tonumber(meth(P, "GetHeight")) or 0
     local cw, ch = (tonumber(meth(card, "GetWidth")) or CARD_W) * k, (tonumber(meth(card, "GetHeight")) or 120) * k
-    meth(card, "ClearAllPoints")
-    if r.b - ch - 10 > 120 then
-      meth(card, "SetPoint", "TOPLEFT", P, "BOTTOMLEFT", r.l / k, (r.b - 10) / k)
-    else
-      local x = (r.l + r.w / 2 > Wd / 2) and 40 or (Wd - cw - 40)
-      meth(card, "SetPoint", "TOPLEFT", P, "BOTTOMLEFT", x / k, ((r.b + r.h) / k))
-    end
+    local l, top
+    if r.b - ch - 10 > 120 then l, top = r.l, r.b - 10
+    else l, top = ((r.l + r.w / 2 > Wd / 2) and 40 or (Wd - cw - 40)), r.b + r.h end
+    local inside = Wd > 200 and Hd > 200 and l >= 8 and l + cw <= Wd - 8 and top - ch >= 8 and top <= Hd - 8
+    if inside then anchorTo(card, "TOPLEFT", floor(l / k + 0.5), floor((top - Hd) / k + 0.5)) end
   end
 end
 
@@ -1302,8 +1311,10 @@ local function buildWindow()
   if not (th and th.IsSkinned and th:IsSkinned(win)) then
     win.bgt = meth(win, "CreateTexture", nil, "BACKGROUND"); meth(win.bgt, "SetAllPoints", win); color(win.bgt, 0.05, 0.06, 0.08, 0.95)
   end
-  if st and st.point then meth(win, "ClearAllPoints"); meth(win, "SetPoint", st.point, G.UIParent, st.point, st.x or 0, st.y or 0)
-  else meth(win, "SetPoint", "CENTER", G.UIParent, "CENTER", 0, 40) end
+  -- (PLACEBUG) place gardée seulement si elle est complète (jamais « nil → 0 → coin »)
+  if not (st and okAnchor(st.point, st.x, st.y) and anchorTo(win, st.point, st.x, st.y)) then
+    anchorTo(win, "CENTER", 0, 40)
+  end
   -- colonne de gauche (fond un peu plus sombre) : titre + version + navigation
   local nav = G.CreateFrame("Frame", nil, win)
   meth(nav, "SetPoint", "TOPLEFT", win, "TOPLEFT", 3, -3)
@@ -1319,9 +1330,11 @@ local function buildWindow()
     meth(f, "SetScript", "OnDragStart", function() meth(win, "StartMoving") end)
     meth(f, "SetScript", "OnDragStop", function()
       meth(win, "StopMovingOrSizing")
+      -- (PLACEBUG) ancrage explicite sur UIParent depuis le rectangle réel (pas l'ancrage que le client vient d'y mettre)
+      if T.AnchorFromRect then T:AnchorFromRect(win) end
       local pt, _, _, x, y = meth(win, "GetPoint")
       local s2 = th and th:WindowState("main")
-      if s2 and pt then s2.point, s2.x, s2.y = pt, floor((x or 0) + 0.5), floor((y or 0) + 0.5) end
+      if s2 and okAnchor(pt, x, y) then s2.point, s2.x, s2.y = pt, floor(x + 0.5), floor(y + 0.5) end
     end)
   end
   drag(nav)
@@ -1942,6 +1955,8 @@ function W:OnEnable()
   if cardOn() then
     T:After(1.5, function() if W._active then W.ShowCard() end end)
   end
+  -- (PLACEBUG) le placement automatique ne passe qu'une fois l'écran posé (1er lancement, résolution changée) : la
+  -- carte non posée par le joueur suit alors la place trouvée pour le panneau
   self:On("LAYOUT_DONE", function() if card and meth(card, "IsShown") then W.PlaceCard() end end)
   self:RegisterEvent("PLAYER_REGEN_DISABLED", function() if win and meth(win, "IsShown") and W.db.closeInCombat then W.Close() end end)
   -- pas de minuterie à nous : la carte suit les rendus du panneau (contenu changé, étape épinglée qui bouge avec
