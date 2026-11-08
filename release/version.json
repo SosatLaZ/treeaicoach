@@ -1,6 +1,6 @@
 {
-  "version": "3.9.9",
+  "version": "4.0.0",
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334,
-  "notes": "WoW : mode sûr, bouton minimap, trajet par zone, nouvelle boussole, macros revues, HV fiable + rafale."
+  "notes": "TreeAI 4.0 : nouvelle interface WoW (fenêtre + carte Prochaine étape), suivi de quêtes autonome par zone, groupe, chasseur, HV fiable, mode sûr, app sans gel et vraiment à jour."
 }

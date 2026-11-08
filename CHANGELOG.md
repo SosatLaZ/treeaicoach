@@ -3,6 +3,30 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 4.0.0 · 8 novembre 2026
+
+**WoW Forever : la grande refonte.** Tout a été revu, assemblé, relu par 4 relecteurs et testé sur un WoW simulé
+fidèle au vrai client Forever (fonctions absentes, valeurs secrètes en combat, cadres protégés).
+
+- **Nouvelle interface** : une vraie fenêtre TreeAI (style Leatrix : pages à gauche, recherche, redimensionnable)
+  et, à l'écran, une carte « Prochaine étape » (style Adventure Guide). Bouton de la minimap : clic = fenêtre,
+  clic droit = menu rapide. Visite guidée au premier lancement.
+- **Suivi de quêtes autonome** : tu choisis la zone, TreeAI prépare le trajet (vols, bateaux, pierre de foyer),
+  seulement tes vraies quêtes, jamais de donjon/élite/JcJ en solo, 1 h 30 max, quêtes chronométrées d'abord, temps
+  appris sur ta vraie vitesse, ordre stable. Suivi Forever n'est plus utilisé (au choix dans les options).
+- **Groupe** : un seul onglet, une carte par ami (même sans TreeAI), quêtes à partager, buffs, « prêt ? » ;
+  ~5× moins de calcul et ~10× moins de messages.
+- **Chasseur** : onglet dédié (familier, munitions, aspects, pièges) ; plus de conseils faux.
+- **Ménage** : retiré tout ce qui ne peut pas marcher dans le vrai jeu (chemin sûr, menace, chiffres inventés).
+- **HV** : seulement les achats-reventes qui se vendent vraiment, conseils de prix corrigés, mode rafale.
+- **Mode sûr** : seul le cœur est allumé ; le reste est « bêta », à activer en un clic.
+- **App** : page WoW sans gel (carte « Maintenant », Trajet, Groupe, HV, Session, Donjon, Erreurs), âge des données
+  partout ; « Hey coach » marche enfin en WoW et répond avec tes vraies données.
+- **Correctif important** : depuis la 3.7, les mises à jour de l'app elle-même n'étaient pas livrées (seul
+  l'addon l'était). Le nouvel outil de publication vérifie maintenant chaque fichier.
+- Bugs du vrai client corrigés : erreurs « valeur secrète » en combat, macros introuvables, marquage en sanctuaire,
+  textes coupés au milieu d'un accent, blocages.
+
 ## 3.9.9 · 8 novembre 2026
 
 - **WoW : mode sûr** : seul le cœur reste allumé (quêtes, boussole, trajet, cadavre, erreurs, macros) ; le reste
