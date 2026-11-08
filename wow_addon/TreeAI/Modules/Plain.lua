@@ -44,7 +44,7 @@ end
 -- « à Hurlevent » / « vers Forêt d'Elwynn » (pas d'article à deviner)
 function P.InZone(zone)
   zone = trim(zone)
-  if zone == "" then return nil end
+  if zone == "" or zone == "?" then return nil end   -- (3.9.9) zone inconnue (Quests : "?") : rien plutôt que « à ? »
   if not zone:find(" ", 1, true) and not zone:find("'", 1, true) then return "à " .. zone end
   return "vers " .. zone
 end

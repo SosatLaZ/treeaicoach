@@ -20,7 +20,7 @@ ROOT = HERE.parents[1]
 ADDON = ROOT / "wow_addon" / "TreeAI"
 COMBOS = [(c, f, "essentiel") for c in ("HUNTER", "MAGE", "WARRIOR") for f in ("modern", "legacy")]
 COMBOS += [("HUNTER", "modern", "tout"), ("MAGE", "legacy", "tout")]
-BUDGET = {"essentiel": 2400, "tout": 4600}   # kilo-instructions / simulated minute, whole addon (main client)
+BUDGET = {"essentiel": 2450, "tout": 4600}   # 3.9.9: +50 for 10 new light modules (see session_sim.lua)   # kilo-instructions / simulated minute, whole addon (main client)
 
 pytestmark = pytest.mark.skipif(not shutil.which("lua5.1"), reason="lua5.1 not installed")
 

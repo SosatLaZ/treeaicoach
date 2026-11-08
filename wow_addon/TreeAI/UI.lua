@@ -604,10 +604,10 @@ local function urgentCount(list)
   for _, e in ipairs(list) do if (e.prio or 1) >= 3 and not e.control then n = n + 1 end end
   return n
 end
-local badgeMemo = {}   -- (3.9.9) id -> { at, a, b, c, d } : pastilles relues au plus toutes les 2 s (sauf « Maintenant »)
+local badgeMemo = {}   -- (3.9.9) id -> { at, a, b, c, d } : pastilles « Plus » / onglets secondaires relues au plus toutes les 2 s
 local badgeCompute
 local function badgeOf(id)
-  if id == "now" then return badgeCompute(id) end
+  if IS_PRIMARY[id] then return badgeCompute(id) end   -- onglets toujours visibles : lignes déjà calculées par le rendu
   local t = (_G.GetTime and _G.GetTime()) or 0
   local m = badgeMemo[id]
   if m and t - m.at < 2 and t >= m.at then return m[1], m[2], m[3], m[4] end

@@ -841,7 +841,8 @@ function M.Step(dt)
   local behind = target > BEHIND and target < 2 * pi - BEHIND
   st.behind = behind
   if behind then setTag("Derrière toi", 1, 0.35, 0.3) else setTag(nil) end
-  busy = moved or abs(d) >= 0.004 or (T.NavTime and T.NavTime.moving) or false
+  -- (3.9.9) 30 Hz seulement quand la flèche tourne ; en ligne droite (le cap bouge à peine) 10 Hz suffisent
+  busy = ((moved or abs(d) >= 0.004) and 0.033) or ((T.NavTime and T.NavTime.moving) and 0.1) or false
 end
 M.Spin = function() M.Step(0.1) end
 
@@ -943,7 +944,7 @@ local function createFrame()
   frame:SetScript("OnUpdate", function(_, el)
     el = el or 0
     acc, full = acc + el, full + el
-    if acc < (busy and 0.033 or 0.25) then return end
+    if acc < (busy or 0.25) then return end
     local step = acc
     acc = 0
     if full >= 1 then full = 0 M.Refresh() end    -- calcul complet 1 fois par seconde, même sans cap

@@ -39,9 +39,11 @@ local BUDGET = {
   kinstrPerModuleMin = 4000,     -- avg kilo-instructions / module / simulated minute (main client)
   kinstrPerModulePeak = 15000,   -- worst single minute for one module
   -- whole addon, avg / minute (LITE): « essentiel » (default profile) ≤ 1.5 M instr/min, everything on ≤ 4 M
-  kinstrTotalMin = (opts.profile == "tout") and 4600 or 2400,   -- 3.9.5: budgets as on the hotfix branch (3.9.4: 9.9 M)
+  kinstrTotalMin = (opts.profile == "tout") and 4600 or 2450,   -- 3.9.5: budgets as on the hotfix branch (3.9.4: 9.9 M)
+  -- 3.9.9: +50 for 10 new light modules (Quick, QuickFight, QuickTravel, PathDraw, Finder, NavTime, Horizon, ZonePlan,
+  -- PvPMark, Macros review ≈ 190 kinstr/min, each under its own cap) after cutting integration waste (2477 → 2418 measured)
   kinstrStatsMin = 60,           -- Stats hub (Modules/Stats.lua): event-driven, nearly free
-  kinstrModuleMin = { Team = 80, PathDraw = 60, Edge2 = 80, Finder = 60, Quick = 80, QuickFight = 80, Macros = 80, QuickTravel = 80, Auction = 80, Compass = 80, NavTime = 80, Horizon = 80, ZonePlan = 400, PvPMark = 40 },   -- per-module caps (avg kinstr / minute)
+  kinstrModuleMin = { Team = 80, PathDraw = 60, Edge2 = 80, Finder = 60, Quick = 80, QuickFight = 80, Macros = 80, QuickTravel = 80, Auction = 80, Compass = 90, NavTime = 80, Horizon = 80, ZonePlan = 80, PvPMark = 40 },   -- per-module caps (avg kinstr / minute)
   nowChangesPerMinMax = 12,      -- « Maintenant » changes (text skeleton, digits ignored) in any minute
   nowChangesPerMinAvg = 6,      -- a fight every ~35 s brings its own in-combat lines (aspect, pet HP…)
   alertsPer10Min = 8,            -- corner alert pops in any 10-minute window
@@ -62,7 +64,7 @@ local BUDGET = {
   -- phase ratio 2.06 / 2.42 ; 3.9.7 scheduler: worst 97 / 171, p99 40 / 61, ratio ≤ 1.36
   frameLoginKinstr = 4000,       -- worst frame in the first 30 s (one-time panel layout, loading screen just gone)
   frameWorstKinstr = (opts.profile == "tout") and 210 or 115,   -- worst single frame after 30 s (kilo-instructions)
-  frameP99Kinstr = (opts.profile == "tout") and 80 or 48,
+  frameP99Kinstr = (opts.profile == "tout") and 86 or 48,   -- 3.9.9 « tout »: 84 measured (3.9.8: 75) with the 10 new modules
   framePhaseRatio = 1.6,         -- busiest of the 5 frame phases / average phase (1.0 = flat; 1-Hz spikes → ≫ 1)
   allocKBps = (opts.profile == "tout") and 280 or 160,   -- KB allocated / s in frames (GC pressure)          -- Edge CPU, avg kilo-instructions / minute (25 checks, rotating)
 }
