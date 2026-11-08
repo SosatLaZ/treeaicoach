@@ -34,6 +34,7 @@ return function(M, ctx)
   M.player.level = 18
   M.group = { { name = "Ami-un", class = "WARRIOR", level = 19, online = true },
               { name = "Ami-deux", class = "ROGUE", level = 14, online = true } }
+  if D.Members then D.Members(true) end   -- (ROUTEFIX) the 2 s member cache must not depend on the storm's timing
   M.RunSlash("/tai donjon cavernes")
   ctx.check(D.char.planned == "WC", "planned via /tai donjon")
   ctx.check(T.tabs.dungeon ~= nil, "Donjon tab visible when planned")

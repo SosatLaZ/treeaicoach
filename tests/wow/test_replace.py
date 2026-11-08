@@ -121,5 +121,6 @@ def test_scenario(flavor):
     m = re.search(r"PERF QuestPins idle ([\d.]+) · moving ([\d.]+) · map open ([\d.]+) · dragged ([\d.]+)", out)
     assert m, out[-2000:]
     idle, moving, opened, dragged = (float(x) for x in m.groups())
-    # 4.1: sampled every 100 instructions (every 1000 aliased: 4.0.6 read 38 for a real ~70 modern / ~95 forever)
-    assert idle == 0 and moving <= 40 and opened <= 40 and dragged <= 120, m.group(0)
+    # 4.1: sampled every 37 instructions (a prime: every 100 still locked onto the 0.2 s passes, ±15 % depending on
+    # unrelated code; every 1000 read 38 for a real ~70). 4.1.0 unaliased: moving 72.9, map open 14.5, dragged 134.1
+    assert idle == 0 and moving <= 80 and opened <= 40 and dragged <= 150, m.group(0)

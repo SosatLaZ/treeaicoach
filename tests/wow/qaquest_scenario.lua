@@ -589,7 +589,7 @@ return function(M, ctx)
   end
   all = R:Stops(64)
   keepN, total, _, _, trav = R.Horizon(all)
-  head = find("^Trajet %d+ min")
+  head = find("^Trajet %d+ m?i?n? ?s?")  -- (ROUTEFIX) « Trajet 45 s » : 3 remises au même PNJ, 15 s chacune
   check(head and strip(head.text):find("^Trajet " .. R.Minutes(total) .. " ·", 1, false) and total <= R.HORIZON_S + 600,
     "F7: log full: one total within the horizon (" .. strip(head and head.text) .. ")")
   -- F15: the plan's picks will not all fit, but the log is NOT full: say it as such
