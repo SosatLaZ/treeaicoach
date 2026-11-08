@@ -817,6 +817,9 @@ function X:Build(yieldFn)
     local zones = {}
     if player.map then zones[player.map] = true end
     for i = 1, min(2, #zl) do zones[zl[i].m] = true end
+    local Zp = T.ZonePlan                            -- (ZONEPLAN) zones de travail choisies : leurs quêtes à prendre aussi
+    local zw = Zp and Zp.ExportZones and try(Zp.ExportZones, Zp)
+    if type(zw) == "table" then for m in pairs(zw) do zones[m] = true end end
     -- available quests in those zones (one pass over the DB ids, budgeted)
     local ids = db.ids() or {}
     local lvl = player.level or 1
@@ -857,6 +860,8 @@ function X:Build(yieldFn)
     if a.st ~= b.st then return a.st == "log" end
     return a.id < b.id
   end)
+  local Zw = T.ZonePlan                              -- (ZONEPLAN) zone de travail + quêtes ignorées → solveur de l'appli
+  exp.work = Zw and Zw.ExportWork and try(Zw.ExportWork, Zw) or nil
   -- map rects
   for m in pairs(maps) do
     local r = Geo.Rect(m)

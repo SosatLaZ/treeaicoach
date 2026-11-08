@@ -565,16 +565,18 @@ local function buildModule(content, name, mod, width)
           function(v) if mod.db then mod.db[key] = v; changed(key, v) end end, o.tip)
       end
     end
-  else
+  elseif type(mod.BuildOptions) ~= "function" then
     P.text("|cff999999" .. L["Pas d'autre réglage pour ce module."] .. "|r")
   end
+  -- (ZONEPLAN) réglages propres au module (listes, boutons), posés par le même moteur de mise en page
+  if type(mod.BuildOptions) == "function" then TreeAI.safecall(mod.BuildOptions, mod, P) end
   P.finish()
 end
 
 -- ---------------------------------------------------------------- canvas : arbre des catégories + page à droite
 -- familles de modules (ordre logique : jouer → combat → groupe → sacs → réglages) ; inconnu → « Autres »
 local FAMILY = {
-  { title = "Quêtes et trajet", mods = { "Quests", "Tracker", "Todo", "Planner", "Compass", "Radar", "MinimapPins",
+  { title = "Quêtes et trajet", mods = { "Quests", "Tracker", "Todo", "ZonePlan", "Planner", "Compass", "Radar", "MinimapPins",
     "SafePath", "Highlight", "Predict", "Abandon", "Leveling", "Errands", "Edge" } },
   { title = "Combat et classe", mods = { "Hunter", "HunterPro", "Classes", "Fight", "Boost", "Talents", "Macros",
     "Binds", "Detect" } },

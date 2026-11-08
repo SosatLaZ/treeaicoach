@@ -1,0 +1,1090 @@
+-- TreeAI — Zone de travail + trajet préparé (agent ZONEPLAN). Toujours un chemin prêt, dans la zone que TU choisis.
+--  * « Zone de travail » : Auto (ta zone + ses voisines), une liste de zones (triées par nombre de quêtes à ton
+--    niveau) ou « Toute la région » (le continent). Jamais d'autre continent sans ton choix ; un détour hors zone
+--    très rentable (rendre une quête finie, ex.) est seulement PROPOSÉ, en clair, et ajouté sur un clic.
+--  * Plan en jeu, sans l'appli : arrêts (prendre / objectif / rendre ; vols, bateaux, foyer comptés par Route)
+--    construits sur le journal + QuestieDB (sinon : journal seul, aux points de quête du client), objectifs
+--    voisins regroupés en un seul arrêt (même coin de carte), ordre glouton (valeur / temps) puis 2-opt + Or-opt
+--    avec les précédences (prendre → objectifs → rendre). Recalculé tout de suite à chaque quête prise / rendue /
+--    abandonnée, objectif fini, changement de zone ou de réglage ; HYSTÉRÉSIS : l'ordre en cours reste tant que
+--    le nouveau ne fait pas gagner ≥ 10 % du trajet (et ≥ 1 min) — pas de valse des arrêts pour trois mètres.
+--  * Travail découpé : tourne dans la tâche du Planner (≤ 2 ms par tranche, via l'ordonnanceur du cœur), hors combat.
+--  * Personnalisable (page d'options « Trajet ») : élites, quêtes de groupe, donjons, écart de niveau max,
+--    distance max d'un arrêt, priorité (XP/h, finir la zone, récompenses), liste « Ignorer », Pause / Recalculer.
+--  * Plan de l'appli (TreeAI_Plan) : mêmes règles (zone + quêtes ignorées) appliquées à l'affichage.
+-- Aucune fonction protégée, aucun cadre Blizzard touché (menu = cadre à nous), rien en combat. Lua 5.1, aucune globale.
+local function _ns(v) local f = rawget(_G, "issecretvalue") if f and f(v) then return nil end return v end   -- valeurs secrètes (combat) → nil
+local T = _G.TreeAI
+if not (T and T.RegisterModule) then return end
+
+local Z = T:RegisterModule("ZonePlan", {
+  title = "Trajet",
+  description = "Tu choisis la zone, TreeAI prépare le meilleur ordre des arrêts. Clic droit sur un arrêt : l'ignorer.",
+  defaults = { enabled = true, elites = false, groupQ = true, dungeons = false, gap = 3, maxMin = 0, prio = 1,
+    detour = true, compass = true },
+  charDefaults = { mode = "auto", zones = {}, ignore = {}, extra = {} },
+  options = {
+    { section = "Quêtes du trajet", key = "elites", type = "toggle", label = "Quêtes élites (toujours prises à 3 ou plus)" },
+    { key = "groupQ", type = "toggle", label = "Quêtes de groupe" },
+    { key = "dungeons", type = "toggle", label = "Quêtes de donjon" },
+    { key = "gap", type = "range", label = "Niveau de quête max au-dessus du mien", min = 1, max = 6, step = 1 },
+    { section = "Ordre des arrêts", key = "prio", type = "choice", label = "Priorité",
+      values = { "XP par heure", "Finir la zone", "Récompenses" } },
+    { key = "maxMin", type = "range", label = "Arrêt le plus loin (minutes de trajet, 0 = sans limite)", min = 0, max = 30, step = 1 },
+    { key = "detour", type = "toggle", label = "Proposer un détour hors zone quand il rapporte gros" },
+    { key = "compass", type = "toggle", label = "La boussole vise l'arrêt en cours" },
+  },
+})
+T.ZonePlan = Z
+
+local floor, max, min, sqrt, huge = math.floor, math.max, math.min, math.sqrt, math.huge
+local tsort, tconcat, tinsert, fmt = table.sort, table.concat, table.insert, string.format
+
+local function tryPass(ok, a, ...) if ok then return a, ... end return nil end
+local function try(fn, ...)
+  if type(fn) ~= "function" then return nil end
+  return tryPass(pcall(fn, ...))
+end
+local function G(name) return rawget(_G, name) end
+local function C(ns, fn) local t = G(ns) return type(t) == "table" and t[fn] or nil end
+local function inCombat() return T.InCombat and T:InCombat() or false end
+local function cut(s, n) s = tostring(s or "") if #s > n then return s:sub(1, n - 1) .. "…" end return s end
+local function myLevel() return tonumber(_ns((try(G("UnitLevel"), "player")))) or 1 end
+local function groupSize() return max(1, tonumber(_ns((try(G("GetNumGroupMembers"))))) or 0) end
+local function opt(k) return Z.db and Z.db[k] end
+local Geo = T.Geo or {}
+local function X() return T.Export end
+local function thousands(n)
+  local s = tostring(floor((n or 0) + 0.5)):reverse():gsub("(%d%d%d)", "%1 "):reverse()
+  return (s:gsub("^%s+", ""))
+end
+
+-- ===================================================================== moteur pur (testable)
+local N = {}
+Z.Engine = N
+N.AREA = 120          -- yd : objectifs à moins de ça = un seul arrêt
+N.HYST, N.HYST_MIN = 0.10, 60
+local RANK = { pick = 1, obj = 2, turn = 3 }
+local function skey(s) return tostring(s.k) .. ":" .. tostring(s.q or "") .. ":" .. tostring(s.o or "") end
+N.StepKey = skey
+
+-- requests = { { q, steps = { ordered, k = pick|obj|turn, map, x, y, svc, value } } } → nodes
+-- node = { steps, map, x, y, svc, value, qs = { [q] = rank }, key, area }
+-- dist(a, b) → yards (nil = far / unknown)
+function N.Nodes(requests, dist, area)
+  area = area or N.AREA
+  local nodes, clusters = {}, {}
+  local objs = {}
+  for _, r in ipairs(requests or {}) do
+    for _, s in ipairs(r.steps or {}) do
+      if s.k == "obj" and s.x then objs[#objs + 1] = s
+      else
+        nodes[#nodes + 1] = { steps = { s }, map = s.map, x = s.x, y = s.y, svc = s.svc or 0, value = s.value or 0,
+          qs = { [s.q or -1] = RANK[s.k] or 2 }, key = skey(s) }
+      end
+    end
+  end
+  tsort(objs, function(a, b) if a.q ~= b.q then return (a.q or 0) < (b.q or 0) end return (tonumber(a.o) or 0) < (tonumber(b.o) or 0) end)
+  for _, s in ipairs(objs) do
+    local home
+    for _, c in ipairs(clusters) do
+      if c.map == s.map or dist then
+        local d = dist and dist(c, s) or nil
+        if d and d <= area then home = c break end
+      end
+    end
+    if home then
+      home.steps[#home.steps + 1] = s
+      home.svc, home.value = home.svc + (s.svc or 0), home.value + (s.value or 0)
+      home.qs[s.q or -1] = 2
+      home.key = home.key .. "+" .. skey(s)
+    else
+      home = { steps = { s }, map = s.map, x = s.x, y = s.y, svc = s.svc or 0, value = s.value or 0,
+        qs = { [s.q or -1] = 2 }, key = skey(s) }
+      clusters[#clusters + 1] = home
+    end
+  end
+  for i, c in ipairs(clusters) do
+    if #c.steps > 1 then c.area = "a" .. i end
+    nodes[#nodes + 1] = c
+  end
+  tsort(nodes, function(a, b) return a.key < b.key end)
+  return nodes
+end
+
+-- order (list of node indices) valid? for each quest: every pick before every objective before every turn-in
+function N.Valid(nodes, ord)
+  local maxR = {}
+  for _, i in ipairs(ord) do
+    for q, r in pairs(nodes[i].qs) do
+      if (maxR[q] or 0) > r then return false end
+      if r > (maxR[q] or 0) then maxR[q] = r end
+    end
+  end
+  return true
+end
+
+-- greedy: best value / (travel + service) among the nodes whose predecessors are placed. o = { horizon, cap,
+-- logCount, yield, first = legFirst(start, node) }
+function N.Greedy(nodes, start, leg, o)
+  o = o or {}
+  local need = {}                      -- [q][rank] = nodes left
+  for _, nd in ipairs(nodes) do
+    for q, r in pairs(nd.qs) do
+      need[q] = need[q] or { 0, 0, 0 }
+      need[q][r] = need[q][r] + 1
+    end
+  end
+  local used, ord = {}, {}
+  local pos, logCount, cap = start, o.logCount or 0, o.cap or 99
+  for _ = 1, o.horizon or 40 do
+    local best, bestScore = nil, -huge
+    for i, nd in ipairs(nodes) do
+      if not used[i] then
+        local ok = true
+        for q, r in pairs(nd.qs) do
+          local nq = need[q]
+          for rr = 1, r - 1 do if nq[rr] > 0 then ok = false break end end
+          if not ok then break end
+        end
+        if ok and nd.steps[1].k == "pick" and logCount >= cap then ok = false end
+        if ok then
+          local t = ((#ord == 0 and o.first) and o.first(nd) or leg(pos, nd)) + max(10, nd.svc or 0)
+          local score = (nd.value or 0) / max(10, t)
+          if score > bestScore then best, bestScore = i, score end
+          if o.yield then o.yield() end
+        end
+      end
+    end
+    if not best then break end
+    local nd = nodes[best]
+    used[best] = true
+    ord[#ord + 1] = best
+    for q, r in pairs(nd.qs) do need[q][r] = need[q][r] - 1 end
+    local k = nd.steps[1].k
+    if k == "pick" then logCount = logCount + 1 elseif k == "turn" then logCount = logCount - 1 end
+    if nd.x then pos = nd end
+  end
+  return ord
+end
+
+-- travel matrix D[0..n][1..n] over the chosen nodes (index 0 = start, with the hearthstone option)
+function N.Matrix(nodes, ord, start, leg, first, yield)
+  local D = { [0] = {} }
+  for a = 1, #ord do
+    local na = nodes[ord[a]]
+    D[0][ord[a]] = first and first(na) or leg(start, na)
+    D[ord[a]] = {}
+    for b = 1, #ord do
+      if a ~= b then D[ord[a]][ord[b]] = leg(na, nodes[ord[b]]) end
+      if yield then yield() end
+    end
+  end
+  return D
+end
+function N.Cost(D, ord)
+  local c, prev = 0, 0
+  for _, i in ipairs(ord) do c = c + ((D[prev] and D[prev][i]) or 0); prev = i end
+  return c
+end
+
+-- local search (2-opt with exact reversed-segment cost + Or-opt of 1–3 nodes), precedences kept
+function N.Improve(nodes, ord, D, yield, passes)
+  local n = #ord
+  local function d(a, b) if b == nil then return 0 end return (D[a] and D[a][b]) or 0 end
+  for _ = 1, passes or 3 do
+    local improved = false
+    -- 2-opt
+    for i = 1, n - 1 do
+      local a = (i == 1) and 0 or ord[i - 1]
+      local seen = {}
+      local fwd, rev = 0, 0
+      for q, r in pairs(nodes[ord[i]].qs) do seen[q] = r end
+      for j = i + 1, n do
+        local bad = false
+        for q, r in pairs(nodes[ord[j]].qs) do
+          if seen[q] and seen[q] ~= r then bad = true break end
+          seen[q] = r
+        end
+        if bad then break end
+        fwd = fwd + d(ord[j - 1], ord[j])
+        rev = rev + d(ord[j], ord[j - 1])
+        local b = ord[j + 1]
+        local old = d(a, ord[i]) + fwd + d(ord[j], b)
+        local new = d(a, ord[j]) + rev + d(ord[i], b)
+        if new < old - 1 then
+          local x, y = i, j
+          while x < y do ord[x], ord[y] = ord[y], ord[x]; x, y = x + 1, y - 1 end
+          improved = true
+          a = (i == 1) and 0 or ord[i - 1]
+          fwd, rev, seen = 0, 0, {}
+          break
+        end
+        if yield then yield() end
+      end
+    end
+    -- Or-opt: move a segment of 1..3 nodes elsewhere
+    for L = 1, 3 do
+      local i = 1
+      while i + L - 1 <= n do
+        local a = (i == 1) and 0 or ord[i - 1]
+        local s1, sL, b = ord[i], ord[i + L - 1], ord[i + L]
+        local removeGain = d(a, s1) + d(sL, b) - (b and d(a, b) or 0)
+        local bestJ, bestDelta = nil, -1
+        for j = 0, n do
+          if j < i - 1 or j > i + L - 1 then
+            local p, q = (j == 0) and 0 or ord[j], ord[j + 1]
+            local add = d(p, s1) + (q and d(sL, q) or 0) - (q and d(p, q) or 0)
+            local delta = removeGain - add
+            if delta > bestDelta + 1 then
+              local trial = {}
+              for k = 1, n do if k < i or k > i + L - 1 then trial[#trial + 1] = ord[k] end end
+              local at = (j < i) and j or (j - L)
+              for k = L, 1, -1 do tinsert(trial, at + 1, ord[i + k - 1]) end
+              if N.Valid(nodes, trial) then bestJ, bestDelta = trial, delta end
+            end
+          end
+          if yield then yield() end
+        end
+        if bestJ then
+          for k = 1, n do ord[k] = bestJ[k] end
+          improved = true
+        end
+        i = i + 1
+      end
+    end
+    if not improved then break end
+  end
+  return ord
+end
+
+-- hysteresis: the previous order (step keys) patched with the new nodes (cheapest valid insertion), same node set.
+function N.Patch(nodes, ord, oldKeys, D)
+  local pos = {}
+  for i, k in ipairs(oldKeys or {}) do pos[k] = i end
+  local known, fresh = {}, {}
+  for _, i in ipairs(ord) do
+    local p
+    for _, s in ipairs(nodes[i].steps) do
+      local v = pos[skey(s)]
+      if v and (not p or v < p) then p = v end
+    end
+    if p then known[#known + 1] = { i = i, p = p } else fresh[#fresh + 1] = i end
+  end
+  tsort(known, function(a, b) return a.p < b.p end)
+  local out = {}
+  for _, e in ipairs(known) do out[#out + 1] = e.i end
+  if not N.Valid(nodes, out) then return nil end
+  local function d(a, b) return (D[a] and D[a][b]) or 0 end
+  for _, x in ipairs(fresh) do
+    local bestAt, bestC = nil, huge
+    for at = 0, #out do
+      local p, q = (at == 0) and 0 or out[at], out[at + 1]
+      local c = d(p, x) + (q and (d(x, q) - d(p, q)) or 0)
+      if c < bestC then
+        tinsert(out, at + 1, x)
+        if N.Valid(nodes, out) then bestAt, bestC = at, c end
+        table.remove(out, at + 1)
+      end
+    end
+    if not bestAt then return nil end
+    tinsert(out, bestAt + 1, x)
+  end
+  return out, #known
+end
+-- keep the old order unless the new one saves ≥ 10 % of the travel and ≥ 1 min
+function N.Choose(newCost, oldCost)
+  if not oldCost then return "new" end
+  local gain = oldCost - newCost
+  if gain >= N.HYST_MIN and gain >= N.HYST * oldCost then return "new" end
+  return "old"
+end
+
+-- ===================================================================== cartes, zones
+local infoCache = {}
+local function mapInfo(m)
+  m = tonumber(m)
+  if not m then return nil end
+  local c = infoCache[m]
+  if c == nil then
+    local i = try(C("C_Map", "GetMapInfo"), m)
+    c = type(i) == "table" and i or false
+    infoCache[m] = c
+  end
+  return c or nil
+end
+function Z.MapName(m)
+  local i = mapInfo(m)
+  if i and i.name and i.name ~= "" then return i.name end
+  local exp = X() and X().Data and X():Data()
+  for _, e in ipairs(exp and exp.maps or {}) do if e.id == tonumber(m) and e.name then return e.name end end
+  return "zone " .. tostring(m)
+end
+-- zone (uiMapType 3) holding this map: caves / cities / sub-maps climb to their zone
+function Z.ZoneOf(m)
+  m = tonumber(m)
+  local cur, guard = m, 0
+  while cur and guard < 6 do
+    local i = mapInfo(cur)
+    local t = i and tonumber(i.mapType)
+    if not t or t == 3 then return cur end
+    if t <= 2 then return m end
+    cur, guard = tonumber(i.parentMapID), guard + 1
+  end
+  return m
+end
+function Z.Cont(m)
+  local r = Geo.Rect and Geo.Rect(m)
+  return r and r.c or nil
+end
+local function touch(ra, rb, pad)
+  if not (ra and rb) or ra.c ~= rb.c then return false end
+  local a1, a2 = min(ra.x0, ra.x1) - pad, max(ra.x0, ra.x1) + pad
+  local b1, b2 = min(rb.x0, rb.x1), max(rb.x0, rb.x1)
+  if a2 < b1 or b2 < a1 then return false end
+  a1, a2 = min(ra.y0, ra.y1) - pad, max(ra.y0, ra.y1) + pad
+  b1, b2 = min(rb.y0, rb.y1), max(rb.y0, rb.y1)
+  return not (a2 < b1 or b2 < a1)
+end
+-- every zone we can name on this continent: the client's list, the export, my log, the counts
+function Z:KnownZones(cont)
+  local set = {}
+  local here = Geo.Player and Geo.Player()
+  local m, guard = tonumber(here), 0
+  local contMap
+  while m and guard < 6 do
+    local i = mapInfo(m)
+    if i and tonumber(i.mapType) == 2 then contMap = m break end
+    m, guard = i and tonumber(i.parentMapID), guard + 1
+  end
+  local kids = contMap and try(C("C_Map", "GetMapChildrenInfo"), contMap, 3, false)
+  for _, k in ipairs(type(kids) == "table" and kids or {}) do if type(k) == "table" and tonumber(k.mapID) then set[k.mapID] = true end end
+  local exp = X() and X().Data and X():Data()
+  for _, e in ipairs(exp and exp.maps or {}) do if tonumber(e.id) then set[e.id] = true end end
+  for _, r in ipairs(exp and exp.quests or {}) do if tonumber(r.zone) then set[r.zone] = true end end
+  for mm in pairs(self.char and self.char.zones or {}) do if tonumber(mm) then set[tonumber(mm)] = true end end
+  for mm in pairs(self.counts and self.counts.n or {}) do set[mm] = true end
+  if tonumber(here) then set[Z.ZoneOf(here)] = true end
+  local out = {}
+  for mm in pairs(set) do
+    local z = Z.ZoneOf(mm)
+    if z == mm and (not cont or Z.Cont(mm) == cont) then out[#out + 1] = mm end
+  end
+  tsort(out)
+  return out
+end
+local nbCache = {}
+-- cartes relues (tests / changement de client) : noms, voisines, zone en cours
+function Z.ResetMaps()
+  for k in pairs(infoCache) do infoCache[k] = nil end
+  for k in pairs(nbCache) do nbCache[k] = nil end
+  Z._lastAllowed = nil
+end
+function Z:Neighbours(zone)
+  local r0 = Geo.Rect and Geo.Rect(zone)
+  if not r0 then return {} end
+  local c = nbCache[zone]
+  if c and c.n == #self:KnownZones(r0.c) then return c.list end
+  local list = {}
+  local all = self:KnownZones(r0.c)
+  for _, m in ipairs(all) do
+    if m ~= zone and touch(r0, Geo.Rect(m), 250) then list[#list + 1] = m end
+  end
+  nbCache[zone] = { n = #all, list = list }
+  return list
+end
+
+-- zone de travail en cours : { mode, maps = set | nil (continent), cont, here, label, cross }
+function Z:Allowed()
+  local ch = self.char or {}
+  local here = Geo.Player and Geo.Player()
+  local hz = tonumber(here) and Z.ZoneOf(here) or nil
+  if not hz then return self._lastAllowed or { mode = ch.mode, any = true, label = "Partout (position inconnue)" } end
+  local zs = {}
+  for m in pairs(ch.zones or {}) do zs[#zs + 1] = tostring(m) end
+  tsort(zs)
+  local ckey = fmt("%s|%s|%d|%s", tostring(hz), tostring(ch.mode), self.rev or 0, tconcat(zs, ","))
+  local L = self._lastAllowed
+  local tnow = tonumber(try(G("GetTime"))) or 0
+  if L and L._key == ckey and tnow - (L._at or -100) < 10 then return L end
+  local A = { mode = ch.mode or "auto", here = hz, cont = Z.Cont(hz) }
+  if A.mode == "continent" and A.cont then
+    A.label = "Toute la région"
+  elseif A.mode == "zones" and next(ch.zones or {}) then
+    A.maps = {}
+    local names = {}
+    for m in pairs(ch.zones) do
+      m = tonumber(m)
+      if m then
+        A.maps[m] = true
+        names[#names + 1] = Z.MapName(m)
+        if A.cont and Z.Cont(m) and Z.Cont(m) ~= A.cont then A.cross = true end
+      end
+    end
+    tsort(names)
+    A.label = (#names <= 2) and tconcat(names, " + ") or fmt("%s + %d zones", names[1], #names - 1)
+  else
+    A.mode = "auto"
+    A.maps = { [hz] = true }
+    local nb = self:Neighbours(hz)
+    for _, m in ipairs(nb) do A.maps[m] = true end
+    A.label = Z.MapName(hz) .. (#nb > 0 and fmt(" + %d voisine%s", #nb, #nb > 1 and "s" or "") or "")
+  end
+  A._key, A._at = ckey, tnow
+  self._lastAllowed = A
+  return A
+end
+function Z:InZone(map, A)
+  A = A or self:Allowed()
+  if A.any then return true end
+  local m = tonumber(map)
+  if not m then return true end
+  if A.maps then return (A.maps[Z.ZoneOf(m)] or A.maps[m]) and true or false end
+  local c = Z.Cont(m)
+  return c ~= nil and c == A.cont
+end
+-- signature for the Planner: replan when the work area / a setting changes
+function Z:Sig()
+  if not self:IsEnabled() then return "" end
+  local ch = self.char or {}
+  local here = (ch.mode or "auto") == "auto" and Geo.Player and Geo.Player() or nil
+  return fmt("%s:%s:%d", tostring(ch.mode), tostring(here and Z.ZoneOf(here) or ""), self.rev or 0)
+end
+function Z:Bump()
+  self.rev = (self.rev or 0) + 1
+  local P = T.Planner
+  if P and P.Dirty then P:Dirty(true) end
+end
+
+-- ===================================================================== tri des quêtes
+local DUNGEON_TAG = { [81] = true, [62] = true, [88] = true, [89] = true }
+local tagCache = {}
+local function questTag(q)
+  local c = tagCache[q]
+  if c == nil then
+    local tag = try(C("C_QuestLog", "GetQuestTagInfo"), q)
+    c = type(tag) == "table" and tag or false
+    tagCache[q] = c
+  end
+  return c or nil
+end
+function Z.Kind(q, rec, lq)
+  local tag = questTag(q)
+  local elite = (lq and lq.elite == 1) or (rec and rec.elite == 1) or (tag and tag.isElite) or false
+  for _, o in ipairs(rec and rec.o or {}) do
+    local r = tonumber(o.rank) or 0
+    if r == 1 or r == 2 then elite = true end
+  end
+  local grp = max(tonumber(rec and rec.grp) or 0, tonumber(lq and lq.grp) or 0) > 1
+  local dg = (rec and tonumber(rec.dg) or 0) > 0 or (tag and DUNGEON_TAG[tonumber(tag.tagID) or -1]) or false
+  local zi = rec and rec.zone and mapInfo(rec.zone)
+  if zi and tonumber(zi.mapType) == 4 then dg = true end
+  return elite and true or false, grp, dg and true or false
+end
+-- keep this quest? → ok, why ("ignorée" | "donjon" | "élite" | "groupe" | "niveau")
+function Z:Accept(q, rec, lq, level, group)
+  if self.char and self.char.ignore[q] then return false, "ignorée" end
+  local ready = lq and lq.done == 1
+  local elite, grp, dg = Z.Kind(q, rec, lq)
+  if dg and not opt("dungeons") then return false, "donjon" end
+  if ready then return true end
+  if elite and not (opt("elites") or group >= 3) then return false, "élite" end
+  if grp and not (opt("groupQ") or group >= 2) then return false, "groupe" end
+  local lv = tonumber(rec and rec.lv) or tonumber(lq and lq.lv) or level
+  if lv > 0 and lv - level > (tonumber(opt("gap")) or 3) then return false, "niveau" end
+  return true
+end
+
+-- ===================================================================== plan en jeu
+local function rewardBoost(q)
+  local n = tonumber(_ns((try(G("GetNumQuestLogChoices"), q)))) or 0
+  local r = tonumber(_ns((try(G("GetNumQuestLogRewards"), q)))) or 0
+  return (n + r) > 0 and 2 or 1.2
+end
+local function worldDist(a, b)
+  if not (a and b and a.x and b.x and Geo.Dist) then return nil end
+  return Geo.Dist(a.map, a.x, a.y, b.map, b.x, b.y)
+end
+Z.Dist = worldDist
+
+-- legFirst: from the start, the hearthstone may be faster (Route : foyer prêt + auberge connue)
+local function makeFirst(leg, start)
+  local Rt = T.Route
+  if not (start and Rt and Rt:IsEnabled() and Rt.HearthReady and Rt.HearthReady()) then return nil end
+  local bind = Rt.BindPlace and try(Rt.BindPlace)
+  if not (type(bind) == "table" and bind.map and bind.x) then return nil end
+  local D = T.Data and T.Data.Travel
+  local hs = ((D and D.hearthCast) or 10) + ((D and D.hearthLoad) or 5)
+  local b = { map = bind.map, x = bind.x, y = bind.y }
+  return function(nd) return min(leg(start, nd), hs + leg(b, nd)) end
+end
+
+-- Builds the in-game route (called by Planner:BuildAuto inside its time-sliced job). Returns route, export.
+function Z:BuildRoute(P, yieldFn)
+  local E = P.Engine
+  local ctx = P.CostCtx()
+  local Xm = X()
+  local exp = Xm and Xm.Data and Xm:Data()
+  local recs = {}
+  for _, r in ipairs(exp and exp.quests or {}) do recs[r.id] = r end
+  local log = (Xm and Xm.LogSnapshot and Xm.LogSnapshot()) or {}
+  P.log = log
+  local level, group = ctx.level or myLevel(), groupSize()
+  local A = self:Allowed()
+  local leg = P.Leg
+  local m, x, y
+  if Geo.Player then m, x, y = Geo.Player() end
+  local start = (m and x) and { map = m, x = x, y = y } or nil
+  local prio = tonumber(opt("prio")) or 1
+  local maxS = (tonumber(opt("maxMin")) or 0) * 60
+  local grey = E.GreyLevel(level)
+  local isDone = Xm and Xm.IsQuestDone
+  local requests, far = {}, {}
+  local info, levels = { nonGrey = 0 }, {}
+  local skipped = { ["ignorée"] = 0, zone = 0, loin = 0 }
+  local function consider(q, rec, lq)
+    local ok, why = self:Accept(q, rec, lq, level, group)
+    if not ok then skipped[why] = (skipped[why] or 0) + 1 return end
+    local v = E.QuestVerdict(rec or { lv = lq and lq.lv or level, o = {} }, ctx)
+    if v == "impossible" and not lq then return end
+    local steps = P:QuestSteps(q, rec, lq, ctx)
+    if yieldFn then yieldFn() end
+    if #steps == 0 then return end
+    local inZone = true
+    for _, s in ipairs(steps) do if s.x and not self:InZone(s.map, A) then inZone = false break end end
+    local extra = self.char and self.char.extra[q]
+    if not inZone and not extra then
+      skipped.zone = skipped.zone + 1
+      if lq then far[#far + 1] = { q = q, rec = rec, lq = lq, steps = steps } end
+      return
+    end
+    if maxS > 0 and start and not extra then
+      for _, s in ipairs(steps) do
+        if s.x then
+          if leg(start, s) > maxS then skipped.loin = skipped.loin + 1 return end
+          break
+        end
+      end
+    end
+    local lv = (rec and rec.lv) or (lq and lq.lv) or 0
+    if lv > grey and (not rec or not rec.zone or self:InZone(rec.zone, A)) then
+      info.nonGrey = info.nonGrey + 1
+      levels[#levels + 1] = lv
+    end
+    for _, s in ipairs(steps) do
+      if prio == 2 then s.value = 1000                           -- finir la zone : chaque arrêt compte autant
+      elseif prio == 3 and s.k == "turn" then s.value = (s.value or 0) * rewardBoost(q) end
+      if extra and not inZone then s.out = true end
+    end
+    requests[#requests + 1] = { q = q, steps = steps, inLog = lq ~= nil }
+  end
+  for q, lq in pairs(log) do consider(q, recs[q], lq) end
+  for q, rec in pairs(recs) do
+    if not log[q] and rec.st == "avail" and not (isDone and isDone(q)) and not (P.char and P.char.turned[q])
+        and (rec.rl or 0) <= level and not rec.pre and not rec.preAny then
+      consider(q, rec, nil)
+    end
+  end
+  local Rt = T.Route                                  -- trop dures / trop loin → proposition (Route.lua)
+  if Rt and Rt.FilterRequests and Rt:IsEnabled() then
+    local ok, res = pcall(Rt.FilterRequests, Rt, requests, recs, log, ctx)
+    if ok and type(res) == "table" then requests = res end
+  end
+  tsort(requests, function(a, b) return a.q < b.q end)
+  tsort(levels)
+  if #levels > 0 then info.zoneMedian = levels[floor((#levels + 1) / 2)] end
+  -- nodes → greedy → 2-opt / Or-opt → hysteresis
+  local nodes = N.Nodes(requests, worldDist)
+  local cap = tonumber(try(C("C_QuestLog", "GetMaxNumQuestsCanAccept"))) or 20
+  local logCount = 0
+  for _ in pairs(log) do logCount = logCount + 1 end
+  local first = makeFirst(leg, start)
+  local legN = function(a, b) return leg(a, b) end
+  local st0 = start or { }
+  local ord = N.Greedy(nodes, st0, legN, { horizon = (prio == 2) and 60 or 40, cap = cap - 2, logCount = logCount,
+    yield = yieldFn, first = first })
+  local D = N.Matrix(nodes, ord, st0, legN, first, yieldFn)
+  N.Improve(nodes, ord, D, yieldFn, 3)
+  local cost = N.Cost(D, ord)
+  local kept = "new"
+  if self.lastKeys and #ord > 1 then
+    local old = N.Patch(nodes, ord, self.lastKeys, D)
+    if old then
+      local oc = N.Cost(D, old)
+      kept = N.Choose(cost, oc)
+      if kept == "old" then ord, cost = old, oc end
+    end
+  end
+  -- flatten
+  local steps, keys, t, xp, prev = {}, {}, 0, 0, 0
+  for _, i in ipairs(ord) do
+    local nd = nodes[i]
+    t = t + ((D[prev] and D[prev][i]) or 0)
+    tsort(nd.steps, function(a, b)
+      if a.q ~= b.q then return (a.q or 0) < (b.q or 0) end
+      return (tonumber(a.o) or 0) < (tonumber(b.o) or 0)
+    end)
+    for _, s in ipairs(nd.steps) do
+      t = t + (s.svc or 0)
+      xp = xp + (s.value or 0)
+      s.area = nd.area
+      s.eta = floor(t / 60 + 0.5)
+      steps[#steps + 1] = s
+      keys[#keys + 1] = skey(s)
+    end
+    prev = i
+  end
+  self.lastKeys, self.kept = keys, kept
+  self.skipped = skipped
+  -- detour proposal: a finished quest / objectives out of the zone worth far more than the route rate
+  self.detour = nil
+  local minutes = max(1, floor(t / 60 + 0.5))
+  local xph = (t > 0 and prio ~= 2) and floor(xp * 3600 / t) or 0
+  if opt("detour") ~= false and start then
+    local rate = (t > 0) and (xp * 3600 / t) or 0
+    local best
+    for _, f in ipairs(far) do
+      if f.lq.done == 1 then
+        local turn = f.steps[#f.steps]
+        local s = turn and turn.x and leg(start, turn)
+        local gain = turn and turn.value or 0
+        if s and s < huge and s > 0 then
+          local r = gain * 3600 / (2 * s + 30)
+          if r >= max(1.5 * rate, 1) and gain >= 0.5 * E.QuestXPEstimate(level) and (not best or r > best.r) then
+            best = { q = f.q, title = (f.lq and f.lq.t) or (f.rec and f.rec.t) or ("quête " .. f.q), xp = floor(gain),
+              sec = s, zone = Z.MapName(turn.map), r = r, cross = Z.Cont(turn.map) ~= A.cont }
+          end
+        end
+      end
+    end
+    self.detour = best
+  end
+  local zoneLabel = A.label or "?"
+  local route = { id = "auto", title = "Trajet TreeAI", zone = zoneLabel, steps = steps, minutes = minutes, xph = xph,
+    cross = A.cross }
+  local v, why = E.RouteVerdict(route, ctx, info)
+  route.verdict, route.reasons = v, why and { why } or {}
+  return route, exp
+end
+
+-- Plan de l'appli : quêtes ignorées et arrêts hors zone masqués (jamais de chemin vers un autre continent non choisi)
+function Z:MaskSteps(steps)
+  if not (self:IsEnabled() and type(steps) == "table") then return 0 end
+  local A = self:Allowed()
+  local ch = self.char or {}
+  local out = {}
+  for _, s in ipairs(steps) do
+    local q = tonumber(s.q)
+    if q and (ch.ignore[q] or (s.x and not self:InZone(s.map, A) and not ch.extra[q])) then out[q] = true end
+  end
+  -- vol / bateau / foyer : gardé tant qu'un arrêt de quête gardé le suit (c'est le chemin pour y aller)
+  local n, later = 0, false
+  for i = #steps, 1, -1 do
+    local s = steps[i]
+    local q = tonumber(s.q)
+    if (q and out[q]) or (not q and s.x and not s._done and not later and not self:InZone(s.map, A)) then
+      if not s._done and not s._other then n = n + 1 end
+      s._other, s._zone = true, true
+    else
+      s._zone = nil
+      if q and not s._done and not s._other then later = true end
+    end
+  end
+  return n
+end
+
+-- export pour l'appli (TreeAIDB.export.work) + zones à exporter (quêtes à prendre)
+function Z:ExportWork()
+  if not self:IsEnabled() then return nil end
+  local A = self:Allowed()
+  if A.any then return nil end
+  local w = { mode = A.mode, ignore = {}, extra = {} }
+  if A.maps then
+    w.maps = {}
+    for m in pairs(A.maps) do w.maps[#w.maps + 1] = m end
+    tsort(w.maps)
+  else
+    w.cont = A.cont
+  end
+  for q in pairs(self.char and self.char.ignore or {}) do if tonumber(q) then w.ignore[#w.ignore + 1] = tonumber(q) end end
+  for q in pairs(self.char and self.char.extra or {}) do if tonumber(q) then w.extra[#w.extra + 1] = tonumber(q) end end
+  tsort(w.ignore)
+  tsort(w.extra)
+  return w
+end
+function Z:ExportZones()
+  local A = self:IsEnabled() and self:Allowed() or nil
+  return A and A.maps or nil
+end
+
+-- ===================================================================== actions
+function Z:SetMode(mode, map)
+  local ch = self.char
+  if not ch then return end
+  if mode == "zone" and tonumber(map) then
+    map = tonumber(map)
+    if ch.mode ~= "zones" then ch.zones = {} end
+    ch.mode = "zones"
+    if ch.zones[map] then ch.zones[map] = nil else ch.zones[map] = true end
+    if not next(ch.zones) then ch.mode = "auto" end
+  elseif mode == "continent" then ch.mode = "continent"
+  else ch.mode, ch.zones = "auto", {} end
+  if T.Export and T.Export.Dirty then pcall(T.Export.Dirty, T.Export) end   -- quêtes à prendre dans la nouvelle zone
+  self:Bump()
+end
+function Z:Ignore(q, title)
+  q = tonumber(q)
+  if not (q and self.char) then return false end
+  self.char.ignore[q] = cut(title or ("quête " .. q), 60)
+  self:Bump()
+  return true
+end
+function Z:Unignore(q)
+  if q == nil then self.char.ignore = {} else self.char.ignore[tonumber(q) or q] = nil end
+  self:Bump()
+end
+function Z:AddDetour()
+  local d = self.detour
+  if not (d and self.char) then return false end
+  self.char.extra[d.q] = true
+  self.detour = nil
+  self:Bump()
+  return true
+end
+function Z:Recalc()
+  self.lastKeys = nil
+  local P = T.Planner
+  if not P then return end
+  if P.char then P.char.repaired = nil end
+  P.steps, P.key = nil, nil
+  self.rev = (self.rev or 0) + 1
+  if P.Refresh then P:Refresh(true) end
+end
+function Z:TogglePause()
+  local R = T.Route
+  if R and R.TogglePause then R:TogglePause() end
+end
+function Z:Paused() local R = T.Route return R and R.char and R.char.paused or false end
+function Z:OnOptionChanged() self:Bump() end
+
+-- boussole : l'arrêt en cours (Compass.BuildTargets)
+function Z.CompassTarget(me)
+  if not (Z:IsEnabled() and opt("compass") ~= false) or Z:Paused() then return nil end
+  local P = T.Planner
+  local s = P and P.steps and P.cursor and P.steps[P.cursor]
+  if not (s and s.map and s.x and not s._done and not s._other) then return nil end
+  local label = P.StepLabel and P:StepLabel(s) or "Arrêt"
+  local t = { key = "plan:" .. skey(s), kind = s.k == "turn" and "turnin" or "objective", plan = true, questID = s.q,
+    title = label, label = label, mapID = s.map, x = s.x / 100, y = s.y / 100, src = "trajet" }
+  if me and me.mapID and me.x and Geo.Dist then
+    local mx, my = me.x, me.y
+    if mx <= 1 and my <= 1 then mx, my = mx * 100, my * 100 end
+    t.dist = Geo.Dist(me.mapID, mx, my, s.map, s.x, s.y)
+  end
+  return t
+end
+function Z:OnStep()
+  if inCombat() then return end
+  local Cm = T.Compass
+  local P = T.Planner
+  -- un repère posé par un clic sur l'arrêt précédent ne doit pas retenir la boussole
+  if P and P.navBy == "compass" and Cm and Cm.char and Cm.char.custom and type(Cm.ClearWaypoint) == "function" then
+    P.navBy = nil
+    pcall(Cm.ClearWaypoint)
+    return
+  end
+  if Cm and type(Cm.Rebuild) == "function" and opt("compass") ~= false then pcall(Cm.Rebuild, "plan") end
+end
+
+-- ===================================================================== quêtes par zone (QuestieDB, découpé)
+-- counts.n[map] = quêtes disponibles à mon niveau (± écart), calculé une fois par niveau, hors combat
+function Z:CountZones()
+  local lvl = myLevel()
+  if self.counts and self.counts.lvl == lvl then return self.counts end
+  if self._counting or inCombat() then return self.counts end
+  local db = X() and X().Source and try(X().Source, X())
+  local n = {}
+  if not db then
+    local exp = X() and X().Data and X():Data()
+    for _, r in ipairs(exp and exp.quests or {}) do
+      local m = tonumber(r.zone)
+      if m and (r.lv or 0) >= lvl - 4 and (r.lv or 0) <= lvl + 3 then n[m] = (n[m] or 0) + 1 end
+    end
+    self.counts = { lvl = lvl, n = n }
+    return self.counts
+  end
+  self._counting = true
+  local ids = try(db.ids) or {}
+  local i, gap = 1, tonumber(opt("gap")) or 3
+  local isDone = X().IsQuestDone
+  local ticker
+  local function step()
+    if inCombat() then return end
+    local t0 = try(G("debugprofilestop"))
+    local k = 0
+    while i <= #ids do
+      local id = ids[i]
+      i, k = i + 1, k + 1
+      local zone = tonumber(db.Q(id, "zoneOrSort")) or 0
+      if zone > 0 then
+        local ql, rl = tonumber(db.Q(id, "questLevel")) or 0, tonumber(db.Q(id, "requiredLevel")) or 0
+        if rl <= lvl and ql >= lvl - 4 and ql <= lvl + gap and not (isDone and isDone(id)) then
+          local m = db.map(zone)
+          if m then n[m] = (n[m] or 0) + 1 end
+        end
+      end
+      if k % 40 == 0 then
+        local t1 = try(G("debugprofilestop"))
+        if not (t0 and t1) or t1 - t0 > 2 then return end
+      end
+    end
+    Z.counts, Z._counting = { lvl = lvl, n = n }, false
+    if ticker then ticker:Cancel() end
+    if Z.menuOpen then Z:FillMenu() end
+  end
+  ticker = T.NewTicker and T:NewTicker(0.05, step, self)
+  if not ticker then while self._counting do step() end end
+  return self.counts
+end
+-- zones offered in the menu / options: same continent (+ the picked ones), most quests at my level first
+function Z:ZoneChoices()
+  local A = self:Allowed()
+  local counts = (self.counts and self.counts.n) or {}
+  local list = {}
+  for _, m in ipairs(self:KnownZones(A.cont)) do list[#list + 1] = { map = m, n = counts[m] or 0, name = Z.MapName(m) } end
+  for m in pairs(self.char and self.char.zones or {}) do
+    m = tonumber(m)
+    local seen = false
+    for _, e in ipairs(list) do if e.map == m then seen = true end end
+    if m and not seen then list[#list + 1] = { map = m, n = counts[m] or 0, name = Z.MapName(m), far = true } end
+  end
+  tsort(list, function(a, b)
+    if a.n ~= b.n then return a.n > b.n end
+    return a.name < b.name
+  end)
+  return list
+end
+
+-- ===================================================================== menu (cadre à nous : clic gauche zone, clic droit arrêt)
+local menu
+local MENU_ROW = 18
+local function buildMenu()
+  if menu or not G("CreateFrame") then return menu end
+  local tmpl = G("BackdropTemplateMixin") and "BackdropTemplate" or nil
+  menu = G("CreateFrame")("Frame", "TreeAIZonePlanMenu", G("UIParent"), tmpl)
+  menu:SetFrameStrata("DIALOG")
+  menu:SetClampedToScreen(true)
+  menu:EnableMouse(true)
+  if menu.SetBackdrop then
+    menu:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+      edgeSize = 10, insets = { left = 2, right = 2, top = 2, bottom = 2 } })
+    menu:SetBackdropColor(0.05, 0.06, 0.08, 0.96)
+    menu:SetBackdropBorderColor(0.2, 0.8, 0.4, 0.6)
+  end
+  menu.rows = {}
+  menu:SetScript("OnHide", function() Z.menuOpen = false end)
+  if menu.RegisterEvent and pcall(menu.RegisterEvent, menu, "GLOBAL_MOUSE_DOWN") then
+    menu:SetScript("OnEvent", function(self)
+      if self:IsShown() and not (self.IsMouseOver and self:IsMouseOver()) then self:Hide() end
+    end)
+  end
+  local list = G("UISpecialFrames")
+  if type(list) == "table" then list[#list + 1] = "TreeAIZonePlanMenu" end   -- Échap ferme
+  menu:Hide()
+  return menu
+end
+local function menuRow(i)
+  local b = menu.rows[i]
+  if b then return b end
+  b = G("CreateFrame")("Button", nil, menu)
+  b:SetHeight(MENU_ROW)
+  b:RegisterForClicks("LeftButtonUp")
+  b.text = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  b.text:SetPoint("LEFT", b, "LEFT", 8, 0)
+  b.text:SetPoint("RIGHT", b, "RIGHT", -8, 0)
+  b.text:SetJustifyH("LEFT")
+  if b.text.SetWordWrap then b.text:SetWordWrap(false) end
+  local hl = b:CreateTexture(nil, "HIGHLIGHT")
+  hl:SetAllPoints(b)
+  if hl.SetColorTexture then hl:SetColorTexture(1, 1, 1, 0.08) end
+  b:SetScript("OnClick", function(self)
+    local e = self.e
+    if not (e and e.fn) then return end
+    if not e.keep then menu:Hide() end
+    T:UserAction(e.fn)
+    if e.keep and menu:IsShown() then Z:FillMenu() end
+  end)
+  menu.rows[i] = b
+  return b
+end
+-- entries = { { text, fn?, keep?, head? } }
+function Z:ShowMenu(entries, kind)
+  if not buildMenu() then return false end
+  self.menuKind, self.menuEntries = kind, entries
+  for _, r in ipairs(menu.rows) do r:Hide(); r.e = nil end
+  local probe = menuRow(1)
+  local w = 200
+  for _, e in ipairs(entries) do
+    probe.text:SetText(e.text)
+    w = max(w, floor((probe.text:GetStringWidth() or 0) + 24))
+  end
+  w = min(w, 340)
+  local y = -5
+  for i, e in ipairs(entries) do
+    local b = menuRow(i)
+    b.e = e
+    b:ClearAllPoints()
+    b:SetPoint("TOPLEFT", menu, "TOPLEFT", 3, y)
+    b:SetWidth(w - 6)
+    b.text:SetText(e.text)
+    if e.head then b.text:SetTextColor(0.2, 0.8, 0.4) elseif e.dim then b.text:SetTextColor(0.6, 0.6, 0.6)
+    else b.text:SetTextColor(1, 1, 1) end
+    b:Show()
+    y = y - MENU_ROW
+  end
+  menu:SetSize(w, -y + 5)
+  if not menu:IsShown() then
+    menu:ClearAllPoints()
+    local cx, cy = try(G("GetCursorPosition"))
+    local UI = G("UIParent")
+    local sc = UI and UI.GetEffectiveScale and UI:GetEffectiveScale() or 1
+    if tonumber(cx) and tonumber(cy) and sc > 0 then menu:SetPoint("TOPLEFT", UI, "BOTTOMLEFT", cx / sc + 8, cy / sc - 4)
+    else menu:SetPoint("CENTER", UI, "CENTER", 0, 0) end
+  end
+  menu:Show()
+  self.menuOpen = true
+  return true
+end
+function Z:GetMenu() return menu, self.menuEntries end
+function Z:ZoneEntries()
+  local ch = self.char or {}
+  local A = self:Allowed()
+  local mode = ch.mode or "auto"
+  local out = { { text = "Zone de travail", head = true } }
+  out[#out + 1] = { text = (mode == "auto" and "● " or "○ ") .. "Auto : ma zone + ses voisines", fn = function() Z:SetMode("auto") end, keep = true }
+  out[#out + 1] = { text = (mode == "continent" and "● " or "○ ") .. "Toute la région (continent)", fn = function() Z:SetMode("continent") end, keep = true }
+  out[#out + 1] = { text = "Zones (quêtes à mon niveau)", head = true }
+  local shown = 0
+  for _, e in ipairs(self:ZoneChoices()) do
+    if shown >= 12 then break end
+    local on = mode == "zones" and ch.zones[e.map]
+    local cross = A.cont and Z.Cont(e.map) and Z.Cont(e.map) ~= A.cont
+    out[#out + 1] = { text = fmt("%s %s · %d%s", on and "☑" or "☐", cut(e.name, 28), e.n, cross and " (autre continent)" or ""),
+      fn = function() Z:SetMode("zone", e.map) end, keep = true }
+    shown = shown + 1
+  end
+  if self._counting then out[#out + 1] = { text = "… comptage des quêtes", dim = true } end
+  out[#out + 1] = { text = "Trajet", head = true }
+  out[#out + 1] = { text = "Recalculer maintenant", fn = function() Z:Recalc() end }
+  out[#out + 1] = { text = self:Paused() and "Reprendre le trajet" or "Mettre le trajet en pause", fn = function() Z:TogglePause() end }
+  local n = 0
+  for _ in pairs(ch.ignore or {}) do n = n + 1 end
+  if n > 0 then out[#out + 1] = { text = fmt("Reprendre les %d quête%s ignorée%s", n, n > 1 and "s" or "", n > 1 and "s" or ""),
+    fn = function() Z:Unignore() end } end
+  out[#out + 1] = { text = "Réglages du trajet…", fn = function() if T.OpenOptions then T:OpenOptions("ZonePlan") end end }
+  return out
+end
+function Z:FillMenu()
+  if self.menuKind == "zone" then self:ShowMenu(self:ZoneEntries(), "zone") end
+end
+function Z:ShowZoneMenu()
+  if menu and menu:IsShown() and self.menuKind == "zone" then menu:Hide() return end
+  self:CountZones()
+  self:ShowMenu(self:ZoneEntries(), "zone")
+end
+function Z:StopEntries(s)
+  local P = T.Planner
+  local label = (P and P.StepLabel and P:StepLabel(s)) or "Arrêt"
+  local q = tonumber(s and s.q)
+  local out = { { text = cut(label, 40), head = true } }
+  if q then
+    local title = (P and P.log and P.log[q] and P.log[q].t) or label
+    out[#out + 1] = { text = "Ignorer cette quête", fn = function() Z:Ignore(q, title) end }
+  end
+  if s and s.map and s.x and P and P.Navigate then out[#out + 1] = { text = "Guider vers cet arrêt", fn = function() P:Navigate(s) end } end
+  out[#out + 1] = { text = "Recalculer le trajet", fn = function() Z:Recalc() end }
+  return out
+end
+function Z:StopMenu(s) return self:ShowMenu(self:StopEntries(s), "stop") end
+
+-- lignes ajoutées à la vue « Trajet » (Route:PlanLines) : zone (menu) + détour proposé + quêtes ignorées
+function Z:HeadLines()
+  if not self:IsEnabled() then return {} end
+  local A = self._lastAllowed or self:Allowed()
+  local out = {}
+  local P = T.Planner
+  local file = P and P.src == "file"
+  out[#out + 1] = { text = "Zone : " .. cut(A.label or "?", 40) .. " ▾", prio = 1, id = "zone:pick",
+    onClick = function() Z:ShowZoneMenu() end, onRightClick = function() Z:ShowZoneMenu() end,
+    tooltip = "Clic : choisir la zone de travail\n(auto, une ou plusieurs zones, toute la région)"
+      .. (file and "\nPlan de TreeAI Coach : arrêts hors zone masqués" or "") }
+  if A.cross then
+    out[#out + 1] = { text = "Changement de continent compris (tu l'as choisi)", prio = 1 }
+  end
+  local d = self.detour
+  if d then
+    out[#out + 1] = { text = fmt("Détour rentable : rendre « %s » (%s) · +%s XP pour %d min", cut(d.title, 24), cut(d.zone, 20),
+      thousands(d.xp), max(1, floor(d.sec / 60 + 0.5))), prio = 2, id = "zone:detour",
+      onClick = function() Z:AddDetour() end,
+      tooltip = (d.cross and "Autre continent (bateau / zeppelin compris)\n" or "Hors de ta zone de travail\n") .. "Clic : l'ajouter au trajet" }
+  end
+  return out
+end
+
+-- ===================================================================== page d'options (moteur TIDY)
+function Z:BuildOptions(P)
+  P.header("Zone de travail")
+  P.text("|cff999999Auto suit ta zone et ses voisines. Choisis une ou plusieurs zones pour y rester ; un autre continent n'est pris que si tu le coches.|r")
+  P.buttons({
+    { "Auto (zone + voisines)", function() Z:SetMode("auto") end },
+    { "Toute la région", function() Z:SetMode("continent") end },
+  }, 2)
+  self:CountZones()
+  local shown = 0
+  for _, e in ipairs(self:ZoneChoices()) do
+    if shown >= 14 then break end
+    P.check(fmt("%s · %d quête%s à ton niveau", e.name, e.n, e.n > 1 and "s" or ""),
+      function() return Z.char and Z.char.mode == "zones" and Z.char.zones[e.map] and true or false end,
+      function() Z:SetMode("zone", e.map) end)
+    shown = shown + 1
+  end
+  P.header("Quêtes ignorées")
+  P.text("|cff999999Clic droit sur un arrêt du trajet : « Ignorer cette quête ». Décoche pour la reprendre.|r")
+  local ids = {}
+  for q in pairs(self.char and self.char.ignore or {}) do ids[#ids + 1] = q end
+  tsort(ids, function(a, b) return tostring(a) < tostring(b) end)
+  for _, q in ipairs(ids) do
+    P.check(tostring(self.char.ignore[q]), function() return Z.char.ignore[q] ~= nil end,
+      function(v) if v then Z.char.ignore[q] = Z.char.ignore[q] or ("quête " .. q) else Z:Unignore(q) end end)
+  end
+  P.header("Actions")
+  P.buttons({
+    { "Recalculer", function() Z:Recalc() end },
+    { "Pause / Reprendre", function() Z:TogglePause() end, function() return Z:Paused() and "Reprendre" or "Pause" end },
+  }, 2)
+end
+
+-- ===================================================================== cycle de vie
+function Z:OnEnable()
+  local function zone() Z._lastAllowed = nil; if (Z.char and Z.char.mode or "auto") == "auto" then Z:Bump() end end
+  self:RegisterEvent("ZONE_CHANGED_NEW_AREA", zone)
+  self:RegisterEvent("QUEST_TURNED_IN", function(_, _, qid)
+    qid = tonumber(qid)
+    if qid and Z.char and Z.char.extra[qid] then Z.char.extra[qid] = nil end
+  end)
+  self:RegisterEvent("PLAYER_LEVEL_UP", function() Z.counts = nil end)
+  self:On("EXPORT_UPDATED", function() Z._lastAllowed = nil end)   -- nouvelles zones connues → voisines revues
+end
+function Z:OnDisable()
+  if menu then menu:Hide() end
+  local P = T.Planner
+  if P and P.Dirty then P:Dirty(true) end
+end
+
+T:RegisterSlash("zone", function(rest)
+  rest = tostring(rest or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+  if rest == "auto" then Z:SetMode("auto")
+  elseif rest == "region" or rest == "région" or rest == "continent" then Z:SetMode("continent")
+  elseif rest == "recalc" then Z:Recalc()
+  else Z:ShowZoneMenu() end
+end, "zone : zone de travail du trajet (auto · région · recalc)")

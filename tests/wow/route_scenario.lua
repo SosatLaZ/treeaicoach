@@ -87,6 +87,9 @@ return function(M, ctx)
     Active = function() return cur ~= nil end,
     Subscribe = function(fn) return function() end end,
   } }
+  -- (3.9.8) Suivi Forever = choix du joueur (« Guidage : Suivi Forever ») : on l'active pour cette partie
+  local oldGuide, oldGuideV = T.settings.guide, T.settings.guideV
+  T.settings.guideV, T.settings.guide = 1, "auto"
   rawset(_G, "ShortestPathForever", spf)
   if T.Compass and T.Compass.ResetSPF then T.Compass.ResetSPF() end
   M.mapRects[1424] = M.mapRects[1424] or { top = 1000, left = 2000, w = 3000, h = 2000, continent = 0 }
@@ -162,6 +165,7 @@ return function(M, ctx)
   rawset(_G, "ShortestPathForever", nil)
   if T.Compass and T.Compass.ResetSPF then T.Compass.ResetSPF() end
   rawset(_G, "UnitFactionGroup", oldFaction)
+  T.settings.guide, T.settings.guideV = oldGuide, oldGuideV
   R.db.hearth, R.db.farMin, R.following = true, 10, nil
   P.route, P.steps, P.cursor = nil, nil, nil
 end
