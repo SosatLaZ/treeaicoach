@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from treeaicoach.wow.planner import models as M
+from treeaicoach.wow.planner import transport as TR
 
 log = logging.getLogger(__name__)
 
@@ -178,6 +179,12 @@ class Problem:
     via: dict[tuple[int, int], tuple[int, int]] = field(default_factory=dict)
     taxi_names: dict[int, str] = field(default_factory=dict)
     taxi_pos: dict[int, Point] = field(default_factory=dict)
+    faction: str = ""
+    # hub graph (flight masters + boat / zeppelin docks, transport.hubs): via[(a, b)] = (hub i, hub j)
+    hub_keys: list = field(default_factory=list)
+    hub_places: list = field(default_factory=list)
+    hub_next: list = field(default_factory=list)
+    hub_mode: dict = field(default_factory=dict)
 
     @property
     def START(self) -> int:
@@ -240,7 +247,8 @@ def _load(exp, learn, char_learn, group_mode, zones) -> Problem | None:
                  session_min=_n(pl.get("session")), raid=bool(pl.get("raid")), group=k,
                  known_taxi=[int(_n(t)) for t in _list(pl.get("taxi"))], maps=names, bands=bands,
                  src=str(exp.get("src") or ""), rects=rects,
-                 squad_raw=[s for s in _list(exp.get("squad")) if isinstance(s, dict)])
+                 squad_raw=[s for s in _list(exp.get("squad")) if isinstance(s, dict)],
+                 faction=str(pl.get("faction") or ""))
     h = pl.get("hearth") if isinstance(pl.get("hearth"), dict) else None
     if h:
         pb.hearth = make_point(rects, h)
@@ -344,38 +352,28 @@ def build_matrix(pb: Problem) -> None:
     tx = taxi_data()
     nodes = tx.get("nodes") or {}
     known = [t for t in pb.known_taxi if str(t) in nodes]
-    if len(known) >= 2:
-        idx = {t: i for i, t in enumerate(known)}
-        m = len(known)
-        F = np.full((m, m), np.inf)
-        np.fill_diagonal(F, 0.0)
-        for e in tx.get("edges") or []:
-            a, b, length = int(e[0]), int(e[1]), float(e[2])
-            if a in idx and b in idx:
-                t = pb.calib.flights.get((a, b), length / FLY_SPEED + FLY_HOP)
-                F[idx[a], idx[b]] = min(F[idx[a], idx[b]], t)
-        for kk in range(m):                             # Floyd–Warshall (multi-hop routes)
-            F = np.minimum(F, F[:, kk:kk + 1] + F[kk:kk + 1, :])
-        tpos = []
-        for t in known:
-            r = nodes[str(t)]
-            p = Point(int(r[1]), float(r[2]), float(r[3]), 0, 0.0, 0.0)
-            pb.taxi_names[t] = str(r[0]).split(",")[0]
-            pb.taxi_pos[t] = p
-            tpos.append(p)
-        txs = np.array([p.x for p in tpos]); tys = np.array([p.y for p in tpos]); tcs = np.array([p.c for p in tpos])
+    for t in known:
+        r = nodes[str(t)]
+        pb.taxi_names[t] = str(r[0]).split(",")[0]
+        pb.taxi_pos[t] = Point(int(r[1]), float(r[2]), float(r[3]), 0, 0.0, 0.0)
+    keys, places, H, nxt, mode = TR.hubs(pb.faction or None, tx, known, pb.calib.flights, speed, det)
+    m = len(keys)
+    if m >= 2:
+        F = np.array(H)
+        txs = np.array([p.x for p in places]); tys = np.array([p.y for p in places]); tcs = np.array([p.c for p in places])
         WT = np.hypot(xs[:, None] - txs[None, :], ys[:, None] - tys[None, :]) * det / speed
-        WT = np.where(cs[:, None] == tcs[None, :], WT, np.inf)          # n × m
-        A = (WT[:, :, None] + F[None, :, :] + FLY_BOARD)                # n × m × m : to FM i, fly to j
-        best_j = A.min(axis=1)                                          # n × m : arrive at FM j
+        WT = np.where(cs[:, None] == tcs[None, :], WT, np.inf)          # n × m : walk to hub
+        A = WT[:, :, None] + F[None, :, :]                              # n × m × m : to hub i, then to hub j
+        best_j = A.min(axis=1)                                          # n × m : arrive at hub j
         arg_i = A.argmin(axis=1)
         tot = best_j[:, None, :] + WT[None, :, :]                       # n × n × m
         V = tot.min(axis=2)
         arg_j = tot.argmin(axis=2)
-        better = V + 30.0 < D
+        better = V + TR.MIN_GAIN < D
         D = np.where(better, V, D)
         for a, b in zip(*np.nonzero(better)):
             j = int(arg_j[a, b])
-            via[(int(a), int(b))] = (known[int(arg_i[a, j])], known[j])
+            via[(int(a), int(b))] = (int(arg_i[a, j]), j)
+        pb.hub_keys, pb.hub_places, pb.hub_next, pb.hub_mode = keys, places, nxt, mode
     pb.D = (D * eff).tolist()
     pb.via = via

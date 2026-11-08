@@ -19,7 +19,8 @@ return function(M, ctx)
     local x, y = v.x or v[1], v.y or v[2]
     if v.GetXY then x, y = v:GetXY() end
     if map ~= 1424 and map ~= 1425 then return nil end
-    return 0, { x = 1000 - x * 3000, y = 500 - y * 2000 + (map == 1425 and -5000 or 0) }
+    -- client frame (as HereBeDragons): vec.x = north (follows the map's y), vec.y = west (follows the map's x)
+    return 0, { x = 500 - y * 2000, y = 1000 - x * 3000 + (map == 1425 and -5000 or 0) }
   end
   rawget(_G, "C_Map").GetPlayerMapPosition = function()
     return { x = ppos.x, y = ppos.y, GetXY = function(p) return p.x, p.y end }
@@ -149,7 +150,7 @@ return function(M, ctx)
     and byId[2001].o[1].npc[1] == 2351, "2001 dispo : départ + objet lâché par 2351")
   check(not byId[2002], "quête trop haute exclue")
   check(exp.player and exp.player.level == M.player.level and exp.player.map == 1424 and exp.player.x == 50, "état du joueur exporté")
-  check(exp.maps[1] and exp.maps[1].id == 1424 and exp.maps[1].x0 == 1000, "rectangle de carte exporté")
+  check(exp.maps[1] and exp.maps[1].id == 1424 and exp.maps[1].x0 == 500, "rectangle de carte exporté")
   check(X.Size(exp) < 300000, "export < 300 Ko")
 
   -- learned stats: a kill of a same-level bear in combat, then loot of a tusk
@@ -199,11 +200,14 @@ return function(M, ctx)
   P:Refresh(true)
   M.Advance(3, 0.1)
   check(P.src == "file" and P.route.id == "xph" and P.cursor == 1, "plan fichier : route xph, étape 1")
-  local head = P:Lines()[1].text
-  check(head:find("XP/h max") and head:find("28 500") and head:find("On va galérer : Taux de drop 20 %%"), "en-tête : " .. head)
-  local rl = 0
-  for _, l in ipairs(P:Lines()) do if l.text:find("^\226\151[\143\139] %d%.") then rl = rl + 1 end end
-  check(rl == 3, "sélecteur : 3 routes")
+  -- Route.lua view (« Suivi Forever » style): « Trajet 12 min · 2,4 km », verdict line, one route switcher
+  local pl = P:Lines()
+  local head = pl[1]
+  local function line(pat) for _, l in ipairs(pl) do if l.text:find(pat) then return l end end end
+  check(head.text:find("^Trajet %d+ min · ") and tostring(head.tooltip):find("XP/h max") and tostring(head.tooltip):find("28 500")
+    and line("^On va galérer : Taux de drop 20 %%"), "en-tête : " .. head.text)
+  local sw = line("^Route : XP/h max %(clic : changer%)")
+  check(sw and tostring(sw.tooltip):find("Finir la zone") and tostring(sw.tooltip):find("Prudent"), "sélecteur : 3 routes")
   -- pick up 2001 → cursor moves to the bear objective
   M.quests[3] = { title = "Crocs d'ours", level = 25, complete = false, objectives = { { text = "Croc : 0/6", done = false, have = 0, need = 6 } } }
   -- mock ids are 1000+index: map log index 3 → 1003; keep quest ids aligned with the plan via a remap

@@ -133,7 +133,7 @@ TreeAIPlan = {
       verdict = "ok" | "galere" | "long" | "impossible" | "zone",
       reasons = { "Taux de drop 20 % sur Crocs (galère)", ... },   -- French; the first one is the main reason
       steps = {
-        { k = "pick" | "obj" | "turn" | "fly" | "hs" | "train" | "vendor" | "meet" | "grind",
+        { k = "pick" | "obj" | "turn" | "fly" | "boat" | "zep" | "hs" | "train" | "vendor" | "meet" | "grind",
           q = 1234,                    -- questID (pick / obj / turn); nil otherwise
           o = 1,                       -- objective index into the quest's objectives (obj only)
           map = 1424, x = 40.0, y = 50.0,

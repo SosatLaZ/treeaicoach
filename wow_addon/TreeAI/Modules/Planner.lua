@@ -378,6 +378,11 @@ end
 -- travel seconds between two positioned things
 local function leg(a, b)
   if not (a and b) or not (a.x and b.x) then return 45 end
+  local Rt = T.Route                                  -- fastest: walk / flight / boat / zeppelin (Route.lua)
+  if Rt and Rt.LegSeconds and Rt:IsEnabled() then
+    local s = Rt.LegSeconds(a, b)
+    if s then return s end
+  end
   local d = Geo.Dist and Geo.Dist(a.map, a.x, a.y, b.map, b.x, b.y)
   if not d then return 240 end
   local det = X() and X():Detour(b.map) or 1.3
@@ -511,6 +516,7 @@ function P:OnStepChanged(old, new)
   local map, x, y = playerPos()
   self._legT, self._legPos = t, (map and x) and { map = map, x = x, y = y } or nil
   self._syncDirty = true
+  if T.Route and T.Route.OnPlanStep then pcall(T.Route.OnPlanStep, T.Route) end
   if new > old and self.steps and self.steps[new] then self:Toast(fmt("Étape suivante : %s", self:StepLabel(self.steps[new]))) end
 end
 
@@ -541,7 +547,7 @@ function P:StepLabel(s)
     end
     return "Objectif de « " .. cut(questTitle(q), 30) .. " »"
   end
-  local names = { fly = "Prendre le vol", hs = "Pierre de foyer", train = "Voir le maître", vendor = "Marchand",
+  local names = { fly = "Prendre le vol", boat = "Prendre le bateau", zep = "Prendre le zeppelin", hs = "Pierre de foyer", train = "Voir le maître", vendor = "Marchand",
     meet = "Regroupement", grind = "Tuer des monstres ici" }
   return names[s.k] or tostring(s.k or "?")
 end
@@ -682,6 +688,11 @@ function P:BuildAuto(yieldFn)
     if not log[q] and rec.st == "avail" and not questDone(q) and (rec.rl or 0) <= ctx.level and not rec.pre and not rec.preAny then
       consider(q, rec, nil)
     end
+  end
+  local Rt = T.Route                                  -- too far / too hard → proposal (Route.lua)
+  if Rt and Rt.FilterRequests and Rt:IsEnabled() then
+    local ok, res = pcall(Rt.FilterRequests, Rt, requests, recs, log, ctx)
+    if ok and type(res) == "table" then requests = res end
   end
   tsort(requests, function(a, b) return a.q < b.q end)
   tsort(levels)
@@ -966,6 +977,11 @@ end
 P.VerdictText = verdictText
 
 function P:Lines()
+  local Rt = T.Route                                  -- clean « Trajet 12 min · 2,4 km » view (Route.lua)
+  if Rt and Rt.PlanLines and Rt:IsEnabled() then
+    local ok, l = pcall(Rt.PlanLines, Rt, self)
+    if ok and l then return l end
+  end
   local lines = {}
   local route = self.route
   local steps = self.steps

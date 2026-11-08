@@ -78,11 +78,12 @@ function Geo.Rect(map)
   Geo.rects[map] = r
   return r or nil
 end
--- world position (a, b, continent) of a map point in percent; nil if unknown
+-- world position (a, b, continent) of a map point in percent; nil if unknown. Same frame as UnitPosition:
+-- a = 1st return (north axis, vec.x, follows the map's y), b = 2nd (west axis, vec.y, follows the map's x).
 function Geo.World(map, x, y)
   local r = Geo.Rect(map)
   if not (r and tonumber(x) and tonumber(y)) then return nil end
-  return r.x0 + (r.x1 - r.x0) * x / 100, r.y0 + (r.y1 - r.y0) * y / 100, r.c
+  return r.x0 + (r.x1 - r.x0) * y / 100, r.y0 + (r.y1 - r.y0) * x / 100, r.c
 end
 -- distance in yards between two map points (percent); `nil` when it cannot be estimated
 function Geo.Dist(m1, x1, y1, m2, x2, y2)
@@ -113,7 +114,7 @@ function Geo.FromWorld(map, a, b)
   if not (r and tonumber(a) and tonumber(b)) then return nil end
   local dx, dy = r.x1 - r.x0, r.y1 - r.y0
   if dx == 0 or dy == 0 then return nil end
-  return r1((a - r.x0) / dx * 100), r1((b - r.y0) / dy * 100)
+  return r1((b - r.y0) / dy * 100), r1((a - r.x0) / dx * 100)
 end
 
 -- ------------------------------------------------------------------ apprentissage {s, n}
@@ -523,6 +524,9 @@ function X:PlayerState()
     hearth = { cd = cd, name = try(G("GetBindLocation")) },
     taxi = knownTaxi(), group = max(1, n), raid = try(G("IsInRaid")) and true or false,
   }
+  local Rt = T.Route                     -- bind point learned on arrival (Route.lua) → the Python solver's hearth
+  local bp = Rt and Rt.BindPlace and try(Rt.BindPlace)
+  if type(bp) == "table" and bp.map and bp.x then p.hearth.map, p.hearth.x, p.hearth.y = bp.map, bp.x, bp.y end
   local SQ = T.Squad
   local lm = SQ and SQ.char and tonumber(SQ.char.leaveAt) or 0
   if lm > 0 then p.session = max(0, floor((lm - epoch()) / 60)) end

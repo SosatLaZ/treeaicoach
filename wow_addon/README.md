@@ -36,6 +36,18 @@ Modules/Leveling.lua  Modules/Group.lua  Modules/Squad.lua  Modules/Quests.lua  
 Modules/Leveling.lua  Modules/Group.lua  Modules/Squad.lua  Modules/Quests.lua  Modules/Export.lua  Modules/Planner.lua  Modules/Inventory.lua  Modules/Boost.lua  Modules/Auction.lua
 ```
 
+`Modules/Route.lua` + `Data/Travel.lua` (agent ROUTE) : le chemin le plus rapide entre les étapes du plan =
+min(marche, vol par maîtres de vol connus, bateau / zeppelin — attente période/2 + traversée —, pierre de foyer
+prête vers l'auberge apprise). `Data/Travel.lua` est généré (`python tools/wow_build_travel.py`) depuis la même
+table que le solveur Python (`treeaicoach/wow/planner/transport.py`). Vue de l'onglet Quêtes (remplace celle du
+Planner) : « Trajet 12 min · 2,4 km », « Arrêt 1/8 : … », vols / bateaux / zeppelins / foyer comme arrêts ; clic
+sur le titre = pause / reprise. Shortest Path Forever présent : « Suivre ce trajet » →
+`ShortestPathForever.API.NavigateRoute("TreeAI", arrêts dans l'ordre TreeAI)` (objectifs tenus `hold`+`radius`,
+renvoyé à chaque étape faite, `Cancel` à la pause). Tri : « Garde ces 6 quêtes, laisse ces 3 (trop loin) » (trop
+loin / trop dure / élite en solo), un clic adopte (rien n'est abandonné ; tout revu au niveau suivant).
+`/tai route` (suivre) · `pause` · `garde` · `tout`. Planner : `leg()` → `Route.LegSeconds`, `BuildAuto` →
+`Route:FilterRequests`. `T.Geo.World(map, x, y)` renvoie le repère de `UnitPosition` (1er = nord, suit le y de la carte).
+
 `Modules/Quests.lua` (agent Q): aide aux quêtes PvE — à rendre par zone, « finis ici avant de partir »,
 toasts de progression, quêtes grises (clic = ouvrir, l'abandon reste manuel), « à faire à 4 » (+ Group),
 bouton sécurisé d'objet de quête (créé/modifié hors combat), ligne « Étape : … », `/tai quetes`,
