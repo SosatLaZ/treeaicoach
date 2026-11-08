@@ -31,5 +31,5 @@ def test_ui_is_taint_safe():
 
 
 def test_modules_use_tabs_guarded():
-    for mod in ("Squad.lua", "Quests.lua", "Auction.lua"):
+    for mod in ("Group.lua", "Quests.lua", "Auction.lua"):
         assert "T.SetTabLines" in (ADDON / "Modules" / mod).read_text(encoding="utf-8"), mod

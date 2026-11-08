@@ -34,6 +34,7 @@ Modules/Leveling.lua  Modules/Group.lua  Modules/Squad.lua  Modules/Missions.lua
 Modules/Leveling.lua  Modules/Group.lua  Modules/Squad.lua  Modules/Quests.lua  Modules/Inventory.lua  Modules/Boost.lua  Modules/Pro.lua  Modules/Economy.lua  Modules/Auction.lua
 Modules/Leveling.lua  Modules/Group.lua  Modules/Squad.lua  Modules/Quests.lua  Modules/Inventory.lua  Modules/Boost.lua  Modules/Fight.lua  Modules/HunterPro.lua  Modules/Comfort.lua  Modules/Auction.lua
 Modules/Leveling.lua  Modules/Group.lua  Modules/Squad.lua  Modules/Quests.lua  Modules/Export.lua  Modules/Planner.lua  Modules/Inventory.lua  Modules/Boost.lua  Modules/Auction.lua
+(4.0, GROUPMERGE : Squad.lua, Missions.lua et Team.lua n'existent plus — tout le groupe est dans Modules/Group.lua)
 ```
 
 `Modules/Route.lua` + `Data/Travel.lua` (agent ROUTE) : le chemin le plus rapide entre les étapes du plan =
@@ -378,7 +379,7 @@ les autres modules.
 
 **Profils de modules (LITE, « je lag »)** : `TreeAI.MODULE_INFO[name] = { lite, gate, combat, liteParts, desc }`.
 Profil `essentiel` (défaut pour tout le monde, posé une fois via `TreeAIDB.profileV` + avis « Tout réactiver ») :
-seuls les modules `lite = true` tournent ; `gate` = `"group"` (Squad, Missions, Group), `"ah"` (Auction, HV ouvert),
+seuls les modules `lite = true` tournent ; `gate` = `"group"` (Group « Groupe »), `"ah"` (Auction, HV ouvert),
 `"instance"` (Dungeon). `TreeAI:SetModuleProfile("essentiel"|"tout")`, `TreeAI:ModuleProfile()`, `TreeAI:Lite()`
 (les modules `liteParts` en font moins : Highlight = sacs + butin, Macros = panneau seul, Abandon = à la demande).
 Module coupé = ses événements sont **désinscrits** (rendus au réveil) et ses tickers **annulés** (repris) ; ses
@@ -563,7 +564,7 @@ TreeAI:SetTabLines(id, lines, source?)            -- remplace le bloc `source` (
 --   pin = true : la ligne concourt aussi pour « Maintenant ».
 --   control = true (+ label court, onClick obligatoire) : un vrai petit bouton dans la barre de l'onglet,
 --   pas une ligne (« Recalculer », « Horizon +3 »…) ; TreeAI:GetTabControls() = géométrie (tests).
-if TreeAI.SetTabLines then TreeAI:SetTabLines("group", lines, "Squad") else --[[ ancien chemin ]] end
+if TreeAI.SetTabLines then TreeAI:SetTabLines("group", lines, "Group") else --[[ ancien chemin ]] end
 ```
 * « Maintenant » = top 5 (`settings.panel.nowMax`) des suggestions + lignes `pin`, par prio, sans doublon
   (texte ET sens : voir « Anti-bruit » plus bas).
@@ -784,109 +785,72 @@ d'un quart sur un autre cadre → place libre la plus proche (≤ 300 px, `setti
 · `onglet <id>` · `alerte` · `verrou` · `reset` (= place auto) · `options` · `modules` · `module <Nom> on|off`
 · `sync` · `debug` · `statut` · `test` · + sous-commandes des modules (`RegisterSlash`).
 
-## Groupe à plusieurs : module `Squad` (`Modules/Squad.lua`)
+## Groupe : module `Group` « Groupe » (`Modules/Group.lua`, GROUPMERGE 4.0)
 
-Quand les amis du groupe ont tous TreeAI, chaque client partage un état compact et **tous calculent
-les mêmes conseils** (moteur déterministe ; égalités départagées par le nom le plus petit = « chef »).
-Conseils écrits seulement (section « Groupe » sous le panneau + `/tai groupe`), rien d'automatique ;
-le bouton « Partager » (QuestLogPushQuest) n'agit que sur clic du joueur, jamais en combat. PvE.
+**Un seul module** pour le groupe de 2 à 4 amis, avec ou sans TreeAI : il remplace Squad (cerveau de groupe),
+Missions (tableau des missions), Team (membres sans TreeAI) et l'ancien Group (S1/Q1). Un protocole, un onglet,
+un propriétaire par information. Bêta (mode sûr : un clic dans « Fonctions bêta ») ; s'allume tout seul si l'un des
+anciens modules l'était (migration une fois, `db.v4`, leurs réglages / données effacés). Rien dans le chat, rien
+d'automatique (partager, buffer, dissiper = consignes ; seuls clics : boussole, « Prêt ? », objectif, rendez-vous).
 
-* Comms (via `TreeAI:Send`, PARTY/RAID) : `SQS` état `{v=2, c classe, l niveau, x xp%, r repos%, z zone,
-  m mapID, py/px position grossière (UnitPosition, arrondie à 5 m), pi instance, h PV%, p mana% (-1),
-  d 0 vivant/1 mort/2 fantôme, pt familier 1 ok/2 absent, ph bonheur, b/bt sacs libres/total,
-  du durabilité%, hs pierre de foyer (s restantes, -1 sans), hb bind, fo/wa nourriture/eau, am munitions,
-  pr métiers, lm départ dans N min (`/tai partir N`), rd prêt (`/tai pret on|off`), af AFK, cb combat,
-  qn/qm quêtes/max, xh XP/h}` ; `SQQ` `"2:" .. "id,niv,drapeaux(C fini, G groupe, Dn donjon),titre,m3/8.i0/5;…"` ;
-  `SQR` `"2"` (renvoyez vos infos). Envoi au changement + toutes les 15 s (état) / 60 s (quêtes),
-  ≤ 1 message/s ; en réception : membres actuels du groupe seulement, seau de jetons par membre,
-  version ≠ 2 ignorée, tout revalidé (bornes, longueur, pas de `|`).
-* Catégories (options, chacune désactivable) : `quests` (communes, « X n'a pas Q : Y, partage-la »,
-  attendre avant de rendre, quêtes de groupe, ordre conseillé, à faire à part), `xp` (écarts de niveau,
-  repos, XP/h), `regroup` (autre zone, loin, mort/fantôme), `pull` (cible hostile hors combat : mana/PV
-  bas, familier, AFK/pas prêt), `loot` (objets de quête à laisser, conseil Besoin/Cupidité au
-  START_LOOT_ROLL — texte seulement, jamais de jet automatique), `logistics` (marchand, réparation,
-  munitions, nourriture, pierres de foyer, départs), `dungeons` (tranche de niveau + qui a les quêtes).
-* Instantané pour TreeAI Coach : `TreeAIDB.chars[perso].summary.group = {v=2, updated, size, leader,
-  members = {{name, class, level, xp, rested, zone, hp, mana, dead, bags, durability, ammo, leaveMin,
-  ready, afk, professions, me}}, advices = {{cat, prio, text}}, common = {{id, title, holders, done, group}},
-  xph}` (lu par `treeaicoach/wow/ai_context.py`, noms remplacés par « Classe niveau » avant l'IA).
-* Compat : `Group.lua` se tait quand Squad est actif (plus d'envoi FSTAT/FQUEST ni de suggestions),
-  mais `Group.members` reste rempli (même forme) pour les modules qui le lisent (Quests.lua).
-
-API pour les autres modules (Quests, Boost…) :
-
-```lua
-local SQ = TreeAI.Squad            -- nil si le module n'est pas chargé
-SQ:IsActive()                      -- module activé
-SQ:Members()                       -- { "Nom", ... } triés (moi compris), seulement ceux qui ont TreeAI
-SQ:State(name)                     -- état décodé (champs ci-dessus) ; nil = moi
-SQ:Quests(name)                    -- [questID] = {id, level, title, done, group, dungeon, obj={{t,have,need}}}
-SQ:Common()                        -- {{id, title, holders={}, done={}, notDone={}, missing={}, group, dungeon}} trié
-SQ:Advices()                       -- conseils courants {{id, cat, prio, score, text, action}}
-SQ:Leader()  SQ:Size()
-SQ.Engine.Advise(members, ctx)     -- moteur pur (testable) ; SQ.Engine.LootHint(item, members)
--- message interne : TreeAI:On("SQUAD_UPDATE", owner, fn(owner, msg, advices))
-```
-Boost : si `TreeAI.Boost:XPPerHour()` existe, Squad l'utilise pour `xh`.
-
-## Missions du groupe : module `Missions` (`Modules/Missions.lua`, après Squad)
-
-Suivi des missions (quêtes) des amis, à partir des données de Squad (+ son propre protocole v1). Conseils
-et clics du joueur seulement ; aucune sélection dans le journal de quêtes, aucun panneau Blizzard ouvert.
-
-* **Tableau** : par quête, qui l'a, progression de chacun par objectif (barres), prêts à rendre, % du
-  groupe, « Mission terminée » ; trié « finissable ensemble maintenant » (tous prêts > reste = monstres,
-  crédit partagé > nb de porteurs > reste > distance). Ligne « Charlie : 8 Défense restants, Bravo : terminé ».
-* **Répartition** : tuer ensemble (crédit partagé), qui loote d'abord (le plus en retard, réparti), chacun
-  clique, membres éloignés (> 70 m) « de ton côté ». `/tai prends <quête|n°> [objectif]` ou clic sur la ligne
-  = je m'en charge (bascule, partagé, expire après 30 min).
-* **Route** : prochaine mission (rendre ensemble, sinon le plus de porteurs puis la plus proche,
-  `C_QuestLog.GetDistanceSqToQuest`) ; `/tai mission cible` ou clic : le **chef** pose la cible du groupe
-  (`TreeAI.Compass:SetTarget({x, y, mapID, label})` chez tous, si la boussole existe).
-* **Annonces** (`Suggest`, `opts.tab = "group"`) : fini, tous prêts à rendre, rendu, abandon, mission
-  terminée, arrivée/départ, membre **sans TreeAI** (clic = message privé pour l'installer, 1 fois),
-  niveau, mort, AFK, hors ligne, loin ; « Attendez X » à `QUEST_COMPLETE` (urgent si suite connue, Questie).
-* **41 Prêt ?** vérification maison (pas `DoReadyCheck`) : états prêt / pas prêt (raison) / ? / AFK /
-  hors ligne / sans TreeAI, auto-évaluation PV/mana/familier ; `/tai mission pret [oui|non raison]`.
-* **42 Butin** (`CHAT_MSG_LOOT`, formats `LOOT_ITEM*` du client) : objets par membre, verts/bleus/épiques.
-* **43 Où est chacun** : distance + direction relative (`GetPlayerFacing`) ou cardinale (`/tai mission ou`).
-* **44 Marquage** : crâne (élite/rare/+2 niv.), lune (lanceur), croix ; `SetRaidTarget` sur clic, hors combat,
-  une marque par clic.
-* **45 Classement XP** de la session · **46 Plan de voyage** (zone de la prochaine mission ou zone
-  majoritaire, pierre de foyer prête/bind) · **47 Artisans** (métiers partagés `pr` → sacs, bandages,
-  potions, balles, pierres… pour qui en a besoin).
-* **Session** : objectif `/tai mission objectif niveau 30 | quetes 15 | <quête> | off` (partagé, ETA d'après
-  l'XP/h, table XP Classic), `/tai mission recap`, `start`, `fin`. Gardée 3 h sans activité.
-* Comms v1 : `MSM` "1:id,dist/10,mapID,x‰,y‰,obj1/obj2/obj3;…", `MSC` "1:id.j,…" (liste complète de mes
-  prises), `MST` {v,q,m,x,y,l} (chef seulement), `MSG` {v,k,n,l}, `MSR` {v,k=ask|ans,id,r,w}. Membres du
-  groupe seulement, seau de jetons, version ≠ 1 ignorée, tout revalidé. Envoi ≤ 1 message / 2 s.
-* Onglet : `TreeAI:SetTabLines("group", lines, "missions")` (repli : `Suggest` de la prochaine mission).
-* Résumé `summary.missions = {v=1, updated, size, members={{name,class,level}}, board={{id,title,holders,
-  done,pct,ready,status,missing}}, next, assign, claims={{quest,by}}, travel, crafts, noAddon,
-  session={start,duration,turned,missions,abandoned,deaths,titles,levels,events,goal={kind,text,pct,eta,done},
-  leaderboard,loot}}` → `ai_context.py` (`missions_groupe`, noms remplacés par « Classe niveau »).
-
-## Équipe, même sans TreeAI : module `Team` (`Modules/Team.lua`, après Missions)
-
-Conseils sur **chaque membre du groupe** (party1..4, pas en raid) à partir des seules API Blizzard : niveau,
-classe, rôle (`UnitGroupRolesAssigned`, sinon deviné : guerrier tank, prêtre soigneur), PV / mana % hors
-combat (valeurs secrètes ignorées), mort / fantôme / AFK / hors ligne / loin (`UnitInRange`, sinon
-`CheckInteractDistance`) / autre zone (`C_Map.GetBestMapForUnit`), buffs de classe manquants (Robustesse,
-Intelligence, Marque du fauve, Bénédiction : « Lance … sur X » si tu l'as, sinon « X (classe) peut la donner »),
-affections à dissiper (`dispelName` / `UnitAura`), quêtes de ton journal qu'ils n'ont pas
-(`C_QuestLog.IsUnitOnQuest(unit, id)`, repli `IsUnitOnQuest(index, unit)` ; « X n'a pas « Q » : partage-la
-(Journal > Partager) »), quêtes rouges pour eux (niveau +5), équipement par inspection (`NotifyInspect` →
-`INSPECT_READY`, hors combat, à portée, un à la fois, ≤ 1 / 10 s, cache 10 min, jamais si la fenêtre
-d'inspection est ouverte : arme grise / blanche, emplacements vides, niveau d'objet moyen) et « Avant de
-tirer, attends : … » quand tu cibles un monstre hors combat.
-* Sortie : `SetTabLines("group", lines, "Team")` ; lignes prio ≥ 2 en `pin` (« Maintenant » si actionnable,
-  mode simple respecté). Aucun chat, rien d'automatique (partage / buff / dissipation = consignes).
-* Fusion : membre connu de Squad (il a TreeAI) → état, quêtes et « prêt à tirer » laissés à Squad / Missions ;
-  Team ne garde pour lui que buffs, dissipation et équipement.
-* Coût : événementiel (recalcul regroupé ≥ 2 s, quêtes ≥ 15 s, PV / mana seulement onglet « Groupe » visible
-  ou cible hostile, rien en combat) ; `session_sim` plafonne Team à 80 kinstr/min.
-* Résumé `summary.team = {v=1, members={{class, level, role, addon, dead, far, otherZone, ilvl, missingSlots,
-  greyWeapon}}}` (sans noms). Options : status, pull, buffs, cleanse, quests, levels, gear.
+* **Onglet « Groupe »** (`SetTabLines("group", lines, "Group")`), dans cet ordre : « Prêt ? » (si je l'ai demandé) ·
+  **objectif** du groupe (« Objectif niveau 30 ensemble : 2/4 — Bravo 28 (45 %) », « Objectif : finir « <zone> » —
+  7 quêtes restantes (toi 2, Bravo 3) · 2 à rendre » ; clic = choisir) · **prochain arrêt commun** (« Rendez
+  ensemble « X » (3/3 prêts) » si la quête est dans MON journal et finie, sinon « Bravo, Charlie peuvent rendre … » ;
+  « Ensemble : « X » — Bravo 5/8, toi 2/8 » ; clic = boussole) · **regroupement** (« Regroupez-vous : Bravo (Les
+  Paluns) est dans une autre zone » / « Rejoins le groupe : ils sont dans … ») · **ce que je peux lancer** (« Lance
+  Robustesse sur Bravo et Charlie », « Dissipe Bravo : poison (…) » — épinglé, concourt pour « Maintenant ») ·
+  **écarts de niveau** (« Bravo est 2 niveaux derrière : partage-lui « A » et « B » », « Tu es 2 niveaux derrière :
+  demande « X » à Charlie ») · **une ligne par quête** à partager / demander (« Partage « X » à Bravo et Echo »,
+  « Demande « Y » à Charlie ») · **une carte par membre** : en-tête « Bravo · Chasseur 28 (45 %) · soins · loin ·
+  PV 60 % · mana 30 % · sans familier · part dans 10 min · pas prêt » (PV / mana hors combat ; mort, fantôme, AFK,
+  hors ligne, autre zone ; % du niveau pour les amis TreeAI ; icône de classe), son **étape en cours** (amis TreeAI :
+  « Bravo : Tue « Ogre » (3/8) », clic = boussole si tu l'as aussi), ce qui lui manque et qui peut le donner
+  (« Bravo : manque Marque du fauve (Charlie) · poison à retirer (Charlie) »), ses **signaux d'alerte** (« Delta :
+  arme grise · rien en torse · durabilité 8 % · sacs pleins · 80 munitions ») · **course à l'XP** de la soirée
+  (« XP de la soirée : Charlie +12 000 · toi +9 800 », amis TreeAI, XP exacte comptée par leur jeu). Boutons :
+  « Objectif » (choix en lignes : niveau +1 / +2, les zones de ton journal, aucun), « Prêt ? » (chef : l'appel du
+  jeu via `QuickTravel.ReadyCheck` ; sinon la vérification TreeAI : clic « oui » chez les amis, les autres vus par
+  le jeu). « Avant de tirer, attends : Bravo 30 % mana et Delta loin » quand tu cibles un monstre hors combat
+  (épinglée en tête, retirée en combat).
+* **Annonces** (`Suggest`, onglet Groupe) : niveau d'un ami, objectif proposé / atteint, « Bravo demande : prêt ? —
+  clic : oui », « Rejoins Bravo au point de rencontre (Moulin) · 230 m » (la boussole y va si `meetCompass`),
+  « Attends Bravo (5/8) : « X » ouvre une suite, rendez ensemble » (QUEST_COMPLETE, seulement si une suite est
+  connue), conseil de jet hors donjon (« Jet « Arc » : Besoin Bravo ; les autres Cupidité »).
+* **Données** : tout ce que le jeu donne pour chaque membre est lu par le jeu (niveau, classe, rôle assigné, PV /
+  mana hors combat, mort / fantôme / AFK / hors ligne, `UnitInRange`, `C_Map.GetBestMapForUnit`, familier,
+  `C_QuestLog.IsUnitOnQuest` sur MES quêtes pour les membres sans TreeAI, auras relues toutes les 15 s hors combat —
+  le cœur ne relaie pas UNIT_AURA du groupe —, équipement par `NotifyInspect` → INSPECT_READY : hors combat, à portée,
+  un à la fois, ≤ 1 / 10 s, cache 10 min). Les amis TreeAI n'envoient que ce que le jeu ne donne pas : XP % du niveau,
+  repos, XP de la soirée, durabilité, sacs, munitions, nourriture / eau, pierre de foyer, départ / prêt, métiers,
+  zone, étape en cours, compte des quêtes de la zone objectif, et leur journal (quêtes + objectifs).
+* **Protocole v4** (un seul type `GRP`, `TreeAI:Send(..., "PARTY")`, chaîne `"4;<genre>;…"`) :
+  `D` différences seulement depuis le dernier envoi (`"4;D;<seq>;k=v;…;+<quête>;-<id>"`, valeurs exactes envoyées
+  quand le changement compte : munitions ± 50, durabilité ± 5, XP ± 100…), `F` état complet (arrivée, demande, trou),
+  `R` « renvoie ton état » (`*` ou un nom), `B` module coupé, `E` événements des clics (`goal`, `meet`, `ask`, `ans`).
+  Quête = `"id,niv,drapeaux(C G),titre,m3/8.i0/5"`. Seau de jetons propre (3, +1 / 5 s) : **≤ 1 message / 5 s** en
+  régime établi, rien si rien ne change, jamais par-dessus un envoi encore en file chez le cœur (il le remplacerait) ;
+  numéros de suite → trou détecté = état complet redemandé (≤ 1 / 20 s par ami). Réception : membres du groupe
+  seulement, seau par membre (8, +1 / 2 s), version ≠ 4 ignorée, tout revalidé (bornes, longueurs, `|`). En
+  instance : pause du cœur (le jeu y coupe les messages). **Compat 3.9.x** (une version, à retirer en 4.1) :
+  `SQS` / `SQQ` / `SQD` (Squad v2) et `QTM` (rendez-vous) décodés, jamais envoyés ; info-bulle de sa carte :
+  « TreeAI 3.9 : demande-lui de mettre à jour ».
+* **Façades** (anciens noms, mêmes tables dans `T.modules`, hors de « Plus → Modules ») : `TreeAI.Squad`
+  (`IsActive`, `Members`, `MemberList` = moi + amis TreeAI `{name, st, quests, leaveMin}`, `State(nom)` champs
+  d'avant + `h p d af pt py px pi` lus par le jeu, `Quests(nom)`, `Common`, `Leader`, `Size`, `IsMember`, `char.leaveAt`,
+  `_members`, `Engine.Progress`, `SetLeave`, `SetReady`), `TreeAI.Missions` (`board`, `next`, `Engine.Next /
+  StatusLine`, `SetGroupTarget`, `ReadyAsk`, `SOUND_EVENTS`), `TreeAI.Team` (`GearOf(guid)` → `{ilvl, links, …}`),
+  `ns.Group.members` (Quests). `_active` / `_suspended` / `char` suivent le module « Groupe ».
+* **Résumés** pour TreeAI Coach (formats d'avant gardés) : `summary.group` (v2), `summary.missions` (v1 : tableau,
+  prochaine, session : durée, quêtes rendues, morts, niveaux, objectif, classement), `summary.team` (v1, sans noms).
+* **Coût** : les gestionnaires posent un drapeau ; un seul `T:NewTicker(2)` fait le travail hors combat (journal
+  ≤ 1 / 5 s, lignes seulement si quelque chose a changé : ≤ 1 / 3 s onglet visible, ≤ 1 / 30 s caché, sauf une ligne
+  épinglée). `session_sim` (4 clients TreeAI) : `kinstrModuleMin.Group = 150` (mesuré ≈ 80 ; 3.9.9 : Squad + Missions
+  + Team ≈ 430 sur la même simulation) et `groupMsgsPerMin = 12` (mesuré ≤ 3) hors minute d'arrivée / de /reload.
+* Slash : `/tai groupe` (ouvre l'onglet), `/tai objectif [niveau 30 | zone | off]`, `/tai partir N`, `/tai pret
+  [on|off]`. Options : cards, pull, quests, support, gear, goals, race, meetCompass, toasts.
+* Tests : `tests/wow/group_spec.lua` (moteur + fil + 4 clients sur un faux canal PARTY + un membre sans TreeAI + un
+  ami en 3.9), `tests/wow/group_scenario.lua` (le vrai addon dans le harnais), `tests/wow/test_group.py`.
 
 ## Comms : limites de WoW Forever (Core)
 
@@ -896,8 +860,8 @@ aucun message vers les autres en donjon/raid. Le cœur : seau de jetons (8, +1/s
 un message d'un type pas encore parti est remplacé par le plus récent, pause « Synchro du groupe en pause
 (donjon) » (`TreeAI.commPaused`, messages `COMM_PAUSED`/`COMM_RESUMED`, reprise à `PLAYER_ENTERING_WORLD` /
 `ZONE_CHANGED_NEW_AREA`), morceaux incomplets oubliés après 30 s. `TreeAI:CommStatus()`.
-Squad envoie des **différences** de journal (`SQD "2:base:nouveau:+entrée;-id"`, empreintes des entrées
-triées) et un dump complet toutes les 180 s ou sur demande (`SQR`, base inconnue). « Loin » = > 70 m du
+Le module « Groupe » envoie des **différences** seulement (`GRP "4;D;…"`, voir sa section) et un état complet sur
+demande ou trou détecté. « Loin » = > 70 m du
 coéquipier le plus proche (portée du crédit de kill partagé).
 
 `Modules/Binds.lua` (agent BINDS, onglet « Infos », bloc `Binds`, `/tai touches [poser|oui|reset]`) : « sur quoi je
@@ -1232,10 +1196,11 @@ placés à la position LUE des fenêtres du jeu). `TreeAI.QuickTravel` :
   marchands vus (`db.vendors[mapID][nom] = {x, y, a, f, w}` appris à MERCHANT_SHOW), puis Questie
   (`Q.QuestieVendor(tag)` : itemDB `vendors` des meilleurs objets de ton niveau, ta faction), puis `Detect.Nearest`.
 * **Groupe** : bouton « Outils du groupe » de l'onglet Groupe → fenêtre « Tout le monde prêt ? » (`Q.MemberRows()` :
-  Squad pour les amis TreeAI, API du jeu sinon ; `Q.Verdict` : PV ≥ 70, mana ≥ 70, munitions ≥ 200, familier) ;
-  boutons Appel « prêt » (chef : `C_PartyInfo.DoReadyCheck`, sinon `Missions:ReadyAsk`), Rendez-vous ici, Inviter
-  (amis du dernier groupe, `char.friends`), En raid / En groupe, Butin (cycle). Ouverte aussi à READY_CHECK et par
-  « Prêt ? » de Missions. Slash : `/tai prets`, `/tai rdv`, `/tai courses`.
-* **Point de rencontre** : comm `QTM` `{ v = 1, m, x, y (‰), l }`, envoi ≤ 1 / 15 s, réception membres du groupe
-  seulement, ≤ 1 / 10 s par membre, bornes vérifiées → `Compass:SetTarget{ source = "meet" }` + ligne « Rejoins X au
-  point de rencontre » (onglet Groupe, 10 min).
+  façade Squad du module « Groupe » pour les amis TreeAI, API du jeu sinon ; `Q.Verdict` : PV ≥ 70, mana ≥ 70,
+  munitions ≥ 200, familier) ; boutons Appel « prêt » (chef : `C_PartyInfo.DoReadyCheck`, sinon la vérification TreeAI
+  `Missions:ReadyAsk` → Groupe), Rendez-vous ici, Inviter (amis du dernier groupe, `char.friends`), En raid / En groupe,
+  Butin (cycle). Ouverte aussi à READY_CHECK et par « Prêt ? » de l'onglet Groupe. Slash : `/tai prets`, `/tai rdv`,
+  `/tai courses`.
+* **Point de rencontre** (GROUPMERGE 4.0) : `Q.SendMeet` / `Q.OnMeet` passent par le module « Groupe » (protocole
+  unique `GRP`, événement `meet`, envoi ≤ 1 / 15 s, réception membres du groupe ≤ 1 / 10 s) → ligne « Rejoins X au
+  point de rencontre » (`Group:meet`, 10 min) + boussole ; plus de message `QTM` (encore décodé pour les amis en 3.9).
