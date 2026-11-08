@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import sys
 import time
 from pathlib import Path
@@ -206,7 +207,13 @@ def test_wow_mode_switches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     assert m.install_result.status == "installed" and m.install.addon_dir.is_dir()
     assert isinstance(m.coach, _FakeCoach) and m.coach.started == m.install.combat_log
     assert spoken == [("Familier mort", 2)]
-    assert m.message() == mode.MSG_NO_LOG
+    assert m.message() == mode.MSG_ACTIVE         # (4.0) no combat log yet: it is optional, no nag
+    m.install.combat_log.parent.mkdir(parents=True, exist_ok=True)
+    m.install.combat_log.write_text("x", encoding="utf-8")
+    assert m.message() == mode.MSG_ACTIVE and m._log_seen      # written: seen this session
+    old = time.time() - 3600
+    os.utime(m.install.combat_log, (old, old))
+    assert m.message() == mode.MSG_NO_LOG          # it was active, then stopped: « tape /combatlog »
     cfg = Config(wow_path=str(root), wow_voice=False)
     m.step()
     assert len(spoken) == 1                      # voice off: nothing said

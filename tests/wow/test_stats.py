@@ -66,7 +66,7 @@ def test_reader_rows():
     assert rows["Fiche"] == "For 40 · Agi 120 · End 80 · Int 30 · Esp 45 · niv. obj. 24"
     assert rows["Attaque"] == "PA dist. 320 · crit 8,2 % · armure 1200"
     assert rows["Temps de kill"] == "~12 s même niveau · ~17 s à +2 · 31 % PV perdus / combat"
-    assert rows["XP/h mesurée"] == "quêtes 21k · farm 15k"
+    assert rows["XP/h mesurée"] == "quêtes 21 k · farm 15 k"
     assert rows["Or / heure"] == "1 po 20 pa"
     assert rows["Trajets"] == "7 m/s à pied · 9,8 m/s monté · quête ~22 min"
     assert rows["Par heure"] == "410 munitions · 3,2 nourriture · 2 boisson · réparations 25 pa"

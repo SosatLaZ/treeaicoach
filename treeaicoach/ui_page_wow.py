@@ -134,10 +134,11 @@ def plan_rows(plan: Any) -> list[tuple[str, str]]:
                 continue
             from treeaicoach.wow.planner import routes as R  # noqa: PLC0415
 
-            head = f"{R.route_name(r)} (≈ {max(1, int(r.get('minutes') or 0))} min)"
+            v = str(r.get("verdict") or "ok")
+            mins = int(r.get("minutes") or 0) if isinstance(r.get("minutes"), (int, float)) else 0
+            head = R.route_name(r) + (f" (≈ {mins} min)" if mins > 0 and v != "impossible" else "")
             rs = r.get("reasons")
             rs = list(rs.values()) if isinstance(rs, dict) else (rs or [])
-            v = str(r.get("verdict") or "ok")
             desc = "" if v == "ok" else verdicts.get(v, "?") + (f" : {rs[0]}" if rs else "")
             rows.append((head, desc))
     except Exception:
@@ -276,7 +277,8 @@ def overview(st: dict, enabled: bool = True) -> dict:
         elif not installed:
             steps.append(("addon", False if inst is not None else None, "Pas encore installé."))
         elif st.get("needs_update"):
-            steps.append(("addon", None, f"Mise à jour disponible : {inst_v or '?'} → {src_v or '?'}."))
+            steps.append(("addon", None, "Mise à jour disponible"
+                          + (f" : {inst_v} → {src_v}" if inst_v and src_v and inst_v != src_v else "") + "."))
         else:
             steps.append(("addon", True, f"Version {inst_v}, à jour." if inst_v else "Installé et à jour."))
         log_tone, log_text = st.get("log") or ("", "")
@@ -317,7 +319,7 @@ EMPTY_TEXT = {
     "trajet": ("Pas encore de trajet", "Installe l'addon, connecte-toi puis tape /reload : tes quêtes et ton trajet "
                                        "arrivent ici."),
     "groupe": ("Tu joues seul", "Les cartes de tes amis apparaissent en groupe, quand ils ont TreeAI."),
-    "hv": ("Pas encore de données d'hôtel des ventes", "Ouvre l'HV, clique « Scanner », puis /reload. "
+    "hv": ("Pas encore de données d'hôtel des ventes", "Ouvre l'HV, clique « Scan complet », puis /reload. "
                                                        "Les prix d'Auctionator sont lus aussi."),
     "session": ("Pas encore de session", "Tape /chatlog en jeu : l'XP, l'or, les morts et le butin sont suivis "
                                          "en direct. Sinon, chaque /reload ajoute un point."),
@@ -404,7 +406,8 @@ def _groupe(snap: dict, ctx: dict) -> list[dict]:
     if len(members) >= 2:
         rows = [{"title": m["name"] + (" (toi)" if m["me"] else ""), "desc": m["line"],
                  "badges": [list(b) for b in m["badges"]]} for m in members]
-        foot = f"{g['no_addon']} membre(s) sans TreeAI." if g["no_addon"] else ""
+        n = g["no_addon"]
+        foot = f"{n} membre{'s' if n > 1 else ''} sans TreeAI." if n else ""
         _sec(out, "groupe.members", "Le groupe", rows, foot, kind="members")
     if g["next"]:
         _sec(out, "groupe.next", "Prochaine mission", [_row(g["next"])])
@@ -537,8 +540,8 @@ def _deaths(snap: dict, live_chat: bool) -> list[dict]:
         n, src = live._i(s["session"]["deaths"]), "au /reload"
     if n is not None:
         rows.append(_row("Morts", src, str(n) if n else "Aucune", value_tone="warning" if n >= 2 else ""))
-    ld = (s.get("fight") or {}).get("lastDeath") if isinstance(s.get("fight"), dict) else None
-    if isinstance(ld, dict) and ld and not live.freshness(snap)["stale"]:
+    ld = live.recent_death(s, snap.get("now"))          # (4.0 QA) a death of the last 2 h, never « forever »
+    if ld and not live.freshness(snap)["stale"]:
         rows.append(_row("Dernière mort", live._why(ld.get("advice")), live.last_death_text(ld)))
     return rows
 
@@ -551,11 +554,12 @@ def _donjon(snap: dict, ctx: dict) -> list[dict]:
     if not d["active"]:
         return out
     rows = [_row(d["name"] or "Donjon", d["why"])]
-    if d["boss"]:
+    if d["boss"] and not d.get("stale"):            # (4.0 QA) no « boss en cours » from a save of hours ago
         rows.append(_row("Boss en cours", "", d["boss"], value_tone="warning"))
-    if d["next"]:
+    if d["next"] and not d.get("stale"):
         rows.append(_row("Prochain boss", "", d["next"]))
-    _sec(out, "donjon.now", "En ce moment", rows, "Minuteurs et conseils de boss : dans le jeu (onglet Donjon).")
+    _sec(out, "donjon.now", "Au dernier /reload" if d.get("stale") else "En ce moment", rows,
+         "Minuteurs et conseils de boss : dans le jeu (page « Donjons » de la fenêtre TreeAI).")
     _sec(out, "donjon.run", "Ce run", [_row(t, "", val) for t, val in d["run"]])
     _sec(out, "donjon.last", "Run précédent", [_row(t, "", val) for t, val in d["last"]])
     return out
@@ -1154,7 +1158,8 @@ def _qt_classes() -> dict:
                 t["bar"].setValue(int(lvl["pct"]))
                 t["bar"].show()
                 set_text(t["cap"], f"{lvl['pct']} % du niveau {lvl.get('level')}")
-                set_text(t["cap2"], f"Estimation {lvl['conf']}" if lvl.get("conf") else "Sans mesure d'XP/h")
+                set_text(t["cap2"], f"Estimation {lvl['conf']}" if lvl.get("conf") else
+                         ("" if lvl.get("eta") == "imminent" else "Sans mesure d'XP/h"))
             else:
                 t["bar"].hide()
                 set_text(t["cap"], "")
@@ -1297,7 +1302,7 @@ class WowPage:
         app.bind("wow_path", lambda: None if self.path.hasFocus() else self.path.setText(str(app.cfg.wow_path or "")))
         self.folder_row = inst.add(W.Row("Dossier de WoW", "Vide : trouvé tout seul.", path_box))
         self.auto = app.switch_row(inst, "wow_addon_auto_update", "Mise à jour automatique",
-                                   "L'addon est mis à jour quand WoW est détecté.").switch
+                                   "L'addon est mis à jour au démarrage de TreeAI.").switch
         rules = more.section("Règles de Blizzard")
         rules.add(W.Row("Ce que TreeAI fait (et ne fait pas)", RULES_TEXT))
         self.more = more
@@ -1410,7 +1415,7 @@ class WowPage:
             self.plan_btn.setText("Calculer")
             res = res if isinstance(res, dict) else {}
             ok = bool(res.get("ok"))
-            if res.get("plan"):
+            if ok and res.get("plan"):                  # a plan that was not written is never shown as computed
                 self._plan_last = res["plan"]
             self.app.show_toast(("Trajet calculé : tape /reload en jeu pour le charger." if ok
                                  else str(res.get("message") or "Calcul impossible.")), "info" if ok else "error")

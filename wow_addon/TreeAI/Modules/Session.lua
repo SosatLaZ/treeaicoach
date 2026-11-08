@@ -405,7 +405,8 @@ function M.WriteSummary()
   local trend, tip = M.DeathTrend(c.deaths)
   s.session = { minutes = floor(((c.last or 0) - (c.start or 0)) / 60), xp = c.xp, quests = c.quests,
     levels = (c.lv or 0) - (c.lv0 or 0), money = (c.money or 0) - (c.money0 or 0), deaths = #(c.deaths or {}),
-    trend = trend, tip = tip, best = c.best and c.best.title or nil }
+    trend = trend, tip = tip, best = c.best and c.best.title or nil,
+    updated = now() }   -- (QA-APP) l'appli écarte un bloc qui n'est plus réécrit (module coupé)
 end
 
 function M.Report()

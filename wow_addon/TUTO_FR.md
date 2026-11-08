@@ -4,8 +4,9 @@
 
 - **Automatique** : lance TreeAI Coach, page **WoW Forever** → **Installer l'addon** (il trouve ton dossier WoW ;
   sinon **Parcourir**). Relance le jeu : un nouvel addon n'apparaît qu'après un redémarrage de WoW.
-- **À la main** : dézippe `TreeAI-addon.zip` dans `…\World of Warcraft\_forever_\Interface\AddOns\` (tu dois
-  avoir `…\AddOns\TreeAI\TreeAI.toc`), relance le jeu, coche **TreeAI Coach** dans la liste des AddOns.
+- **À la main** : supprime d'abord l'ancien dossier `…\AddOns\TreeAI` s'il existe (des fichiers retirés
+  resteraient sinon), puis dézippe `TreeAI-addon.zip` dans `…\World of Warcraft\_forever_\Interface\AddOns\` (tu
+  dois avoir `…\AddOns\TreeAI\TreeAI.toc`), relance le jeu, coche **TreeAI Coach** dans la liste des AddOns.
 - Tes amis installent le même addon pour se voir en groupe.
 
 ## Les 3 choses à savoir

@@ -342,6 +342,8 @@ def install_addon(inst: WowInstall | None, src: Path | None = None, force: bool 
             return InstallResult(True, "up_to_date", f"Addon à jour{(' (' + version + ')') if version else ''}.",
                                  version, dest)
         inst.addons_dir.mkdir(parents=True, exist_ok=True)
+        for leftover in inst.addons_dir.glob(f".{ADDON_NAME}.old_*"):     # a swap whose clean-up failed (antivirus…)
+            shutil.rmtree(leftover, ignore_errors=True)
         stamp = f"{os.getpid()}_{int(time.time() * 1000)}"
         tmp = inst.addons_dir / f".{ADDON_NAME}.new_{stamp}"
         old = inst.addons_dir / f".{ADDON_NAME}.old_{stamp}"

@@ -1765,6 +1765,7 @@ function M:WriteSummary()
       quests = #last.quests, loot = #last.loot } or nil,
     meter = self.lastMeter and { total = self.lastMeter.total, top = self.lastMeter.rows[1] and self.lastMeter.rows[1].name } or nil,
     runs = self.char and #(self.char.runs or {}) or 0,
+    updated = clock(),   -- (QA-APP) l'appli écarte un bloc qui n'est plus réécrit (module coupé)
   }
 end
 

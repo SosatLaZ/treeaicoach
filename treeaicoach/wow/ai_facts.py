@@ -222,6 +222,16 @@ def make_snap(db: Any, now: float | None = None, chat: Any = None, chat_age: Any
               sv_age: Any = None) -> Snap:
     t = time.time() if now is None else float(now)
     key, c, s = pick_char(db)
+    if isinstance(c.get("summary"), dict):
+        # (4.0 QA) like the WoW page: no block of a module that is off or stopped writing it, no group blocks out
+        # of a group, no last death older than 2 h (live.trusted_summary)
+        try:
+            from treeaicoach.wow import live  # noqa: PLC0415
+
+            flat = {k: v for k, v in c.items() if k not in _SKIP_CHAR_KEYS and k not in live.SUMMARY_OWNERS}
+            s = {**flat, **live.trusted_summary(db, c, t)}
+        except Exception:
+            log.debug("trusted summary failed", exc_info=True)
     upd = _n(s.get("updated"))
     age = None
     if upd and upd > EPOCH_MIN and upd <= t + 300:
@@ -543,10 +553,18 @@ def quests(snap: Snap, max_items: int = 6) -> Section:
         d["pretes_a_rendre"] = ready[:4]
     if doing:
         d["en_cours"] = doing[:max_items]
-    ab = [a for a in _l(snap.sub("abandon").get("list")) if isinstance(a, dict) and a.get("title")]
+    known = isinstance(snap.sub("abandon").get("list"), (list, dict))
+    ab_all = [a for a in _l(snap.sub("abandon").get("list")) if isinstance(a, dict) and a.get("title")]
+    ab = [a for a in ab_all if str(a.get("verdict") or "abandon") == "abandon"]
     if ab:
         d["a_abandonner"] = [f"{short(a.get('title'), 40)} : {short(a.get('why') or 'ne vaut plus le coup', 60)}"
                              for a in ab[:2]]
+    elif known:
+        d["abandon"] = "aucune quête à abandonner selon l'addon"
+    later = [a for a in ab_all if str(a.get("verdict") or "") == "later"]
+    if later:
+        d["en_passant_seulement"] = [f"{short(a.get('title'), 40)} : {short(a.get('why') or 'si tu passes à côté', 60)}"
+                                     for a in later[:2]]
     if _i(tr.get("totalMin")):
         d["tout_finir"] = "≈ " + dur_fr(_i(tr.get("totalMin")) * 60)
     if mx and count >= mx:
@@ -633,7 +651,7 @@ def route_plan(snap: Snap) -> Section:
         if p.get("label"):
             bits.append(short(p["label"], 80))
         if _i(p.get("left")):
-            bits.append(f"≈ {_i(p.get('left'))} min pour cette étape")
+            bits.append(f"≈ {_i(p.get('left'))} min pour finir le trajet")
         d["trajet_en_jeu"] = ", ".join(bits)
         if _i(p.get("minutes")):
             d["duree_trajet"] = "≈ " + dur_fr(_i(p.get("minutes")) * 60)
@@ -748,6 +766,8 @@ def _members(snap: Snap, with_state: bool) -> list[str]:
 def group(snap: Snap) -> Section:
     """Group members (labels, never names) + their state when fresh, common quests, missions."""
     d: dict[str, Any] = {}
+    if snap.s.get("inGroup") is False or (snap.s.get("groupSize") is not None and _i(snap.s.get("groupSize")) <= 1):
+        return Section("groupe", {"etat": "tu joues seul (au dernier /reload)"}, snap.age)
     g = snap.sub("group")
     g_age = snap.age
     if _n(g.get("updated")) and _n(g.get("updated")) > EPOCH_MIN:
@@ -799,17 +819,16 @@ def auction_house(snap: Snap) -> Section:
     d: dict[str, Any] = {}
     manque: list[str] = []
     scan_age = None
-    if _n(a.get("scanAge")) is not None:
-        scan_age = (_n(a.get("scanAge")) or 0.0) + (snap.age or 0.0)
     try:
         from treeaicoach.wow import auction  # noqa: PLC0415
 
+        scan_age = auction.scan_age(a, snap.age, snap.db, snap.now) if a else None
         deals = [d_ for d_ in _l(a.get("deals")) if isinstance(d_, dict)]
-        if deals and (scan_age is None or scan_age <= AH_MAX_AGE_S):
+        if deals and scan_age is not None and scan_age <= AH_MAX_AGE_S:
             d["affaires_sures"] = [short(auction._deal_text(x), 150) for x in deals[:3]]
-        elif deals:
-            manque.append("les affaires de l'HV viennent d'un scan de plus de 24 h, rescanne l'HV")
-        elif isinstance(a.get("none"), dict):
+        elif deals and scan_age is not None:
+            manque.append("les affaires de l'HV viennent d'un scan de plus de 24 h, refais un scan complet puis /reload")
+        elif not deals and isinstance(a.get("none"), dict):     # (deals without a known scan: the line below says it)
             why = [short(x, 80) for x in _l(a["none"].get("why")) if isinstance(x, str)]
             d["rien_de_sur"] = [auction.NONE_TEXT] + why[:3]
         sells = []
@@ -834,14 +853,14 @@ def auction_house(snap: Snap) -> Section:
     if scan_age is not None:
         d["scan_hv"] = age_fr(scan_age)
     elif a:
-        manque.append("pas encore de scan de l'HV, ouvre l'HV, clique « Scanner » puis fais /reload")
+        manque.append("pas encore de scan de l'HV, ouvre l'HV, clique « Scan complet » puis fais /reload")
     if not a:
-        manque.append("aucune donnée d'HV, ouvre l'HV en jeu, scanne puis fais /reload")
+        manque.append("aucune donnée d'HV, ouvre l'HV en jeu, fais un scan complet puis /reload")
     if a.get("neutral"):
         d["commission"] = "HV neutre : 15 %"
     if manque:
         d["manque"] = manque
-    return Section("hv", d, snap.age)
+    return Section("hv", d, snap.age, volatile=True)
 
 
 # ------------------------------------------------------------------ dungeons

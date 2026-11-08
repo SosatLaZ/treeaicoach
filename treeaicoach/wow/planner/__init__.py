@@ -52,6 +52,16 @@ def compute_and_write(inst: Any, seconds: float = 16.0, db: dict | None = None) 
         plan = routes.compute_plan(exp, learn, cl, seconds=seconds)
         if not plan or not plan.get("routes"):
             return {"ok": False, "plan": plan, "message": "Aucun trajet possible avec ces quêtes."}
+        # (4.0 QA) routes that are all « impossible » (no step) are no plan: say why, never write a useless file
+        usable = [r for r in plan["routes"] if isinstance(r, dict) and r.get("verdict") != "impossible"
+                  and r.get("steps")]
+        if not usable:
+            why = next((str(x) for r in plan["routes"] if isinstance(r, dict) for x in (r.get("reasons") or []) if x),
+                       "").strip().rstrip(".")
+            if len(why) > 1 and why[1].islower():
+                why = why[0].lower() + why[1:]
+            hint = " Installe Questie (positions des quêtes), puis /reload." if exp.get("src") == "log" else ""
+            return {"ok": False, "plan": plan, "message": "Aucun trajet possible" + (f" : {why}." if why else ".") + hint}
         ok, msg = writer.write_plan(inst.addons_dir, plan)
         return {"ok": ok, "message": msg, "plan": plan}
     except Exception as exc:

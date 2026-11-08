@@ -114,6 +114,8 @@ def write_plan(addons_dir: str | Path, plan: dict) -> tuple[bool, str]:
     try:
         base = Path(addons_dir)
         base.mkdir(parents=True, exist_ok=True)
+        for leftover in base.glob(f".{PLAN_ADDON}.old_*"):              # a swap whose clean-up failed earlier
+            shutil.rmtree(leftover, ignore_errors=True)
         dest = base / PLAN_ADDON
         stamp = f"{os.getpid()}_{int(time.time() * 1000)}"
         tmp = base / f".{PLAN_ADDON}.new_{stamp}"

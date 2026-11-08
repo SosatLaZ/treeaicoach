@@ -30,7 +30,7 @@ TreeAIDB = {
 				["class"] = "HUNTER", ["className"] = "Chasseur", ["level"] = 26,
 				["xp"] = 12000, ["xpMax"] = 25000, ["rested"] = 3000,
 				["zone"] = "Zone Test", ["subzone"] = "Camp Factice",
-				["money"] = 123456, ["groupSize"] = 1,
+				["money"] = 123456, ["inGroup"] = true, ["groupSize"] = 4,
 				["updated"] = 1762500000,
 				["session"] = { ["minutes"] = 42, ["xp"] = 12600, ["quests"] = 3, ["levels"] = 0, ["money"] = 5400, ["deaths"] = 1 },
 				["fight"] = { ["deaths"] = 2, ["lastDeath"] = { ["killer"] = "Sanglier Factice", ["level"] = 27, ["elite"] = true,
@@ -58,7 +58,7 @@ TreeAIDB = {
 					["easyNearby"] = { { ["id"] = 201, ["title"] = "Petite Course", ["dist"] = 80 } },
 				},
 				["missions"] = {
-					["v"] = 1, ["size"] = 4, ["noAddon"] = 0,
+					["v"] = 1, ["updated"] = 1762500000, ["size"] = 4, ["noAddon"] = 0,
 					["members"] = {
 						{ ["name"] = "Testeur", ["class"] = "Chasseur", ["level"] = 26 },
 						{ ["name"] = "Alpha", ["class"] = "Prêtre", ["level"] = 25 },

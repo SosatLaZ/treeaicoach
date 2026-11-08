@@ -45,31 +45,44 @@ def _lua(v: object, ind: int = 1) -> str:
 
 
 def _summary(n_quests: int = 20) -> dict:
-    log_list = [{"id": 1000 + i, "title": f"Quête {i}", "level": 26 + i % 3, "done": i % 4, "total": 8,
-                 "complete": i == 0} for i in range(n_quests)]
+    """A summary in the REAL addon shape (4.0, from a session_sim save): ``quests.list[].obj`` carries the progress
+    words; ``tracker.route[].done/total`` count OBJECTIVES; abandon entries carry the addon's ``verdict``; the group
+    blocks carry ``updated`` (written with the save while in a group)."""
+    log_list = [{"id": 1000 + i, "title": f"Quête {i}", "level": 26 + i % 3, "color": "jaune", "done": 0, "total": 1,
+                 "obj": [f"Objectif Test {i % 4}/8"], "zone": "Zone Test", "complete": i == 0} for i in range(n_quests)]
     return {
         "class": "HUNTER", "className": "Chasseur", "level": 28, "xp": 20000, "xpMax": 40000, "rested": 0,
         "zone": "Zone Test", "subzone": "Camp Factice", "money": 123456, "bagsFree": 6, "bagsTotal": 64,
-        "groupSize": 4, "updated": NOW - 120,
-        "quests": {"count": n_quests, "complete": 1, "list": log_list},
-        "tracker": {"route": [{"id": 1000 + i, "title": f"Quête {i}", "ready": i == 0, "done": i % 4, "total": 8,
-                               "dist": 100 + 10 * i, "zone": "Zone Test"} for i in range(n_quests)]
+        "inGroup": True, "groupSize": 4, "updated": NOW - 120,
+        "quests": {"count": n_quests, "complete": 1, "list": log_list, "updated": NOW - 120},
+        "tracker": {"route": [{"id": 1000 + i, "title": f"Quête {i}", "ready": i == 0, "done": 0, "total": 1,
+                               "dist": 100 + 10 * i, "zone": "Zone Test", "sec": 300, "tag": "Rapide",
+                               "why": "Vite faite (≈ 5 min)."} for i in range(n_quests)]
                     + [{"id": 9999, "title": "Quête Rendue Hier", "ready": True}]},
         "todo": {"now": {"kind": "quest", "text": "Rends « Quête 0 »", "why": "Tout est fait : il reste à la rendre.",
-                         "eta": 75}},
+                         "eta": 75}, "updated": NOW - 120},
         "compass": {"target": {"kind": "quest", "questID": 1000, "title": "Quête 0", "label": "Rendre « Quête 0 »",
                                "dist": 131, "distText": "120 m", "eta": "40 s", "zone": "Zone Test"}},
         "plan": {"v": 1, "src": "file", "made": NOW - 3600, "route": "xph", "title": "XP/h max", "step": 2,
-                 "steps": 40, "label": "Rendre « Quête 0 »", "minutes": 90, "left": 75, "verdict": "ok"},
-        "abandon": {"list": [{"title": "Quête 7", "why": "grise : presque plus d'XP"},
-                             {"title": "Quête Fantôme", "why": "pas dans le journal"}], "count": 2},
-        "group": {"v": 2, "size": 4, "members": [
-            {"name": "Testeur", "class": "Chasseur", "level": 28, "zone": "Zone Test", "me": True},
-            {"name": "Alpha", "class": "Prêtre", "level": 27, "zone": "Zone Test", "dead": True},
-            {"name": "Bravo", "class": "Guerrier", "level": 28, "zone": "Autre Zone", "afk": True},
-            {"name": "Charlie", "class": "Mage", "level": 26, "zone": "Zone Test", "bags": 0}]},
-        "missions": {"board": [{"id": 1000 + i, "title": f"Quête {i}", "holders": 4, "done": i % 4,
-                                "pct": 25 * (i % 4)} for i in range(10)], "next": "Rendre « Quête 0 » ensemble"},
+                 "steps": 40, "label": "Rendre « Quête 0 »", "kind": "turn", "quest": 1000, "minutes": 90, "left": 75,
+                 "verdict": "ok", "updated": NOW - 120},
+        "abandon": {"list": [{"title": "Quête 7", "verdict": "abandon", "why": "grise : presque plus d'XP"},
+                             {"title": "Quête 3", "verdict": "later", "why": "fais-la si tu passes à côté"},
+                             {"title": "Quête Fantôme", "verdict": "abandon", "why": "pas dans le journal"}],
+                    "count": 3, "updated": NOW - 120},
+        "group": {"v": 2, "updated": NOW - 120, "size": 4, "members": [
+            {"name": "Testeur", "class": "Chasseur", "level": 28, "zone": "Zone Test", "me": True, "ready": True,
+             "treeai": True},
+            {"name": "Alpha", "class": "Prêtre", "level": 27, "zone": "Zone Test", "dead": True, "ready": True,
+             "treeai": True},
+            {"name": "Bravo", "class": "Guerrier", "level": 28, "zone": "Autre Zone", "afk": True, "ready": False,
+             "treeai": True},
+            {"name": "Charlie", "class": "Mage", "level": 26, "zone": "Zone Test", "bags": 0, "ready": True,
+             "treeai": True}]},
+        "missions": {"v": 1, "updated": NOW - 120, "size": 4, "noAddon": 0,
+                     "board": [{"id": 1000 + i, "title": f"Quête {i}", "holders": 4, "done": i % 4,
+                                "pct": 25 * (i % 4)} for i in range(10)],
+                     "next": "Ensemble : « Quête 0 » \u2014 toi 6/8, Alpha 2/8"},
         "auction": {"updated": NOW - 120, "neutral": False, "scanAge": 600,
                     "deals": [{"name": f"Objet {i}", "id": 2000 + i, "kind": "flip", "count": 20, "buy": 2000,
                                "sell": 4000, "profit": 1700, "roi": 0.85, "conf": 0.8, "deposit": 150, "sold": 12.5,
@@ -79,7 +92,8 @@ def _summary(n_quests: int = 20) -> dict:
                     "realized": {"today": 1200, "week": 5000, "total": 9000,
                                  "top": [{"item": "Objet 1", "profit": 4000}]}},
         "dungeon": {"key": "mortemines", "name": "Les Mortemines", "why": "Tu es dedans.", "boss": "Rhahk'Zor",
-                    "next": "Sneed", "run": {"time": 900, "pulls": 12, "kills": 1, "wipes": 1, "deaths": 2, "xp": 9000}},
+                    "next": "Sneed", "updated": NOW - 120,
+                    "run": {"time": 900, "pulls": 12, "kills": 1, "wipes": 1, "deaths": 2, "xp": 9000}},
     }
 
 
@@ -469,11 +483,11 @@ def test_rows_are_updated_in_place(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         titles = [r.title.text() for r in sec.rows if not r.isHidden()]
         assert titles[:2] == ["Quête 0", "Quête 1"] and sec.rows[0].num.text() == "1"
         s = _summary()
-        s["tracker"]["route"][1]["done"] = 7                         # one quest progressed
+        s["quests"]["list"][1]["obj"] = ["Objectif Test 7/8"]        # one quest progressed (the log's own words)
         view.state = {"install": None, "live": _snap(summary=s), "rows": [], "mode": {}}
         view._render()
         assert sec.rows == rows_before                                # same widgets, updated in place
-        assert sec.rows[1].desc.text().startswith("7/8")
+        assert sec.rows[1].desc.text().startswith("Objectif Test 7/8")
         s["tracker"]["route"] = s["tracker"]["route"][:3]             # shorter list: extra rows hidden, kept
         view.state = {"install": None, "live": _snap(summary=s), "rows": [], "mode": {}}
         view._render()

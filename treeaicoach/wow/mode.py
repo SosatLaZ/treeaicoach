@@ -88,6 +88,7 @@ class WowMode:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.active = False
+        self._log_seen = False           # the combat log was active once this session
         self.wow_exe: str | None = None
         self.install: Any = None
         self.install_result: Any = None
@@ -311,13 +312,17 @@ class WowMode:
 
     # -------------------------------------------------------------- status
     def message(self) -> str | None:
-        """The engine's status line while the mode is on (None when off)."""
+        """The engine's status line while the mode is on (None when off). (4.0 QA) The combat log is optional
+        (the addon and the chat log carry what the page needs, and Forever may not write it): « tape /combatlog »
+        only when it was active earlier this session and stopped, and the option is on."""
         if not self.active:
             return None
         install = optional("install")
         if install is not None and self.install is not None:
             tone, _t = install.combat_log_status(self.install)
-            if tone != "ok":
+            if tone == "ok":
+                self._log_seen = True
+            elif self._log_seen and bool(getattr(self._cfg_fn(), "wow_combatlog", True)):
                 return MSG_NO_LOG
         return MSG_ACTIVE
 

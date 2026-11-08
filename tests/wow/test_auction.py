@@ -130,7 +130,7 @@ def test_reader():
     assert ctx["dernier_scan"] == "il y a 10 min" and ctx["marches_minces"] == ["Lame runique"]
     assert A.answer_lines(db)[0].startswith("À acheter — Lin")
     assert A.auction_context({}) == {} and A.auction_context(None) == {}
-    assert "Scanner" in A.answer_lines({})[0]
+    assert "« Scan complet »" in A.answer_lines({})[0]                # the 4.0 AH window's button
     assert A.money_text(12345) == "1 po 23 pa 45 pc" and A.money_text(0) == "0 pc"
 
 
