@@ -16,7 +16,7 @@ local TreeAI = _G.TreeAI or {}
 _G.TreeAI = TreeAI
 
 TreeAI.name = ADDON_NAME
-TreeAI.version = "4.0.5"
+TreeAI.version = "4.0.6"
 TreeAI.SCHEMA = 1
 TreeAI.PREFIX = "TREEAI"
 TreeAI.PRIO_INFO, TreeAI.PRIO_TIP, TreeAI.PRIO_URGENT = 1, 2, 3
@@ -1605,6 +1605,17 @@ function TreeAI:_ApplyProfileOnce()
     local fromV = tonumber(db.safeV) or 0
     db.safeV = self.SAFE_V
     if fromV < 2 then
+      -- tous les réglages enregistrés (compte + chaque perso en profil perso), pas seulement le perso connecté
+      local stores = { db.modules }
+      for _, c in pairs(type(db.chars) == "table" and db.chars or {}) do
+        if type(c) == "table" and type(c.moduleSettings) == "table" then stores[#stores + 1] = c.moduleSettings end
+      end
+      for n in pairs(self.SAFE_REMOVED or {}) do
+        for _, st in ipairs(stores) do
+          local e = type(st) == "table" and st[n]
+          if type(e) == "table" then e.enabled = false if e.replace ~= nil then e.replace = false end end
+        end
+      end
       for n in pairs(self.SAFE_REMOVED or {}) do
         local mod = self.modules[n]
         if mod and mod.db then

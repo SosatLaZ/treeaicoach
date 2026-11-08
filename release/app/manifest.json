@@ -1,25 +1,25 @@
 {
- "version": "4.0.5",
+ "version": "4.0.6",
  "exe": "TreeAICoach-app.exe",
- "sha256": "535d5e1730cd74cccee892bd3796ef716088405d7c12aed33a165f6ee81dc3d8",
+ "sha256": "6f3912a7f321a5365b1ae51025bd2c778771714c45e6a5110c9c12b316d4550d",
  "chunks": [
   {
-   "name": "4.0.5/part-01.zip",
-   "size": 88018741,
-   "sha256": "d4090255d0444d6d00f6852490caec9ead63b9a40149bd6356d01ac707bc10f0",
+   "name": "4.0.6/part-01.zip",
+   "size": 88018736,
+   "sha256": "78147282cc7a122a4a78dd795b07b88bc117023ee5aff7d2f4d307e857b8fab5",
    "files": 127
   },
   {
-   "name": "4.0.5/part-02.zip",
-   "size": 14002995,
-   "sha256": "d06b2d787ea1220dd89753fcc00f30f4e6d7a94f71c3c82dd0d7e05a1e8841ef",
+   "name": "4.0.6/part-02.zip",
+   "size": 14003139,
+   "sha256": "63cb707e611f37b68058851149f7abfa7a71ea4b7dce86bd8d1142071ef164e2",
    "files": 684
   }
  ],
- "total_size": 102021736,
+ "total_size": 102021875,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "TreeAI 4.0.5 : le suivi de qu\u00eates du jeu revient et reste cliquable (Suivi TreeAI coup\u00e9, le pilote ne touche plus \u00e0 ton suivi)."
+ "notes": "TreeAI 4.0.6 : Suivi TreeAI coup\u00e9 chez tous les persos (plus par-dessus le suivi de Questie)."
 }

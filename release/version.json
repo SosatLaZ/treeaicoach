@@ -1,6 +1,6 @@
 {
-  "version": "4.0.5",
+  "version": "4.0.6",
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334,
-  "notes": "TreeAI 4.0.5 : le suivi de quêtes du jeu revient et reste cliquable (Suivi TreeAI coupé, le pilote ne touche plus à ton suivi)."
+  "notes": "TreeAI 4.0.6 : Suivi TreeAI coupé chez tous les persos (plus par-dessus le suivi de Questie)."
 }

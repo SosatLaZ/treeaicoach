@@ -3,6 +3,10 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 4.0.6 · 8 novembre 2026
+
+- « Suivi TreeAI » coupé aussi chez chaque perso en profil perso (il pouvait rester par-dessus le suivi de Questie).
+
 ## 4.0.5 · 8 novembre 2026
 
 - **Ton suivi de quêtes du jeu revient et reste cliquable** : « Suivi TreeAI » est coupé (une fois chez tout le
