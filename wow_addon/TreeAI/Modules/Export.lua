@@ -597,20 +597,38 @@ local KIND_ORDER = { "kill", "obj", "item" }   -- default Questie order: creatur
 local LOGTYPE = { monster = "kill", item = "item", object = "obj", event = "explore", reputation = "other",
   log = "other", spell = "spell", player = "other" }
 
-local function cluster(spawns, map2)
-  -- spawns = { [areaId] = { {x, y}, ... } } → up to 3 clusters {map, x, y, sp, r}, biggest first
+-- (QUESTS 4.1) carte d'instance (donjon / raid : type de carte 4, ou zone de donjon de Questie) : un PNJ que Questie
+-- range DANS l'instance (données du serveur) ne doit pas placer la remise d'une quête du dehors au fond du Kraal
+-- (capture 4.0.5 : « Kraal de Tranchebauge » en titre d'un trajet aux Tarides / Mille pointes)
+local instCache = {}
+local function instanceMap(m)
+  m = tonumber(m)
+  if not m then return false end
+  local c = instCache[m]
+  if c == nil then
+    local i = try(C("C_Map", "GetMapInfo"), m)
+    local t = type(i) == "table" and tonumber(_ns(i.mapType)) or nil
+    c = (t == 4) or false
+    instCache[m] = c
+  end
+  return c
+end
+X.InstanceMap = instanceMap
+local function cluster(spawns, map2, dungeon)
+  -- spawns = { [areaId] = { {x, y}, ... } } → up to 3 clusters {map, x, y, sp, r, inst}, biggest first
   if type(spawns) ~= "table" then return nil end
   local cells = {}
   for area, pts in pairs(spawns) do
     if type(pts) == "table" then
       local m = map2(area)
+      local inst = (m and instanceMap(m)) or (dungeon and dungeon(area)) or false
       for i = 1, min(#pts, 200) do
         local p = pts[i]
         local x, y = type(p) == "table" and tonumber(p[1]), type(p) == "table" and tonumber(p[2])
         if m and x and y and x >= 0 then
           local k = m .. ":" .. floor(x / 6) .. ":" .. floor(y / 6)
           local c = cells[k]
-          if not c then c = { map = m, sx = 0, sy = 0, sp = 0, pts = {} }; cells[k] = c end
+          if not c then c = { map = m, sx = 0, sy = 0, sp = 0, pts = {}, inst = inst or nil }; cells[k] = c end
           c.sx, c.sy, c.sp = c.sx + x, c.sy + y, c.sp + 1
           c.pts[#c.pts + 1] = p
         end
@@ -622,21 +640,58 @@ local function cluster(spawns, map2)
     local cx, cy = c.sx / c.sp, c.sy / c.sp
     local rr = 0
     for _, p in ipairs(c.pts) do rr = max(rr, ((p[1] - cx) ^ 2 + (p[2] - cy) ^ 2) ^ 0.5) end
-    list[#list + 1] = { map = c.map, x = r1(cx), y = r1(cy), sp = c.sp, r = floor(rr * 25 + 30) }
+    list[#list + 1] = { map = c.map, x = r1(cx), y = r1(cy), sp = c.sp, r = floor(rr * 25 + 30), inst = c.inst }
   end
-  tsort(list, function(a, b) if a.sp ~= b.sp then return a.sp > b.sp end return a.x < b.x end)
+  tsort(list, function(a, b)
+    if a.sp ~= b.sp then return a.sp > b.sp end
+    if a.x ~= b.x then return a.x < b.x end
+    return a.map < b.map
+  end)
   return list
 end
+X.Cluster = cluster
 
-local function firstPos(db, kind, id, maps)
+-- (QUESTS 4.1) inside = la quête se fait dans une instance (quête de donjon) : sinon les amas d'instance sont écartés
+local function firstPos(db, kind, id, maps, inside)
   local getter = kind == "obj" and db.O or db.N
-  local cl = cluster(getter(id, "spawns"), db.map)
+  local cl = cluster(getter(id, "spawns"), db.map, db.dungeon)
   local best
   for _, c in ipairs(cl or {}) do
-    if maps and maps[c.map] then return c end
-    best = best or c
+    if inside or not c.inst then
+      if maps and maps[c.map] then return c end
+      best = best or c
+    end
   end
   return best
+end
+-- (QUESTS 4.1) nom d'un PNJ / objet pour l'affichage : celui de Questie, seulement s'il est traduit pour un client non
+-- anglais (table l10n de Questie quand on peut la lire ; « Rendre à Stonespire » sur un client français, 4.0.5) — sinon rien
+local function l10nTable()
+  local L = G("QuestieLoader")
+  local mods = type(L) == "table" and rawget(L, "_modules")
+  local l = type(mods) == "table" and rawget(mods, "l10n")
+  return type(l) == "table" and l or nil
+end
+function X.NpcName(db, id)
+  id = tonumber(id)
+  if not (db and id and id > 0) then return nil end
+  local nm = db.N(id, "name")
+  if type(nm) ~= "string" or nm == "" then return nil end
+  local loc = try(G("GetLocale"))
+  if loc and loc ~= "enUS" and loc ~= "enGB" then
+    local l = l10nTable()
+    local look = l and rawget(l, "npcNameLookup")
+    -- deux formes possibles : à plat ([id] = { nom, sous-titre }) ou par langue ([« frFR »][id]) ; une table d'une autre
+    -- forme (fonction à charger, vide) = on ne sait pas → le nom de Questie (qu'il traduit lui-même au chargement)
+    if type(look) == "table" and type(look[loc]) == "table" then look = look[loc] end
+    if type(look) == "table" and type(next(look)) == "number" then
+      local e = look[id]
+      local t = type(e) == "table" and e[1] or e
+      if type(t) == "string" and t ~= "" then return t end
+      return nil                                     -- traduction absente : on se tait plutôt que l'anglais
+    end
+  end
+  return nm
 end
 
 local function raceOK(db, mask)
@@ -681,6 +736,7 @@ local function questRecord(db, id, lq, st, maps, budget)
   local zi = rec.zone and try(C("C_Map", "GetMapInfo"), rec.zone)
   local mt = type(zi) == "table" and tonumber(zi.mapType) or nil
   if mt == 4 then rec.dg = 1 elseif mt == 5 then rec.raid = 1 end
+  local inside = (rec.dg == 1 or rec.raid == 1)
   local sf = tonumber(Q(id, "specialFlags")) or 0
   if floor(sf / 2) % 2 == 1 then rec.esc = 1 end
   if rec.flags and floor(rec.flags / 2) % 2 == 1 then rec.esc = 1 end
@@ -699,15 +755,17 @@ local function questRecord(db, id, lq, st, maps, budget)
   end
   local ex = Q(id, "exclusiveTo")
   if type(ex) == "table" and #ex > 0 then rec.excl = ex end
+  local nx = tonumber(Q(id, "nextQuestInChain"))            -- (QUESTS 4.1) suite de la chaîne (« ouvre la suite »)
+  if nx and nx > 0 then rec.nx = nx end
   -- starter / finisher
   if not lq then
     local sb = Q(id, "startedBy")
     if type(sb) == "table" then
       if type(sb[1]) == "table" and sb[1][1] then
-        local c = firstPos(db, "npc", sb[1][1], maps)
-        if c then rec.s = { map = c.map, x = c.x, y = c.y, k = "npc", id = sb[1][1] } end
+        local c = firstPos(db, "npc", sb[1][1], maps, inside)
+        if c then rec.s = { map = c.map, x = c.x, y = c.y, k = "npc", id = sb[1][1], name = X.NpcName(db, sb[1][1]) } end
       elseif type(sb[2]) == "table" and sb[2][1] then
-        local c = firstPos(db, "obj", sb[2][1], maps)
+        local c = firstPos(db, "obj", sb[2][1], maps, inside)
         if c then rec.s = { map = c.map, x = c.x, y = c.y, k = "obj", id = sb[2][1] } end
       elseif type(sb[3]) == "table" and sb[3][1] then
         rec.s = { k = "item", id = sb[3][1] }
@@ -717,10 +775,10 @@ local function questRecord(db, id, lq, st, maps, budget)
   local fb = Q(id, "finishedBy")
   if type(fb) == "table" then
     if type(fb[1]) == "table" and fb[1][1] then
-      local c = firstPos(db, "npc", fb[1][1], maps)
-      if c then rec.f = { map = c.map, x = c.x, y = c.y, k = "npc", id = fb[1][1] } end
+      local c = firstPos(db, "npc", fb[1][1], maps, inside)
+      if c then rec.f = { map = c.map, x = c.x, y = c.y, k = "npc", id = fb[1][1], name = X.NpcName(db, fb[1][1]) } end
     elseif type(fb[2]) == "table" and fb[2][1] then
-      local c = firstPos(db, "obj", fb[2][1], maps)
+      local c = firstPos(db, "obj", fb[2][1], maps, inside)
       if c then rec.f = { map = c.map, x = c.x, y = c.y, k = "obj", id = fb[2][1] } end
     end
   end
@@ -781,13 +839,17 @@ local function questRecord(db, id, lq, st, maps, budget)
       end
       local all = {}
       for _, s in ipairs(spawnsOf or {}) do
-        for _, c in ipairs(cluster((s[1] == "obj" and db.O or db.N)(s[2], "spawns"), db.map) or {}) do all[#all + 1] = c end
+        for _, c in ipairs(cluster((s[1] == "obj" and db.O or db.N)(s[2], "spawns"), db.map, db.dungeon) or {}) do
+          if inside or not c.inst then all[#all + 1] = c end
+        end
         budget()
       end
       tsort(all, function(a, b)
         local am, bm = maps[a.map] and 1 or 0, maps[b.map] and 1 or 0
         if am ~= bm then return am > bm end
-        return a.sp > b.sp
+        if a.sp ~= b.sp then return a.sp > b.sp end
+        if a.x ~= b.x then return a.x < b.x end
+        return a.y < b.y
       end)
       if all[1] then
         o.map, o.x, o.y, o.r, o.sp = all[1].map, all[1].x, all[1].y, all[1].r, all[1].sp
@@ -878,7 +940,8 @@ function X:Build(yieldFn)
       add(rec)
     end
     for qid, who in pairs(squadQ) do
-      if not log[qid] and not isDone(qid) then
+      -- (QUESTS 4.1) quête d'un ami : seulement si TU peux la prendre (race / classe ; faction comprise dans la race)
+      if not log[qid] and not isDone(qid) and raceOK(db, db.Q(qid, "requiredRaces")) and classOK(db.Q(qid, "requiredClasses")) then
         local rec = questRecord(db, qid, nil, "avail", maps, budget)
         if rec then rec.who = who; add(rec) end
       end
@@ -914,13 +977,21 @@ function X:Build(yieldFn)
       if not picked[id] and not log[id] then
         local zone = tonumber(db.Q(id, "zoneOrSort")) or 0
         local m = zone > 0 and db.map(zone)
-        if m and zones[m] then
+        -- (QUESTS 4.1) quête de donjon (zone = l'instance) : gardée si son donneur est dans ces zones (le cerveau des
+        -- quêtes la propose à un groupe de 4 qui veut des donjons) ; niveau proche seulement (peu de quêtes, peu de calcul)
+        local dgZone = zone > 0 and db.dungeon and db.dungeon(zone) and not (m and zones[m])
+        if dgZone then
+          local ql = tonumber(db.Q(id, "questLevel")) or 0
+          dgZone = ql >= lvl - 2 and ql <= lvl + 5
+        end
+        if (m and zones[m]) or dgZone then
           local rl, ql = tonumber(db.Q(id, "requiredLevel")) or 0, tonumber(db.Q(id, "questLevel")) or 0
           local sf = tonumber(db.Q(id, "specialFlags")) or 0
           if rl <= lvl + 2 and (ql <= 0 or ql >= lvl - 8) and sf % 2 == 0 and not isDone(id)
               and raceOK(db, db.Q(id, "requiredRaces")) and classOK(db.Q(id, "requiredClasses"))
               and (not db.doable or db.doable(id) ~= false) then
             local rec = questRecord(db, id, nil, "avail", maps, budget)
+            if rec and dgZone and not (rec.s and rec.s.map and zones[rec.s.map]) then rec = nil end
             if rec and (rec.pre == nil or (log[rec.pre[1]] ~= nil)) and (rec.preAny == nil or log[rec.preAny[1]]) then add(rec) end
           end
         end
@@ -930,6 +1001,16 @@ function X:Build(yieldFn)
     end
   else
     ok = false
+    -- (QUESTS 4.1) sans Questie : points de quête du jeu sur ta carte (C_QuestLog.GetQuestsOnMap) quand le point de passage
+    -- (GetNextWaypoint) manque
+    local poi = {}
+    local qm = C("C_QuestLog", "GetQuestsOnMap")
+    if qm and player.map then
+      for _, e in ipairs(try(qm, player.map) or {}) do
+        local q, px, py = type(e) == "table" and tonumber(_ns(e.questID)), type(e) == "table" and tonumber(_ns(e.x)), type(e) == "table" and tonumber(_ns(e.y))
+        if q and px and py then poi[q] = { map = player.map, x = r1(px * 100), y = r1(py * 100) } end
+      end
+    end
     for qid, lq in pairs(log) do       -- no Questie: just my log (titles, objectives, waypoints)
       local rec = { id = qid, t = lq.t, lv = lq.lv, rl = 0, xp = 0, st = "log", done = lq.done, elite = lq.elite or 0,
         grp = lq.grp, o = {}, dg = lq.dg, raid = lq.raid, pvp = lq.pvp, tag = lq.tag, failed = lq.failed }
@@ -940,15 +1021,17 @@ function X:Build(yieldFn)
       local wp = C("C_QuestLog", "GetNextWaypoint")
       local m, x, y
       if wp then m, x, y = try(wp, qid) end
-      if tonumber(m) and tonumber(x) then
-        local pt = { map = m, x = r1(x * 100), y = r1(y * 100) }
+      local pt
+      if tonumber(m) and tonumber(x) then pt = { map = m, x = r1(x * 100), y = r1(y * 100) } else pt = poi[qid] end
+      if pt then
         -- (QA-QUEST F10) le point du jeu d'une quête pas finie = la zone de l'objectif, pas le PNJ de remise : il va
         -- sur le 1er objectif pas fini ; seulement une quête finie y met sa remise (« Rendre » posé sur le camp, avant)
         if lq.done == 1 then
           rec.f = { map = pt.map, x = pt.x, y = pt.y, k = "npc", id = 0 }
         else
+          -- (QUESTS 4.1) tous les objectifs pas finis à ce point (la zone de la quête) : UN arrêt, pas 1 placé + 2 « sans lieu »
           for j, lo in ipairs(lq.obj) do
-            if not lo.fin and rec.o[j] then rec.o[j].map, rec.o[j].x, rec.o[j].y = pt.map, pt.x, pt.y break end
+            if not lo.fin and rec.o[j] then rec.o[j].map, rec.o[j].x, rec.o[j].y = pt.map, pt.x, pt.y end
           end
         end
       end

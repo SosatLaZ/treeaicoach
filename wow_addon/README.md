@@ -1073,6 +1073,39 @@ d'avant, courses retirées du trajet).
   (infobulle : titres et raisons, clic = page « Pilote auto ») ; QuestPins ne dessine plus leurs zones d'objectifs ; les
   deux se rafraîchissent sur `BRAIN_PARKED` ; une quête prête à rendre n'est jamais cachée. (3) pas encore.
 
+## Cerveau des quêtes : module `QuestBrain` (agent QUESTS, 4.1, `Modules/QuestBrain.lua`, **mode sûr**)
+
+Quatre modes, UN actif (par personnage), le trajet (ZonePlan → Planner.steps → Route) suit le mode actif :
+`turnin` « Rendre mes quêtes » (quêtes finies, toutes zones, ordre le plus rapide, vols / bateaux / foyer à n'importe quelle
+étape), `pickup` « Quêtes à prendre » (les meilleures prises, XP / min), `zone` « Tout faire ici » (défaut : le trajet de
+la zone de travail), `group` « Avec le groupe » (quêtes communes d'abord, d'un seul tenant).
+
+* `T.QuestBrain.Modes()` → `{ { id, label, short, key, binding, tip, count, active } }` dans l'ordre turnin, pickup, zone,
+  group ; `binding` = action de raccourci (`TREEAI_QB_TURNIN`, `TREEAI_QB_PICKUP`, `TREEAI_QB_ZONE`, `TREEAI_QB_GROUP`, à
+  déclarer par Binds.lua / Bindings.xml), `key` = la touche liée (`GetBindingKey`) ou nil, `count` = quêtes concernées.
+* `T.QuestBrain.SetMode(id)` → true / false (mode inconnu) ; `T.QuestBrain.Mode()` → id ; `T.QuestBrain.Cycle()` ;
+  message `QUEST_MODE_CHANGED` (id, ancien id) ; `T.QuestBrain.Label(id)`.
+* `T.QuestBrain.PickupList(n)` → `{ { questID, title, level, npc, map, x, y, dist (yd), eta (s jusqu'au donneur), xp,
+  why, score (XP / min), minutes } }` classées (2 chiffres significatifs, ordre précédent puis questID : stable).
+  Règles : jamais grise, jamais élite seul (à 2 seulement si « élites » coché), donjon seulement à 4 ET coché, jamais JcJ /
+  raid / donjon fait, race / classe / prérequis / exclusivité / niveau requis / écart de niveau (réglage du trajet).
+* `T.QuestBrain.TurnInList()` → `{ { questID, title, npc, map, x, y, eta, xp, zone } }` : dans l'ordre du trajet quand le
+  mode turnin est actif (eta = arrivée), sinon les plus proches d'abord.
+* « Suivant » : `T.QuestBrain.Skip()` (= `SkipStop()` = `NextStop()`) passe l'arrêt 1 (ses quêtes, pour la session, masquées
+  tout de suite, trajet refait sans elles, « Hors trajet : 1 passée (Suivant) ») → true si quelque chose a changé ;
+  `Unskip(q)` (nil = toutes), `Prev()` (reprend le dernier passé), `Skipped(q)`, `FirstStopQuests()` ; message `QUEST_SKIPPED`.
+* `T.QuestBrain.GroupList()`, `T.QuestBrain.PickupNote()` (ce qu'il manque sans Questie, en clair, ou nil),
+  `T.QuestBrain.HasQuestie()`.
+* Sans Questie : quêtes du journal aux points du jeu (`C_QuestLog.GetNextWaypoint`, `C_QuestLog.GetQuestsOnMap`) ; PNJ appris
+  quand tu leur parles (`GOSSIP_SHOW`, `QUEST_GREETING`, `QUEST_DETAIL`, `QUEST_PROGRESS`, `QUEST_COMPLETE` : position + nom
+  du jeu, `TreeAIDB.modules.QuestBrain.learned`, 600 au plus) → `T.QuestBrain.LearnedFinisher(q)`, `LearnedTitle(q)`,
+  `SyntheticRec(q)` (Planner, ZonePlan).
+* Contrat ZonePlan : `Z.BrainMode()`, `Z:StyleName()` (sans argument) = le libellé du mode quand ce n'est pas « zone »,
+  ligne `qb:mode` « Que faire : … ▾ » + `Z:ShowModeMenu()` dans la vue Trajet, `Z.StepsZoneLabel(steps)`,
+  `Z.IsInstance(m)` / `Z.OutdoorZone(m)` (jamais un nom d'instance comme zone du trajet ou titre de carte).
+* Rien dans le chat, aucune action protégée, aucun OnUpdate : calculs à la demande, mémorisés jusqu'au prochain évènement
+  de quête / groupe / export ou 60 yd de déplacement. Slash : `/tai rendre`, `/tai prendre`, `/tai cerveau <mode>`.
+
 ## Sons, fenêtres, placement vivant (agent UI2)
 
 **Sons** (`Core.lua`) : `TreeAI:Sound(kind[, {preview=true}])` → `true` ou `false, raison` (`off` sons coupés ·

@@ -78,6 +78,23 @@ R.FactionOK = factionOK
 
 -- Graphe des « hubs » (maîtres de vol connus + quais) : H[i][j] secondes, nxt (saut suivant), mode des arêtes.
 -- Calculé une fois par (faction, maîtres de vol connus) ; m ≈ 20–60 → Floyd–Warshall en ~O(m³).
+-- (QUESTS 4.1) nom d'un maître de vol / quai à l'écran : celui du jeu (carte des vols, en français) quand on l'a lu ; sinon
+-- celui de la table, sauf les quelques capitales que la table écrit en anglais (« Vol pour Thunder Bluff », capture 4.0.5)
+-- → le nom de leur carte dans le client
+local ENGLISH_NAME = { ["Thunder Bluff"] = true, ["Undercity"] = true, ["Stormwind"] = true, ["Ironforge"] = true,
+  ["Darnassus"] = true, ["Silvermoon"] = true, ["Booty Bay"] = true, ["Ratchet"] = true }
+R.taxiNames = {}
+function R.PlaceName(kind, id, r)
+  local n = kind == "taxi" and (R.taxiNames[id] or (R.char and type(R.char.taxiName) == "table" and R.char.taxiName[id])) or nil
+  if type(n) == "string" and n ~= "" then return n end
+  n = r and r[1]
+  if ENGLISH_NAME[n or ""] then
+    local i = try(C("C_Map", "GetMapInfo"), r[5])
+    local mn = type(i) == "table" and i.name or nil
+    if type(mn) == "string" and mn ~= "" and mn ~= n then return mn end
+  end
+  return n
+end
 local hubCache
 function R.BuildHubs(faction, known, o)
   local D = data()
@@ -89,12 +106,12 @@ function R.BuildHubs(faction, known, o)
   for _, id in ipairs(known or {}) do knownSet[tonumber(id) or -1] = true end
   for id, r in pairs(D.taxi or {}) do
     if knownSet[id] and factionOK(r[8], faction) then
-      pl[#pl + 1] = { kind = "taxi", id = id, name = r[1], c = r[2], n = r[3], w = r[4], map = r[5], x = r[6], y = r[7] }
+      pl[#pl + 1] = { kind = "taxi", id = id, name = R.PlaceName("taxi", id, r), c = r[2], n = r[3], w = r[4], map = r[5], x = r[6], y = r[7] }
     end
   end
   tsort(pl, function(a, b) return a.id < b.id end)
   for id, r in pairs(D.docks or {}) do
-    pl[#pl + 1] = { kind = "dock", id = id, name = r[1], c = r[2], n = r[3], w = r[4], map = r[5], x = r[6], y = r[7] }
+    pl[#pl + 1] = { kind = "dock", id = id, name = R.PlaceName("dock", id, r), c = r[2], n = r[3], w = r[4], map = r[5], x = r[6], y = r[7] }
   end
   tsort(pl, function(a, b) if a.kind ~= b.kind then return a.kind == "taxi" end return a.id < b.id end)
   for i, p in ipairs(pl) do idx[p.kind .. p.id] = i end
@@ -277,6 +294,7 @@ function R.KnownTaxi()
         if type(nd) == "table" and nd.nodeID and nd.isUndiscovered == false then
           set[nd.nodeID] = true
           if R.char then R.char.taxi[nd.nodeID] = true end
+          if type(nd.name) == "string" and nd.name ~= "" then R.taxiNames[nd.nodeID] = nd.name end
         end
       end
     end
@@ -503,6 +521,16 @@ local function call(fn, ...)
   if Cm.SPFCall then return Cm.SPFCall(A, fn, ...) end
   return try(A[fn], ...)
 end
+-- (QUESTS 4.1) signature d'une liste d'arrêts envoyée à SPF : on ne renvoie que ce qui a changé
+local function stopsSig(stops)
+  local t = {}
+  for i, st in ipairs(stops) do
+    if i > 24 then break end
+    t[#t + 1] = fmt("%s:%s:%s:%d:%d", tostring(st.kind), tostring(st.questID), tostring(st.map), floor((st.x or 0) * 1000), floor((st.y or 0) * 1000))
+  end
+  return tconcat(t, "|")
+end
+R.StopsSig = stopsSig
 local KIND = { pick = "pickup", turn = "turnin", obj = "objective", fly = "flightmaster", hs = "innkeeper",
   train = "trainer", vendor = "innkeeper", boat = "boat", zep = "zeppelin" }
 local TRANSPORT = { fly = true, boat = true, zep = true, hs = true }
@@ -561,7 +589,7 @@ function R:Follow()
   local stops = self:SPFStops()
   if #stops > 0 and spf() then
     if call("NavigateRoute", OWNER, stops) then
-      self.following, self._sentAt = true, now()
+      self.following, self._sentAt, self._sentSig = true, now(), stopsSig(stops)
       self:Say(fmt("Trajet envoyé à Shortest Path : %d arrêt%s, dans le Suivi Forever", #stops, #stops > 1 and "s" or ""))
       self:Render()
       return "spf"
@@ -579,13 +607,21 @@ function R:Follow()
   end
   return false
 end
+-- étape faite OU trajet refait (Planner : un nouvel ordre garde parfois le même n° d'étape — capture 4.0.5 : Suivi
+-- Forever guidait encore vers « Arikara » quand la carte disait « La revanche de Gann »)
 function R:OnPlanStep()
   if not self.following or self.char.paused then return end
   if inCombat() then self._resend = true return end
-  if self._sentAt and now() - self._sentAt < 2 then self._resend = true return end
+  if self._sentAt and now() - self._sentAt < 2 then
+    self._resend = true
+    T:After(2.1, function() if R._resend and not inCombat() then R._resend = false; R:OnPlanStep() end end)
+    return
+  end
   local stops = self:SPFStops()
-  if #stops == 0 then call("Cancel", OWNER); self.following = nil return end
-  if call("NavigateRoute", OWNER, stops) then self._sentAt = now() else self.following = nil end
+  if #stops == 0 then call("Cancel", OWNER); self.following, self._sentSig = nil, nil return end
+  local sig = stopsSig(stops)
+  if sig == self._sentSig then return end
+  if call("NavigateRoute", OWNER, stops) then self._sentAt, self._sentSig = now(), sig else self.following = nil end
 end
 function R:TogglePause()
   local ch = self.char
@@ -677,12 +713,16 @@ function R:StopsRaw(n)
   -- (QA-QUEST F1) trajet en jeu calculé sans foyer (un arrêt à moins de 5 min) : pas de foyer ici non plus
   local Zp = T.ZonePlan
   local noHs = Zp and Zp.noHearth and P.src ~= "file" and Zp.IsEnabled and Zp:IsEnabled()
+  -- (QUESTS 4.1) « Rendre mes quêtes » : la pierre de foyer peut servir à n'importe quelle étape (une fois) — rendre les
+  -- quêtes d'ici, PUIS foyer vers la capitale et vols vers les autres remises
+  local hsAny = Zp and Zp.hearthAny and P.src ~= "file" and Zp.IsEnabled and Zp:IsEnabled()
+  local hsUsed = false
   for i = cur, #steps do
     local s = steps[i]
     if not s._done and not s._other then
       local here = world(s.x and s or nil)
       if prev and here then
-        local o = first and not noHs and R.HearthReady() and { hearth = true, bind = R.BindPlace() } or nil
+        local o = (first or hsAny) and not hsUsed and not noHs and R.HearthReady() and { hearth = true, bind = R.BindPlace() } or nil
         local sec, legs
         if g then sec, legs = R.FastestWorld(g, prev, here, o) end
         if not sec or sec == huge then
@@ -700,6 +740,7 @@ function R:StopsRaw(n)
         end
         local run, trRun, lastTo = out.total, out.travel, prev
         for _, lg in ipairs(legs or {}) do
+          if lg.mode == "hs" then hsUsed = true end
           run, trRun = run + (lg.sec or 0), trRun + (lg.sec or 0)
           if lg.mode == "walk" then out.yd = out.yd + (lg.yd or 0)
           elseif lg.mode ~= prevKind then          -- a plan step already shows this transport
@@ -771,6 +812,12 @@ function R:CompassTarget(me)
   local lt = R.LegTarget(me)
   if lt then return lt end
   local label = P.StepLabel and P:StepLabel(s) or "Arrêt"
+  -- (QUESTS 4.1) l'arrêt entier (même texte que la carte et l'onglet) : « Ramasse « A » 0/6, « B » 0/6 »
+  local okS, st1 = pcall(R.Stops, R, 64)            -- (la liste de l'onglet, déjà mémorisée)
+  if okS and type(st1) == "table" and st1[1] and st1[1].step == s then
+    local okL, gl = pcall(R.StopLabel, P, st1, 1, R.Groups(st1))
+    if okL and type(gl) == "string" then label = gl end
+  end
   local key = "plan:" .. tostring(s.k) .. ":" .. tostring(s.q or "") .. ":" .. tostring(s.o or "")
   if not (s.map and s.x) then
     -- pas de lieu connu (sans Questie, pas de point du jeu) : l'arrêt 1 quand même, sans flèche (« Zone : … »), jamais
@@ -806,18 +853,53 @@ end
 -- (QA-QUEST F18) numéros d'arrêt partagés par l'onglet, la page Trajet et la carte du monde : des objectifs
 -- consécutifs du même coin (step.area, ZonePlan) = UN arrêt (« Arrêt 3/12 : Tue X + Ramasse Y »).
 -- → g = { [i] = numéro de l'arrêt de l'entrée st[i], n = nombre d'arrêts } (entrées 1..n, ou toutes)
+-- (QUESTS 4.1) et des prises / remises consécutives au même PNJ (≤ 25 yd) = UN arrêt (« Rendre X + Rendre Y »)
+local function samePlace(a, b)
+  local sa, sb = a and a.step, b and b.step
+  if not (sa and sb and sa.x and sb.x and sa.map == sb.map) then return false end
+  if not ((sa.k == "pick" or sa.k == "turn") and (sb.k == "pick" or sb.k == "turn")) then return false end
+  local d = Geo.Dist and Geo.Dist(sa.map, sa.x, sa.y, sb.map, sb.x, sb.y)
+  return d ~= nil and d <= 25
+end
 function R.Groups(st, n)
   local g, k, lastArea = { n = 0 }, 0, nil
   for i = 1, min(n or #st, #st) do
     local e = st[i]
     local a = e.step and e.step.area
-    if not (a and a == lastArea) then k = k + 1 end
+    if not ((a and a == lastArea) or (i > 1 and samePlace(st[i - 1], e))) then k = k + 1 end
     g[i], lastArea = k, a
   end
   g.n = k
   return g
 end
 
+-- (QUESTS 4.1) UN libellé par arrêt (onglet, carte, boussole) : les étapes de l'arrêt numéro grp[i] — même quête, même verbe :
+-- « Ramasse « Nitroglycérine » 0/6, « Pulpe de bois » 0/6, « Nitrate de sodium » 0/6 » ; sinon « Rendre « X » + Rendre « Y » »
+-- → libellé, index de la dernière entrée de l'arrêt
+function R.StopLabel(P, st, i, grp)
+  local e0 = st and st[i]
+  if not (P and e0 and e0.step) then return nil, i end
+  local items, last = {}, i
+  for j = i, #st do
+    local e = st[j]
+    if j > i and not (grp and grp[j] == grp[i] and e.step) then break end
+    local s = e.step
+    local lbl = P:StepLabel(s)
+    local lq = s.k == "obj" and s.q and P.log and P.log[s.q]
+    local o = lq and lq.obj and lq.obj[tonumber(s.o) or 0]
+    local prog = (o and (o.n or 0) > 0) and fmt(" %d/%d", o.have or 0, o.n) or ""
+    items[#items + 1] = { verb = lbl:match("^(.-) «"), name = lbl:match("(«.*»)$"), lbl = lbl, prog = prog, q = s.q }
+    last = j
+  end
+  if #items == 1 then return items[1].lbl .. items[1].prog, last end
+  local same = items[1].verb ~= nil
+  -- la forme courte (un verbe, des noms) seulement pour UNE quête ; plusieurs quêtes : « Rendre « A » + Rendre « B » »
+  for _, it in ipairs(items) do if it.verb ~= items[1].verb or not it.name or it.q ~= items[1].q then same = false end end
+  local parts = {}
+  for k, it in ipairs(items) do parts[k] = (same and it.name or it.lbl) .. it.prog end
+  if same then return items[1].verb .. " " .. tconcat(parts, ", "), last end
+  return tconcat(parts, " + "), last
+end
 -- ===================================================================== lignes (remplace la vue du Planner)
 local function progressTxt(P, s)
   if s.k ~= "obj" or not s.q then return "" end
@@ -907,7 +989,7 @@ function R:PlanLines(P)
   for i, e in ipairs(st) do
     local last = groups[#groups]
     if last and num[i] == num[i - 1] then last.more[#last.more + 1] = e
-    else groups[#groups + 1] = { e = e, more = {} } end
+    else groups[#groups + 1] = { e = e, more = {}, i = i } end
   end
   count = num.n
   local shown = 0
@@ -921,10 +1003,7 @@ function R:PlanLines(P)
     if e.kind == "quest" or e.step then
       local s = e.step
       txt = (s and P:StepLabel(s) or "?") .. (s and progressTxt(P, s) or "")
-      for _, o in ipairs(gr.more) do
-        local s2 = o.step
-        txt = txt .. " + " .. (s2 and P:StepLabel(s2) or "?") .. (s2 and progressTxt(P, s2) or "")
-      end
+      if #gr.more > 0 and gr.i then txt = R.StopLabel(P, st, gr.i, num) or txt end
       if s and s.out then txt = txt .. " (hors zone)" end
       click = function() P:Navigate(s) end
       if s and Zp and Zp.StopMenu and Zp:IsEnabled() then rclick = function() Zp:StopMenu(s) end end
