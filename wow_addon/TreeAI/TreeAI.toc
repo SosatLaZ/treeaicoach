@@ -66,3 +66,4 @@ Modules\Talents.lua
 Modules\Session.lua
 Modules\Errands.lua
 Modules\Edge.lua
+Modules\Edge2.lua

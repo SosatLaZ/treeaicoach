@@ -231,13 +231,21 @@ local function opts()
   }
 end
 
+-- (CHEAT2) quoi jeter d'abord : calculé par Edge2 (propriétaire), montré dans l'infobulle de « Sacs pleins »
+function M.DropTip()
+  local E2 = core() and core().Edge2
+  if not (E2 and E2.DropTip) then return nil end
+  local ok, tip = pcall(E2.DropTip)
+  return ok and tip or nil
+end
+
 function M.CheckBags()
   local free, total = M.ScanBags()
   local o = opts()
   if total > 0 and free == 0 then
-    suggest("inv_bags", "Sacs pleins ! Le butin est perdu : vends ou détruis du gris.", 3)
+    suggest("inv_bags", "Sacs pleins ! Le butin est perdu : vends ou détruis du gris.", 3, nil, M.DropTip())
   elseif total > 0 and free <= o.minFree then
-    suggest("inv_bags", ("Sacs presque pleins (%d place%s)."):format(free, free > 1 and "s" or ""), 2, 300)
+    suggest("inv_bags", ("Sacs presque pleins (%d place%s)."):format(free, free > 1 and "s" or ""), 2, 300, M.DropTip())
   elseif free > o.minFree + 1 then
     clear("inv_bags")
   end

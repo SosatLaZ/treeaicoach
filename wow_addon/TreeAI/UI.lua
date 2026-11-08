@@ -22,7 +22,7 @@ local IS_PRIMARY = { now = true, quests = true, group = true }
 local MORE = "__more"
 local SHORT = { now = "Maint.", quests = "Quêtes", group = "Groupe", [MORE] = "Plus", predict = "Prévis.",
   gear = "Équip.", prof = "Métiers", talents = "Talents", dungeon = "Donjon", pvp = "JcJ", hv = "HV", info = "Infos",
-  binds = "Touches" }
+  binds = "Touches", adv = "Avant." }
 local TAB_ICONS = {
   now = "Interface\\Icons\\Spell_Nature_TimeStop", quests = "Interface\\Icons\\INV_Misc_Note_02",
   group = "Interface\\Icons\\Ability_Hunter_Pet_Wolf", [MORE] = "Interface\\Buttons\\UI-PlusButton-Up",
@@ -30,7 +30,7 @@ local TAB_ICONS = {
   prof = "Interface\\Icons\\Trade_BlackSmithing", talents = "Interface\\Icons\\Ability_Marksmanship",
   gear = "Interface\\Icons\\INV_Chest_Chain", dungeon = "Interface\\Icons\\INV_Misc_Key_03",
   pvp = "Interface\\Icons\\Ability_DualWield", info = "Interface\\Icons\\INV_Misc_QuestionMark",
-  binds = "Interface\\Icons\\INV_Misc_Key_14",
+  binds = "Interface\\Icons\\INV_Misc_Key_14", adv = "Interface\\Icons\\Ability_Hunter_SniperShot",
 }
 TreeAI.PANEL_MIN_WIDTH = MIN_W
 local moreOpen = false

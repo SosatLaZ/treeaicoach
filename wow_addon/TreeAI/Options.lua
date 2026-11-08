@@ -566,7 +566,7 @@ end
 -- familles de modules (ordre logique : jouer → combat → groupe → sacs → réglages) ; inconnu → « Autres »
 local FAMILY = {
   { title = "Quêtes et trajet", mods = { "Quests", "Tracker", "Todo", "Planner", "Compass", "Radar", "MinimapPins",
-    "SafePath", "Highlight", "Predict", "Abandon", "Leveling", "Errands", "Edge" } },
+    "SafePath", "Highlight", "Predict", "Abandon", "Leveling", "Errands", "Edge", "Edge2" } },
   { title = "Combat et classe", mods = { "Hunter", "HunterPro", "Classes", "Fight", "Boost", "Talents", "Macros",
     "Binds", "Detect" } },
   { title = "Groupe", mods = { "Group", "Squad", "Missions", "Dungeon", "PvP" } },
