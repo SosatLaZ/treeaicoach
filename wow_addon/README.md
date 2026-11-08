@@ -131,6 +131,12 @@ Questie / Shortest Path Forever / TomTom, jamais en doublon, aucun cadre ni fonc
     infobulle « lâche <objet> (taux) ». Recalcul hors combat seulement (`:AutoRefresh()`, ≥ 1,5 s) ; en combat
     la progression est recopiée sans calcul. `/tai suivi [cadre|filtre X|tri X|police N|verrou|masquer id|
     montrer|reduire|cacher]`, `/tai itineraire` (→ SPF `NavigateRoute`, ≤ 64 étapes).
+* **En clair** (`T.Plain`, `Modules/Plain.lua`, agent SIMPLE) — toutes les consignes de quête en français de tous les
+  jours : `Task` (« Va tuer 6 Loups au nord (≈ 3 min) », « Rends « X » à Dughan »), `Tag` (UN mot : Rapide / Long /
+  À plusieurs / Prête à rendre / À retirer + une raison), `Why` (« C'est la quête la plus rapide autour de toi »),
+  `RouteName` (« Le plus rapide », « Tout finir ici », « Avec mes potes »), `IsPlain` (garde-fou : jamais d'XP/min,
+  de score, de λ ni de % hors progression dans l'interface principale). Les calculs (Tracker, Abandon, Planner) ne
+  changent pas ; `/tai abandon detail` garde les chiffres.
 * **À faire** (`T.Todo`, `Modules/Todo.lua`, agent TODO) — la page de suivi refaite : une fenêtre (`/tai todo`, ou la
   dernière ligne de l'onglet « Quêtes ») déplaçable / redimensionnable (`TreeAI:RegisterMovable` si présent) et l'onglet
   « Quêtes » en version compacte (le Tracker lui passe la main dans `Push`, retour `"todo"` ; Todo désactivé = affichage
@@ -415,6 +421,7 @@ TreeAIDB = {
     noise = { nowMinPrio = 1, perModule = 2, alertGap = 20, topicGap = 120 },
   },
   onboarded = "0.4.0",          -- assistant de démarrage déjà vu
+  flags = { commPause_donjon = true },  -- explications déjà dites une fois (pause synchro en donjon)
   modules = { ["Hunter"] = { enabled = true, ... }, ... },  -- réglages (compte)
   chars = {
     ["Nom-Royaume"] = {
@@ -430,6 +437,8 @@ TreeAIDB = {
         -- les modules ajoutent leurs propres sous-tables: summary.hunter = {...}, summary.quests = {...}
       },
       suggestions = { {id=, text=, prio=, time=, module=}, ... },  -- 40 dernières
+      dismissed = { [id] = {sk=, ts=} },   -- clic droit « masquer » : même sens caché 2 h (≤ 40, ANNOY)
+      recentAlerts = { [id] = {sk=, ts=} }, -- encadrés des 5 dernières min (pas rejoués au /reload)
       modules = { ["Hunter"] = { ... } },   -- données par perso des modules
       panel = { tab=, mini=, point=, x=, y=, manual= },   -- état du panneau pour ce perso
       profile = "char" | nil,               -- profil perso : settings + moduleSettings ci-dessous
@@ -446,7 +455,9 @@ TreeAIDB = {
 
 * Panneau compact déplaçable (sans icône minimap), **à onglets** : « Maintenant », « Quêtes »,
   « Groupe », « HV », « Infos ». Chaque onglet défile à la molette (barre fine à droite, « 3-10/14 »),
-  lignes colorées par prio, cliquables (`onClick`), infobulles, clic droit = retirer un conseil.
+  lignes colorées par prio, cliquables (`onClick`), infobulles, clic droit = masquer un conseil
+  (`TreeAI:DismissSuggestion(id)` : même sens — chiffres ignorés — et même sujet caché 2 h, gardé au /reload ;
+  un danger passe toujours ; `TreeAI:IsDismissed(id, text, danger)`).
   Barre d'outils : boussole (si `TreeAI.Compass`), macros, groupe, options, cadenas, mini, fermer.
   Mode **mini** (une seule ligne : le plus important, sinon l'étape de quête ; clic droit sur le titre
   ou `/tai mini`) — c'est le mode par défaut d'un nouveau personnage.
@@ -846,3 +857,22 @@ Blizzard_APIDocumentationGenerated (branche `forever`). Les modules qui utilisen
 Utilisé par : Boost (ligne rare / trésor, clic = y aller), Highlight (repli UnitIsRelatedToActiveQuest), Compass
 (`TargetNearest(kind)`), Predict (« · Réparation : PNJ — 230 m »), Radar (couche rares : vignettes).
 Commande : `/tai detect [rare|tresor|marchand|reparation|vol|auberge|courrier]`. Résumé IA : `summary.detect`.
+## Macros : installation robuste (agent MACROFIX, `Modules/Macros.lua`)
+Écriture **sur clic / commande seulement**, hors combat (refusée en combat, rien mis en file d'attente).
+- Index par nom : `GetMacroIndexByName` s'il existe, sinon parcours `GetMacroInfo` (compte 1..n, perso 121..) ;
+  `CreateMacro` est vérifié par son retour (index) — jamais de 2e création (les noms en double sont permis).
+- Limites : `Constants.MacroConsts` (Forever 120 compte / 30 perso), sinon globales (120 / 18). Plein → message
+  « perso x/y, compte x/y » + fenêtre copier-coller.
+- Sorts : nom depuis l'ID au chargement (`C_Spell.GetSpellInfo(id).name`), connu par l'ID **ou par le nom sans
+  rang** (`C_SpellBook.FindSpellBookSlotForSpell(nom)`, `C_Spell.GetSpellInfo(nom).spellID`, scan du grimoire) :
+  Forever a des rangs (`IsSpellBookItemLowRank`), l'ID du rang 1 peut ne pas être « connu ». Sort inconnu → la
+  macro (ou la clause `?`) n'est jamais émise. `M.ValidBody(texte)` : ≤ 255 octets, aucun jeton, aucune clause vide.
+- Bloqué par le jeu (`ADDON_ACTION_FORBIDDEN` sur `CreateMacro`/`EditMacro`, nouvelle entrée `diag.blocked`, ou
+  appel accepté sans rien créer) → **une seule** tentative, `db.blocked = {t, func}`, mode copier-coller
+  (`M:ShowCopy(list)` : nom + texte sélectionnables (Ctrl+C), icône, étapes, « Ouvrir les macros » =
+  `ShowMacroFrame` sur clic, « Réessayer la création auto »).
+- `M:Diagnose(show)` (bouton « Diagnostic macros », `/tai macros diag`) → `TreeAIDB.diag.macros = {t, ok, ko,
+  mode="auto"|"copier-coller", blocked, slots={account,accountMax,char,charMax}, api={create,byName,spellbook},
+  lastError, items={{n, ok, status=installed|user|later|full|blocked|ready|invalid, reason, detail, len}}}`.
+- Succès : une ligne « N macro(s) TAI prête(s) — clique pour les glisser sur ta barre » ; « Installer cette
+  macro » la met directement sur le curseur (`PickupMacro`). `/tai macros copier` ouvre la fenêtre à la main.

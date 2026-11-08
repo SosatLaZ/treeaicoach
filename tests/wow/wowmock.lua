@@ -69,6 +69,7 @@ function M.Reset()
   M.merchantOpen = false
   M.ah = { open = false, list = {}, owned = {}, bids = {}, cancels = {}, queries = {}, mail = {} }
   M.hardware, M.hwCalls = false, 0
+  M.macroFail, M.macroBlockedCalls = nil, 0   -- "forbidden" | "nilret" (see CreateMacro)
   M.talentGroup, M.numTalentGroups = 1, 2
   M.locale = "frFR"
   M.ammoSlot = 0
@@ -906,7 +907,11 @@ function M.Install(flavor)
     if type(s) == "number" then return M.spells[s], s end
     if type(s) == "string" then
       local base = s:gsub("%(.-%)", ""):gsub("%s+$", "")
-      for id, sp in pairs(M.spells) do if sp.name == base then return sp, id end end
+      local hit, hitId
+      for id, sp in pairs(M.spells) do
+        if sp.name == base and (not hit or (sp.known and not hit.known)) then hit, hitId = sp, id end
+      end
+      if hit then return hit, hitId end
     end
   end
   G.GetSpellInfo = function(s)
@@ -1183,8 +1188,21 @@ function M.Install(flavor)
   G.GetMacroIndexByName = function(name) local _, i = macroAt(name) return i or 0 end
   G.GetMacroIcons = function(t) t = t or {} t[#t + 1] = 134400 return t end
   G.GetMacroItemIcons = G.GetMacroIcons
+  -- failure modes seen in the real client (WowMock.macroFail): "forbidden" = the call is ignored and
+  -- ADDON_ACTION_FORBIDDEN fires (no Lua error, returns nothing); "nilret" = ignored silently.
+  local function macroFail(fn)
+    if M.macroFail == "forbidden" then
+      M.macroBlockedCalls = (M.macroBlockedCalls or 0) + 1
+      M.FireEvent("ADDON_ACTION_FORBIDDEN", "TreeAI", fn .. "()")
+      return true
+    elseif M.macroFail == "nilret" then
+      M.macroBlockedCalls = (M.macroBlockedCalls or 0) + 1
+      return true
+    end
+  end
   G.CreateMacro = function(name, icon, body, perChar)
     if protected("CreateMacro") then error("Interface action failed because of an AddOn", 2) end
+    if macroFail("CreateMacro") then return nil end
     checkBody("CreateMacro", name, body)
     local list = macroList(perChar)
     local cap = perChar and G.MAX_CHARACTER_MACROS or G.MAX_ACCOUNT_MACROS
@@ -1194,6 +1212,7 @@ function M.Install(flavor)
   end
   G.EditMacro = function(idx, name, icon, body)
     if protected("EditMacro") then error("Interface action failed because of an AddOn", 2) end
+    if macroFail("EditMacro") then return nil end
     local m, i = macroAt(idx)
     if not m then return 0 end
     checkBody("EditMacro", name or m.name, body or m.body)
@@ -1717,6 +1736,16 @@ function M.ApplyForever(G)
   SB.GetSpellBookSkillLineInfo = SB.GetSpellBookSkillLineInfo or function() return nil end
   SB.GetSpellBookItemName = SB.GetSpellBookItemName or function() return nil end
   SB.HasPetSpells = SB.HasPetSpells or function() return nil end
+  -- spellIdentifier = id or name (rank-agnostic): a slot only for a LEARNED spell
+  SB.FindSpellBookSlotForSpell = SB.FindSpellBookSlotForSpell or function(s)
+    if type(s) == "number" then local sp = M.spells[s] if sp and sp.known then return s, 0 end return nil end
+    if type(s) == "string" then
+      for id, sp in pairs(M.spells) do if sp.known and sp.name == s then return id, 0 end end
+    end
+  end
+  G.Constants = G.Constants or {}
+  G.Constants.MacroConsts = { MAX_ACCOUNT_MACROS = 120, MAX_CHARACTER_MACROS = 30 }
+  G.MAX_CHARACTER_MACROS = 30   -- the mock's own cap follows Forever (the client has no such global)
   G.Enum = G.Enum or {}
   G.Enum.SpellBookSpellBank = G.Enum.SpellBookSpellBank or { Player = 0, Pet = 1 }
   G.C_ActionBar = G.C_ActionBar or {}

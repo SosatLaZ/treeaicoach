@@ -155,8 +155,9 @@ return function(M, ctx)
     if l.questID == 1003 then clickLine = l end
   end
   check(ready and ready.prio == 2, "« prête à rendre » highlighted")
-  check(ready and ready.text:find("suite « Aide au fermier »"), "chain: rendre ici → suite: " .. tostring(ready and ready.text))
-  check(clickLine and clickLine.text:find("%[=+%-*%]") and clickLine.text:find("2 000 XP"), "objective bar + XP: " .. tostring(clickLine and clickLine.text))
+  check(ready and table.concat(ready.tooltip, "\n"):find("Aide au fermier"), "chain (tooltip): rendre ici → suite: " .. tostring(ready and ready.text))
+  check(clickLine and table.concat(clickLine.tooltip, "\n"):find("%[=+%-*%]") and table.concat(clickLine.tooltip, "\n"):find("2 000 XP"),
+    "objective bar + XP in the tooltip: " .. tostring(clickLine and clickLine.text))
   clickLine.onClick()
   check(C.Current().questID == 1003, "click a line = compass target")
   -- easy nearby + pick up on the way

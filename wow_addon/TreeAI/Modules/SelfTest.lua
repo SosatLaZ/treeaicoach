@@ -170,8 +170,17 @@ end)
 add("macros", "Macros : écriture permise maintenant ?", function()
   if not (G.CreateMacro and G.EditMacro) then return "ko", "CreateMacro absent" end
   local g, c = try(G.GetNumMacros)
-  local count = ("%s/%s générales, %s/%s perso"):format(tostring(g or "?"), tostring(G.MAX_ACCOUNT_MACROS or 120),
-    tostring(c or "?"), tostring(G.MAX_CHARACTER_MACROS or 18))
+  local Mc = T.modules and T.modules.Macros
+  local maxG, maxC = G.MAX_ACCOUNT_MACROS or 120, G.MAX_CHARACTER_MACROS or 18
+  if Mc and Mc.Limits then maxG, maxC = Mc.Limits() end   -- Forever : Constants.MacroConsts (120 / 30)
+  local count = ("%s/%s générales, %s/%s perso"):format(tostring(g or "?"), tostring(maxG), tostring(c or "?"),
+    tostring(maxC))
+  -- dernier diagnostic du module Macros (TreeAIDB.diag.macros) : mode copier-coller si le jeu bloque
+  local dm = diag() and diag().macros
+  if type(dm) == "table" then
+    count = count .. (" · TAI %s OK / %s à voir"):format(tostring(dm.ok or 0), tostring(dm.ko or 0))
+    if dm.mode == "copier-coller" then return "warn", "le jeu a bloqué la création : mode copier-coller · " .. count end
+  end
   if T:InCombat() or try(G.InCombatLockdown) then return "warn", "non : en combat · " .. count end
   if T.InUserAction and not T:InUserAction() then return "warn", "seulement pendant un clic / une commande · " .. count end
   local d = diag()

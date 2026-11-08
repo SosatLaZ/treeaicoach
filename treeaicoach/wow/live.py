@@ -678,14 +678,14 @@ def abandon_advice(s: dict, group_size: int = 1) -> list[dict]:
         for a in own[:10]:
             if isinstance(a, dict):
                 out.append({"title": str(a.get("title") or a.get("q") or "?"),
-                            "why": str(a.get("why") or a.get("reason") or "pas rentable")})
+                            "why": str(a.get("why") or a.get("reason") or "elle ne vaut plus le coup")})
             elif a:
                 out.append({"title": str(a), "why": "conseillé par l'addon"})
         return out
     lvl = _i(s.get("level"))
     qs = [q for q in _list(_d(s.get("quests")).get("list")) if isinstance(q, dict)]
     route = {_i(r.get("id")): r for r in _list(_d(s.get("tracker")).get("route")) if isinstance(r, dict)}
-    xpms = sorted(_i(r.get("xpm")) for r in route.values() if _i(r.get("xpm")) > 0)
+    xpms = sorted(_i(r.get("xpm")) for r in route.values() if _i(r.get("xpm")) > 0)  # computation only, never shown
     med = xpms[len(xpms) // 2] if xpms else 0
     gsize = max(1, _i(s.get("groupSize"), group_size) or group_size)
     out = []
@@ -695,56 +695,82 @@ def abandon_advice(s: dict, group_size: int = 1) -> list[dict]:
         ql, title = _i(q.get("level")), str(q.get("title") or "?")
         why = ""
         if q.get("grey") or (lvl and ql and ql <= lvl - _grey_gap(lvl)):
-            why = f"grise (niveau {ql} contre {lvl}) : presque pas d'XP, le temps vaut mieux ailleurs"
+            why = "trop facile maintenant, presque pas d'XP"
         elif q.get("hard") and gsize < 3:
-            why = "élite / de groupe et tu es seul : risque de mourir pour peu d'XP"
+            why = "trop dure seul : tu risques de mourir pour pas grand-chose"
         elif lvl and ql >= lvl + 4:
-            why = f"trop dure pour l'instant (+{ql - lvl} niveaux) : reviens plus tard"
+            why = "trop dure pour l'instant : reviens plus tard"
         else:
             r = route.get(_i(q.get("id")))
             if r and med and 0 < _i(r.get("xpm")) < med * 0.25:
-                why = f"trop longue : {_i(r.get('xpm'))} XP/min contre {med} en moyenne pour tes autres quêtes"
+                why = "beaucoup trop longue pour ce qu'elle rapporte"
         if why:
             out.append({"title": title, "why": why})
     return out[:10]
 
 
+#: The 5 status words of a quest (same as the addon, Modules/Plain.lua) — never XP/min, score or %.
+QUEST_TAGS = ("Prête à rendre", "À retirer", "À plusieurs", "Rapide", "Long")
+#: Words that must never reach the main quest UI (robustness check, see tests).
+JARGON = ("xp/min", "xp/h", "/min", "score", "λ", "/100", "coût", "rendement", "coefficient")
+
+
+def is_plain(text: str) -> bool:
+    """True when a main-UI quest line speaks plain French: no XP/min, score, λ, cost… and « % » only for a
+    progress (« niveau 27 : 62 % »)."""
+    low = str(text or "").lower()
+    if any(w in low for w in JARGON):
+        return False
+    if "%" in low and not any(k in low for k in ("niv", "progress", "fini")):
+        return False
+    return True
+
+
+def quest_tag(r: dict, drop: bool = False) -> tuple[str, str]:
+    """(one status word, one short reason) for a tracker route entry; the addon's own tag wins."""
+    tag, why = str(r.get("tag") or ""), str(r.get("why") or "")
+    if tag in QUEST_TAGS:
+        return tag, why
+    sec = _i(r.get("sec"))
+    mins = f"≈ {max(1, round(sec / 60))} min" if sec else ""
+    if r.get("ready"):
+        return "Prête à rendre", "Tu as tout fait : il ne reste qu'à la rendre."
+    if drop:
+        return "À retirer", "Elle ne vaut plus le coup."
+    if r.get("hard"):
+        return "À plusieurs", "Trop dure seul : fais-la avec tes potes."
+    if sec and sec <= 600:
+        return "Rapide", f"Vite faite ({mins})."
+    return "Long", f"Elle prend du temps ({mins})." if mins else "Elle prend du temps."
+
+
+
 def quests_view(snap: dict) -> dict:
-    """« Quêtes » tab: tracker head, plan route (planner module or the addon's plan), abandon advice."""
+    """« Quêtes » tab in plain French: « À faire maintenant » (one sentence + why), the quests best first with ONE
+    status word each (Rapide / Long / À plusieurs / Prête à rendre / À retirer), the plan, the quests to drop."""
     s = _d(snap.get("summary"))
     tr, qs = _d(s.get("tracker")), _d(s.get("quests"))
+    drop = {a["title"] for a in abandon_advice(s)}
     route = []
     for r in _list(tr.get("route"))[:8]:
         if not isinstance(r, dict):
             continue
-        bits = []
-        if r.get("ready"):
-            bits.append("prête à rendre")
-        elif _i(r.get("total")):
-            bits.append(f"{_i(r.get('done'))}/{_i(r.get('total'))}")
-        if r.get("zone"):
-            bits.append(str(r["zone"]))
-        if _i(r.get("dist")):
-            bits.append(f"{_i(r['dist'])} m")
-        if _i(r.get("xpm")):
-            bits.append(f"{_i(r['xpm'])} XP/min")
-        if _i(r.get("mates")):
-            bits.append(f"avec {_i(r['mates'])} ami(s)")
-        route.append((str(r.get("title") or "?"), " · ".join(bits)))
+        title = str(r.get("title") or "?")
+        tag, why = quest_tag(r, title in drop)
+        route.append((title, tag, why))
     head = []
     if qs.get("count") is not None:
-        head.append(f"{_i(qs.get('count'))} quêtes, {_i(qs.get('complete'))} à rendre")
+        n, ready = _i(qs.get("count")), _i(qs.get("complete"))
+        head.append(f"{n} quête{'s' if n > 1 else ''}" + (f", {ready} prête{'s' if ready > 1 else ''} à rendre" if ready else ""))
     if tr.get("totalMin"):
         head.append(f"tout finir ≈ {duration_text(_i(tr['totalMin']) * 60)}")
-    if qs.get("questsToLevel"):
-        head.append(f"~{_i(qs['questsToLevel'])} quêtes avant le niveau")
     tips = []
     if isinstance(tr.get("pickup"), dict):
         p = tr["pickup"]
         tips.append(f"En chemin : prends « {p.get('title')} »" + (f" chez {p['giver']}" if p.get("giver") else ""))
     for e in _list(tr.get("easyNearby"))[:3]:
         if isinstance(e, dict):
-            tips.append(f"Facile à côté : « {e.get('title')} » ({_i(e.get('dist'))} m)")
+            tips.append(f"Facile, juste à côté : « {e.get('title')} »")
     if qs.get("next"):
         tips.append(str(qs["next"]))
     plan: list[str] = []
@@ -755,7 +781,16 @@ def quests_view(snap: dict) -> dict:
         plan = [str(x) for x in res if x][:8]
     if not plan and tr.get("plan"):
         plan = ["Un plan TreeAI est actif en jeu (en tête du suivi de quêtes)."]
-    return {"head": " · ".join(head), "route": route, "tips": tips, "plan": plan,
+    td = _d(s.get("todo"))
+    now = _d(td.get("now"))
+    now_text, now_why = str(now.get("text") or ""), str(now.get("why") or "")
+    if not now_text:
+        first = next((r for r in _list(tr.get("route")) if isinstance(r, dict)), None)
+        if first:
+            now_text = str(first.get("task") or (f"Rends « {first.get('title')} »" if first.get("ready")
+                                                 else f"Fais « {first.get('title')} »"))
+            now_why = "C'est la quête la plus rapide autour de toi."
+    return {"head": " · ".join(head), "now": now_text, "why": now_why, "route": route, "tips": tips, "plan": plan,
             "abandon": abandon_advice(s), "empty": not (tr or qs)}
 
 

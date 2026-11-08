@@ -159,7 +159,7 @@ function M.OnDetectRares(list)
           stats.rares, stats.lastRare = stats.rares + 1, e.name
           if e.guid then markGUID = e.guid end
           M:Suggest("rare", txt .. " (clic : y aller)", 2,
-            { ttl = 90, cooldown = 5, sound = opt("rareSound") and true or false, onClick = click })
+            { ttl = 90, cooldown = 5, sound = opt("rareSound") and true or false, soundKind = "rare", onClick = click })
         end
       end
     end

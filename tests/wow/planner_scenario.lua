@@ -75,9 +75,9 @@ return function(M, ctx)
   check(math.abs(F2 - 2.6 * 1.21 / 4) < 1e-6 and l2 == "risque", "chasseur 26 vs élite 24 = 0.79 (seuil 0.8)")
   local cx = { class = "HUNTER", level = 26, group = 4 }
   local g, why = E.Galere({ lv = 25, o = { { k = "item", n = 10, have = 0, p = 0.25, ml = 25 } } }, cx)
-  check(g >= 45 and why and why:find("160 corps à 25 %% pour 4"), "galère : 160 corps à 25 % pour 4 (" .. tostring(why) .. ")")
+  check(g >= 45 and why and why:find("l'objet tombe très rarement", 1, true), "galère : objet très rare, en mots simples (" .. tostring(why) .. ")")
   local v, vwhy = E.QuestVerdict({ lv = 31, o = {} }, { class = "HUNTER", level = 26, group = 1 })
-  check(v == "impossible" and vwhy:find("rouge"), "quête rouge solo = pas faisable")
+  check(v == "impossible" and vwhy:find("trop haute"), "quête rouge solo = pas faisable")
   check(E.QuestVerdict({ lv = 25, o = {} }, { class = "HUNTER", level = 26, group = 4, raid = true }) == "impossible", "raid = pas faisable")
   local rv = E.RouteVerdict({ steps = { {} }, minutes = 200, xph = 30000 }, { class = "HUNTER", level = 26, session = 60 }, { nonGrey = 9 })
   check(rv == "long", "trop long > temps de session")
@@ -177,7 +177,7 @@ return function(M, ctx)
   local lines = P:Lines()
   local card
   for _, l in ipairs(lines) do if l.id == "plan:step" then card = l end end
-  check(card and not card.text:find("▶") and card.text:find(" m ") and tostring(card.tooltip):find("min"), "carte d'étape : " .. tostring(card and card.text))
+  check(card and not card.text:find("▶") and card.text:find("(≈ ", 1, true) and not card.text:find(" m ") and tostring(card.tooltip):find("min"), "carte d'étape : " .. tostring(card and card.text))
   local sugg = false
   for _, e in ipairs(TreeAI:GetSuggestions()) do if tostring(e.id):find("Planner:step") then sugg = true end end
   check(type(TreeAI.SetTabLines) == "function" or sugg, "repli Suggest quand SetTabLines est absent")
@@ -200,7 +200,9 @@ return function(M, ctx)
   M.Advance(3, 0.1)
   check(P.src == "file" and P.route.id == "xph" and P.cursor == 1, "plan fichier : route xph, étape 1")
   local head = P:Lines()[1].text
-  check(head:find("XP/h max") and head:find("28 500") and head:find("On va galérer : Taux de drop 20 %%"), "en-tête : " .. head)
+  check(head:find("Le plus rapide", 1, true) and head:find("≈ 1 h 14", 1, true) and head:find("On va galérer", 1, true)
+    and not head:find("XP/h", 1, true) and not head:find("%", 1, true), "en-tête : " .. head)
+  check(tostring(P:Lines()[1].tooltip):find("Taux de drop 20 %", 1, true), "raison au survol seulement")
   local rl = 0
   for _, l in ipairs(P:Lines()) do if l.text:find("^\226\151[\143\139] %d%.") then rl = rl + 1 end end
   check(rl == 3, "sélecteur : 3 routes")

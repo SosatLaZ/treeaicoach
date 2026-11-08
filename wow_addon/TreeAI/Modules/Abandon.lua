@@ -178,67 +178,69 @@ function A.Judge(e, ref, ctx)
   end
   if e.color == "gris" then
     s = s - 10
-    neg[#neg + 1] = { w = 30, t = fmt("grise (tu as %d niveaux de plus)", e.d) }
+    neg[#neg + 1] = { w = 30, t = fmt("grise (tu as %d niveaux de plus)", e.d), p = "trop facile maintenant" }
   end
   if e.xpTurn < e.xp then
     s = s - 5
-    neg[#neg + 1] = { w = 8, t = fmt("elle perdra %d XP si tu montes de niveau avant de la rendre", e.xp - e.xpTurn) }
+    neg[#neg + 1] = { w = 8, t = fmt("elle perdra %d XP si tu montes de niveau avant de la rendre", e.xp - e.xpTurn), p = "elle rapportera moins bientôt" }
   end
   if not q.complete then
     if e.hard then
       s = s - 20
-      neg[#neg + 1] = { w = 25, t = (#e.diffWhy > 0 and table.concat(e.diffWhy, ", ") or "trop dure") .. " : pas faisable seul" }
+      neg[#neg + 1] = { w = 25, t = (#e.diffWhy > 0 and table.concat(e.diffWhy, ", ") or "trop dure") .. " : pas faisable seul", p = "trop dure seul" }
     elseif #e.diffWhy > 0 then
       s = s - 8
-      neg[#neg + 1] = { w = 12, t = table.concat(e.diffWhy, ", ") .. " : ça va galérer" }
+      neg[#neg + 1] = { w = 12, t = table.concat(e.diffWhy, ", ") .. " : ça va galérer", p = "un peu dure" }
     end
-    if q.escort then s = s - 5 neg[#neg + 1] = { w = 6, t = "escorte (peut échouer, à refaire)" } end
+    if q.escort then s = s - 5 neg[#neg + 1] = { w = 6, t = "escorte (peut échouer, à refaire)", p = "escorte qui peut rater" } end
     if (tonumber(q.ratio) or 0) >= 0.5 then
       s = s + 5
-      pos[#pos + 1] = { w = 5, t = fmt("déjà faite à %d %%", r0(q.ratio * 100)) }
+      pos[#pos + 1] = { w = 5, t = fmt("déjà faite à %d %%", r0(q.ratio * 100)), p = "presque finie" }
     end
   end
   if q.breadcrumbUseless then
     s = s - 40
-    neg[#neg + 1] = { w = 40, t = "relais inutile (la quête où elle mène est déjà prise ou faite)" }
+    neg[#neg + 1] = { w = 40, t = "relais inutile (la quête où elle mène est déjà prise ou faite)", p = "elle ne sert plus à rien" }
   end
   local ch = q.chain
   if type(ch) == "table" and (ch.n or 0) > 0 then
     s = s + min(25, 8 + 5 * ch.n)
     pos[#pos + 1] = { w = 20, t = fmt("elle ouvre une suite (« %s »%s%s)", cutT(ch.title, 30),
-      ch.n > 1 and fmt(", %d quêtes", ch.n) or "", (ch.xp or 0) > 0 and fmt(", ~%d XP", ch.xp) or "") }
+      ch.n > 1 and fmt(", %d quêtes", ch.n) or "", (ch.xp or 0) > 0 and fmt(", ~%d XP", ch.xp) or ""), p = "elle ouvre une suite" }
   end
   local rw = q.reward
   if type(rw) == "table" then
     if (rw.pct or 0) >= 1 then
       s = s + min(20, rw.pct)
-      pos[#pos + 1] = { w = 15, t = fmt("récompense : %s (+%d %% %s)", rw.item or "objet", r0(rw.pct), rw.slot or "") :gsub("%s+%)", ")") }
+      pos[#pos + 1] = { w = 15, t = (fmt("récompense : %s (+%d %% %s)", rw.item or "objet", r0(rw.pct), rw.slot or ""):gsub("%s+%)", ")")),
+        p = "bonne récompense" }
     elseif (rw.sell or 0) >= 5000 then
       s = s + min(5, floor(rw.sell / 5000))
-      pos[#pos + 1] = { w = 3, t = fmt("récompense revendable %d pa", floor(rw.sell / 100)) }
+      pos[#pos + 1] = { w = 3, t = fmt("récompense revendable %d pa", floor(rw.sell / 100)), p = "récompense qui se revend bien" }
     end
   end
   local mates = q.mates or {}
   if #mates > 0 then
     s = s + min(25, 12 * #mates)
-    pos[#pos + 1] = { w = 30, t = names(mates) .. (#mates > 1 and " l'ont aussi : à faire ensemble" or " l'a aussi : à faire ensemble") }
+    pos[#pos + 1] = { w = 30, t = names(mates) .. (#mates > 1 and " l'ont aussi : à faire ensemble" or " l'a aussi : à faire ensemble"),
+      p = names(mates) .. (#mates > 1 and " l'ont aussi" or " l'a aussi") }
   end
   if not q.complete then
     if q.isolated then
       s = s - 8
-      neg[#neg + 1] = { w = 9, t = fmt("seule quête en %s, loin de tes autres", q.zone or "?") }
+      neg[#neg + 1] = { w = 9, t = fmt("seule quête en %s, loin de tes autres", q.zone or "?"), p = "toute seule, loin de tes autres quêtes" }
     elseif q.far then
       s = s - 5
-      neg[#neg + 1] = { w = 7, t = "loin d'ici" }
+      neg[#neg + 1] = { w = 7, t = "loin d'ici", p = "trop loin" }
     end
     if ctx.leavingZone and q.zone == ctx.leavingZone then
       s = s - 6
-      neg[#neg + 1] = { w = 8, t = fmt("tu quittes %s (zone trop facile)", q.zone) }
+      neg[#neg + 1] = { w = 8, t = fmt("tu quittes %s (zone trop facile)", q.zone), p = "tu quittes cette zone" }
     end
   end
   if q.complete then
     s = max(s, 90)
-    pos[#pos + 1] = { w = 50, t = "prête à rendre" }
+    pos[#pos + 1] = { w = 50, t = "prête à rendre", p = "prête à rendre" }
   end
   s = clamp(r0(s), 0, 100)
   -- seuils : un journal presque plein rend plus sévère
@@ -256,6 +258,7 @@ function A.Judge(e, ref, ctx)
   e.score, e.verdict, e.ratio, e.ref, e.neg, e.pos = s, verdict, ratio, ref, neg, pos
   e.text = A.Explain(e)
   e.short = A.Short(e)
+  e.plain = A.Plain(e)
   return e
 end
 
@@ -311,6 +314,29 @@ function A.Short(e)
   local cmp = (e.ref and e.ref > 0) and fmt("%d XP/min (autres %d)", r0(e.xpm), r0(e.ref)) or fmt("%d XP/min", r0(e.xpm))
   why[#why + 1] = cmp
   return table.concat(why, ", ")
+end
+
+-- version EN CLAIR (agent SIMPLE) : 1–2 raisons en mots, sans aucun nombre
+-- (« trop facile maintenant, presque pas d'XP »). Les calculs ne changent pas.
+function A.Plain(e)
+  local list = {}
+  local src = e.verdict == "keep" and e.pos or e.neg
+  for _, r in ipairs(src or {}) do if r.p then list[#list + 1] = r.p end if #list >= 2 then break end end
+  if e.verdict ~= "keep" and #list < 2 and not e.q.complete and e.ref and e.ref > 0 and (e.ratio or 1) < 0.6 then
+    list[#list + 1] = (e.ratio < 0.25 or e.color == "gris") and "presque pas d'XP" or "peu d'XP pour le temps"
+  end
+  if #list == 0 then
+    if e.verdict == "keep" then list[1] = (e.ratio or 1) >= 1.2 and "elle rapporte bien" or "elle vaut le coup"
+    elseif e.verdict == "later" then list[1] = e.hard and "attends tes potes" or "fais-la si tu passes à côté"
+    else list[1] = "elle ne vaut plus le coup" end
+  end
+  return table.concat(list, ", ", 1, min(2, #list))
+end
+
+-- ligne d'interface : « Retire « X » : trop facile maintenant, presque pas d'XP »
+local PLAIN_HEAD = { abandon = "Retire", later = "Plus tard", keep = "Garde" }
+function A.PlainLine(e, n)
+  return fmt("%s « %s » : %s", PLAIN_HEAD[e.verdict] or "Garde", cutT(e.q.title, n or 28), e.plain or A.Plain(e))
 end
 
 local function median(t)
@@ -530,12 +556,12 @@ end
 ---------------------------------------------------------------------------------------------------
 -- Affichage
 ---------------------------------------------------------------------------------------------------
-local VERB = { abandon = "À abandonner", later = "Plus tard", keep = "Garder" }
+local VERB = { abandon = "À retirer", later = "Plus tard", keep = "Garder" }
 M.VERB = VERB
 
 function M.Instructions(e)
   if not e then return end
-  M:Print(e.text)
+  M:Print(A.PlainLine(e, 60) .. ".")
   M:Print(A.HowTo(e.q.title))
 end
 
@@ -548,17 +574,18 @@ function M.Lines()
   local nAb = 0
   for _, e in ipairs(free) do if e.verdict == "abandon" then nAb = nAb + 1 end end
   if #free == 0 then return out end
-  out[1] = { text = fmt("— À retirer (journal %d/%d%s) —", ctx.logCount or 0, ctx.logMax or A.LOG_MAX,
-    full <= 2 and ", presque plein" or ""), prio = full <= 2 and 2 or 1,
-    tooltip = "Clic sur une quête = pourquoi + comment la retirer. /tai abandon = le détail de tout le journal." }
+  out[1] = { text = full <= 2 and fmt("— À retirer (journal presque plein : %d/%d) —", ctx.logCount or 0, ctx.logMax or A.LOG_MAX)
+    or "— À retirer —", prio = full <= 2 and 2 or 1,
+    tooltip = "Des quêtes qui ne valent plus le coup. Clic sur une quête = comment la retirer." }
   local cap = tonumber(M.db and M.db.maxLines) or 6
   for _, e in ipairs(free) do
     if #out > cap then break end
     if e.verdict == "abandon" or (M.db and M.db.showLater ~= false) then
       out[#out + 1] = {
-        text = fmt("%s : « %s » — %s", VERB[e.verdict], cutT(e.q.title, 28), e.short),
+        text = A.PlainLine(e),
         prio = e.verdict == "abandon" and 2 or 1,
-        tooltip = e.text .. "\n" .. A.HowTo(e.q.title) .. fmt("\nScore %d/100.", e.score),
+        tooltip = A.PlainLine(e, 60) .. "." .. fmt("\n≈ %d min pour %d XP.", max(1, r0(e.sec / 60)), e.xpTurn or e.xp or 0)
+          .. "\n" .. A.HowTo(e.q.title),
         onClick = function() M.Instructions(e) end,
         data = { questID = e.q.id, verdict = e.verdict, score = e.score },
       }
@@ -615,7 +642,8 @@ function M.Report(arg)
     return
   end
   M:Print(fmt("Journal %d/%d. Verdict pour chaque quête (du pire au meilleur) :", ctx.logCount or 0, ctx.logMax or A.LOG_MAX))
-  for _, e in ipairs(ev) do M:Print(fmt("[%s, %d/100] %s", VERB[e.verdict], e.score, e.text)) end
+  local detail = tostring(arg or ""):find("detail") ~= nil
+  for _, e in ipairs(ev) do M:Print(detail and fmt("[%s, %d/100] %s", VERB[e.verdict], e.score, e.text) or (A.PlainLine(e, 40) .. ".")) end
   if #free > 0 then
     local t = {}
     for i, e in ipairs(free) do if i <= 5 then t[#t + 1] = fmt("%d. %s", i, cutT(e.q.title, 26)) end end
@@ -631,7 +659,7 @@ function M:WriteSummary()
   local out = {}
   for i, e in ipairs(A.FreeList(M.evals or {})) do
     if i > 5 then break end
-    out[#out + 1] = { title = e.q.title, verdict = e.verdict, score = e.score, why = e.short }
+    out[#out + 1] = { title = e.q.title, verdict = e.verdict, score = e.score, why = e.plain, detail = e.short }
   end
   s.abandon = { list = out, count = #out, log = (M.ctx or {}).logCount, logMax = (M.ctx or {}).logMax }
 end

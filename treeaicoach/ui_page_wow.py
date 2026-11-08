@@ -108,7 +108,8 @@ def summary_rows(db: dict) -> list[tuple[str, str]]:
 
 
 def plan_rows(plan: Any) -> list[tuple[str, str]]:
-    """(title, description) per route of a TreeAIPlan dict: XP/h, minutes, verdict and reasons. Never raises."""
+    """(title, description) per route of a TreeAIPlan dict, in plain words: the route's name (« Le plus rapide »,
+    « Tout finir ici », « Avec mes potes »…) + its time; the description says only what is wrong, if anything."""
     rows: list[tuple[str, str]] = []
     try:
         verdicts = {"ok": "OK", "galere": "On va galérer", "long": "Trop long", "impossible": "Pas faisable",
@@ -118,11 +119,14 @@ def plan_rows(plan: Any) -> list[tuple[str, str]]:
         for r in routes:
             if not isinstance(r, dict):
                 continue
-            head = (f"{r.get('title', '?')} — {int(r.get('xph') or 0):,} XP/h · ~{int(r.get('minutes') or 0)} min"
-                    f" · {verdicts.get(str(r.get('verdict')), '?')}").replace(",", " ")
+            from treeaicoach.wow.planner import routes as R  # noqa: PLC0415
+
+            head = f"{R.route_name(r)} (≈ {max(1, int(r.get('minutes') or 0))} min)"
             rs = r.get("reasons")
             rs = list(rs.values()) if isinstance(rs, dict) else (rs or [])
-            rows.append((head, " ; ".join(str(x) for x in rs[:3])))
+            v = str(r.get("verdict") or "ok")
+            desc = "" if v == "ok" else verdicts.get(v, "?") + (f" : {rs[0]}" if rs else "")
+            rows.append((head, desc))
     except Exception:
         log.debug("plan rows failed", exc_info=True)
     return rows
@@ -397,11 +401,13 @@ def tab_blocks(key: str, live_snap: dict) -> list[dict]:
         block("En direct", rows + _pairs(v["rows"]), v["live_text"])
     elif key == "quetes":
         v = live.quests_view(snap)
-        block("Suivi des quêtes", [_row(t, d) for t, d in v["route"]], v["head"])
-        block("Plan TreeAI", [_row(f"Étape {i}", p) for i, p in enumerate(v["plan"], 1)])
-        block("Astuces", [_row(t) for t in v["tips"]])
-        block("Quêtes à abandonner", [_row(a["title"], a["why"]) for a in v["abandon"]],
-              "Pourquoi : expliqué sous chaque quête. L'abandon reste manuel (journal de quêtes → Abandonner).")
+        if v["now"]:
+            block("À faire maintenant", [_row(v["now"], f"Pourquoi ? {v['why']}" if v["why"] else "")])
+        block("Tes quêtes (les meilleures en haut)", [_row(f"{t} — {tag}", why) for t, tag, why in v["route"]], v["head"])
+        block("Ton trajet", [_row(("Maintenant" if i == 1 else "Ensuite"), p) for i, p in enumerate(v["plan"], 1)])
+        block("En passant", [_row(t) for t in v["tips"]])
+        block("À retirer", [_row(f"Retire « {a['title']} »", a["why"]) for a in v["abandon"]],
+              "Tu la retires toi-même : journal de quêtes (L) → Abandonner.")
     elif key == "groupe":
         v = live.group_view(snap)
         if v["members"]:
@@ -568,7 +574,7 @@ class WowPage:
         self._char_group: Any = None
         self._char_sig: Any = None
         direct.addWidget(self.char_section)
-        plan = W.Section("Plan de quêtes", "Les meilleurs trajets pour tes quêtes (XP/h, durée, verdict). "
+        plan = W.Section("Plan de quêtes", "Trois trajets au choix : le plus rapide, tout finir ici, avec tes potes. "
                                             "Choisis-en un en jeu : /tai plan.")
         self._plan_holder = QtWidgets.QWidget()
         self._plan_layout = QtWidgets.QVBoxLayout(self._plan_holder)
@@ -726,6 +732,9 @@ class WowPage:
         install = optional("install")
         if install is None:
             return
+        if getattr(self, "_installing", False):
+            return
+        self._installing = True                        # the 3 s refresh must not re-enable the button meanwhile
         self.install_btn.setEnabled(False)
         path = str(getattr(self.app.cfg, "wow_path", "") or "")
 
@@ -733,11 +742,13 @@ class WowPage:
             return install.install_addon(install.find_wow(path), force=True)
 
         def done(res: Any) -> None:
+            self._installing = False
             self.install_btn.setEnabled(True)
             self.app.show_toast(str(getattr(res, "message", "")), "info" if getattr(res, "ok", False) else "error")
             self.refresh()
 
         def failed(_exc: BaseException) -> None:
+            self._installing = False
             self.install_btn.setEnabled(True)
 
         self.app.run_job(job, done, failed, name="TreeAI-wow-install")
@@ -823,7 +834,7 @@ class WowPage:
             row.set_desc(text)
         self.pick_btn.setVisible(bool(st) and not ov["found"])
         self.install_btn.setText(ov["button"])
-        self.install_btn.setEnabled(ov["can_install"])
+        self.install_btn.setEnabled(ov["can_install"] and not getattr(self, "_installing", False))
         self.install_hint.setText("Puis /reload en jeu." if ov["found"] else "Indique d'abord le dossier de WoW.")
         mode = st.get("mode") or {}
         snap = st.get("live") or {}
@@ -844,10 +855,20 @@ class WowPage:
         self.char_section.setVisible(not self._tab_sig.get("direct", "[]").startswith("[{"))
 
     def _render_char(self, rows: list, age: Any) -> None:
-        sig = (tuple(rows), _age_text(age))
+        # ANNOY: the age (« il y a 3 min ») changes every minute; only that label is updated then, the card
+        # is rebuilt only when the character data changes (it used to blink once a minute)
+        age_txt = _age_text(age)
+        sig = (tuple(rows), bool(age_txt))
         if sig == self._char_sig:
+            lbl = getattr(self, "_age_lbl", None)
+            if lbl is not None:
+                try:
+                    lbl.setText(age_txt)
+                except Exception:
+                    log.debug("age label update failed", exc_info=True)
             return
         self._char_sig = sig
+        self._age_lbl = None
         W = self.W
         if self._char_group is not None:
             self._char_group.setParent(None)
@@ -867,8 +888,9 @@ class WowPage:
                 grp.add(W.Row(str(title)))
         if not rows:
             grp.add(W.Row("Rien pour l'instant", "Installe l'addon, connecte-toi puis tape /reload."))
-        elif sig[1]:
-            grp.add(W.Row("Dernière sauvegarde", None, W.label(sig[1], "secondary")))
+        elif age_txt:
+            self._age_lbl = W.label(age_txt, "secondary")
+            grp.add(W.Row("Dernière sauvegarde", None, self._age_lbl))
         self._char_layout.addWidget(grp)
         self._char_group = grp
 

@@ -65,7 +65,7 @@ return function(M, ctx)
   check(m.now and m.now.kind == "quest" and m.now.questID == TR.items[1].q.id, "Maintenant = best card of the cost model")
   check(m.now.why ~= "" and m.now.title ~= "", "now: title + why: " .. tostring(m.now.why))
   check(m.board and m.board[1].pct == 50 and m.board.next:find("courrier"), "group mini-board (Missions)")
-  check(m.session and m.session.xph == 12300 and TD.SessionText(m.session):find("12,3k XP/h"), "session: " .. TD.SessionText(m.session))
+  check(m.session and m.session.xph == 12300 and TD.SessionText(m.session):find("niveau 28 dans ≈ ", 1, true) and not TD.SessionText(m.session):find("XP/h"), "session: " .. TD.SessionText(m.session))
   local byId = {}
   for _, c in ipairs(m.cards) do byId[c.id] = c end
   local lea = byId[BEARS].mates[1]
@@ -77,7 +77,7 @@ return function(M, ctx)
   check(TR.Push() == "todo", "Tracker.Push hands the tab to Todo")
   local L = tabs.quests
   local planActive = T.Planner and T.Planner.GetActiveSteps and T.Planner:GetActiveSteps(1) ~= nil
-  check(L and L[1].now and (L[1].pin or planActive) and L[1].text:find("Maintenant"),
+  check(L and L[1].now and (L[1].pin or planActive) and L[1].text:find("À faire maintenant", 1, true) and T.Plain.IsPlain(L[1].text),
     "tab: Maintenant first, pinned to the Now tab (unless the planner already pins its step)")
   local raptor, courses, open
   for _, l in ipairs(L) do
@@ -85,7 +85,12 @@ return function(M, ctx)
     if l.text:find("Courses") then courses = l end
     if l.text:find("fenêtre « À faire »") then open = l end
   end
-  check(raptor and raptor.text:find("%+12 %%") and raptor.text:find("Plus tard"), "tab line: reward % + verdict: " .. tostring(raptor and raptor.text))
+  check(raptor and raptor.text:find("À plusieurs", 1, true) and not raptor.text:find("%", 1, true)
+    and table.concat(raptor.tooltip, "\n"):find("mieux que ton équipement", 1, true), "tab line: name + one status word: " .. tostring(raptor and raptor.text))
+  for _, l in ipairs(L) do
+    local okp, w = T.Plain.IsPlain(l.text)
+    check(okp, "plain todo line (no " .. tostring(w) .. "): " .. tostring(l.text))
+  end
   check(courses and courses.prio == 2, "tab: errands line")
   check(open and open.onClick, "tab: open-window button")
 
@@ -106,7 +111,7 @@ return function(M, ctx)
   check(kinds.section >= 4 and kinds.now == 1 and kinds.zone == 2 and kinds.card == 4 and kinds.errand == 2 and (kinds.board or 0) >= 1
     and kinds.mates == 1, ("layout: sections %s now %s zone %s card %s errand %s board %s mates %s"):format(tostring(kinds.section), tostring(kinds.now), tostring(kinds.zone), tostring(kinds.card), tostring(kinds.errand), tostring(kinds.board), tostring(kinds.mates)))
   check((kinds.obj or 0) >= 3, "layout: objective bars for unfolded cards")
-  check(f.session:IsShown() and f.session.fs:GetText():find("XP/h"), "session bar")
+  check(f.session:IsShown() and f.session.fs:GetText():find("Niv 27", 1, true) and not f.session.fs:GetText():find("XP/h"), "session bar")
 
   -- plan steps
   T.Planner = { GetActiveSteps = function() return { { k = "obj", q = BEARS, map = 1424, x = 0.5, y = 0.3, label = "Tuer 5 Ours", eta = 6 },

@@ -143,15 +143,40 @@ def addon_version(addon_dir: Path | None) -> str:
     return toc_fields(addon_dir).get("version", "")
 
 
+def _skipped(rel: str) -> bool:
+    """Files the install never copies (same rule as ``shutil.ignore_patterns`` in :func:`install_addon`):
+    counting them made ``needs_update`` true forever (« Mettre à jour l'addon » after every update)."""
+    parts = rel.split("/")
+    return any(x.startswith(".") or x == "__pycache__" for x in parts) or rel.endswith(".pyc")
+
+
+_SIG_CACHE: dict[str, tuple[tuple, dict]] = {}
+
+
 def _tree_signature(d: Path) -> dict[str, tuple[int, str]]:
-    """{relative path: (size, sha1)} of the addon files (to know whether an update is needed)."""
+    """{relative path: (size, sha1)} of the addon files (to know whether an update is needed).
+
+    The WoW page asks every 3 s: files are only re-read and hashed when their (size, mtime) list changed."""
     import hashlib  # noqa: PLC0415
 
-    sig: dict[str, tuple[int, str]] = {}
+    files = []
     for p in sorted(d.rglob("*")):
-        if p.is_file():
-            data = p.read_bytes()
-            sig[p.relative_to(d).as_posix()] = (len(data), hashlib.sha1(data).hexdigest())   # noqa: S324
+        rel = p.relative_to(d).as_posix()
+        if not _skipped(rel) and p.is_file():
+            st = p.stat()
+            files.append((rel, st.st_size, st.st_mtime_ns, p))
+    stamp = tuple((rel, size, mt) for rel, size, mt, _ in files)
+    key = str(d)
+    hit = _SIG_CACHE.get(key)
+    if hit is not None and hit[0] == stamp:
+        return hit[1]
+    sig: dict[str, tuple[int, str]] = {}
+    for rel, _size, _mt, p in files:
+        data = p.read_bytes()
+        sig[rel] = (len(data), hashlib.sha1(data).hexdigest())   # noqa: S324
+    if len(_SIG_CACHE) > 8:
+        _SIG_CACHE.clear()
+    _SIG_CACHE[key] = (stamp, sig)
     return sig
 
 
