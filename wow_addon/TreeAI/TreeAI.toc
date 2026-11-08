@@ -74,3 +74,4 @@ Modules\Bugs.lua
 Modules\Edge2.lua
 Modules\Finder.lua
 Modules\Quick.lua
+Modules\QuickFight.lua

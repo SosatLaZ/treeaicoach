@@ -33,14 +33,21 @@ return function(M, ctx)
   ctx.check(pa and pa.prio == 3 and pa.text:find("Garde%-élite"), "patrol: " .. tostring(pa and pa.text))
   for i = 1, 4 do M.units["nameplate" .. i] = nil end
 
-  -- 30. pre-pull check
+  -- 30. pre-pull check (QUICK2: when the « Raccourcis » bar shows its ready indicator, it owns the info)
   M.player.health = 400
+  local QF = TreeAI.QuickFight
+  if QF and QF:OwnsPrePull() then
+    F:CheckPrePull()
+    ctx.check(not sug("Fight:prepull"), "prepull: silent while the Raccourcis bar shows « Pas prêt »")
+    QF.db.ready = false
+  end
   F:CheckPrePull()
   local pp = sug("Fight:prepull")
   ctx.check(pp and pp.text:find("PV 40 %%"), "prepull: " .. tostring(pp and pp.text))
   M.player.health = 1000
   F:CheckPrePull()
   ctx.check(not sug("Fight:prepull"), "prepull cleared at full HP")
+  if QF then QF.db.ready = true end
 
   -- 28. fleeing mob (emote) + memory
   ctx.fire("CHAT_MSG_MONSTER_EMOTE", "%s tente de s'enfuir !", "Ours-test")
