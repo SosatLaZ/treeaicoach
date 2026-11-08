@@ -50,7 +50,7 @@ return function(M, ctx)
   -- partial scan: the press does nothing
   A.job = { rows = 84, total = 100, t0 = GetTime(), kind = "replicate" }
   M.Hw(T.AuctionNext)
-  ctx.check(#M.ah.bids == nb and ctx.out("Rafale en pause : scan en cours %(84 %%%)"), "partial scan: paused")
+  ctx.check(#M.ah.bids == nb and A.Said("En pause : scan en cours %(84 %%%)"), "partial scan: paused")
   A.job = nil
 
   -- reserve reached: no purchase
@@ -76,7 +76,7 @@ return function(M, ctx)
   ctx.check(A.raf.n == bought + posted and presses >= A.raf.n, ("one action per press: %d actions / %d presses"):format(A.raf.n, presses))
   ctx.check(not modern or presses <= A.raf.n + 2, "prefetch: Forever needs at most the game's own confirm press: " .. presses)
   ctx.check(#M.sounds > snd, "tick after successful actions")
-  ctx.check(ctx.out("Rafale : 3 action%(s%), %+%d+ pa"), "session summary printed")
+  ctx.check(A.Said("Série : 3 actions, %+%d+ pa") and A.SessionText():find("^Session : 2 achats"), "session summary in the panel (not in chat): " .. A.SessionText())
   ctx.check(A.char.rafale and A.char.rafale.n == 3, "summary kept for the Bilan")
 
   -- « Lier à une touche »: 2 clicks (propose, confirm), through the Binds module path

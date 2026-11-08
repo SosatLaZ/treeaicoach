@@ -265,7 +265,7 @@ return function(M, ctx)
     M.SetBagItem(1, 2, 91020, 4)
     ctx.fire("BAG_UPDATE_DELAYED")
     _, j = show(91020, bagBtn(1, 2))
-    check(has(j, "HV ~45 pa, se vend ~6/jour → Mettre à l'HV"), "reliable market → AH: " .. j)
+    check(has(j, "HV ≈ 45 pa (vendu ~6/j)") and has(j, "→ vends à l'HV"), "reliable market → AH (4.1: HV first): " .. j)
     _, j = show(91021)
     check(has(j, "HV : pas de marché fiable"), "unreliable market said as such: " .. j)
     M.shift = true

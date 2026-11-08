@@ -5,7 +5,7 @@
 --    munitions de ton arme, niveau requis, armure pas encore portable (mailles au niv 40 pour le chasseur) ;
 --  • Groupe : à qui il sert (classe, armure, niveau, équipement inspecté), Besoin / Cupidité ;
 --  • Valeur : marchand (la pile aussi), HV seulement quand le marché est fiable (modèle de liquidité de l'HV :
---    « se vend ~N/jour »), sinon « pas de marché fiable » → Vendre au marchand / Mettre à l'HV / Garder ;
+--    « se vend ~N/jour »), sinon « pas de marché fiable » → vends au marchand / vends à l'HV / Garder ;
 --  • Quête : objet d'une quête du journal dont l'objectif n'est pas fini (x/y), à rendre, plus utile, commence une
 --    quête (niv) ;
 --  • Métiers : compo de tes recettes connues (combien tu peux en faire), sinon les métiers qui s'en servent ;
@@ -815,7 +815,8 @@ function SEC.value(it, c, o, st)
   end
   local reliable = liq and liq.ok and (tonumber(liq.market) or 0) > 0
   if reliable then
-    parts[#parts + 1] = fmt("HV ~%s, se vend ~%s/jour", money(liq.market), soldTxt(liq.sold))
+    -- (4.1 AHPROFIT) « HV ≈ 1 po 20 pa (vendu ~6/j) · marchand 30 pa → vends à l'HV » : l'HV en premier
+    table.insert(parts, 1, fmt("HV ≈ %s (vendu ~%s/j)", money(liq.market), soldTxt(liq.sold)))
     o.details[#o.details + 1] = fmt("HV : %d jours de scans, confiance %d %%.", tonumber(liq.days) or 0, floor((tonumber(liq.conf) or 0) * 100 + 0.5))
   elseif stA then
     parts[#parts + 1] = "HV : pas de marché fiable"
@@ -830,9 +831,9 @@ function SEC.value(it, c, o, st)
   elseif reliable then
     local pp = A.PostPrice and try(A.PostPrice, it.id, count)
     if type(pp) == "table" and pp.better == "ah" then
-      verdict = "Mettre à l'HV"
+      verdict = "vends à l'HV"
       if pp.unit then o.details[#o.details + 1] = fmt("Prix conseillé : %s l'unité, net ~%s après commission et dépôt.", money(pp.unit), money(pp.net or 0)) end
-    elseif it.sell > 0 then verdict = "Vendre au marchand" end
+    elseif it.sell > 0 then verdict = "vends au marchand" end
   elseif it.sell > 0 and (it.quality == 0 or st.useless or (not tradable and (it.classID == 2 or it.classID == 4) and not st.later)) then
     verdict = "Vendre au marchand"
   end

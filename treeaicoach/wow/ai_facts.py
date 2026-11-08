@@ -853,7 +853,7 @@ def auction_house(snap: Snap) -> Section:
     if scan_age is not None:
         d["scan_hv"] = age_fr(scan_age)
     elif a:
-        manque.append("pas encore de scan de l'HV, ouvre l'HV, clique « Scan complet » puis fais /reload")
+        manque.append("pas encore de scan de l'HV, ouvre l'HV, clique « Scanner » puis fais /reload")
     if not a:
         manque.append("aucune donnée d'HV, ouvre l'HV en jeu, fais un scan complet puis /reload")
     if a.get("neutral"):

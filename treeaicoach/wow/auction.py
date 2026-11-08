@@ -38,6 +38,7 @@ __all__ = [
     "suggest_post", "realized_profit", "money_text", "auction_summary", "auction_context", "answer_lines",
     "LIQ", "demand_class", "sold_between", "liquidity", "max_quantity", "stop_loss", "item_cap", "safe_flip",
     "why_none", "cancel_advice", "scan_age", "STALE_TEXT",
+    "MIN_NET", "MIN_ROI", "min_net", "undercut", "post_quantity", "vendor_to_ah", "craft_profit",
 ]
 
 CUT_PCT = {False: 5, True: 15}          # neutral? -> % of the sale price
@@ -45,6 +46,7 @@ DEPOSIT_PCT = {False: 5, True: 25}      # neutral? -> % of the vendor price per 
 SOLD_SHARE = 0.6                        # share of listings that vanish between scans because they SOLD
 LOW_N = 5                               # « median of the lowest N listings »
 MAX_DAYS = 14
+MIN_VOLUME_HOURS = 12                   # (4.1) volume measured only over ≥ 12 h of scans (else unknown)
 
 
 def _i(v: Any, default: int = 0) -> int:
@@ -170,10 +172,12 @@ def volatility(points: Iterable[Any]) -> float:
 
 
 def daily_volume(points: Iterable[Any]) -> float | None:
-    """Estimated units SOLD per day = Σ vanished units / Σ hours between scans × 24 × 0.6."""
+    """Estimated units SOLD per day = Σ vanished units / Σ hours between scans × 24 × 0.6.
+
+    (4.1) None (unknown) until scans span ≥ 12 h: « 0 sold in 20 minutes » is not evidence of no demand."""
     ds = _days(points)
     hrs = sum(d["hrs"] for d in ds)
-    if hrs <= 0:
+    if hrs < MIN_VOLUME_HOURS:
         return None
     return round(sum(d["gone"] for d in ds) / hrs * 24 * SOLD_SHARE, 2)
 
@@ -250,20 +254,31 @@ def evaluate_vendor_flip(buyout: int, count: int, vendor_unit: int) -> dict | No
             "score": round(gain / _i(buyout) * 10000, 2), "conf": 1.0}
 
 
-def rank_deals(deals: Iterable[dict], min_margin: float = 0.20, min_profit: int = 5000,
+MIN_NET, MIN_ROI = 100, 0.15            # (4.1 AHPROFIT) a flip needs net ≥ max(1 pa, 15 % of the stake)
+
+
+def min_net(buy: Any, min_profit: Any = None) -> int:
+    """Smallest acceptable net profit for a purchase of ``buy`` copper: max(min_profit or 1 pa, ⌈15 % × buy⌉)."""
+    m = _i(min_profit)
+    return max(m if m > 0 else MIN_NET, math.ceil(max(0, _i(buy)) * MIN_ROI - 1e-9))
+
+
+def rank_deals(deals: Iterable[dict], min_margin: float = 0.15, min_profit: int = MIN_NET,
                budget: int | None = None) -> list[dict]:
-    """Keep vendor flips (any profit) and flips with discount ≥ min_margin and risk-adjusted profit ≥
-    min_profit, within budget; sort by score (profit per gold) desc, then sell-through days asc."""
+    """Keep vendor flips and flips (discount ≥ min_margin, risk-adjusted profit ≥ min_profit) whose net profit
+    ≥ min_net(buy), within budget; sort by score (profit per gold) desc, then sell-through days asc."""
     out = []
     for d in deals or []:
         if not isinstance(d, dict):
             continue
         if budget is not None and _i(d.get("buy")) > _i(budget):
             continue
+        need = min_net(d.get("buy"), min_profit)
         if d.get("kind") == "vendor":
-            if _i(d.get("profit")) > 0:
+            if _i(d.get("profit")) >= need:
                 out.append(d)
-        elif (_f(d.get("discount"), 0.0) or 0.0) >= min_margin and _i(d.get("adj")) >= min_profit:
+        elif ((_f(d.get("discount"), 0.0) or 0.0) >= min_margin and _i(d.get("adj")) >= min_profit
+              and _i(d.get("profit")) >= need):
             out.append(d)
     out.sort(key=lambda d: (-(_f(d.get("score"), 0.0) or 0.0),
                             _f(d.get("days"), 999.0) if d.get("days") is not None else 999.0))
@@ -452,8 +467,8 @@ def item_cap(total_gold: Any, pct: Any = None, budget: Any = None) -> int:
 
 
 def safe_flip(buyout: Any, count: Any, liq: dict, vendor_unit: Any = 0, qty_ahead: Any = 0, held: Any = 0,
-              neutral: bool = False, hours: int = 24, min_margin: float = 0.20,
-              min_profit: int = 5000) -> tuple[dict | None, dict | None]:
+              neutral: bool = False, hours: int = 24, min_margin: float = 0.15,
+              min_profit: int = MIN_NET) -> tuple[dict | None, dict | None]:
     """(deal, None) when buying this listing is a SAFE flip, else (None, {code, text})."""
     L = LIQ
     if not liq or not liq.get("ok"):
@@ -471,8 +486,9 @@ def safe_flip(buyout: Any, count: Any, liq: dict, vendor_unit: Any = 0, qty_ahea
                       _f(liq.get("conf"), 0.0) or 0.0, vendor_unit, qty_ahead, neutral, hours)
     if d["days"] is None or d["days"] > L["max_tts"]:
         return None, {"code": "tts", "text": f"trop long à revendre (~{_dec(d['days'])} j)"}
-    if d["profit"] < _i(min_profit) or (d["roi"] or 0) < L["min_roi"]:
-        return None, {"code": "margin", "text": f"marge trop faible ({money_text(d['profit'])} net)"}
+    need = min_net(buyout, min_profit)
+    if d["profit"] < need or (d["roi"] or 0) < L["min_roi"]:
+        return None, {"code": "margin", "text": f"marge trop faible ({money_text(d['profit'])} net, il faut {money_text(need)})"}
     d.update(safe=True, maxQty=maxq, sold=liq.get("sold"), stop=stop_loss(unit, vendor_unit, neutral))
     return d, None
 
@@ -533,12 +549,21 @@ def cancel_advice(my_unit: Any, count: Any, competitors: Iterable[Any], liq: dic
 
 
 # ---------------------------------------------------------------------------------------- selling
+def undercut(lowest: Any, pct: Any = 0) -> int:
+    """Our price under the lowest competitor: 1 pc under (pct 0) or pct % under (at least 1 pc)."""
+    low = _i(lowest)
+    return low - max(1, low * max(0, _i(pct)) // 100)
+
+
 def suggest_post(count: int, vendor_unit: int, market: int | None, vol: float, volume: float | None,
-                 competitors: Iterable[Any] = (), neutral: bool = False, hours: int = 24) -> dict:
+                 competitors: Iterable[Any] = (), neutral: bool = False, hours: int = 24,
+                 undercut_pct: int = 0) -> dict:
     """Suggested unit price for posting ``count`` units.
 
-    competitors: (unit_price, stack_count) of OTHER players' listings. Undercut the lowest by 1 pc but
+    competitors: (unit_price, stack_count) of OTHER players' listings. Undercut the lowest (``undercut``) but
     never below floor = max(market − σ, price whose AH net still beats the vendor); no market → no price.
+    (4.1) ``ev`` = honest expectation: sold (p) → net; unsold → item back, deposit lost, then the vendor;
+    ``better`` = "ah" only when ev beats the vendor.
     """
     count = max(1, _i(count, 1))
     vendor_total = _i(vendor_unit) * count
@@ -565,8 +590,8 @@ def suggest_post(count: int, vendor_unit: int, market: int | None, vol: float, v
     vend_unit = -(-break_even(vendor_total, dep, p0, neutral) // count)
     floor_unit = max(floor_unit, vend_unit if vendor_total else 1)
     if comp:
-        unit = comp[0][0] - 1
-        reason = "1 pc sous le moins cher"
+        unit = undercut(comp[0][0], undercut_pct)
+        reason = f"{_i(undercut_pct)} % sous le moins cher" if _i(undercut_pct) > 0 else "1 pc sous le moins cher"
         if unit < floor_unit:
             unit = floor_unit
             reason = "concurrent trop bas : ne pas sous-coter sous le plancher"
@@ -577,9 +602,64 @@ def suggest_post(count: int, vendor_unit: int, market: int | None, vol: float, v
     ahead = sum(c for u, c in comp if u < unit)
     p = p_sell(volume, ahead, count, hours)
     ah_net = _round(net_sale(unit * count, neutral) - dep * (1 - p))
-    res.update(unit=unit, net=ah_net, p=p, reason=reason,
-               better="vendor" if vendor_total >= ah_net else "ah")
+    ev = _round(p * net_sale(unit * count, neutral) + (1 - p) * (vendor_total - dep))
+    res.update(unit=unit, net=ah_net, ev=ev, p=p, reason=reason,
+               better="vendor" if vendor_total >= ev else "ah")
     return res
+
+
+def post_quantity(have: Any, sold_per_day: Any = None, hours: int = 24, listed: Any = 0, split: Any = None) -> int:
+    """(4.1) How many to post: what sells during ONE listing (sold/day × hours/24, minus what is already
+    listed); the whole stack when sales were never measured; never more than the usual competitor stack."""
+    have = max(1, _i(have, 1))
+    v = _f(sold_per_day)
+    q = have
+    if v is not None and v > 0:
+        q = min(have, max(0, math.ceil(v * max(1, _i(hours, 24)) / 24) - max(0, _i(listed))))
+    if split and _i(split) > 0 and q > _i(split):
+        q = _i(split)
+    return q
+
+
+def _resale(liq: dict) -> int:
+    return max(1, int(math.floor(_i(liq.get("market")) * (1 - 0.5 * (_f(liq.get("vol"), 0.0) or 0.0)))))
+
+
+def vendor_to_ah(buy_unit: Any, liq: dict | None, vendor_sell: Any = 0, neutral: bool = False, hours: int = 24,
+                 held: Any = 0, min_profit: Any = None) -> dict | None:
+    """(4.1) Buy at a merchant, resell at the AH: only with sales evidence, quantity ≤ demand, net ≥ min_net."""
+    if not liq or not liq.get("ok") or _i(buy_unit) <= 0:
+        return None
+    qty = max_quantity(liq.get("sold"), None, held)
+    if qty <= 0:
+        return None
+    sell_unit = _resale(liq)
+    dep = deposit(vendor_sell, qty, hours, neutral)
+    p = p_sell(liq.get("sold"), 0, qty, hours)
+    cost = _i(buy_unit) * qty
+    profit = expected_profit(cost, sell_unit * qty, dep, p, neutral)
+    if profit < min_net(cost, min_profit):
+        return None
+    return {"kind": "vendorAH", "buyUnit": _i(buy_unit), "sellUnit": sell_unit, "count": qty, "buy": cost,
+            "sell": sell_unit * qty, "deposit": dep, "p": p, "profit": profit,
+            "days": sell_through_days(liq.get("sold"), 0, qty), "sold": liq.get("sold")}
+
+
+def craft_profit(cost: Any, made: Any, liq: dict | None, vendor_sell: Any = 0, neutral: bool = False,
+                 hours: int = 24, min_profit: Any = None) -> dict | None:
+    """(4.1) Craft (reagent cost of ONE craft making ``made`` items) and sell at the AH: same honest rules."""
+    if not liq or not liq.get("ok") or _i(cost) <= 0:
+        return None
+    made = max(1, _i(made, 1))
+    sell_unit = _resale(liq)
+    dep = deposit(vendor_sell, made, hours, neutral)
+    p = p_sell(liq.get("sold"), 0, made, hours)
+    profit = expected_profit(_i(cost), sell_unit * made, dep, p, neutral)
+    if profit < min_net(cost, min_profit):
+        return None
+    return {"kind": "craft", "cost": _i(cost), "count": made, "sellUnit": sell_unit, "sell": sell_unit * made,
+            "deposit": dep, "p": p, "profit": profit, "sold": liq.get("sold"),
+            "days": sell_through_days(liq.get("sold"), 0, made)}
 
 
 # ----------------------------------------------------------------------------------------- ledger
@@ -727,6 +807,21 @@ def auction_context(db_or_char: Any) -> dict:
                              f"(net {money_text(s.get('net'))}, marchand {money_text(s.get('vendor'))})")
         if sells:
             out["a_vendre"] = sells
+        crafts = []
+        for c in _list(a.get("crafts"))[:5]:
+            if isinstance(c, dict) and _i(c.get("profit")) > 0:
+                crafts.append(f"{c.get('name')} : composants {money_text(c.get('cost'))}, se vend "
+                              f"{money_text(c.get('sell'))} → +{money_text(c.get('profit'))} net")
+        if crafts:
+            out["a_fabriquer"] = crafts
+        vf = []
+        for v in _list(a.get("vendorFlips"))[:5]:
+            if isinstance(v, dict) and _i(v.get("profit")) > 0:
+                lim = " (quantité limitée)" if v.get("lim") else ""
+                vf.append(f"{v.get('name')} x{_i(v.get('count'), 1)} : marchand {money_text(v.get('buyUnit'))}/u{lim}, "
+                          f"HV ~{money_text(v.get('sellUnit'))}/u → +{money_text(v.get('profit'))} net")
+        if vf:
+            out["marchand_vers_hv"] = vf
         r = a.get("realized") if isinstance(a.get("realized"), dict) else {}
         if r:
             out["profit_realise"] = (f"aujourd'hui {money_text(r.get('today'))}, 7 j {money_text(r.get('week'))}, "
@@ -750,9 +845,10 @@ def answer_lines(db_or_char: Any) -> list[str]:
     """Short French lines for the WoW page / a voice answer."""
     ctx = auction_context(db_or_char)
     if not ctx:
-        return ["Pas encore de données d'hôtel des ventes : ouvre l'HV, clique « Scan complet », puis /reload."]
+        return ["Pas encore de données d'hôtel des ventes : ouvre l'HV, clique « Scanner », puis /reload."]
     lines = list(ctx.get("aucun_achat_sur", []))[:2]
-    for k, title in (("affaires", "À acheter"), ("a_vendre", "À vendre")):
+    for k, title in (("affaires", "À acheter"), ("a_vendre", "À vendre"), ("a_fabriquer", "À fabriquer"),
+                     ("marchand_vers_hv", "Marchand → HV")):
         for t in ctx.get(k, [])[:3]:
             lines.append(f"{title} — {t}")
     if ctx.get("profit_realise"):

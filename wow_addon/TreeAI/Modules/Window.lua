@@ -2090,9 +2090,11 @@ W.AddPage({ id = "group", label = "Groupe", icon = TAB_ICON.group, title = "Grou
     end
   end })
 W.AddPage({ id = "dungeon", label = "Donjons", icon = TAB_ICON.dungeon, title = "Donjons", render = function(Ly) W.RenderTab(Ly, "dungeon") end })
-W.AddPage({ id = "hv", label = "HV", icon = TAB_ICON.hv, title = "Hôtel des ventes", desc = "Achats-reventes sûrs, ventes, bilan",
+W.AddPage({ id = "hv", label = "HV", icon = TAB_ICON.hv, title = "Hôtel des ventes", desc = "Bénéfice : acheter-revendre, sacs, métiers",
   render = function(Ly)
     local A = T.modules and T.modules.Auction
+    -- (4.1 AHPROFIT) la page dessinée par le module : 3 chiffres, 4 gros boutons, la liste choisie
+    if A and A._active and A.RenderPage then A.RenderPage(Ly, W) return end
     -- (4.0 QA) « Allumer l'HV (bêta) » : le bouton du pied de page, pas deux fois le même
     W.RenderTab(Ly, "hv", (A and A._active) and "Pas encore de prix : à l'hôtel des ventes, lance un scan complet."
       or "Le module Hôtel des ventes est coupé (fonction bêta) : « Allumer l'HV (bêta) », en bas à droite.")
