@@ -70,8 +70,7 @@ eq(ev[2].verdict, "keep", "bonne quête gardée")
 near(ev[2].ref, 209.29, "sa référence (médiane 8,57 / 410)")
 local fl = A.FreeList(ev)
 eq(#fl, 1, "libérer de la place : 1 quête")
-eq(A.HowTo("Vieille corvée"), "Pour la retirer : ouvre ton journal (L), clique « Vieille corvée », puis « Abandonner » et confirme."
-  .. " TreeAI ne le fait jamais à ta place.", "marche à suivre")
+eq(A.HowTo("Vieille corvée"), "Ouvre ton journal (L) > « Vieille corvée » > « Abandonner ».", "marche à suivre (repli sans appel)")
 
 -- 3. XP au rendu : un niveau pris avant le rendu (100 XP/min, 500 XP restants) → 80 % → 60 %
 local ev2 = A.EvaluateAll({ { title = "Lettre", level = 24, xp = 1000, travelSec = 285, obj = {} } },
@@ -116,7 +115,11 @@ local e5 = A.Judge(A.Base(q5, { pl = 26 }), 250, { pl = 26, logCount = 10, logMa
 eq(e5.score, 35, "score moyen")
 eq(e5.verdict, "later", "journal 10/20 : plus tard")
 eq(A.Judge(A.Base(q5, { pl = 26 }), 250, { pl = 26, logCount = 19, logMax = 20 }).verdict, "later", "journal 19/20 : plus tard (pas un fait)")
-eq(A.Judge(A.Base(q5, { pl = 26 }), 250, { pl = 26, logCount = 20, logMax = 20 }).verdict, "abandon", "journal plein 20/20 : abandon")
+-- (JOURNAL 4.0.1) journal plein : plus un fait suffisant (QUELLE quête retirer serait choisie sur une estimation)
+eq(A.Judge(A.Base(q5, { pl = 26 }), 250, { pl = 26, logCount = 20, logMax = 20 }).verdict, "later", "journal plein 20/20 : plus tard")
+-- un fait sûr calculé par A.Facts (q.strongFact) décide ; false = jamais « abandon », même grise
+eq(A.Judge(A.Base({ title = "G", level = 10, xp = 50, travelSec = 900, obj = {}, strongFact = false }, c3), 300, c3).verdict, "later",
+  "strongFact = false : jamais « abandon »")
 
 -- 7. relais inutile, quête prête, quête isolée / zone quittée
 local e6 = A.Judge(A.Base({ title = "Le relais", level = 26, xp = 400, travelSec = 100, obj = {}, breadcrumbUseless = true }, c3), 300, c3)
@@ -129,6 +132,53 @@ local c8 = { pl = 26, zone = "Hautebrande", leavingZone = "Les Paluns", logCount
 local e8 = A.Judge(A.Base({ title = "Loin", level = 26, xp = 2000, zone = "Les Paluns", isolated = true, travelSec = 285, obj = {} }, c8), 300, c8)
 ok(e8.text:find("seule quête en Les Paluns", 1, true) and e8.text:find("tu quittes Les Paluns", 1, true), "zone : isolée + quittée")
 eq(e8.score, 40, "score zone (50 + 25·log2(333/300) − 8 − 6 = 39,8)")
+
+-- 8. (JOURNAL 4.0.1) faits du jeu → raisons de retirer (jamais une durée estimée)
+local fc = { pl = 28, group = 2 }
+local function facts(q) local t = {} for _, f in ipairs(A.Facts(q, fc)) do t[#t + 1] = f.key .. "=" .. f.text end return table.concat(t, " | ") end
+eq(facts({ title = "G", level = 17, xp = 85, grey = true }), "grey=grise : 85 XP au rendu (niv 17, toi 28)", "grise + XP du jeu")
+eq(facts({ title = "G", level = 17, grey = true }), "grey=grise (niv 17, toi 28)", "grise sans XP lue")
+eq(facts({ title = "G", level = 17, grey = true, complete = true }), "", "grise mais prête à rendre : rien")
+eq(facts({ title = "G", level = 17, grey = true, planned = true }), "", "grise mais arrêt du trajet : rien")
+eq(facts({ title = "G", level = 17, grey = true, mates = { "Ami" } }), "", "grise mais un ami l'a : rien")
+eq(facts({ title = "G", level = 17, grey = true, keep = true }), "", "grise mais elle ouvre une suite : rien")
+eq(facts({ title = "F", level = 27, failed = true, timerOut = true }), "failed=échouée : chrono écoulé", "échouée, chrono")
+eq(facts({ title = "F", level = 27, failed = true, grey = true }), "failed=échouée", "échouée (grise ignorée)")
+eq(facts({ title = "R", level = 26, breadcrumb = { title = "Le camp", state = "done" } }), "blocked=relais vers « Le camp », déjà faite", "relais")
+eq(facts({ title = "L", level = 26, lostItem = "Lettre scellée", complete = true }), "blocked=« Lettre scellée » n'est plus dans tes sacs",
+  "objet de livraison perdu (même « prête »)")
+eq(facts({ title = "D", level = 26, dupOf = "Le choix A" }), "dup=même suite que « Le choix A » : une seule compte", "doublon")
+eq(facts({ title = "U", level = 26, dungeon = true, dungeonName = "Donjon d'Ombrecroc",
+  dungeonDone = { name = "Donjon d'Ombrecroc", label = "Fait le 3 nov." } }),
+  "dungeon=Donjon d'Ombrecroc : fait le 3 nov. | hard=Donjon d'Ombrecroc : à faire en groupe de 5, vous êtes 2", "donjon fait + trop dur à 2")
+eq(facts({ title = "U", level = 26, dungeon = true }), "hard=donjon : à faire en groupe de 5, vous êtes 2", "donjon sans nom connu")
+eq(#A.Facts({ title = "U", level = 26, dungeon = true, suggestedGroup = 5 }, { pl = 28, group = 4 }), 0, "donjon à 4 : jouable")
+eq(facts({ title = "E", level = 29, elite = true }), "hard=élite, vous êtes 2", "élite à 2")
+eq(facts({ title = "E", level = 29, suggestedGroup = 3 }), "hard=prévue pour 3, vous êtes 2", "groupe conseillé du jeu")
+eq(facts({ title = "E", level = 29, suggestedGroup = 2 }), "", "prévue pour 2, vous êtes 2 : rien")
+eq(facts({ title = "R", level = 33, color = "rouge" }), "hard=niv 33, toi 28 : rouge, vous êtes 2", "rouge en duo")
+eq(#A.Facts({ title = "R", level = 33, color = "rouge" }, { pl = 28, group = 3 }), 0, "rouge à 3 : faisable")
+eq(facts({ title = "K", level = 27, continent = "Kalimdor" }), "far=autre continent (Kalimdor)", "autre continent")
+eq(facts({ title = "T", level = 27, travelSec = 18 * 60 }), "far=≈ 18 min de trajet", "trajet mesuré ≥ 15 min")
+eq(facts({ title = "T", level = 27, travelSec = 14 * 60 }), "", "trajet < 15 min : rien")
+eq(facts({ title = "N", level = 28, xp = 2400 }), "", "quête ordinaire : aucune raison (pas d'estimation)")
+local solo = A.Facts({ title = "E", level = 29, elite = true }, { pl = 28, group = 1 })
+eq(solo[1] and solo[1].text, "élite, tu es seul", "élite seul")
+local cl = A.Cleanup({
+  { id = 1, title = "Grise chère", level = 18, xp = 300, grey = true },
+  { id = 2, title = "Grise", level = 17, xp = 85, grey = true },
+  { id = 3, title = "Ratée", level = 27, failed = true },
+  { id = 4, title = "Élite", level = 29, elite = true },
+  { id = 5, title = "Normale", level = 28, xp = 2400 },
+}, fc)
+eq(cl.count, 4, "4 à nettoyer")
+eq(cl.strong, 3, "3 sur un fait sûr (échouée, 2 grises)")
+eq(cl.groups[1].key, "failed", "ordre des groupes : échouées d'abord")
+eq(cl.groups[2].key .. ":" .. cl.groups[2].items[1].q.title, "grey:Grise", "grises : la moins payée d'abord")
+eq(cl.groups[3].key, "hard", "puis trop dures")
+eq(A.Line(cl.groups[2].items[1]), "Retire « Grise » : grise : 85 XP au rendu (niv 17, toi 28)", "ligne sûre : « Retire »")
+eq(A.Line(cl.groups[3].items[1]), "« Élite » : élite, vous êtes 2", "ligne à voir : sans « Retire »")
+eq(A.Detail({ facts = { { text = "a" }, { text = "b" } } }), "a · b", "tous les faits")
 
 print(("abandon_spec: %d checks, %d failures"):format(checks, fails))
 os.exit(fails == 0 and 0 or 1)

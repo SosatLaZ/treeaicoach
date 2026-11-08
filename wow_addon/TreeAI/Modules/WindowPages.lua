@@ -45,11 +45,6 @@ local function openQuest(q)
     if not t and W.Flash then W.Flash(fmt("« %s » : pas encore de position connue pour la boussole.", strip(q and q.title or "?"))) end
   end
 end
--- une quête grise : comment la retirer (l'abandon reste au joueur)
-local function cleanQuest(q)
-  local Q = mod("Quests")
-  return function() if Q and Q.OpenQuest then Q.OpenQuest(q) end end
-end
 
 W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = "Quêtes",
   desc = "L'histoire de la zone : étapes numérotées, quêtes à venir, journal",
@@ -97,14 +92,10 @@ W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = 
       if #here > 0 and Ly.header("En cours ici", "q:here", #here, W.MARK.pick) then
         for _, q in ipairs(here) do Ly.quest(q.level, q.title, questProgress(q), openQuest(q), nil, QUEST_HINT) end
       end
-      local grey = {}
-      for _, q in ipairs(a.grey or {}) do if W.Match(q.title) then grey[#grey + 1] = q end end
-      if #grey > 0 and Ly.header("Nettoyer mon journal", "q:clean", #grey, "Interface\\GossipFrame\\IncompleteQuestIcon", true) then
-        for _, q in ipairs(grey) do
-          Ly.quest(q.level, q.title, "grise : presque pas d'XP · à retirer du journal", cleanQuest(q),
-            { "L'abandon reste ton choix : journal (L) > la quête > « Abandonner »." }, "Clic : comment la retirer")
-        end
-      end
+      -- (JOURNAL 4.0.1) « Nettoyer mon journal » : les faits du jeu (grises, échouées, bloquées, donjon fait…), la page
+      -- « Journal » pour abandonner (2 clics) — Modules/JournalPage.lua
+      local Jp = T.JournalPage
+      if Jp and Jp.QuestsSection then Jp.QuestsSection(Ly) end
       -- ailleurs, par zone (plus de quêtes d'abord), repliés
       local zones = {}
       for _, q in ipairs(a.elsewhere or {}) do
@@ -127,7 +118,10 @@ W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = 
     -- le reste de l'onglet « Quêtes » (objets de quête, conseils de zone…) sans le trajet déjà montré au-dessus
     local extra = {}
     for _, e in ipairs(T.GetTabLines and T:GetTabLines("quests") or {}) do
-      if e.source ~= "plan" and not e.header and not e.control and W.Match(e.text, e.right) then extra[#extra + 1] = e end
+      -- (JOURNAL) le bloc « Nettoyer mon journal » du panneau texte (Abandon) : déjà la section ci-dessus
+      if e.source ~= "plan" and e.source ~= "Abandon" and not e.header and not e.control and W.Match(e.text, e.right) then
+        extra[#extra + 1] = e
+      end
     end
     if #extra > 0 and Ly.header("Autres conseils", "q:extra", #extra, ICON .. "INV_Misc_Note_01", true) then
       for _, e in ipairs(extra) do Ly.row(e) end
@@ -342,6 +336,9 @@ local function dcardPool(content)
     meth(f.check, "SetSize", 14, 14)
     meth(f.check, "SetTexture", "Interface\\RaidFrame\\ReadyCheck-Ready")
     meth(f.check, "SetPoint", "RIGHT", f.q, "LEFT", -3, 0)
+    f.done = W._text(f, "S", "text")      -- (JOURNAL) « Fait le 3 nov. » / « Fait en partie : 2/5 boss »
+    meth(f.done, "SetPoint", "TOPLEFT", f, "TOPLEFT", 52, -33)
+    meth(f.done, "SetWordWrap", false)
     f.lv = W._text(f, "S", "text")
     meth(f.lv, "SetPoint", "BOTTOMLEFT", f, "BOTTOMLEFT", 10, 8)
     f.tag = W._text(f, "S", "muted")
@@ -359,6 +356,24 @@ local function dcardPool(content)
   return cardPool
 end
 
+-- (JOURNAL 4.0.1) ce qu'on SAIT d'un donjon (Dungeon.DoneInfo : boss tués par TreeAI, verrou du jeu, quêtes finies)
+local function doneInfo(D, d)
+  if type(D.DoneInfo) ~= "function" then return nil end
+  local ok, i = pcall(D.DoneInfo, d)
+  return ok and type(i) == "table" and i or nil
+end
+local DONE_SRC = { run = "tous les boss tués (historique TreeAI)", lock = "verrou d'instance du jeu",
+  quests = "toutes ses quêtes rendues (selon le jeu)" }
+-- « Quêtes faites 2/6 » (faits du jeu) ; repli : le compte QuestieDB ; « Aucune quête pour toi » (quêtes de l'autre faction)
+local function questText(D, d, q, di)
+  if di and (di.qTotal or 0) > 0 then return fmt("Quêtes faites %d/%d", di.qDone or 0, di.qTotal) end
+  if q.pending and q.total == 0 then return "quêtes…" end
+  if q.total > 0 then return fmt("%d quête%s", q.total, q.total > 1 and "s" or "") end
+  local data = D.Data and D.Data()
+  if data and data.quests and data.quests[d.key] then return "Aucune quête pour toi" end
+  return ""
+end
+
 local function renderDungeonList(Ly, D)
   local pl = tonumber(try(G.UnitLevel, "player")) or 1
   local all = W.char and W.char.dgAll
@@ -372,6 +387,19 @@ local function renderDungeonList(Ly, D)
   for _, d in ipairs(all and (D.Index().list or {}) or D.ForLevel(pl)) do
     if W.Match(d.n, d.key, tconcat(d.kw or {}, " ")) then list[#list + 1] = d end
   end
+  -- (JOURNAL 4.0.1) pas encore faits et à ton niveau d'abord ; ceux déjà faits à la fin
+  local info, fit = {}, {}
+  for _, d in ipairs(list) do
+    info[d] = doneInfo(D, d)
+    fit[d] = (pl >= (d.min or 1) - 1 and pl <= (d.max or 60)) and 0 or 1
+  end
+  tsort(list, function(a, b)
+    local da, db = (info[a] and info[a].done) and 1 or 0, (info[b] and info[b].done) and 1 or 0
+    if da ~= db then return da < db end
+    if fit[a] ~= fit[b] then return fit[a] < fit[b] end
+    if (a.min or 0) ~= (b.min or 0) then return (a.min or 0) < (b.min or 0) end
+    return tostring(a.key) < tostring(b.key)
+  end)
   if #list == 0 then
     Ly.empty(W.Query() ~= "" and ("Aucun donjon ne correspond à « " .. W.Query() .. " ».")
       or "Aucun donjon à ton niveau pour l'instant.",
@@ -396,24 +424,34 @@ local function renderDungeonList(Ly, D)
     meth(f.name, "SetWidth", cw - 62)
     meth(f.name, "SetText", d.n)
     local q = dungeonQuests(D, d)
-    local qtxt
-    if q.pending and q.total == 0 then qtxt = "quêtes…"
-    elseif q.inLog > 0 then qtxt = fmt("%d/%d quête%s", q.done, q.total, q.total > 1 and "s" or "")
-    else qtxt = fmt("%d quête%s", q.total, q.total > 1 and "s" or "") end
+    local di = info[d]
+    local qtxt = questText(D, d, q, di)
     meth(f.q, "SetText", qtxt)
-    if q.total > 0 and q.done == q.total then meth(f.check, "Show") else meth(f.check, "Hide") end
+    if di and di.done then meth(f.check, "Show") else meth(f.check, "Hide") end
+    -- (JOURNAL) « Fait le 3 nov. » en vert ; « Fait en partie : 2/5 boss » / « Verrou : 2/5 boss » en doré
+    meth(f.done, "SetWidth", cw - 62)
+    meth(f.done, "SetText", (di and di.label) and ((di.done and "|cff33dd33" or "|cffd8b04a") .. di.label .. "|r") or "")
     meth(f.lv, "SetText", fmt("Niv. %d-%d", d.min or 1, d.max or 60))
     local tags = {}
     if cur == d then tags[#tags + 1] = "|cff33dd33tu y es|r"
     elseif planned == d then tags[#tags + 1] = "|cffffd100prévu|r" end
     if d.new then tags[#tags + 1] = "propre à Forever" end
     if d.faction then tags[#tags + 1] = d.faction end
-    meth(f.tag, "SetWidth", max(40, cw - 170))
+    -- la ligne du bas : niveau · étiquettes à gauche, quêtes (+ coche) à droite, sans se toucher
+    local _, qn = tostring(qtxt):gsub("[^\128-\191]", "")
+    meth(f.tag, "SetWidth", max(40, cw - 72 - 10 - floor(qn * 5.4) - 24))
     meth(f.tag, "SetWordWrap", false)
     meth(f.tag, "SetText", tconcat(tags, " · "))
     f.key, f.label = d.key, d.n
-    f.tipL = { fmt("Niveaux %d à %d · %d boss", d.min or 1, d.max or 60, #(d.bosses or {})),
-      (q.total > 0) and fmt("Quêtes : %d dans ton journal, %d à prendre", q.inLog, q.total - q.inLog) or "Aucune quête connue" }
+    local qline
+    if di and (di.qTotal or 0) > 0 then
+      qline = fmt("Quêtes : %d/%d faites (selon le jeu), %d dans ton journal", di.qDone or 0, di.qTotal, di.qInLog or 0)
+    elseif q.total > 0 then qline = fmt("Quêtes : %d dans ton journal, %d à prendre", q.inLog, q.total - q.inLog)
+    else qline = qtxt ~= "" and qtxt or "Aucune quête connue" end
+    f.tipL = { fmt("Niveaux %d à %d · %d boss", d.min or 1, d.max or 60, #(d.bosses or {})), qline }
+    if di and di.label then
+      f.tipL[#f.tipL + 1] = di.label .. ((di.done and DONE_SRC[di.src]) and (" : " .. DONE_SRC[di.src]) or "")
+    end
     Ly.at(f, x, Ly.y)
     Ly.rec("dcard", x, Ly.y, cw, ch, d.n)
   end
@@ -425,15 +463,22 @@ local function renderDungeonDetail(Ly, D, d)
   local members = (D.Members and select(2, pcall(D.Members))) or {}
   local q = dungeonQuests(D, d)
   local planned = try(D.Planned)
+  local di = doneInfo(D, d)
   Ly.hero(ICON .. (DG_ICON[d.key] or "INV_Misc_Key_03"), d.n,
     fmt("Niv. %d-%d · %d boss%s", d.min or 1, d.max or 60, #(d.bosses or {}), d.faction and (" · " .. d.faction) or ""),
-    planned == d and "Donjon prévu : la préparation est dans « Prêt ? »" or (d.new and "Donjon propre à WoW Forever" or nil))
+    planned == d and "Donjon prévu : la préparation est dans « Prêt ? »" or (di and di.label)
+      or (d.new and "Donjon propre à WoW Forever" or nil))
   -- quêtes
   local res = q.res or {}
   local nq = #(res.inLog or {}) + #(res.toGet or {})
-  if Ly.header(fmt("Quêtes (%d/%d)", q.done, nq), "dg:quests", nil, W.MARK.pick) then
+  if Ly.header("Quêtes du donjon", "dg:quests", (di and (di.qTotal or 0) > 0) and di.qTotal or nq, W.MARK.pick) then
+    -- (JOURNAL) les faits du jeu d'abord : combien sont déjà rendues
+    if di and (di.qTotal or 0) > 0 then
+      Ly.text(fmt("Faites : %d/%d (selon le jeu) · dans ton journal : %d", di.qDone or 0, di.qTotal, di.qInLog or 0), "S", "text")
+    end
     if nq == 0 then Ly.text(res.pending and "Lecture des quêtes du donjon…" or
-      "Aucune quête connue pour ce donjon (pas de QuestieDB, ou rien à ton niveau).", "S", "muted") end
+      ((di and (di.qTotal or 0) > 0 and (di.qDone or 0) >= di.qTotal) and "Toutes ses quêtes sont faites."
+        or "Rien à prendre pour toi ici (pas de QuestieDB, ou rien à ton niveau)."), "S", "muted") end
     for _, e in ipairs(res.inLog or {}) do
       local sub
       if e.done then sub = "finie · à rendre"
@@ -461,11 +506,13 @@ local function renderDungeonDetail(Ly, D, d)
   -- boss
   local nb = #(d.bosses or {})
   if nb > 0 and Ly.header("Boss", "dg:boss", nb, ICON .. "INV_Misc_Bone_HumanSkull_01") then
+    local ever = D.char and type(D.char.kills) == "table" and D.char.kills[d.key] or nil   -- (JOURNAL) historique
     for i, b in ipairs(d.bosses) do
       local killed = D.Killed and D.Killed(b)
       local tip = strip(b.tip or "")
       tip = T.Cut(tip, 110)
-      Ly.step({ n = i, title = b.n .. (killed and "  |cff33dd33(tué)|r" or ""), sub = tip }, false)
+      local mark = (killed and "  |cff33dd33(tué)|r") or ((type(ever) == "table" and ever[i]) and "  |cff33dd33(déjà tué)|r") or ""
+      Ly.step({ n = i, title = b.n .. mark, sub = tip }, false)
     end
   end
   -- butin pour le groupe (objets qui servent à quelqu'un)

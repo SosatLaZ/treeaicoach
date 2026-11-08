@@ -105,8 +105,9 @@ return function(M, ctx)
   check(win.search ~= nil, "recherche en haut à droite")
   local ids = {}
   for _, pg in ipairs(W.PAGES) do ids[#ids + 1] = pg.id end
-  check(table.concat(ids, ","):find("^now,quests,route,group,dungeon,hv,tools") and table.concat(ids, ","):find("options$"),
-    "navigation : Maintenant / Quêtes / Trajet / Groupe / Donjons / HV / Outils / … / Options (" .. table.concat(ids, ",") .. ")")
+  -- (JOURNAL 4.0.1) « Journal » (nettoyer mon journal) juste après « Quêtes »
+  check(table.concat(ids, ","):find("^now,quests,journal,route,group,dungeon,hv,tools") and table.concat(ids, ","):find("options$"),
+    "navigation : Maintenant / Quêtes / Journal / Trajet / Groupe / Donjons / HV / Outils / … / Options (" .. table.concat(ids, ",") .. ")")
   for _, pg in ipairs(W.PAGES) do
     W.Select(pg.id)
     check(W.CurrentPage() == pg.id, "page " .. pg.id)

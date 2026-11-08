@@ -39,7 +39,7 @@ Modules/Prof.lua  Modules/Glow.lua  Modules/Highlight.lua  Modules/PvP.lua  Modu
 Modules/DungeonPrep.lua  Modules/Radar.lua  Modules/MinimapPins.lua  Modules/Gear.lua  Modules/Talents.lua
 Modules/Session.lua  Modules/Errands.lua  Modules/Edge2.lua  Modules/Bugs.lua  Modules/Finder.lua  Modules/Quick.lua
 Modules/QuickFight.lua  Modules/QuickTravel.lua  Modules/Shortcuts.lua  Modules/Window.lua  Modules/WindowPages.lua
-Modules/Tour.lua
+Modules/JournalPage.lua  Modules/Tour.lua
 (4.0 : Squad / Missions / Team → Group ; SafePath, Edge, HunterPro, Comfort, Economy, Predict retirés — voir plus bas)
 ```
 
@@ -836,6 +836,61 @@ données viennent des contrats existants (`GetTabLines`, `Route:Stops(64)`, `Pla
   Options : une seule barre, verrou, titres, taille.
 * Infobulles des points de la minimap (`MinimapPins.TipLines`) et de la boussole : ce que c'est, distance + temps,
   pourquoi maintenant, ce que fait le clic.
+
+## Nettoyer mon journal + donjons déjà faits (agent JOURNAL, 4.0.1)
+
+`Modules/Abandon.lua` (module « Nettoyer mon journal », **mode sûr** : faits du jeu seulement, deux clics pour agir ;
+allumé une fois pour qui était en mode sûr) + `Modules/JournalPage.lua` (`T.JournalPage`, page « Journal » de la
+fenêtre, juste après « Quêtes », donc aussi dans la pastille ; rendu seulement) + `Modules/Dungeon.lua` /
+`Data/Dungeons.lua` (`quests`).
+* **Raisons = faits du jeu**, jamais une durée estimée (`Abandon.Core.Facts(q, ctx)`, `Core.Cleanup(qs, ctx)` purs,
+  `tests/wow/abandon_spec.lua`) : échouée / chrono écoulé (`C_QuestLog.IsFailed`, `GetTimeAllowed`) · chaîne bloquée
+  (relais dont la suite est dans le journal ou finie selon `IsQuestFlaggedCompleted` ; quête de livraison sans objectif
+  dont l'objet `sourceItemId` n'est plus dans les sacs, `C_Item.GetItemCount(id, true)`) · doublon (QuestieDB
+  `exclusiveTo` toutes deux dans le journal, deux relais vers la même suite) · grise (couleur du jeu,
+  `UnitQuestTrivialLevelRange` ; XP réelle `GetQuestLogRewardXP`) · donjon déjà fait (`Dungeon.IsDone`, historique ou
+  verrou) · trop dure pour le groupe ACTUEL (étiquette donjon à moins de 4, groupe conseillé du jeu > groupe, élite < 3,
+  rouge < 3) · autre continent (`GetQuestUiMapID` → continent `Geo.Rect`) ou trajet ≥ 15 min (`Route.LegSeconds`, vitesse
+  NavTime). Jamais pour une quête prête à rendre, un arrêt du trajet, une quête qu'un ami a, une grise qui ouvre une
+  suite non grise ou dont la récompense est une amélioration. `A.STRONG` (échouée, bloquée, doublon, grise, donjon) =
+  « Retire » ; trop dure / loin = « à voir ». Le suivi (Tracker / Todo / Plain : `Abandon.evals[i].verdict`) dit
+  « À retirer » sur les mêmes faits seulement. Sorties : `Abandon.cleanup = {groups = {{key, title, advice, items =
+  {{q, facts, key, strong}}}}, count, strong}`, `Abandon.CleanupNow()` (la page la calcule même module coupé),
+  bloc « Nettoyer mon journal » de l'onglet Quêtes (clic = la page), rappel `Abandon:journal` dans « Maintenant »
+  montré en avis (badge « i ») sur la carte quand le journal a ≥ 20 quêtes (option `hintMin`) ou ≤ 3 places,
+  `summary.abandon = {list = {{title, verdict = "abandon"|"later", why, detail, reason, group}}, count, strong}`.
+* **Abandon dans le clic** : `Abandon.Request(questID, title)` (1er clic → « Confirmer l'abandon de « X » ? », 2e clic
+  sur la même quête ≤ 8 s → `Abandon.AbandonNow`), `Abandon.BatchRequest("grey")` (« Tout ce qui est gris » : une
+  confirmation puis UN abandon par clic), `Abandon.ButtonState(id)` (`go` / `confirm` / `combat` / `guided`).
+  `AbandonNow` refuse hors d'un clic (`T:InUserAction()`) et en combat ; puis seulement des fonctions C :
+  `C_QuestLog.GetSelectedQuest` → `SetSelectedQuest(id)` → `SetAbandonQuest()` → relit `GetAbandonQuest() == id` →
+  `AbandonQuest()` → remet la quête « à abandonner » de Blizzard (une fenêtre « Abandonner ? » ouverte garde la
+  sienne) puis la sélection (clients classiques : `GetQuestLogSelection` / `SelectQuestLogEntry(index)` /
+  `SetAbandonQuest` / `GetAbandonQuestName() == titre` / `AbandonQuest` / sélection remise). **Analyse de
+  contamination** : documentées sans restriction ni protection (Forever 1.60.1) ; une fonction C ne contamine rien ;
+  aucune fonction Lua ni variable de Blizzard (ni `QuestMapFrame_*`, ni `StaticPopup_Show("ABANDON_QUEST")`, ni
+  `ShowUIPanel`) ; ce qui avait bloqué « Abandonner » en 3.8 (sélection changée HORS CLIC, journal ouvert par l'addon)
+  n'arrive jamais. Repli « où cliquer » sans aucun appel (« Ouvre ton journal (L) > « X » > « Abandonner ». ») si
+  l'API manque, si l'option `direct` est coupée, ou si le jeu a bloqué une fois (`ADDON_ACTION_*` pendant l'appel →
+  `db.refused`, plus jamais tenté). Mock strict : ces appels hors clic / en combat = action bloquée ; deux
+  `AbandonQuest` dans un même clic = violation.
+* **Donjons déjà faits** (`Dungeon.DoneInfo(d)` → `{done, src = "run"|"lock"|"quests", at, kills, total, lock,
+  qDone, qTotal, qInLog, label}`, cache 30 s) : 1) historique TreeAI `char.kills[clé][boss] = date` (ENCOUNTER_END
+  réussi / BOSS_KILL, écouté même module Donjon coupé ; fait = le dernier boss obligatoire ou tous ; runs archivés
+  avant 4.0.1 comptés s'ils ont tous les boss) ; 2) verrou du jeu (`GetNumSavedInstances` / `GetSavedInstanceInfo`,
+  14 retours, carte en dernier ; `RequestRaidInfo` au plus une fois / 2 min hors combat, `UPDATE_INSTANCE_INFO`) ;
+  3) quêtes du donjon finies selon le jeu (`Data/Dungeons.lua quests` = id QuestieDB Forever par `zoneOrSort`, vérifiés
+  dans la table client QuestV2 ; `h` / `a` / `n` = faction, `r` / `c` = masques race / classe ; `qsort` = zones de
+  quêtes en plus de `area` pour l'index « à prendre »). Libellés : « Fait le 3 nov. », « Fait (verrou en cours) »,
+  « Quêtes toutes faites », « Fait en partie : 2/5 boss », « Verrou : 2/5 boss ».
+* **Contrats pour les autres modules (ZonePlan / Quests / Route)** : `T.Dungeon.IsDone(id)` (clé, nom, carte ou
+  table) → `fait, infos` ; `T.Dungeon.QuestDungeon(questID)` → donjon `{key, n, min, max, map, …}` ou nil (liste du
+  donjon, puis index QuestieDB, puis en-tête de zone du journal EXACTEMENT égal au nom du donjon — jamais « Les
+  Paluns » → « Excavations ») ; `T.Dungeon.QuestIDs(d)` (quêtes du donjon pour TON perso, `.set`) ; `T.Dungeon.QuestForMe(id)`.
+  Ne jamais proposer une quête d'un donjon fait : `local d = T.Dungeon.QuestDungeon(id) if d and T.Dungeon.IsDone(d)
+  then … end`. Le module Donjon ne prévoit plus tout seul un donjon fait ; « à prendre » ne liste que les quêtes de ta
+  faction / race / classe. Cartes « Donjons » : « Fait le … » (vert, coche), « Quêtes faites x/y », « Aucune quête pour
+  toi », pas encore faits + à ton niveau d'abord ; fiche : « Faites : x/y (selon le jeu) », boss « (déjà tué) ».
 
 ## Sons, fenêtres, placement vivant (agent UI2)
 
