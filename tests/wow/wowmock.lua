@@ -2620,8 +2620,30 @@ function M.ApplyForever(G)
   G.C_SuperTrack = G.C_SuperTrack or {}
   stub(G.C_SuperTrack, "IsSuperTrackingUserWaypoint", function() return M.superTrackUser and true or false end)
   stub(CI, "GetDetailedItemLevelInfo", function(i) local it = itemFromArg(i) if it then return it.ilvl, false, it.ilvl end end)
-  stub(CI, "GetItemLinkByGUID", function() return nil end)
+  stub(CI, "GetItemLinkByGUID", function(guid)
+    local l = (M.itemGUIDs or {})[guid]
+    return l and M.ItemLink(l.id) or nil
+  end)
   stub(CI, "RequestLoadItemDataByID", function() end)
+  -- (ITEMINFO) the GUID of a bag / equipped item (tooltip data) → ItemLocation mixin, its stack count and bound state.
+  -- M.itemGUIDs[guid] = { id=, bag=, slot= } or { id=, equip=slot }, bound = true for a soulbound item
+  stub(CI, "GetItemLocation", function(guid)
+    local l = (M.itemGUIDs or {})[guid]
+    if not l then return nil end
+    return { _guid = guid,
+      IsBagAndSlot = function() return l.bag ~= nil end, GetBagAndSlot = function() return l.bag, l.slot end,
+      IsEquipmentSlot = function() return l.equip ~= nil end, GetEquipmentSlot = function() return l.equip end,
+      IsValid = function() return true end }
+  end)
+  local function locOf(loc) return type(loc) == "table" and (M.itemGUIDs or {})[loc._guid] or nil end
+  stub(CI, "GetStackCount", function(loc)
+    local l = locOf(loc)
+    if not l then return 0 end
+    if l.bag then local s = bagSlot(l.bag, l.slot) return s and s.count or 0 end
+    return 1
+  end)
+  stub(CI, "IsBound", function(loc) local l = locOf(loc) return (l and l.bound) and true or false end)
+  stub(G, "GetLootSlotLink", function(i) local l = (M.loot or {})[i] return l and l.id and M.ItemLink(l.id) or nil end)
   G.C_AddOns = G.C_AddOns or {}
   stub(G.C_AddOns, "GetNumAddOns", function() return 1 end)
   stub(G.C_AddOns, "GetAddOnInfo", function(i)

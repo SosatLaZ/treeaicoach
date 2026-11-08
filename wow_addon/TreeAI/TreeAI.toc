@@ -66,6 +66,7 @@ Modules\DungeonPrep.lua
 Modules\Radar.lua
 Modules\MinimapPins.lua
 Modules\Gear.lua
+Modules\ItemInfo.lua
 Modules\Talents.lua
 Modules\Session.lua
 Modules\Errands.lua

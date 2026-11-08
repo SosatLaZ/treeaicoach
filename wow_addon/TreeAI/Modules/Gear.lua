@@ -20,7 +20,7 @@ local M = T:RegisterModule("Gear", {
                dungeons = true, crafted = true, vendors = true, maxPerSlot = 3, tooltip = true, rewards = true },
   charDefaults = { shopping = {} },
   options = {
-    { key = "tooltip", type = "toggle", label = "Infobulles d'objets : mieux ou pas pour toi, prix de vente", section = "Équipement" },
+    { key = "tooltip", type = "toggle", label = "Infobulles d'objets quand « Infos objets » est coupé : mieux ou pas, prix de vente", section = "Équipement" },
     { key = "rewards", type = "toggle", label = "Entourer la meilleure récompense de quête (jamais choisie à ta place)", section = "Équipement" },
     { key = "tab", type = "toggle", label = "Onglet « Équipement » (emplacement par emplacement)", section = "Équipement" },
     { key = "suggest", type = "toggle", label = "Signaler la meilleure amélioration dans « Maintenant »", section = "Équipement" },
@@ -1180,7 +1180,7 @@ local function hookTooltips()
   local TDP, E = G.TooltipDataProcessor, G.Enum and G.Enum.TooltipDataType
   if TDP and TDP.AddTooltipPostCall and E and E.Item then
     TDP.AddTooltipPostCall(E.Item, function(tip, data)
-      if not M:IsEnabled() then return end
+      if not M:IsEnabled() or (T.ItemInfo and T.ItemInfo.Owns and T.ItemInfo.Owns()) then return end   -- (4.0.2) ItemInfo écrit
       local link = tip and tip.GetItem and select(2, tip:GetItem())
       if not link and data and data.guid and G.C_Item and G.C_Item.GetItemLinkByGUID then
         link = try(G.C_Item.GetItemLinkByGUID, data.guid)
@@ -1191,7 +1191,7 @@ local function hookTooltips()
     for _, tip in ipairs({ G.GameTooltip, G.ItemRefTooltip }) do
       if tip and tip.HookScript then
         pcall(tip.HookScript, tip, "OnTooltipSetItem", function(self)
-          if not M:IsEnabled() then return end
+          if not M:IsEnabled() or (T.ItemInfo and T.ItemInfo.Owns and T.ItemInfo.Owns()) then return end
           local link = self.GetItem and select(2, self:GetItem())
           pcall(M.DecorateItem, self, link)
         end)

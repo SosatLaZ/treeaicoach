@@ -52,7 +52,10 @@ local BUDGET = {
     Route = 80, Planner = 80, Quests = 80, Tracker = 80, Todo = 80, Export = 80, Detect = 80, Speed = 80, Tour = 10,
     -- CLEAN 4.0 (ROUND7 : ≤ 80 par module) : Combat, Rares, Chasseur, Équipement… (avant : Fight 139-191, Hunter 97)
     Fight = 80, Boost = 40, Hunter = 80, Gear = 80, Inventory = 80, Errands = 60, Session = 60, Leveling = 60, Prof = 60,
-    Talents = 40, Binds = 60, Classes = 60, PvP = 60 },   -- per-module caps (avg kinstr / minute); Group below
+    Talents = 40, Binds = 60, Classes = 60, PvP = 60,
+    -- ITEMINFO (4.0.2) : lignes d'infobulle d'objet, calculées seulement quand une infobulle s'affiche (≈ 0 sinon) ; ici
+    -- le joueur survole ses sacs chez le marchand et après le butin (une construction des index, puis le cache)
+    ItemInfo = 10 },   -- per-module caps (avg kinstr / minute); Group below
   nowChangesPerMinMax = 12,      -- « Maintenant » changes (text skeleton, digits ignored) in any minute
   nowChangesPerMinAvg = 6,      -- a fight every ~35 s brings its own in-combat lines (aspect, pet HP…)
   alertsPer10Min = 8,            -- corner alert pops in any 10-minute window
@@ -89,7 +92,7 @@ if opts.profile == "sur" then
   BUDGET.kinstrTotalMin = 640
   BUDGET.frameWorstKinstr, BUDGET.frameP99Kinstr, BUDGET.allocKBps = 58, 25, 30
   local caps = { Core = 260, Macros = 35, Quests = 30, Highlight = 28, Detect = 25, Export = 22, PathDraw = 16, Tracker = 15,
-    Todo = 10, Window = 8, Speed = 6, Tour = 3, Glow = 3 }
+    Todo = 10, Window = 8, Speed = 6, Tour = 3, Glow = 3, ItemInfo = 8 }
   for k, v in pairs(caps) do BUDGET.kinstrModuleMin[k] = v end
 end
 -- PERF4 : 10 min sans RIEN (--idle : immobile, hors combat, aucun événement) : ce qui attend un changement ne travaille
@@ -100,7 +103,7 @@ if opts.idle then
   BUDGET.frameWorstKinstr, BUDGET.frameP99Kinstr, BUDGET.allocKBps = 32, 12, 22
   -- (Detect et Export : appelés par la boussole et le trajet ; PathDraw : une passe au plus toutes les 30 s, puis dort)
   local caps = { Core = 115, Export = 10, Detect = 8, PathDraw = 6, Quests = 4, Tracker = 4, Todo = 4, Speed = 3,
-    Highlight = 2, Macros = 2, Window = 2, Tour = 1, Glow = 1, Hub = 1, Shortcuts = 1, Bugs = 1 }
+    Highlight = 2, Macros = 2, Window = 2, Tour = 1, Glow = 1, Hub = 1, Shortcuts = 1, Bugs = 1, ItemInfo = 1 }
   for k, v in pairs(caps) do BUDGET.kinstrModuleMin[k] = v end
 end
 
@@ -959,6 +962,27 @@ local function clickToolbar(c)
   end
 end
 
+-- ITEMINFO (4.0.2): the player hovers his bag items (the game re-sets a bag tooltip ~5×/s while the mouse stays:
+-- 3 calls per item); the lines are built once per item, then served from the cache
+local function hoverBags(c, n)
+  local GT = rawget(c.env, "GameTooltip")
+  local fn = GT and GT:GetScript("OnTooltipSetItem")
+  if not fn then return end
+  CUR = c.name
+  local k = 0
+  for b = 0, 4 do
+    local bag = c.M.bags[b]
+    for s = 1, bag and bag.size or 0 do
+      local sl = bag.slots[s]
+      if sl and c.M.items[sl.id] and k < (n or 8) then
+        k = k + 1
+        for _ = 1, 3 do GT.__item, GT.__lines = sl.id, {} fn(GT) end
+      end
+    end
+  end
+  GT.__item, GT.__lines = nil, {}
+end
+
 local function refreshTabs(c)
   local T = c.T
   if not (T and T.GetTabs and T.SelectTab) then return end
@@ -1079,6 +1103,7 @@ at(17, function()   -- vendor: the player clicks what the panel offers, then rep
   local M = main.M
   M.SetMerchant(true)
   tick(2)
+  hoverBags(main, 10)   -- (ITEMINFO) what is each item worth, sell or keep
   refreshTabs(main)
   clickPanel(main, 1)
   for b = 0, 4 do local bag = M.bags[b] if bag then for s = 1, bag.size do
@@ -1176,6 +1201,7 @@ at(36, function()   -- bags full while questing
   while freeSlot(M) do local b, s = freeSlot(M); M.SetBagItem(b, s, 20002, 1) end
   fire(main, "BAG_UPDATE", 1); fire(main, "BAG_UPDATE_DELAYED")
   fire(main, "UI_ERROR_MESSAGE", 3, "Vos sacs sont pleins.")
+  hoverBags(main, 6)   -- (ITEMINFO) what to throw away first
 end)
 at(40, function()   -- a click on a panel line DURING combat must not do anything protected
   fight(main, "Araignée des bois", { inCombatHook = function(r) if r == 2 then clickPanel(main, 1); clickToolbar(main) end end })
