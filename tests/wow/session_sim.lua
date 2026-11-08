@@ -52,7 +52,9 @@ local BUDGET = {
     Route = 80, Planner = 80, Quests = 80, Tracker = 80, Todo = 80, Export = 80, Detect = 80, Speed = 80, Tour = 10,
     -- CLEAN 4.0 (ROUND7 : ≤ 80 par module) : Combat, Rares, Chasseur, Équipement… (avant : Fight 139-191, Hunter 97)
     Fight = 80, Boost = 40, Hunter = 80, Gear = 80, Inventory = 80, Errands = 60, Session = 60, Leveling = 60, Prof = 60,
-    Talents = 40, Binds = 60, Classes = 60, PvP = 60 },   -- per-module caps (avg kinstr / minute); Group below
+    Talents = 40, Binds = 60, Classes = 60, PvP = 60,
+    -- REPLACE (4.0.1) « sans autres addons » : icônes de quêtes (carte + minimap), Suivi TreeAI, Mes addons, Confort, Dégâts
+    QuestPins = 40, Watch = 40, Addons = 5, QoL = 10, Meter = 10 },   -- per-module caps (avg kinstr / minute); Group below
   nowChangesPerMinMax = 12,      -- « Maintenant » changes (text skeleton, digits ignored) in any minute
   nowChangesPerMinAvg = 6,      -- a fight every ~35 s brings its own in-combat lines (aspect, pet HP…)
   alertsPer10Min = 8,            -- corner alert pops in any 10-minute window
@@ -100,7 +102,8 @@ if opts.idle then
   BUDGET.frameWorstKinstr, BUDGET.frameP99Kinstr, BUDGET.allocKBps = 32, 12, 22
   -- (Detect et Export : appelés par la boussole et le trajet ; PathDraw : une passe au plus toutes les 30 s, puis dort)
   local caps = { Core = 115, Export = 10, Detect = 8, PathDraw = 6, Quests = 4, Tracker = 4, Todo = 4, Speed = 3,
-    Highlight = 2, Macros = 2, Window = 2, Tour = 1, Glow = 1, Hub = 1, Shortcuts = 1, Bugs = 1 }
+    Highlight = 2, Macros = 2, Window = 2, Tour = 1, Glow = 1, Hub = 1, Shortcuts = 1, Bugs = 1,
+    QuestPins = 1, Watch = 1, Addons = 1 }   -- REPLACE : rien à l'arrêt (carte fermée, joueur immobile)
   for k, v in pairs(caps) do BUDGET.kinstrModuleMin[k] = v end
 end
 

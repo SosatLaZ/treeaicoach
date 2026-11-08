@@ -1790,6 +1790,7 @@ for _, n in ipairs({
   "SPF_Tracker", "ShortestPathTrackerFrame",
 }) do SCAN_NAMES[#SCAN_NAMES + 1] = n end
 for i = 1, 10 do SCAN_NAMES[#SCAN_NAMES + 1] = "ChatFrame" .. i end
+SCAN_NAMES[#SCAN_NAMES + 1] = "TreeAIWatchFrame"   -- (REPLACE 4.0.1) Suivi TreeAI : mesuré comme un suivi (voir isOurs)
 TreeAI.LAYOUT_SCAN_NAMES = SCAN_NAMES
 -- cadres d'autres addons repérés par leur préfixe (enfants de la minimap compris : boutons LibDBIcon)
 local SCAN_PREFIX = { "LibDBIcon10_", "Questie_", "QuestieTracker", "Details", "Recount", "Skada",
@@ -1812,7 +1813,7 @@ TreeAI.LAYOUT_SCAN_PREFIX = SCAN_PREFIX
 -- suivis de quêtes : ils grandissent avec les quêtes -> on réserve la colonne jusqu'au tiers bas de l'écran
 local GROWS = { ObjectiveTrackerFrame = true, QuestWatchFrame = true, WatchFrame = true, Questie_BaseFrame = true,
   QuestieTrackerBaseFrame = true, Questie_TrackerBaseFrame = true, QuestieTracker_BaseFrame = true,
-  Questie_TrackedQuests = true }
+  Questie_TrackedQuests = true, TreeAIWatchFrame = true }
 -- cadres de groupe : réservés même cachés (le groupe se forme plus tard, ils ne doivent pas tomber sur nous)
 local RESERVE_HIDDEN = { PartyMemberFrame1 = true, PartyMemberFrame2 = true, PartyMemberFrame3 = true,
   PartyMemberFrame4 = true, CompactPartyFrame = true, PartyFrame = true }
@@ -1876,6 +1877,8 @@ local function layoutState()
 end
 
 local function isOurs(f)
+  -- (REPLACE 4.0.1) le Suivi TreeAI se mesure comme un suivi de quêtes : rien ne se pose sur lui (carte, panneau)
+  if type(f) == "table" and rawget(f, "_taiScan") then return false end
   if f == panel or f == alert then return true end
   if type(f) == "table" and rawget(f, "_taiOurs") then return true end   -- (PLACEBUG) nos cadres sans nom (calques)
   local n = call(f, "GetName")
@@ -2719,7 +2722,9 @@ function TreeAI:CommitMove(id, l, b, scale)
   local S = self.settings
   if S and S.snapFree ~= false and TreeAI._LightRects then
     local area = 0
+    local ownName = call(f, "GetName")
     for _, r in ipairs(TreeAI._LightRects(W, H)) do
+      if r.name == ownName then r = { l = 0, b = 0, w = 0, h = 0 } end   -- (REPLACE) jamais son propre rectangle
       local ox = math.min(r.l + r.w, l + w) - math.max(r.l, l)
       local oy = math.min(r.b + r.h, b + h) - math.max(r.b, b)
       if ox > 0 and oy > 0 then area = area + ox * oy end

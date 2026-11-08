@@ -63,6 +63,8 @@ Modules\Dungeon.lua
 Modules\DungeonPrep.lua
 Modules\Radar.lua
 Modules\MinimapPins.lua
+Modules\QuestPins.lua
+Modules\Watch.lua
 Modules\Gear.lua
 Modules\Talents.lua
 Modules\Session.lua
@@ -77,4 +79,7 @@ Modules\Shortcuts.lua
 Modules\Window.lua
 Modules\WindowPages.lua
 Modules\JournalPage.lua
+Modules\QoL.lua
+Modules\Meter.lua
+Modules\Addons.lua
 Modules\Tour.lua
