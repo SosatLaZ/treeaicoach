@@ -140,9 +140,13 @@ local function countList(list)
   end
   return n
 end
-function M.FoodCount()
+function M.FoodCountRaw()
   local C = T.Data and T.Data.Consumables or {}
   return countList(C.food), countList(C.water)
+end
+function M.FoodCount()
+  if API.BagMemo then return API.BagMemo("Predict.FoodCount", M.FoodCountRaw) end   -- (LITE)
+  return M.FoodCountRaw()
 end
 
 function M.Durability()

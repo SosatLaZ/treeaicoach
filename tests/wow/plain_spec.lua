@@ -67,10 +67,10 @@ eq(P.RouteName("clear"), "Tout finir ici", "clear")
 eq(P.RouteName("squad", "Escouade (4)"), "Avec mes potes", "squad")
 
 -- garde-fou de robustesse
-ok(not P.IsPlain("Les loups · 410 XP/min"), "XP/min refusé")
+ok(P.IsPlain("Les loups · 410 XP/min"), "XP/min permis (le joueur l'aime)")
 ok(not P.IsPlain("Garder (score 74/100)"), "score refusé")
 ok(not P.IsPlain("λ = 0,3"), "λ refusé")
-ok(not P.IsPlain("Récompense +12 %"), "% hors progression refusé")
+ok(P.IsPlain("Récompense +12 %"), "% permis")
 ok(P.IsPlain("Niv 27 → 28 : 46 %"), "% de progression permis")
 ok(P.IsPlain("|cffffd100À faire maintenant|r : Va tuer 6 Loups au nord (≈ 3 min)"), "ligne simple permise")
 

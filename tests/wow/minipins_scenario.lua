@@ -168,11 +168,11 @@ return function(M, ctx)
   check(not pinOf("rare"), "layer toggle off hides the layer")
   MP.db.rares = true
 
-  -- perf: ≤ 10 placements / s through the Minimap-child driver
+  -- perf: ≤ 5 placements / s through the Minimap-child driver (LITE)
   MP.Update(true)
   local u0 = MP.updates
   M.Advance(2, 0.02)
-  check(MP.updates - u0 <= 21 and MP.updates - u0 >= 10, "driver updates ≤ 10 Hz (" .. (MP.updates - u0) .. " in 2 s)")
+  check(MP.updates - u0 <= 11 and MP.updates - u0 >= 5, "driver updates ≤ 5 Hz (" .. (MP.updates - u0) .. " in 2 s)")
 
   -- ------------------------------------------------------------- HereBeDragons-Pins path (stub)
   local added, removed = {}, {}

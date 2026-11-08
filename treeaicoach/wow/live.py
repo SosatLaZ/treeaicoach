@@ -712,7 +712,7 @@ def abandon_advice(s: dict, group_size: int = 1) -> list[dict]:
 #: The 5 status words of a quest (same as the addon, Modules/Plain.lua) — never XP/min, score or %.
 QUEST_TAGS = ("Prête à rendre", "À retirer", "À plusieurs", "Rapide", "Long")
 #: Words that must never reach the main quest UI (robustness check, see tests).
-JARGON = ("xp/min", "xp/h", "/min", "score", "λ", "/100", "coût", "rendement", "coefficient")
+JARGON = ("score", "λ", "/100", "coefficient")   # internal jargon only: XP/min, XP/h, % and minutes are wanted
 
 
 def is_plain(text: str) -> bool:
@@ -720,8 +720,6 @@ def is_plain(text: str) -> bool:
     progress (« niveau 27 : 62 % »)."""
     low = str(text or "").lower()
     if any(w in low for w in JARGON):
-        return False
-    if "%" in low and not any(k in low for k in ("niv", "progress", "fini")):
         return False
     return True
 

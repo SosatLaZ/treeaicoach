@@ -38,7 +38,8 @@ def test_no_jargon_strings_in_ui_modules():
             code = re.sub(r"--.*$", "", line)
             for s in re.findall(r'"([^"]*)"', code):
                 low = s.lower()
-                if any(w in low for w in ("xp/min", "xp/h", "/100", "λ", "rendement")) or re.search(r"\bscore\b", low):
+                # only real internal jargon: XP/min, XP/h, % and minutes are wanted by the player
+                if any(w in low for w in ("/100", "λ", "coefficient")) or re.search(r"\bscore\b", low):
                     bad.append(f"{name}:{n}: {s}")
     assert not bad, bad
 
@@ -47,5 +48,5 @@ def test_app_quest_lines_are_plain():
     from treeaicoach.wow import live
 
     assert live.is_plain("Va tuer 6 Loups au nord (≈ 3 min)")
-    assert not live.is_plain("Les loups · 400 XP/min") and not live.is_plain("score 74")
-    assert not live.is_plain("Récompense +12 %") and live.is_plain("Niveau 27 : 62 %")
+    assert live.is_plain("Les loups · 400 XP/min") and not live.is_plain("score 74")
+    assert live.is_plain("Récompense +12 %") and live.is_plain("Niveau 27 : 62 %") and not live.is_plain("λ = 0,3")

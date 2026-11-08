@@ -659,6 +659,8 @@ local function startTicker()
   M._tickEvery = every
   M._ticker = T:NewTicker(every, function()
     if (T.perfSlow and 2 or 1) ~= M._tickEvery then startTicker() return end
+    -- (LITE) hors combat, un tour sur deux suffit
+    if not (T.InCombat and T:InCombat()) then M._skip = not M._skip; if M._skip then return end end
     if M:IsEnabled() then M:Tick() end
   end)
 end

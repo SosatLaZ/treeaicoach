@@ -153,6 +153,10 @@ end
 -- ------------------------------------------------------------------ sacs (17, 22)
 local QUEST_CLASS = 12
 function M.SellList()
+  if API.BagMemo then return API.BagMemo("Economy.SellList", M.SellListRaw) end   -- (LITE)
+  return M.SellListRaw()
+end
+function M.SellListRaw()
   local list = {}
   if not API.IterBags then return list end
   for bag, slot, it in API.IterBags() do

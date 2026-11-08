@@ -140,7 +140,9 @@ function M.OnDetectRares(list)
   local Dt = T.Detect
   local t = now()
   for _, e in ipairs(list) do
-    if type(e) == "table" and e.kind ~= "event" and e.kind ~= "vignette" then
+    -- un rare vu sur une barre de nom / la cible : la ligne de scanUnit (même id) s'en charge, quel que soit
+    -- l'ordre des deux modules sur NAME_PLATE_UNIT_ADDED (sinon le texte dépend du hasard)
+    if type(e) == "table" and e.kind ~= "event" and e.kind ~= "vignette" and e.src ~= "plate" then
       if e.guid then
         if seen[e.guid] and t - seen[e.guid] < 600 then e = nil else seen[e.guid] = t end
       end
@@ -889,6 +891,10 @@ local function isDrink(id, name)
 end
 
 function M:FoodCount()
+  if API.BagMemo then return API.BagMemo("Boost.FoodCount", M.FoodCountRaw, self) end   -- (LITE)
+  return self:FoodCountRaw()
+end
+function M:FoodCountRaw()
   local food, drink = 0, 0
   if not API.IterBags then return food, drink end
   for _, _, it in API.IterBags() do

@@ -49,7 +49,7 @@ MP.LAYERS, MP.LABELS = LAYERS, LABELS
 
 local floor, sqrt, atan2, cos, sin, pi, abs, max, min =
   math.floor, math.sqrt, math.atan2, math.cos, math.sin, math.pi, math.abs, math.max, math.min
-local STEP = 0.1                 -- ≤ 10 placements / s
+local STEP = 0.2                 -- ≤ 5 placements / s (LITE)
 local CIRCLE = "Interface\\CharacterFrame\\TempPortraitAlphaMask"
 local ARROW = "Interface\\Minimap\\MinimapArrow"
 
@@ -59,11 +59,10 @@ MP.YARDS = {
   outdoor = { 466 + 2 / 3, 400, 333 + 1 / 3, 266 + 2 / 3, 200, 133 + 1 / 3 },
 }
 
+local function tryPass(ok, a, ...) if ok then return a, ... end return nil end   -- (LITE) sans table
 local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
-  local r = { pcall(fn, ...) }
-  if not r[1] then return nil end
-  return unpack(r, 2)
+  return tryPass(pcall(fn, ...))
 end
 local function now() return try(_G.GetTime) or 0 end
 local function epoch() return try(_G.time) or floor(now()) end
@@ -510,7 +509,7 @@ function MP.Update(force)
   local view = MP.View()
   if not view then return end
   MP.updates = MP.updates + 1
-  if force or not MP.pins or t - (MP.slowAt or 0) >= 1 or MP.pinsMap ~= me.mapID then
+  if force or not MP.pins or t - (MP.slowAt or 0) >= 3 or MP.pinsMap ~= me.mapID then   -- (LITE) liste : 3 s
     MP.pins = MP.Collect(me, view)
     MP.slowAt, MP.pinsMap, MP.sig = t, me.mapID, nil
     if MP.SyncHBD(MP.pins, me, view) then

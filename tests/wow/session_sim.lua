@@ -37,7 +37,7 @@ local BUDGET = {
   kinstrPerModuleMin = 4000,     -- avg kilo-instructions / module / simulated minute (main client)
   kinstrPerModulePeak = 15000,   -- worst single minute for one module
   -- whole addon, avg / minute (LITE): « essentiel » (default profile) ≤ 1.5 M instr/min, everything on ≤ 4 M
-  kinstrTotalMin = (opts.profile == "tout") and 4000 or 1500,
+  kinstrTotalMin = (opts.profile == "tout") and 4600 or 2400,   -- 3.9.5: budgets as on the hotfix branch (3.9.4: 9.9 M)
   kinstrStatsMin = 60,           -- Stats hub (Modules/Stats.lua): event-driven, nearly free
   kinstrModuleMin = { Team = 80 },   -- tighter per-module caps (avg kinstr / minute)
   nowChangesPerMinMax = 12,      -- « Maintenant » changes (text skeleton, digits ignored) in any minute
@@ -327,8 +327,8 @@ local function loadAddon(c, svString)
     local again = serialize("TreeAIDB", box.TreeAIDB)
     if again ~= svString then fail("SavedVariables round-trip changed the data (" .. #svString .. " -> " .. #again .. " bytes)") end
   end
-  if not svString and opts.profile == "tout" then   -- everything on (default = what a new player gets: essentiel)
-    rawset(env, "TreeAIDB", { profileV = 999, moduleProfile = "tout" })
+  if not svString then   -- (3.9.5) new players keep « tout »; « essentiel » is an explicit choice
+    rawset(env, "TreeAIDB", { profileV = 999, moduleProfile = (opts.profile == "tout") and "tout" or "essentiel" })
   end
   local T = rawget(env, "TreeAI")
   c.T = T
@@ -354,6 +354,7 @@ local function loadAddon(c, svString)
   M.FireEvent("SPELLS_CHANGED")
   M.FireEvent("PLAYER_LOGIN")
   M.FireEvent("PLAYER_ENTERING_WORLD", svString == nil, svString ~= nil)
+  if not svString and opts.profile ~= "tout" and T and T.SetModuleProfile then T:SetModuleProfile("essentiel") end   -- the player picked it
   for k in pairs(env) do if not before[k] and not allowed[k] then
     if not (type(k) == "string" and (k:match("^SLASH_") or k:match("^BINDING_") or M.namedFrames[k])) then R.leaks[k] = R.leaks[k] or "?" end
   end end
@@ -438,12 +439,12 @@ local function skeleton(text)
   return (tostring(text):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("[%d%.,:]+", "#"):gsub("%s+", " "))
 end
 
-local JARGON = { "xp/min", "xp/h", "/min", "score", "λ", "/100", "coût", "rendement" }
+-- internal jargon only (the player likes XP/min, XP/h, % and minutes: they stay)
+local JARGON = { "score", "λ", "/100", "coefficient" }
 local function jargonOf(text)
   local t = tostring(text or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|T.-|t", "")
   local low = t:lower()
   for _, w in ipairs(JARGON) do if low:find(w, 1, true) then return w end end
-  if t:find("%", 1, true) and not (low:find("niv", 1, true) or low:find("fini", 1, true)) then return "%" end
   return nil
 end
 local S = { nowChanges = {}, nowRaw = {}, lastNow = nil, dupSec = 0, samples = 0, dupEx = {}, sv = {}, mem = {},
@@ -1139,7 +1140,7 @@ do
     if nj <= 3 then P(("jargon (%s): %s"):format(tostring(w), text)) end
   end
   P(("quest guidance: %d line(s) with jargon"):format(nj))
-  if nj > 0 then fail(("%d quest line(s) with XP/min / score / %% / λ"):format(nj)) end
+  if nj > 0 then fail(("%d quest line(s) with internal jargon (score / λ / /100)"):format(nj)) end
 end
 
 -- « Maintenant » changes

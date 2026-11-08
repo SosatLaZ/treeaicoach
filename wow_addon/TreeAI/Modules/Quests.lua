@@ -635,6 +635,13 @@ function M.NextStep(a)
 end
 
 -- ------------------------------------------------------------------ toasts / rappels
+-- un plan TreeAI suivi (Planner + Itinéraire) : ses arrêts couvrent déjà les rendus
+local function planActive()
+  local P = T.Planner
+  if not (P and P.IsEnabled and P:IsEnabled() and P.GetActiveSteps) then return false end
+  local ok, st = pcall(P.GetActiveSteps, P, 1)
+  return ok and st ~= nil
+end
 local prev = {}          -- [qid] = { complete=, obj = { have... } }
 local primed = false
 local function toasts(list)
@@ -643,7 +650,9 @@ local function toasts(list)
     seen[q.id] = true
     local p = prev[q.id]
     if primed and p and cfg("toasts") then
-      if q.complete and not p.complete then
+      if q.complete and not p.complete and planActive() then
+        -- (LITE) le plan / l'itinéraire dit déjà « Arrêt n/N : Rendre « … » » : pas de deuxième ligne
+      elseif q.complete and not p.complete then
         suggest("done:" .. q.id, ("Rends « %s » : terminée%s"):format(cut(q.title, 34),
           q.turnZone and (" (" .. q.turnZone .. ")") or ""), 2,
           { ttl = 20, cooldown = 60 })

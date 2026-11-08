@@ -800,8 +800,8 @@ function M.Display(list)
   for _, l in ipairs(list or {}) do
     if l.rank then
       if not rank then
-        rank = { text = ("Meilleure quête : « %s »"):format(cut(l.title or "", 30)), prio = 1,
-          tooltip = { ("Quêtes du journal, la plus rentable d'abord (%d XP/min) :"):format(l.xpm or 0) } }
+        rank = { text = ("Meilleure quête : « %s » (%d XP/min)"):format(cut(l.title or "", 30), l.xpm or 0), prio = 1,
+          tooltip = { "Quêtes du journal, la plus rentable d'abord :" } }
         out[#out + 1] = rank
       end
       rank.tooltip[#rank.tooltip + 1] = l.text

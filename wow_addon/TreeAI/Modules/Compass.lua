@@ -755,14 +755,14 @@ local function createFrame()
     if Th then Th:Skin(frame, "hud", { bg = bg }); Th:Font(label, "S", "gold"); Th:Font(info, "S") end
   end
   frame:SetScale(tonumber(M.db.scale) or 1)
-  -- (LITE) la flèche tourne avec le joueur (20 Hz, seulement si l'orientation change) ; cible, distance et
-  -- textes 2 fois par seconde
+  -- (LITE) la flèche tourne avec le joueur (10 Hz, seulement si l'orientation change) ; cible, distance et
+  -- textes 1 fois par seconde (flèche : 10 Hz)
   local acc, full = 0, 0
   frame:SetScript("OnUpdate", function(_, dt)
     acc, full = acc + (dt or 0), full + (dt or 0)
-    if acc < 0.05 then return end
+    if acc < 0.1 then return end
     acc = 0
-    if full >= 0.5 or not (M.state and M.state.bearing) then full = 0; M.Refresh(); return end
+    if full >= 1 or not (M.state and M.state.bearing) then full = 0; M.Refresh(); return end
     M.Spin()
   end)
   return frame
@@ -781,8 +781,10 @@ end
 function M.Spin()
   local st = M.state
   if not (frame and arrow and st and st.bearing and frame:IsShown()) then return end
-  local facing = try(_G.GetPlayerFacing)
-  if facing == nil or facing == st.facing then return end
+  local gf = _G.GetPlayerFacing
+  if not gf then return end
+  local ok, facing = pcall(gf)
+  if not ok or facing == nil or facing == st.facing then return end
   st.facing = facing
   st.rel = G.Relative(st.bearing, facing)
   if st.rel then setArrow(st.rel) end

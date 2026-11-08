@@ -189,10 +189,10 @@ end
 
 -- TreeAI module profile (LITE): scenarios test every module, so the default here is « tout » (everything on,
 -- the one-time « essentiel » switch already done); --profile essentiel = what a new player gets.
-if opts.profile == "tout" and addonName == "TreeAI" then
+if addonName == "TreeAI" then   -- (3.9.5) « essentiel » is opt-in: seeded only when asked
   local db = rawget(_G, "TreeAIDB")
   if type(db) ~= "table" then db = {}; rawset(_G, "TreeAIDB", db) end
-  if db.profileV == nil then db.profileV, db.moduleProfile = 999, "tout" end
+  if db.profileV == nil then db.profileV, db.moduleProfile = 999, (opts.profile == "essentiel") and "essentiel" or "tout" end
 end
 
 -- drive ------------------------------------------------------------------------------------------
@@ -212,6 +212,8 @@ fire("VARIABLES_LOADED")
 fire("SPELLS_CHANGED")
 fire("PLAYER_LOGIN")
 fire("PLAYER_ENTERING_WORLD", true, false)
+-- the player picked « essentiel » (Plus → Modules): modules off as that choice does it
+if opts.profile == "essentiel" and rawget(_G, "TreeAI") and TreeAI.SetModuleProfile then TreeAI:SetModuleProfile("essentiel") end
 M.Advance(2)
 
 local function clickAll()

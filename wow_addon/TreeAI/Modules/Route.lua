@@ -576,7 +576,22 @@ local function stepSvc(steps, i)
 end
 -- liste des arrêts restants : { kind = "quest"|"walk"|"fly"|"boat"|"zeppelin"|"hs", text, sec, step, place }
 -- + totaux (secondes, yards de marche). n = nombre max d'arrêts de quête parcourus.
+-- (LITE) mémorisé 5 s pour le même plan / la même étape (le panneau se redessine souvent, le trajet bouge peu)
+local stopsMemo = {}
 function R:Stops(n)
+  local P = T.Planner
+  local tnow = now()
+  local m = stopsMemo
+  if P and m.steps == P.steps and m.cur == P.cursor and m.n == n and m.len == #(P.steps or {})
+      and m.skipN == (P.char and P.char.skip and next(P.char.skip) and true or false) and tnow - (m.at or -100) < 5 then
+    return m.out
+  end
+  local out = self:StopsRaw(n)
+  stopsMemo = { steps = P and P.steps, cur = P and P.cursor, n = n, len = P and #(P.steps or {}) or 0,
+    skipN = (P and P.char and P.char.skip and next(P.char.skip) and true or false), at = tnow, out = out }
+  return out
+end
+function R:StopsRaw(n)
   local P = T.Planner
   local steps, cur = P and P.steps, P and P.cursor
   local out = { total = 0, travel = 0, yd = 0 }

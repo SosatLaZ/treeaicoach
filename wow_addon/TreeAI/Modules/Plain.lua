@@ -212,20 +212,14 @@ function P.Reason(list, n)
   return table.concat(out, ", ")
 end
 
--- Garde-fou : un texte de l'interface principale ne parle pas en jargon.
-P.FORBIDDEN = { "xp/min", "xp/h", "/min", "score", "λ", "/100", "coût", "rendement", "coefficient", "×0" }
+-- Garde-fou : un texte de l'interface principale ne parle pas en jargon INTERNE (λ, score, /100, coefficient,
+-- codes de debug). Les chiffres utiles au joueur (XP/min, XP/h, %, minutes) sont permis : il les aime.
+P.FORBIDDEN = { "score", "λ", "/100", "coefficient", "×0" }
 function P.IsPlain(text)
   local s = tostring(text or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|T.-|t", "")
   local low = s:lower()
   for _, w in ipairs(P.FORBIDDEN) do
     if low:find(w, 1, true) then return false, w end
-  end
-  -- « % » permis seulement pour une progression (« 62 % » d'un niveau / d'une quête, « 3/10 »)
-  for before in s:gmatch("(.-)%%") do
-    if not (before:find("%d%s*$") and (low:find("niv", 1, true) or low:find("progress", 1, true) or low:find("fini", 1, true)
-      or low:find("→", 1, true))) then
-      return false, "%"
-    end
   end
   return true
 end

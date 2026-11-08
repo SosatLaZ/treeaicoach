@@ -2239,7 +2239,7 @@ do
 
   local owner = {}
   TreeAI:On("READY", owner, function()
-    TreeAI:NewTicker(2, function()
+    TreeAI:NewTicker(5, function()   -- (LITE) 5 s : la place des cadres change rarement
       local S = TreeAI.settings
       if S and S.reflow ~= false and not TreeAI:InCombat() then TreeAI.safecall(TreeAI.Reflow, TreeAI) end
     end)

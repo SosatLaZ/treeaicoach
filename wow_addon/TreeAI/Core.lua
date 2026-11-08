@@ -226,6 +226,24 @@ function API.FreeSlots()
   return free, total
 end
 
+-- (LITE) calculs tirés des sacs mémorisés jusqu'au prochain changement de sacs (événement), un nombre de cases
+-- libres différent, ou 10 s : API.BagMemo("clé", fn, ...) rend les mêmes valeurs que fn(...)
+local bagGen, bagMemo = 0, {}
+function API.BagGen() return bagGen end
+function API.BagChanged() bagGen = bagGen + 1 end
+local function pack(...) return { n = select("#", ...), ... } end
+function API.BagMemo(key, fn, ...)
+  local free = API.FreeSlots()
+  local t = now()
+  local m = bagMemo[key]
+  if m and m.gen == bagGen and m.free == free and t >= m.at and t - m.at < 10 then
+    return unpack(m.r, 1, m.r.n)
+  end
+  local r = pack(fn(...))
+  bagMemo[key] = { gen = bagGen, free = free, at = t, r = r }
+  return unpack(r, 1, r.n)
+end
+
 -- Only call from a player click (merchant sell button), out of combat.
 function API.UseContainerItem(bag, slot)
   if TreeAI:InCombat() then return false end
@@ -435,10 +453,17 @@ local profile = _G.debugprofilestop
 TreeAI._stats = TreeAI._stats or {}   -- [module] = { calls, ms } (SelfTest / « /tai perf »)
 local curOwner                         -- module dont le code tourne en ce moment (nil = cœur)
 local function isMod(o) return type(o) == "table" and o ~= TreeAI and o.IsEnabled ~= nil and o.name ~= nil end
+local statOf = setmetatable({}, { __mode = "k" })   -- propriétaire -> sa ligne de TreeAI._stats (sans recalcul)
+local coreKey = {}
 local function addStat(owner, ms)
-  local name = isMod(owner) and owner.name or "Core"
-  local st = TreeAI._stats[name]
-  if not st then st = { calls = 0, ms = 0 }; TreeAI._stats[name] = st end
+  local key = owner or coreKey
+  local st = statOf[key]
+  if not st then
+    local name = isMod(owner) and owner.name or "Core"
+    st = TreeAI._stats[name]
+    if not st then st = { calls = 0, ms = 0 }; TreeAI._stats[name] = st end
+    statOf[key] = st
+  end
   st.calls = st.calls + 1
   st.ms = st.ms + (ms or 0)
 end
@@ -1089,6 +1114,14 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Inventory = { lite = false, desc = "Inventaire : tri, objets inutiles" },
   Classes = { lite = false, combat = true, desc = "Conseils de classe (autres classes)" },
   Predict = { lite = false, desc = "Prévisions : ce qui va te manquer" },
+  Stats = { lite = true, desc = "Statistiques mesurées du perso (sur événement)" },
+  Team = { lite = true, gate = "group", desc = "Groupe : tous les membres, même sans TreeAI (en groupe)" },
+  Route = { lite = true, desc = "Itinéraire le plus rapide entre les étapes" },
+  Speed = { lite = true, desc = "Aller plus vite : mort, monture, foyer" },
+  Plain = { lite = true, desc = "Conseils de quête en mots simples" },
+  Detect = { lite = true, desc = "Détection : rares, trésors, monstres de quête, services proches" },
+  MinimapPins = { lite = true, desc = "Points sur la minimap (ce que Questie ne montre pas)" },
+  Edge = { lite = false, desc = "Astuces avancées (petits avantages)" },
 }
 
 function TreeAI:ModuleProfile()
@@ -1174,8 +1207,7 @@ function TreeAI:_ApplyProfileOnce()
   if type(db) ~= "table" then return end
   if (tonumber(db.profileV) or 0) >= self.PROFILE_V then return end
   db.profileV = self.PROFILE_V
-  self:SetModuleProfile("essentiel")
-  self._liteNotice = true
+  -- (3.9.5) le joueur veut TOUT : on garde tout allumé (les gains de perf restent) ; « essentiel » reste au choix
 end
 
 function TreeAI:_LiteNotice()
@@ -1914,8 +1946,9 @@ end
 
 --- LITE : le panneau a-t-il quelque chose de neuf à montrer ? (génération changée ou conseil expiré)
 local panelGen, renderedGen = 1, 0
-function TreeAI:MarkDirty() panelGen = panelGen + 1 end
-function TreeAI:_PanelRendered() renderedGen = panelGen end
+local contentGen = 0   -- (LITE) tout changement de contenu (même d'un onglet caché) : invalide le cache GetTabLines
+function TreeAI:MarkDirty() panelGen = panelGen + 1; contentGen = contentGen + 1 end
+function TreeAI:_PanelRendered() renderedGen = panelGen; contentGen = contentGen + 1 end   -- nouveau passage : cache neuf
 function TreeAI:PanelDirty()
   if panelGen ~= renderedGen then return true end
   local t = now()
@@ -1943,6 +1976,7 @@ function TreeAI:GetSuggestions()
   for id, e in pairs(suggestions) do
     if e.expires and e.expires <= t then
       suggestions[id] = nil
+      contentGen = contentGen + 1
     elseif e.prio >= minPrio and not ((e.kind == nil or e.kind == "advice") and qAdv or (e.kind == "buff" and qBuf)) then
       list[#list + 1] = e
     end
@@ -2072,6 +2106,7 @@ function TreeAI:SetTabLines(id, lines, source)
   if isNewSource then ts.order[#ts.order + 1] = source end
   local old = ts.lines[source]
   ts.lines[source] = out
+  contentGen = contentGen + 1
   -- LITE : un onglet qu'on ne voit pas ne redessine pas le panneau (le clic sur l'onglet le reconstruit) ;
   -- une ligne épinglée (offerte à « Maintenant ») compte toujours
   if isNewSource or self:TabShown(id) or hasPin(out) or hasPin(old) then self:RequestRefresh() end
@@ -2162,7 +2197,18 @@ end
 -- by visible text AND by meaning (topic: ammo / bags / repair… from several modules -> one line),
 -- at most `perModule` lines per module, prio >= nowMinPrio (pinned quest step exempt).
 -- Other tabs = their SetTabLines blocks, then the suggestions routed to them.
+local tabCache = {}   -- id -> { gen, at, out } : un redessin demande chaque onglet (couleur des boutons)
 function TreeAI:GetTabLines(id)
+  local c = tabCache[id]
+  local t = now()
+  -- l'état du joueur (mort, vol…) cache / rend des lignes sans toucher au contenu : il fait partie de la clé
+  local q = (self:Quiet("advice") and 1 or 0) + (self:Quiet("buff") and 2 or 0)
+  if c and c.gen == contentGen and c.q == q and t - c.at < 1 and c.n == #c.out then return c.out end
+  local out = self:_GetTabLines(id)
+  tabCache[id] = { gen = contentGen, at = t, out = out, n = #out, q = q }
+  return out
+end
+function TreeAI:_GetTabLines(id)
   local out, seen = {}, {}
   local function push(e)
     local k = plain(e.text)
@@ -2967,6 +3013,14 @@ do  -- pause / reprise des comms selon l'instance (propriétaire distinct : n'é
   for _, ev in ipairs({ "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA" }) do
     TreeAI:RegisterEvent(ev, commOwner, function() TreeAI:_CheckCommPause() end)
   end
+end
+do  -- (LITE) sacs changés -> API.BagMemo recalcule
+  local bagOwner = {}
+  for _, ev in ipairs({ "BAG_UPDATE_DELAYED", "BAG_UPDATE", "PLAYER_ENTERING_WORLD", "MERCHANT_CLOSED", "LOOT_CLOSED",
+      "PLAYER_EQUIPMENT_CHANGED" }) do
+    TreeAI:RegisterEvent(ev, bagOwner, function() API.BagChanged() end)
+  end
+  TreeAI:RegisterEvent("UNIT_INVENTORY_CHANGED", bagOwner, function(_, _, u) if u == nil or u == "player" then API.BagChanged() end end)
 end
 TreeAI:RegisterEvent("GROUP_ROSTER_UPDATE")
 TreeAI:RegisterEvent("PARTY_MEMBERS_CHANGED", TreeAI, "GROUP_ROSTER_UPDATE")
