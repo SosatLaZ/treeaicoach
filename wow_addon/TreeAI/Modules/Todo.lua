@@ -1493,6 +1493,7 @@ function M:OnOptionChanged(key, value)
 end
 
 -- Core:StartAutoRefresh : barre de session / courses / groupe quand la fenêtre est ouverte (rien sinon)
+M.autoIdleSafe = true   -- (4.0.1) fenêtre fermée : rien ; au calme, son rendu suit les poussées du Suivi
 function M:AutoRefresh()
   if frame and frame:IsShown() then M.RequestRender() end
 end

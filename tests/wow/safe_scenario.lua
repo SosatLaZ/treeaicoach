@@ -17,7 +17,7 @@ return function(M, ctx)
       check(mod(n)._active ~= true and mod(n).db.enabled == false, n .. " (bêta) off in mode sûr")
     end
   end
-  check(nBeta >= 30, "most modules are bêta (" .. nBeta .. ")")
+  check(nBeta >= 26, "most modules are bêta (" .. nBeta .. ")")   -- (4.0.1) ZonePlan, PathDraw, Highlight : mode sûr
   check(not T:IsBeta("Quests") and not T:IsBeta("Compass") and not T:IsBeta("Speed") and T:IsBeta("Auction"), "safe set")
 
   -- one-line notice
@@ -68,4 +68,22 @@ return function(M, ctx)
   T:SetModuleProfile("sur")
   check(mod("Boost")._active ~= true and mod("Quests")._active == true, "back to mode sûr")
   M.Advance(10, 0.5)
+
+  -- (4.0.1) ZonePlan, PathDraw, Highlight (+ Glow, la bibliothèque des lueurs) : mode sûr. Un joueur 4.0 en mode sûr
+  -- les reçoit UNE fois, sauf ceux qu'il a coupés lui-même (un clic = db.modChoice)
+  for n in pairs(T.SAFE_ADDED) do check(T.SAFE_MODULES[n] and not T:IsBeta(n) and mod(n)._active == true, n .. " on in mode sûr (4.0.1)") end
+  check(T.SAFE_MODULES.Glow, "Glow (lueurs de Highlight) in the safe set")
+  local db = TreeAIDB
+  for _, n in ipairs({ "ZonePlan", "PathDraw" }) do mod(n).db.enabled = false; T._ModuleDisable(mod(n)) end   -- état 4.0 (bêta)
+  db.safeV, db.modChoice = nil, { PathDraw = false }                       -- PathDraw coupé par le joueur en 4.0.1
+  T:_ApplyProfileOnce()
+  check(mod("ZonePlan").db.enabled == true and mod("ZonePlan")._active == true, "4.0 -> 4.0.1: ZonePlan turned on once")
+  check(mod("PathDraw").db.enabled == false and mod("PathDraw")._active ~= true, "4.0 -> 4.0.1: PathDraw kept off (player's choice)")
+  check(db.safeV == T.SAFE_V and T:ModuleProfile() == "sur", "4.0.1 migration recorded, still mode sûr")
+  mod("ZonePlan").db.enabled = false; T._ModuleDisable(mod("ZonePlan"))
+  T:_ApplyProfileOnce()
+  check(mod("ZonePlan").db.enabled == false, "4.0.1 migration runs once")
+  T:SetModuleEnabled("ZonePlan", true); T:SetModuleEnabled("PathDraw", true)
+  check(db.modChoice.ZonePlan == true and mod("PathDraw")._active == true, "a click records the player's choice")
+  M.Advance(5, 0.5)
 end

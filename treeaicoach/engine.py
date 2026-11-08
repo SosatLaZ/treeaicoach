@@ -67,6 +67,7 @@ from treeaicoach.engine_base import (
     POLL_IDLE_S,
     POLL_IN_GAME_S,
     POLL_MIN_WAIT_S,
+    POLL_WOW_S,
     RECENT_ALERTS_MAX,
     SIEGE_TEXT,
     STATS_EVERY_S,
@@ -734,7 +735,8 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             t = self._clock()
             t0 = time.monotonic()
             self._poll_once(t)
-            period = POLL_IN_GAME_S if self._in_game or self._game is not None else POLL_IDLE_S
+            period = POLL_IN_GAME_S if self._in_game or self._game is not None else \
+                (POLL_WOW_S if getattr(self, "_wow_mode", False) else POLL_IDLE_S)
             # steady rate: the fetch + parse time is part of the period (a 300 ms answer late in
             # the game no longer stretches the 1 s poll to 1.3 s); slower while the API is silent (rule 9)
             spent = max(0.0, time.monotonic() - t0)

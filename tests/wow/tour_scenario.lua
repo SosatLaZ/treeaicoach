@@ -256,6 +256,10 @@ return function(M, ctx)
 
   -- 8. astuces : une fois chacune, ≤ 1 / 10 min, jamais en combat ni pendant la visite ----------------------------
   local A = T.modules.Auction
+  -- (4.0.1) calme : après la visite, les astuces sont coupées par défaut (une case des options les rallume)
+  check(Tr.db.tips == false and Tr.Done(), "astuces coupées par défaut après la visite")
+  Tr.db.tips = true
+  Tr:OnOptionChanged("tips")
   check(Tr.db.tips ~= false and Tr.Done(), "astuces allumées")
   local shows = {}
   local origShowTip = Tr.ShowTip

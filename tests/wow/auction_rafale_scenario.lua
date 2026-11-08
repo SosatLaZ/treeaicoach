@@ -7,6 +7,7 @@ return function(M, ctx)
   local A = T and T:GetModule("Auction")
   ctx.check(A and T.AuctionNext, "Auction module + TreeAI.AuctionNext (key binding entry)")
   if not A then return end
+  if T.SetSoundKind then T:SetSoundKind("ah", true) end   -- (4.0.1) sons coupés par défaut sauf le danger
   ctx.check(BINDING_NAME_TREEAI_AH_NEXT == "TreeAI : action HV suivante" and BINDING_HEADER_TREEAI == "TreeAI", "binding names")
   local modern = M.flavor ~= "legacy"
 

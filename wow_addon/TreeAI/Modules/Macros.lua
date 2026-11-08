@@ -49,15 +49,20 @@ local function itemInfo(id)
   return try((C and C.GetItemInfo) or _G.GetItemInfo, id)
 end
 
+local itemSpellMemo = {}   -- (4.0.1) le sort d'un objet ne change pas : lu une fois (réponse non vide seulement)
 local function itemSpell(id)
+  local c = id and itemSpellMemo[id]
+  if c then return c end
   local C = _G.C_Item
-  return (try((C and C.GetItemSpell) or _G.GetItemSpell, id))
+  local r = (try((C and C.GetItemSpell) or _G.GetItemSpell, id))
+  if r and id then itemSpellMemo[id] = r end
+  return r
 end
 
 local function eachBagItem(fn)
   local A = API()
   if A.IterBags then
-    for _, _, item in A.IterBags() do
+    for _, _, item in (A.IterBagsShared or A.IterBags)() do   -- (4.0.1) relevé partagé dans l'image
       if item and item.itemID then fn(item.itemID, item.count or 1) end
     end
     return
@@ -289,15 +294,18 @@ local function petDiet()
 end
 
 -- Construit le contexte : comptes du sac + sélection par catégorie (mémoïsée).
-local function newContext()
-  local counts, unknown = {}, {}
-  eachBagItem(function(id, n) counts[id] = (counts[id] or 0) + n end)
+-- (4.0.1) listes de consommables fusionnées (Data/Macros + Data/Consumables, données fixes) : calculées une fois,
+-- plus à chaque relevé des sacs (chaque fin de combat avec butin / munitions)
+local mergedFor, mergedFor2, mergedItems, mergedKnown
+local function consumableLists()
   local D = data() or {}
   local items = D.items or {}
+  local C = T.Data and T.Data.Consumables
+  if mergedItems and mergedFor == items and mergedFor2 == C then return mergedItems, mergedKnown end
   -- Préfère les listes générées depuis le client (Data/Consumables.lua) quand elles existent.
   -- Les niveaux requis de Data/Macros.lua (bandage = Secourisme requis pour UTILISER, pierre de soins =
   -- niveau de la pierre) restent prioritaires quand la liste client les met à 1.
-  local C = T.Data and T.Data.Consumables
+  local out = items
   if type(C) == "table" then
     local merged = {}
     for k, v in pairs(items) do merged[k] = v end
@@ -313,12 +321,36 @@ local function newContext()
         merged[k] = rows
       end
     end
-    items = merged
+    out = merged
   end
   local known = {}
-  for _, rows in pairs(items) do
+  for _, rows in pairs(out) do
     for _, row in ipairs(rows) do known[row[1]] = true end
   end
+  mergedFor, mergedFor2, mergedItems, mergedKnown = items, C, out, known
+  return out, known
+end
+local rowIndex = setmetatable({}, { __mode = "k" })   -- liste -> { [id] = { positions } } (listes fixes)
+local function rowIndexOf(rows)
+  local ix = rowIndex[rows]
+  if not ix then
+    ix = {}
+    for i, row in ipairs(rows) do
+      local id = row[1]
+      if id ~= nil then
+        local l = ix[id]
+        if not l then l = {}; ix[id] = l end
+        l[#l + 1] = i
+      end
+    end
+    rowIndex[rows] = ix
+  end
+  return ix
+end
+local function newContext()
+  local counts, unknown = {}, {}
+  eachBagItem(function(id, n) counts[id] = (counts[id] or 0) + n end)
+  local items, known = consumableLists()
   for id in pairs(counts) do
     if not known[id] then unknown[#unknown + 1] = id end
   end
@@ -326,14 +358,27 @@ local function newContext()
   local level = playerLevel()
   local ctx = { counts = counts, cache = {} }
 
+  -- (4.0.1) seuls les objets du sac sont regardés (index des listes, fixes) : même choix qu'en parcourant toute la
+  -- liste (meilleur score, à égalité le premier de la liste), sans les centaines de lignes à chaque relevé
   local function bestOf(rows, okRow, lowest)
-    local best, bestScore
-    for _, row in ipairs(rows or {}) do
-      local id, req, val, tag = row[1], row[2], row[3], row[4]
-      if (counts[id] or 0) > 0 and okRow(req, tag) then
-        local score = val + ((tag == "conj") and 0.5 or 0) -- invoqué = gratuit : priorité à égalité
-        if lowest then score = -score end
-        if not bestScore or score > bestScore then best, bestScore = id, score end
+    if not rows then return nil end
+    local ix = rowIndexOf(rows)
+    local best, bestScore, bestPos
+    for id, n in pairs(counts) do
+      local poss = n > 0 and ix[id]
+      if poss then
+        for k = 1, #poss do
+          local pos = poss[k]
+          local row = rows[pos]
+          local req, val, tag = row[2], row[3], row[4]
+          if okRow(req, tag) then
+            local score = val + ((tag == "conj") and 0.5 or 0) -- invoqué = gratuit : priorité à égalité
+            if lowest then score = -score end
+            if not bestScore or score > bestScore or (score == bestScore and pos < bestPos) then
+              best, bestScore, bestPos = id, score, pos
+            end
+          end
+        end
       end
     end
     return best, bestScore
@@ -1166,25 +1211,40 @@ local function usesItems(def)
 end
 
 -- Met à jour les macros déjà installées (kind = "consumable" ou toutes).
-function M:Refresh(onlyConsumables, ctx0)
-  runOOC(onlyConsumables and "Macros:consumables" or "Macros:refresh", function()
+-- sliced = vrai pour les relectures automatiques (sac, sort appris, connexion) : 3 macros par image au plus (une
+-- montée de niveau rendait toutes les macros dans la même image) ; un appel direct (commande, clic) reste immédiat
+function M:Refresh(onlyConsumables, ctx0, sliced)
+  local key = onlyConsumables and "Macros:consumables" or "Macros:refresh"
+  runOOC(key, function()
     local ctx = (ctx0 and not inCombat()) and ctx0 or newContext()
-    for _, def in ipairs(self:Defs()) do
-      if char().installed[def.n] and (not onlyConsumables or usesItems(def)) and macroIndex(def.n) then
-        local body = self:Render(def, ctx)
-        local idx = body and macroIndex(def.n)
-        local _, _, cur = try(_G.GetMacroInfo, idx)
-        -- rien à changer : pas d'écriture (donc pas de « clique pour mettre à jour » à chaque sac)
-        if body and not same(cur, body) and not self:IsBlocked() then
-          local r = self:Write(def, body, false)
-          if r == "pending" or r == "blocked" then
-            if r == "blocked" then suggestReady("Le jeu bloque la mise à jour auto : clique pour copier-coller") end
+    local defs, i = self:Defs(), 1
+    local function step()
+      local done = 0
+      while i <= #defs do
+        local def = defs[i]
+        i = i + 1
+        if char().installed[def.n] and (not onlyConsumables or usesItems(def)) and macroIndex(def.n) then
+          local body = self:Render(def, ctx)
+          local idx = body and macroIndex(def.n)
+          local _, _, cur = try(_G.GetMacroInfo, idx)
+          -- rien à changer : pas d'écriture (donc pas de « clique pour mettre à jour » à chaque sac)
+          if body and not same(cur, body) and not self:IsBlocked() then
+            local r = self:Write(def, body, false)
+            if r == "pending" or r == "blocked" then
+              if r == "blocked" then suggestReady("Le jeu bloque la mise à jour auto : clique pour copier-coller") end
+              return
+            end
+          end
+          done = done + 1
+          if sliced and done >= 3 and i <= #defs then
+            after(0, function() if not inCombat() then step() else runOOC(key, step) end end)
             return
           end
         end
       end
+      if self.panel and self.panel:IsShown() then self:FillPanel() end
     end
-    if self.panel and self.panel:IsShown() then self:FillPanel() end
+    step()
   end)
 end
 
@@ -1669,7 +1729,7 @@ local pendingCons, pendingSpells = false, false
 local function scheduleConsumables()
   if pendingCons or db().autoConsumables == false or not char().setup then return end
   pendingCons = true
-  after(1, function() pendingCons = false; M:Refresh(true) end)
+  after(1, function() pendingCons = false; M:Refresh(true, nil, true) end)
 end
 
 local function scheduleSpells()
@@ -1681,7 +1741,7 @@ local function scheduleSpells()
     -- (4.0, perf) UN relevé des sacs pour les deux passes, et la 2e passe dans une autre image (niveau gagné :
     -- beaucoup de modules travaillent dans la même seconde)
     local ctx = newContext()
-    M:Refresh(false, ctx)
+    after(0, function() M:Refresh(false, ctx, true) end)   -- (4.0.1) relevé des sacs et rendu : deux images
     after(0.5, function()
       -- nouvelles macros par défaut devenues possibles (sort appris)
       local fresh = {}
@@ -1702,9 +1762,14 @@ function M:OnEnable()
   -- (LITE) profil essentiel : le panneau Macros seulement, pas de relecture des sacs / de l'équipement en fond
   if not (T.Lite and T:Lite()) then
     self:RegisterEvent("BAG_UPDATE_DELAYED", scheduleConsumables)
-    self:RegisterEvent("UNIT_INVENTORY_CHANGED", function(_, _, unit) if unit == nil or unit == "player" then scheduleConsumables() end end)
+    -- (4.0.1) « player » seulement, filtré par le cœur avant tout appel (repli : test dans le handler)
+    local function playerEvent(ev)
+      if self.RegisterUnitEvent then return self:RegisterUnitEvent(ev, "player", nil, function() scheduleConsumables() end) end
+      self:RegisterEvent(ev, function(_, _, unit) if unit == nil or unit == "player" then scheduleConsumables() end end)
+    end
+    playerEvent("UNIT_INVENTORY_CHANGED")
     self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", scheduleConsumables)
-    self:RegisterEvent("UNIT_PET", function(_, _, unit) if unit == nil or unit == "player" then scheduleConsumables() end end)
+    playerEvent("UNIT_PET")
   end
   -- niveau gagné : la passe complète (sorts) couvre aussi les consommables ; sans elle, les consommables seuls
   self:RegisterEvent("PLAYER_LEVEL_UP", function()
@@ -1722,7 +1787,7 @@ function M:OnEnable()
   if self:IsBlocked() and not char().setup then
     suggestReady("Macros prêtes à copier-coller : clique pour les voir")
   elseif char().setup then
-    after(3, function() M:Refresh(false) end)
+    after(3, function() M:Refresh(false, nil, true) end)
   else
     suggestReady(READY_TEXT)
   end

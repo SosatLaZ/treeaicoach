@@ -1676,6 +1676,7 @@ class VoiceAssistant:
         wake_rec: WakeEngine | None = None
         seg: Any = None
         retry_at = -1.0
+        mic_fails = 0
         try:
             while not self._stop.is_set():
                 if not self._active() or self._clock() < retry_at:
@@ -1689,8 +1690,10 @@ class VoiceAssistant:
                         return
                     if self.stage in ("listening", "wake", "question", "answer"):
                         self._set_stage("ready")
-                    self._wake_evt.wait(IDLE_POLL_S)
+                    woke = self._wake_evt.wait(IDLE_POLL_S)
                     self._wake_evt.clear()
+                    if woke and mic is None and retry_at > 0:
+                        retry_at = -1.0               # (4.0.1) micro changé / réglage touché : nouvel essai tout de suite
                     continue
                 if wake_rec is None:
                     try:
@@ -1719,8 +1722,12 @@ class VoiceAssistant:
                 if mic is None:
                     mic = self._open_mic()
                     if mic is None:
-                        retry_at = self._clock() + 10.0
+                        # (4.0.1) micro absent / refusé : 10 s, puis de plus en plus rarement (5 min au plus) ; le
+                        # changement de micro dans les réglages réveille la boucle tout de suite (_wake_evt)
+                        mic_fails += 1
+                        retry_at = self._clock() + min(300.0, 10.0 * (2 ** min(5, mic_fails - 1)))
                         continue
+                    mic_fails = 0
                     self.listening = True
                     self._set_stage("listening")
                     seg = self._segmenter()

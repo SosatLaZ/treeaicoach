@@ -71,6 +71,7 @@ return function(M, ctx)
 
   -- scan: one cheap listing of each (+ the rare green, seen once, at a « bargain »)
   M.SetAuctionHouse(true)
+  if T.SetSoundKind then T:SetSoundKind("ah", true) end   -- (4.0.1) sons coupés par défaut sauf le danger
   local snd0 = #M.sounds
   local function market(extra)
     local l = {}

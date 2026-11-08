@@ -232,6 +232,30 @@ local bagGen, bagMemo = 0, {}
 function API.BagGen() return bagGen end
 function API.BagChanged() bagGen = bagGen + 1 end
 local function pack(...) return { n = select("#", ...), ... } end
+-- (4.0.1) relevé des sacs partagé dans UNE image, tant qu'aucun événement de sac n'est passé (lecture seule) : la
+-- surbrillance et les quêtes relisent les sacs 2 s après le même butin, en général dans la même image : un relevé
+-- pour les deux (et les macros). Les autres lecteurs gardent API.IterBags (relecture directe).
+do
+  local snapT, snapG, snap = nil, nil, nil
+  function API.IterBagsShared()
+    local t = now()
+    if not (snap and snapT == t and snapG == bagGen) then
+      local list, n = {}, 0
+      for bag, slot, item in API.IterBags() do
+        list[n + 1], list[n + 2], list[n + 3] = bag, slot, item
+        n = n + 3
+      end
+      list.n = n
+      snap, snapT, snapG = list, t, bagGen
+    end
+    local list, i = snap, -2
+    return function()
+      i = i + 3
+      if i > list.n then return nil end
+      return list[i], list[i + 1], list[i + 2]
+    end
+  end
+end
 function API.BagMemo(key, fn, ...)
   local free = API.FreeSlots()
   local t = now()
@@ -541,6 +565,8 @@ function Ticker:Cancel()
   if self.real then self.real:Cancel(); self.real = nil end
 end
 function Ticker:IsCancelled() return self.cancelled and true or false end
+--- (4.0.1) minuteur « de marche » : k fois moins souvent quand le joueur est immobile (voir MO, ordonnanceur)
+function Ticker:IdleStretch(k) k = tonumber(k) self.stretch = (k and k > 1) and k or nil return self end
 -- SPIKE (3.9.7) : ordonnanceur unique. Avant, chaque ticker était un C_Timer.NewTicker créé au même instant
 -- (OnEnable de tous les modules à la connexion) : tous les tickers d'1 s (puis 2, 3, 5 s…) tombaient dans
 -- la MÊME image, chaque seconde pile → saccade régulière. Maintenant : un seul OnUpdate, chaque ticker a sa
@@ -548,6 +574,11 @@ function Ticker:IsCancelled() return self.cancelled and true or false end
 -- « lourds » (période ≥ 1 s) par image et ~SLICE_MS de travail (debugprofilestop) ; le reste passe à l'image suivante (file par échéance).
 local SLICE_JOBS, SLICE_MS, SLICE_WAIT = 3, 1.5, 0.5   -- SLICE_WAIT : image « longue »
 local sched, schedFrame, schedNext, schedSeq = {}, nil, math.huge, 0
+-- (4.0.1) MOUVEMENT : l'OnUpdate unique de l'ordonnanceur jette un coup d'œil par seconde (position + cap). Joueur
+-- immobile depuis 3 s = les minuteurs « de marche » (ticker:IdleStretch(k)) battent k fois moins vite ; dès qu'il
+-- bouge (ou PLAYER_STARTED_MOVING), ils reprennent leur cadence et ceux qui dorment à l'arrêt (T:OnMotion) sont
+-- réveillés. T:Moving() = a bougé ces 3 dernières secondes.
+local MO = { at = -1e9, acc = 0, wakers = {}, still = 3 }
 local dueBuf = {}
 local function byNext(a, b) return a.next < b.next end
 local runSlices, slicePending   -- file « tranches » (rafraîchissement auto) : voir StartAutoRefresh
@@ -557,14 +588,18 @@ local function schedStep(elapsed)
   local coarse = (tonumber(elapsed) or 0) >= SLICE_WAIT
   local jobs, t0 = 0, profile and profile()
   if t >= schedNext then
-    local n = 0
+    local still = t - MO.at > MO.still
+    -- (4.0.1) un seul passage sur la liste : échéances dues + prochaine échéance des autres (avant : deux passages)
+    local n, m = 0, math.huge
     for i = #sched, 1, -1 do
       local p = sched[i]
       if p.cancelled or not p.real then tremove(sched, i)
-      elseif p.next <= t then n = n + 1; dueBuf[n] = p end
+      elseif p.next <= t then n = n + 1; dueBuf[n] = p
+      elseif p.next < m then m = p.next end
     end
     for i = #dueBuf, n + 1, -1 do dueBuf[i] = nil end
     if n > 1 then tsort(dueBuf, byNext) end
+    schedNext = math.huge   -- un minuteur lancé par un rappel ci-dessous l'abaisse (startTicker)
     for i = 1, n do
       local p = dueBuf[i]
       dueBuf[i] = nil
@@ -572,20 +607,56 @@ local function schedStep(elapsed)
       if p.cancelled or not p.real then   -- annulé par un rappel précédent de cette image
       elseif heavy and not coarse and (jobs >= SLICE_JOBS or (jobs > 0 and t0 and (profile() - t0) > SLICE_MS)) then
         -- reste dû : passera à l'image suivante (file par échéance, le plus en retard d'abord)
+        if p.next < m then m = p.next end
       else
-        local nx = p.next + p.sec
-        p.next = (nx > t) and nx or (t + p.sec)   -- en retard : on garde la cadence sans rafale de rattrapage
+        local per = (still and p.stretch) and p.sec * p.stretch or p.sec
+        local nx = p.next + per
+        p.next = (nx > t) and nx or (t + per)   -- en retard : on garde la cadence sans rafale de rattrapage
         if heavy then jobs = jobs + 1 end
         p.cb()
+        if p.real and not p.cancelled and p.next < m then m = p.next end
       end
     end
-    local m = math.huge
-    for i = 1, #sched do local p = sched[i] if p.next < m then m = p.next end end
-    schedNext = m
+    if m < schedNext then schedNext = m end
   end
   if runSlices then runSlices(jobs, t0) end
 end
 TreeAI._SchedStep = schedStep   -- tests
+
+--- (4.0.1) le joueur se met à bouger : minuteurs étirés ramenés à leur cadence, dormeurs réveillés
+function TreeAI:WakeMotion()
+  local t = now()
+  MO.at = t
+  local m = schedNext
+  for i = 1, #sched do
+    local p = sched[i]
+    if p.stretch and p.next and p.next > t + p.sec then p.next = t + p.sec end
+    if p.next and p.next < m then m = p.next end
+  end
+  schedNext = m
+  for owner, fn in pairs(MO.wakers) do
+    if not (type(owner) == "table" and owner ~= TreeAI and owner.IsEnabled) or owner:IsEnabled() then runAs(owner, fn) end
+  end
+end
+--- fn() quand le joueur se remet à bouger après un arrêt (un par propriétaire)
+function TreeAI:OnMotion(owner, fn) if owner then MO.wakers[owner] = type(fn) == "function" and fn or nil end end
+function TreeAI:Moving(win) return now() - MO.at <= (win or MO.still) end
+local function motionPoll()
+  local map, x, y = TreeAI:Here()
+  local gf, f = _G.GetPlayerFacing, nil
+  if gf then
+    local ok, v = pcall(gf)
+    if ok then f = v end
+    local sec = _G.issecretvalue
+    if f ~= nil and sec and sec(f) then f = nil end
+  end
+  if map ~= MO.map or x ~= MO.x or y ~= MO.y or f ~= MO.f then
+    MO.map, MO.x, MO.y, MO.f = map, x, y, f
+    TreeAI:WakeMotion()   -- (les réveils ne coûtent rien à qui est déjà éveillé)
+  end
+end
+TreeAI._MotionPoll = motionPoll   -- tests
+
 local function ensureSched()
   if schedFrame ~= nil then return schedFrame end
   schedFrame = false
@@ -593,6 +664,8 @@ local function ensureSched()
     local ok, f = pcall(_G.CreateFrame, "Frame")
     if ok and f then
       f:SetScript("OnUpdate", function(_, elapsed)
+        local a = MO.acc + (elapsed or 0)
+        if a >= 1 then MO.acc = 0 safecall(motionPoll) else MO.acc = a end   -- (4.0.1) 1 coup d'œil / s
         if slicePending or now() >= schedNext then safecall(schedStep, elapsed) end   -- image sans travail : 1 comparaison
       end)
       schedFrame = f
@@ -670,18 +743,40 @@ local function ownerActive(owner)
 end
 
 local AURA_UNITS = { player = true, pet = true, target = true, focus = true }
+local evGen = 0   -- (4.0.1) événements reçus : le cycle des :AutoRefresh() sait si quelque chose s'est passé
+-- (4.0.1) le journal de quêtes a pu changer : compteur avancé AVANT les handlers (T:QuestGen) → les relevés du
+-- journal partagés (Export.LogSnapshot) se refont, sans dépendre de l'ordre des modules
+TreeAI.QUEST_EVENTS = { QUEST_LOG_UPDATE = true, QUEST_ACCEPTED = true, QUEST_REMOVED = true, QUEST_TURNED_IN = true,
+  UNIT_QUEST_LOG_CHANGED = true, QUEST_WATCH_UPDATE = true, QUEST_WATCH_LIST_CHANGED = true }
+TreeAI._questGen = 0
+function TreeAI:QuestGen() return self._questGen end
+TreeAI._ctxCache = setmetatable({}, { __mode = "k" })
+-- (4.0.1) événement -> { [handler] = { unité = true } } : la vie d'un membre du groupe ou d'une barre de nom ne réveille
+-- plus (ni ne chronomètre) les handlers qui ne veulent que « player » / « pet » (avant : enveloppe appelée, puis filtrée)
+TreeAI._unitOf = {}
 local function dispatch(event, ...)
   local list = handlers[event]
   if not list then return end
   -- (LITE) auras : seulement joueur / familier / cible (pas chaque membre du groupe ni chaque barre de nom)
   if event == "UNIT_AURA" and not AURA_UNITS[(...)] then return end
+  evGen = evGen + 1
+  if TreeAI.QUEST_EVENTS[event] then TreeAI._questGen = TreeAI._questGen + 1 end
   local prev = TreeAI._ctx
   -- TAINT : le jeu signale le blocage pendant l'appel fautif → garder le module qui tournait (pas « core:ADDON_… »)
   if event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN" then TreeAI._blockCtx = prev end
   dispatchDepth = dispatchDepth + 1
+  local cc = TreeAI._ctxCache
+  local uo = TreeAI._unitOf[event]   -- (4.0.1) handlers inscrits pour certaines unités seulement (RegisterUnitEvent)
+  local unit = uo and (...)
   for owner, fn in pairs(list) do
-    if ownerActive(owner) then
-      TreeAI._ctx = tostring(owner.name or "core") .. ":" .. tostring(event)
+    local f = uo and uo[fn]
+    if (not f or f[unit]) and ownerActive(owner) then
+      -- (4.0.1) étiquette « module:événement » (erreurs, blocages) construite une fois par couple
+      local co = cc[owner]
+      if not co then co = {}; cc[owner] = co end
+      local c = co[event]
+      if not c then c = tostring(owner.name or "core") .. ":" .. tostring(event); co[event] = c end
+      TreeAI._ctx = c
       runAs(owner, fn, owner, event, ...)
     end
   end
@@ -729,6 +824,9 @@ function TreeAI:RegisterEvent(event, owner, fn)
   handlers[event][owner] = fn
   return true
 end
+
+--- (4.0.1) le handler inscrit par `owner` pour `event` (nil sinon)
+function TreeAI:GetEventHandler(event, owner) local l = handlers[event] return l and l[owner or self] end
 
 function TreeAI:UnregisterEvent(event, owner)
   owner = owner or self
@@ -829,6 +927,7 @@ local function sliceDone()
   -- le panneau ne se redessine que si un conseil / une ligne a changé (ou un conseil a expiré)
   if TreeAI.RefreshPanel and TreeAI:PanelDirty() then TreeAI:RequestRefresh() end
 end
+local arCtx = setmetatable({}, { __index = function(t, k) local v = k .. ":AutoRefresh"; rawset(t, k, v); return v end })
 runSlices = function(jobs, t0)
   if not slicePending then return end
   local late = jobs < 0 or now() >= sliceAt   -- échéance : avant le cycle suivant, tout est passé
@@ -842,7 +941,7 @@ runSlices = function(jobs, t0)
     -- (LITE) en combat, seuls les modules utiles au combat se recalculent
     if m and type(m.AutoRefresh) == "function" and m._active and (not m.IsEnabled or m:IsEnabled())
         and not (sliceFight and not (info[name] and info[name].combat)) then
-      TreeAI._ctx = name .. ":AutoRefresh"
+      TreeAI._ctx = arCtx[name]   -- (4.0.1) « Module:AutoRefresh » construite une fois par module
       runAs(m, m.AutoRefresh, m)
       TreeAI._ctx = nil
       jobs = jobs + 1
@@ -853,7 +952,7 @@ runSlices = function(jobs, t0)
   safecall(sliceDone)
 end
 
--- (CLEAN 4.0, repris du module Confort) ralenti auto : sous 30 images/s deux relevés de suite (toutes les 2 s),
+-- (CLEAN 4.0, repris du module Confort) ralenti auto : sous 30 images/s deux relevés de suite (toutes les 3 s),
 -- le cycle des :AutoRefresh() passe à ×2 ; il revient quand le jeu remonte à 40 images/s cinq relevés de suite.
 local slowBad, slowGood = 0, 0
 local function perfSample()
@@ -870,29 +969,78 @@ local function perfSample()
 end
 TreeAI._PerfSample = perfSample
 
+do
+-- (4.0.1) les modules qui ont un :AutoRefresh() (fixé au chargement des fichiers) : la liste est gardée, le cycle ne
+-- reparcourt plus les ~50 modules toutes les 3 s ; refaite si un module s'inscrit plus tard
+local arMods, arN = {}, -1
+local function autoRefreshMods()
+  local order = TreeAI.moduleOrder or {}
+  if arN ~= #order then
+    arN = #order
+    for i = #arMods, 1, -1 do arMods[i] = nil end
+    for _, name in ipairs(order) do
+      local m = TreeAI.modules[name]
+      if m and type(m.AutoRefresh) == "function" then arMods[#arMods + 1] = name end
+    end
+  end
+  return arMods
+end
+
+-- (4.0.1) le cycle bat à sa propre cadence (3 s, ×2 en combat / jeu ralenti) au lieu d'un minuteur d'1 s qui comptait
+-- jusqu'à 3 : deux fois moins de réveils de l'ordonnanceur ; le relevé d'images / s suit (toutes les 3 s)
+-- (4.0.1) calme plat : aucun événement depuis le dernier cycle, joueur immobile, et chaque module actif qui a un
+-- :AutoRefresh() se déclare « sans travail au calme » (mod.autoIdleSafe : il vérifie lui-même ce qui a changé) →
+-- le cycle n'appelle personne (seules les lignes expirées sont retirées) ; un cycle complet au moins toutes les 30 s
+TreeAI.AUTO_IDLE_MAX = 30
+local cycEv, cycAt, cycPos = -1, -1e9, {}
+local function quietCycle(list, t)
+  if evGen ~= cycEv or t - cycAt >= TreeAI.AUTO_IDLE_MAX or TreeAI:Moved(cycPos, 0.0005) then return false end
+  for i = 1, #list do
+    local m = TreeAI.modules[list[i]]
+    if m and m._active and not m.autoIdleSafe then return false end
+  end
+  return true
+end
+
 function TreeAI:StartAutoRefresh()
   if self._refreshTicker or not self.NewTicker then return end
-  local n, ticks = 0, 0
-  self._refreshTicker = self:NewTicker(1, function()
-    n, ticks = n + 1, ticks + 1
-    if ticks % 2 == 0 then perfSample() end
+  local base = tonumber(self.settings and self.settings.refresh) or 3
+  if base <= 0 then base = 3 end
+  local n = 0
+  self._refreshTicker = self:NewTicker(base, function()
+    perfSample()
     local every = tonumber(self.settings and self.settings.refresh) or 3
     if every <= 0 then return end
+    local k = math.max(1, math.floor(every / base + 0.5))
     local fighting = InCombatLockdown and InCombatLockdown()
-    if fighting then every = every * 2 end
-    if self.perfSlow then every = every * 2 end
-    if n < every or slicePending then return end
+    if fighting then k = k * 2 end
+    if self.perfSlow then k = k * 2 end
+    n = n + 1
+    if n < k or slicePending then return end
     n = 0
-    sliceFight = fighting and true or false
-    for _, name in ipairs(self.moduleOrder or {}) do
-      local m = self.modules and self.modules[name]
-      if m and type(m.AutoRefresh) == "function" and m._active then sliceN = sliceN + 1; sliceQ[sliceN] = name end
+    local list = autoRefreshMods()
+    local t = now()
+    local rt = self._refreshTicker
+    if quietCycle(list, t) then
+      if rt then rt.stretch = 3 end   -- calme plat et immobile : un cycle toutes les 9 s (le mouvement le ramène à 3 s)
+      if self.RefreshPanel and self:PanelDirty() then self:RequestRefresh() end
+      return
     end
-    sliceHead, sliceAt = 1, now() + mmax(1, every - 1)
+    if rt then rt.stretch = nil end
+    cycEv, cycAt = evGen, t
+    self:Stamp(cycPos)
+    sliceFight = fighting and true or false
+    for i = 1, #list do
+      local name = list[i]
+      local m = self.modules[name]
+      if m and m._active then sliceN = sliceN + 1; sliceQ[sliceN] = name end
+    end
+    sliceHead, sliceAt = 1, now() + mmax(1, base * k - 1)
     if schedFrame then slicePending = true return end
     slicePending = true
     runSlices(-math.huge, nil)   -- pas d'ordonnanceur (tests sans CreateFrame) : tout de suite
   end)
+end
 end
 
 function TreeAI:Fire(message, ...)
@@ -900,9 +1048,14 @@ function TreeAI:Fire(message, ...)
   if not list then return end
   local prev = TreeAI._ctx
   dispatchDepth = dispatchDepth + 1
+  local cc = TreeAI._ctxCache
   for owner, fn in pairs(list) do
     if ownerActive(owner) then
-      TreeAI._ctx = tostring(type(owner) == "table" and owner.name or "core") .. ":" .. tostring(message)
+      local co = cc[owner]
+      if not co then co = {}; cc[owner] = co end
+      local c = co[message]
+      if not c then c = tostring(type(owner) == "table" and owner.name or "core") .. ":" .. tostring(message); co[message] = c end
+      TreeAI._ctx = c
       runAs(owner, fn, owner, message, ...)
     end
   end
@@ -963,8 +1116,10 @@ function TreeAI:CharKey()
 end
 
 function TreeAI:PlayerClass()
+  if self._classFile then return self._classFile end   -- (4.0.1) la classe ne change pas : lue une fois
   if not _G.UnitClass then return nil end
   local _, classFile = _G.UnitClass("player")
+  if type(classFile) == "string" and classFile ~= "" then self._classFile = classFile end
   return classFile
 end
 
@@ -1042,9 +1197,15 @@ function ModuleMixin:RegisterUnitEvent(event, unit1, unit2, fn)
   if type(unit2) == "function" then fn, unit2 = unit2, nil end
   local handler = fn or self[event]
   if type(handler) ~= "function" then return false end
-  return TreeAI:RegisterEvent(event, self, function(mod, ev, unit, ...)
-    if unit == unit1 or (unit2 and unit == unit2) then return handler(mod, ev, unit, ...) end
-  end)
+  local ok = TreeAI:RegisterEvent(event, self, handler)
+  if ok then   -- filtre lu par le répartiteur avant tout appel (gardé tel quel quand le module est coupé / rallumé)
+    local uo = TreeAI._unitOf[event]
+    if not uo then uo = setmetatable({}, { __mode = "k" }); TreeAI._unitOf[event] = uo end
+    local set = { [unit1] = true }
+    if unit2 then set[unit2] = true end
+    uo[handler] = set
+  end
+  return ok
 end
 function ModuleMixin:On(message, fn)
   if type(fn) ~= "function" then fn = self[message] end
@@ -1188,6 +1349,11 @@ function TreeAI:SetModuleEnabled(name, enabled)
   local mod = self.modules[name]
   if not mod or not mod.db then return false end
   mod.db.enabled = enabled and true or false
+  -- (4.0.1) le choix du joueur (clic dans « Fonctions », options, pastille, /tai module) : aucune migration ne le défait
+  if type(self.db) == "table" then
+    if type(self.db.modChoice) ~= "table" then self.db.modChoice = {} end
+    self.db.modChoice[name] = mod.db.enabled
+  end
   if enabled then
     if self._loggedIn then moduleEnable(mod) end
   else
@@ -1254,7 +1420,14 @@ TreeAI.SAFE_MODULES = TreeAI.SAFE_MODULES or {
   Hub = true, Macros = true,                                     -- pastille de la minimap, macros (diagnostic compris)
   Window = true,                                                 -- (UIREDO) fenêtre TreeAI + carte « Prochaine étape »
   Shortcuts = true,                                              -- (UIREDO) une seule barre « Raccourcis » (rendu)
+  -- (4.0.1) ce que le joueur a demandé, allumé d'office : zone de travail + trajet préparé, chemin dessiné (carte du
+  -- monde tant qu'elle est ouverte, traînée minimap seulement en marchant), objets de quête en surbrillance
+  -- (Glow = la bibliothèque d'animations de Highlight, jouées par le client)
+  ZonePlan = true, PathDraw = true, Highlight = true, Glow = true,
 }
+-- (4.0.1) entrés dans le mode sûr après la 4.0 : allumés une fois chez les joueurs en mode sûr (voir _ApplyProfileOnce)
+TreeAI.SAFE_ADDED = { ZonePlan = 1, PathDraw = 1, Highlight = 1 }
+TreeAI.SAFE_V = 1
 --- module « bêta » (pas dans le mode sûr) ?
 function TreeAI:IsBeta(name) return not self.SAFE_MODULES[name] end
 TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
@@ -1401,11 +1574,28 @@ end
 function TreeAI:_ApplyProfileOnce()
   local db = self.db
   if type(db) ~= "table" then return end
-  if (tonumber(db.profileV) or 0) >= self.PROFILE_V then return end
-  db.profileV = self.PROFILE_V
-  -- (3.9.9, REVIEW) une fois pour tous (nouveaux et anciens) : mode sûr ; les fonctions bêta restent à un clic
-  self:SetModuleProfile("sur")
-  self._safeNotice = true
+  if (tonumber(db.profileV) or 0) < self.PROFILE_V then
+    db.profileV = self.PROFILE_V
+    -- (3.9.9, REVIEW) une fois pour tous (nouveaux et anciens) : mode sûr ; les fonctions bêta restent à un clic
+    self:SetModuleProfile("sur")
+    self._safeNotice = true
+    db.safeV = self.SAFE_V   -- le mode sûr posé ici contient déjà les modules ajoutés
+    return
+  end
+  -- (4.0.1) ZonePlan, PathDraw, Highlight rejoignent le mode sûr : allumés UNE fois chez les joueurs en mode sûr,
+  -- sauf s'ils les ont coupés eux-mêmes (db.modChoice) ; aucun avis (rien de neuf à lire, juste ce qu'il a demandé)
+  if (tonumber(db.safeV) or 0) < self.SAFE_V then
+    db.safeV = self.SAFE_V
+    if self:ModuleProfile() ~= "sur" then return end
+    local choice = type(db.modChoice) == "table" and db.modChoice or {}
+    for n in pairs(self.SAFE_ADDED or {}) do
+      local mod = self.modules[n]
+      if mod and mod.db and mod.db.enabled == false and choice[n] ~= false then
+        mod.db.enabled = true
+        if self._modulesStarted then moduleEnable(mod) end
+      end
+    end
+  end
 end
 
 function TreeAI:_SafeNotice()
@@ -1445,7 +1635,7 @@ function TreeAI:_BuildModulesTab()
   else head = "Tout est allumé (bêta compris) — clic : revenir au mode sûr" end
   local lines = {
     { text = head, prio = 2, id = "core:profile",
-      tooltip = "Mode sûr = quêtes, trajet, boussole, carte « Prochaine étape », fenêtre TreeAI, course au corps, erreurs, macros.\n"
+      tooltip = "Mode sûr = quêtes, zone de travail, trajet (et son tracé), boussole, carte « Prochaine étape », fenêtre TreeAI, surbrillance des objets de quête, course au corps, erreurs, macros.\n"
         .. "Les fonctions « bêta » n'ont été testées que hors du jeu : allume-les une par une ci-dessous.",
       onClick = function() TreeAI:SetModuleProfile(prof == "sur" and "tout" or (lite and "tout" or "sur")) end },
     -- (« mod: » : l'orage de clics du harnais laisse les bascules de profil tranquilles)
@@ -1554,6 +1744,56 @@ function TreeAI:FrameLocked(...)
   return false
 end
 
+---------------------------------------------------------------------------
+-- (4.0.1) « A-t-il bougé ? » : la position du joueur lue au plus une fois par instant de jeu (GetTime), valeurs
+-- secrètes écartées. Les minuteurs s'en servent pour ne RIEN refaire tant que rien n'a changé (joueur immobile) :
+--   T:Here() -> mapID, x, y (0..1) | nil (instance, écran de chargement)
+--   T:Moved(stamp, d) -> vrai si la carte a changé ou si le joueur est à plus de d (unités de carte ; 0,002 ≈ 5 à
+--   10 m selon la zone) de la dernière T:Stamp(stamp) ; stamp = une table à soi, gardée par l'appelant.
+---------------------------------------------------------------------------
+do
+local hereT, hereMap, hereX, hereY = -1, nil, nil, nil
+function TreeAI:Here()
+  local t = now()
+  if t == hereT then return hereMap, hereX, hereY end
+  hereT, hereMap, hereX, hereY = t, nil, nil, nil
+  local CM = _G.C_Map
+  local gm, gp = CM and CM.GetBestMapForUnit, CM and CM.GetPlayerMapPosition
+  if not (gm and gp) then return nil end
+  local sec = _G.issecretvalue                       -- lecture directe (3 appels protégés, pas un par valeur)
+  local ok, map = pcall(gm, "player")
+  if not ok or map == nil or (sec and sec(map)) then return nil end
+  local ok2, p = pcall(gp, map, "player")
+  if not ok2 or type(p) ~= "table" then return nil end
+  local x, y
+  if type(p.GetXY) == "function" then
+    local ok3
+    ok3, x, y = pcall(p.GetXY, p)
+    if not ok3 then return nil end
+  else
+    x, y = p.x, p.y
+  end
+  if sec and (sec(x) or sec(y)) then return nil end
+  x, y = tonumber(x), tonumber(y)
+  if not (x and y) or (x == 0 and y == 0) then return nil end
+  hereMap, hereX, hereY = map, x, y
+  return map, x, y
+end
+function TreeAI:Stamp(st)
+  if type(st) ~= "table" then return end
+  st.map, st.x, st.y = self:Here()
+end
+function TreeAI:Moved(st, d)
+  if type(st) ~= "table" then return true end
+  local map, x, y = self:Here()
+  if map ~= st.map then return true end
+  if not map then return false end
+  d = d or 0.002
+  local dx, dy = x - (st.x or 0), y - (st.y or 0)
+  return dx > d or dx < -d or dy > d or dy < -d
+end
+end
+
 local oocQueue, oocOrder = {}, {}
 function TreeAI:RunOutOfCombat(key, fn)
   if type(fn) ~= "function" then return end
@@ -1660,14 +1900,15 @@ end
 -- chaque genre activable, canal au choix, cooldown global (jamais de rafale), en combat SEUL le danger.
 ---------------------------------------------------------------------------
 -- kits = clés SOUNDKIT essayées dans l'ordre, id = repli numérique (sons du jeu, aucun fichier ajouté)
+-- (4.0.1) calme par défaut : seul le danger sonne ; chaque autre genre se rallume d'un clic (Options > Sons)
 TreeAI.SOUND_KINDS = {
   danger   = { label = "Danger (combat)", kits = { "RAID_WARNING" }, id = 8959, cd = 4, on = true },
-  alert    = { label = "Important", kits = { "ALARM_CLOCK_WARNING_3", "RAID_WARNING" }, id = 12889, cd = 8, on = true },
-  rare     = { label = "Rare / élite repéré", kits = { "UI_EPICLOOT_TOAST", "READY_CHECK" }, id = 8960, cd = 20, on = true },
-  quest    = { label = "Quête terminée (à rendre)", kits = { "IG_QUEST_LIST_COMPLETE" }, id = 878, cd = 5, on = true },
-  group    = { label = "Groupe / amis", kits = { "UI_BNET_TOAST", "IG_PLAYER_INVITE" }, id = 18019, cd = 15, on = true },
-  ah       = { label = "Bonne affaire HV", kits = { "LOOT_WINDOW_COIN_SOUND", "AUCTION_WINDOW_OPEN" }, id = 120, cd = 20, on = true },
-  levelup  = { label = "Niveau / carte de niveau", kits = { "UI_LEVEL_UP", "LEVELUPSOUND" }, id = 888, cd = 10, on = true },
+  alert    = { label = "Important", kits = { "ALARM_CLOCK_WARNING_3", "RAID_WARNING" }, id = 12889, cd = 8, on = false },
+  rare     = { label = "Rare / élite repéré", kits = { "UI_EPICLOOT_TOAST", "READY_CHECK" }, id = 8960, cd = 20, on = false },
+  quest    = { label = "Quête terminée (à rendre)", kits = { "IG_QUEST_LIST_COMPLETE" }, id = 878, cd = 5, on = false },
+  group    = { label = "Groupe / amis", kits = { "UI_BNET_TOAST", "IG_PLAYER_INVITE" }, id = 18019, cd = 15, on = false },
+  ah       = { label = "Bonne affaire HV", kits = { "LOOT_WINDOW_COIN_SOUND", "AUCTION_WINDOW_OPEN" }, id = 120, cd = 20, on = false },
+  levelup  = { label = "Niveau / carte de niveau", kits = { "UI_LEVEL_UP", "LEVELUPSOUND" }, id = 888, cd = 10, on = false },
   reminder = { label = "Rappel discret", kits = { "TELL_MESSAGE", "MAP_PING" }, id = 3081, cd = 30, on = false },
 }
 TreeAI.SOUND_ORDER = { "danger", "alert", "quest", "rare", "group", "ah", "levelup", "reminder" }
@@ -2038,11 +2279,22 @@ local function charEnd(s, k)            -- dernier octet des k premiers caractè
     i, pos = i + 1, a + 1
   end
 end
+local trimMemo, trimMemoN = {}, 0   -- (4.0.1) coupes déjà faites (mêmes titres redemandés à chaque rendu)
 local function cutText(s, n, tail)
   s = tostring(s or "")
   n = tonumber(n)
-  if not n or #s <= n or charEnd(s, n) >= #s then return s end
+  if not n or #s <= n then return s end
   tail = tail or "…"
+  local ck = s .. "\1" .. n .. "\1" .. tail
+  local c = trimMemo[ck]
+  if c then return c end
+  if trimMemoN > 600 then trimMemo, trimMemoN = {}, 0 end
+  c = TreeAI._CutRaw(s, n, tail)
+  trimMemo[ck], trimMemoN = c, trimMemoN + 1
+  return c
+end
+function TreeAI._CutRaw(s, n, tail)
+  if charEnd(s, n) >= #s then return s end
   local _, cont = strgsub(tail, "[\128-\191]", "")
   local keep = n - (#tail - cont)
   local head = keep > 0 and strgsub(strsub(s, 1, charEnd(s, keep)), "%s+$", "") or ""
@@ -2098,7 +2350,21 @@ TreeAI.ShortText = shortText
 
 --- Nom propre d'un objectif de quête : « Atrexis : 0/1 », « 0/1 Atrexis », « Atrexis tué : 0/1 (Terminé) »
 --- -> « Atrexis ». Espaces insécables du client FR compris. Jamais nil.
+local objNameCache, objNameN = {}, 0   -- (4.0.1) même texte = même nom (le trajet le redemande à chaque rendu)
 function TreeAI.ObjectiveName(text)
+  local key = text
+  if key ~= nil then
+    local c = objNameCache[key]
+    if c then return c end
+  end
+  local r = TreeAI._ObjectiveName(text)
+  if key ~= nil then
+    if objNameN > 400 then objNameCache, objNameN = {}, 0 end
+    objNameCache[key], objNameN = r, objNameN + 1
+  end
+  return r
+end
+function TreeAI._ObjectiveName(text)
   local s = tostring(text or "")
   s = strgsub(s, "\194\160", " ")
   s = strgsub(s, "\226\128\175", " ")
@@ -2474,12 +2740,21 @@ TreeAI.PlainText = plain
 -- Formats communs (tous les modules peuvent s'en servir) : 1 234 · 12 po 3 pa · 45 s / 12 min / 1 h 05 · 85 %
 TreeAI.Fmt = TreeAI.Fmt or {}
 local Fmt = TreeAI.Fmt
+local numMemo, numMemoN = {}, 0   -- (4.0.1) « 1 234 » déjà formatés (mêmes nombres redemandés à chaque rendu)
 function Fmt.Num(n)
   n = tonumber(n) or 0
   local neg = n < 0
+  local k = not neg and math.floor(n + 0.5) or nil
+  local c = k and numMemo[k]
+  if c then return c end
   local s = tostring(math.floor(math.abs(n) + 0.5)):reverse():gsub("(%d%d%d)", "%1 "):reverse()
   s = s:gsub("^ ", "")
-  return (neg and "-" or "") .. s
+  c = (neg and "-" or "") .. s
+  if k then
+    if numMemoN > 500 then numMemo, numMemoN = {}, 0 end
+    numMemo[k], numMemoN = c, numMemoN + 1
+  end
+  return c
 end
 function Fmt.Money(c)
   c = math.floor(tonumber(c) or 0)
@@ -3425,9 +3700,16 @@ do  -- (LITE) sacs changés -> API.BagMemo recalcule
     TreeAI:RegisterEvent(ev, bagOwner, function() API.BagChanged() end)
   end
   TreeAI:RegisterEvent("UNIT_INVENTORY_CHANGED", bagOwner, function(_, _, u) if u == nil or u == "player" then API.BagChanged() end end)
+  -- (« player » seulement : le répartiteur saute les autres unités sans appel)
+  local f = TreeAI.GetEventHandler and TreeAI:GetEventHandler("UNIT_INVENTORY_CHANGED", bagOwner)
+  if f then TreeAI._unitOf.UNIT_INVENTORY_CHANGED = TreeAI._unitOf.UNIT_INVENTORY_CHANGED or setmetatable({}, { __mode = "k" }) TreeAI._unitOf.UNIT_INVENTORY_CHANGED[f] = { player = true } end
 end
 TreeAI:RegisterEvent("GROUP_ROSTER_UPDATE")
 TreeAI:RegisterEvent("PARTY_MEMBERS_CHANGED", TreeAI, "GROUP_ROSTER_UPDATE")
+do  -- (4.0.1) le joueur se met à marcher : les minuteurs « de marche » reprennent tout de suite (sans attendre le coup d'œil)
+  local moveOwner = {}
+  TreeAI:RegisterEvent("PLAYER_STARTED_MOVING", moveOwner, function() TreeAI:WakeMotion() end)
+end
 for _, ev in ipairs({ "PLAYER_LEVEL_UP", "ZONE_CHANGED_NEW_AREA", "PLAYER_MONEY", "PLAYER_GUILD_UPDATE" }) do
   TreeAI:RegisterEvent(ev, TreeAI, function(self) self:_QueueSummary() end)
 end

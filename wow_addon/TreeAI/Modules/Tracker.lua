@@ -1178,10 +1178,12 @@ M.PushSoon = pushSoon
 
 -- ------------------------------------------------------------------ mise à jour
 local lastUpdate = -10
+local updPos = {}   -- (4.0.1) où était le joueur au dernier calcul (T:Moved)
 function M.Update(force)
   -- planification lourde hors combat seulement ; refaite en sortie de combat
   if inCombat() then M.dirty = true return M.items end
   lastUpdate = now()
+  if T.Stamp then T:Stamp(updPos) end
   M.dirty = nil
   M.NeededDrops()
   local order = M.Build()
@@ -1203,8 +1205,7 @@ function M.Update(force)
       #M.easy > 1 and (" +" .. (#M.easy - 1)) or ""), 1, { ttl = 120, cooldown = 1200, sound = false })
   end
   M.CheckHub(avail, me)
-  M.WriteSummary()
-  pushSoon()
+  pushSoon()   -- (4.0.1) résumé pour l'appli : sur SUMMARY seulement (connexion, /reload, déconnexion…)
   return order
 end
 
@@ -1254,7 +1255,7 @@ local function onQuests(list)
     pcall(M.LightRefresh)
     pushSoon()
   else
-    M.Refresh(1)
+    M.Refresh(1.2)   -- (4.0.1) même délai que ses autres événements (pas dans l'image du rafraîchissement du trajet)
   end
 end
 
@@ -1281,9 +1282,13 @@ end
 function M:OnOptionChanged() M.Refresh(0.2) end
 
 -- actualisation automatique (Core:StartAutoRefresh) : hors combat, recalcul complet ; en combat, différé
+M.autoIdleSafe = true   -- (4.0.1) immobile et sans événement : rien (cycle sauté par le cœur, filet 5 min)
 function M:AutoRefresh()
   if inCombat() then M.dirty = true return end
-  if M.items and now() - lastUpdate < 10 then return end   -- (LITE) les événements recalculent tout de suite ; filet 10 s
+  local age = now() - lastUpdate
+  if M.items and age < 10 then return end   -- (LITE) les événements recalculent tout de suite ; filet 10 s
+  -- (4.0.1) immobile : ordre, distances et « en chemin » n'ont pas bougé (les événements recalculent) ; filet 5 min
+  if M.items and age < 300 and T.Moved and not T:Moved(updPos, 0.003) then return end
   pcall(M.Update)
 end
 

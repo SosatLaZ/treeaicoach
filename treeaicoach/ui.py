@@ -679,7 +679,9 @@ class CoachApp:
                     voice = None
             out["voice"] = voice
             try:
-                out["detector"] = self._make_detector(cfg, demo)
+                # (4.0.1) WoW lancé (pas de partie de League) : le détecteur d'images (modèle ONNX) n'est pas chargé ;
+                # le moteur le crée lui-même au début d'une partie de League (_ensure_detector)
+                out["detector"] = None if (not demo and _wow_session(cfg)) else self._make_detector(cfg, demo)
             except Exception:
                 log.exception("Detector unavailable")
                 out["detector"] = None
@@ -1823,6 +1825,18 @@ def _default_overlay_factory(cfg: Config, provider: Callable[[], Any]) -> Any:
         log.info("Overlay module unavailable: overlay disabled", exc_info=log.isEnabledFor(logging.DEBUG))
         return None
     return OverlayManager(cfg, provider)
+
+
+def _wow_session(cfg: Config) -> bool:
+    """(4.0.1) WoW runs and no League game: the LoL vision models are not needed now. Process NAMES only."""
+    try:
+        if not bool(getattr(cfg, "wow_enabled", True)):
+            return False
+        from treeaicoach.wow import process  # noqa: PLC0415
+
+        return bool(process.wow_mode_wanted())
+    except Exception:
+        return False
 
 
 def _default_detector_factory(cfg: Config, learn: bool = True) -> Any:

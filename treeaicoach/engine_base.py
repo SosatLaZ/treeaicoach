@@ -30,6 +30,8 @@ log = logging.getLogger("treeaicoach.engine")   # same logger as before the spli
 # ------------------------------------------------------------------------------ tunables
 POLL_IN_GAME_S = 1.0             # Live Client poll period in game
 POLL_IDLE_S = 2.0                # ... and outside a game (0.5 Hz)
+POLL_WOW_S = 10.0                # (4.0.1) ... while the WoW mode is on (WoW runs, no League game: the WoW mode itself
+                                 # watches the process list every 3 s and turns off as soon as a League game starts)
 POLL_MIN_WAIT_S = 0.1            # the poller always rests this long between two fetches
 GAME_GONE_S = 8.0                # API silent this long after a game -> game over
 GAME_TIME_BACK_S = 3.0           # game_time going back more than this -> new game

@@ -1023,11 +1023,20 @@ function TreeAI:CreatePanel()
   panel.more = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
   panel.more:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -PAD - 14, 3)   -- place pour la poignée de largeur
 
-  -- expire old suggestions even without new events
-  TreeAI:NewTicker(1, function()
-    if not panel:IsShown() then return end
-    if TreeAI:PanelDirty() then TreeAI:RequestRefresh() else TreeAI:_UpdateGuide() end
-  end)
+  -- expire old suggestions even without new events ; (4.0.1) seulement panneau ouvert : le minuteur s'arrête quand
+  -- le panneau se cache (la carte « Prochaine étape » suit les rendus) et repart quand il se montre
+  local expiry
+  local function startExpiry()
+    if expiry then return end
+    TreeAI._RunAs(nil, function()   -- minuteur du cœur (jamais coupé avec le module qui a ouvert le panneau)
+      expiry = TreeAI:NewTicker(1, function()
+        if not panel:IsShown() then if expiry then expiry:Cancel() end expiry = nil return end
+        if TreeAI:PanelDirty() then TreeAI:RequestRefresh() else TreeAI:_UpdateGuide() end
+      end)
+    end)
+  end
+  if panel.HookScript then panel:HookScript("OnShow", startExpiry) end
+  startExpiry()
 
   applyPosition()
   local s = acc()

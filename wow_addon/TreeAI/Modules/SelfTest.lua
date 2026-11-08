@@ -444,6 +444,7 @@ function M.PushTab()
 end
 
 function M:OnEnable() M.PushTab() end
+M.autoIdleSafe = true   -- (4.0.1) compteurs comparés : rien à faire au calme (cycle sauté par le cœur)
 function M:AutoRefresh()
   local d = diag() or {}
   local n = type(d.errors) == "table" and #d.errors or 0
