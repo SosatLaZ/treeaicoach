@@ -526,12 +526,20 @@ X.IsQuestDone = isDone
 
 local function knownTaxi()
   local out, seenNode = {}, {}
+  -- (QA-QUEST F29) les maîtres de vol appris que l'itinéraire garde (Route.char.taxi : vus ouverts, ou lus sur la
+  -- carte des vols) : sinon l'appli conseillait « prends le point de vol … en passant » pour un vol déjà connu
+  local Rt = T.Route
+  for id, v in pairs(Rt and Rt.char and type(Rt.char.taxi) == "table" and Rt.char.taxi or {}) do
+    id = tonumber(id)
+    if v and id and not seenNode[id] then seenNode[id] = true; out[#out + 1] = id end
+  end
   local f = C("C_TaxiMap", "GetTaxiNodesForMap")
-  if not f then return out end
-  for _, m in ipairs({ 1414, 1415, try(C("C_Map", "GetBestMapForUnit"), "player") }) do
-    for _, nd in ipairs(try(f, m) or {}) do
-      if type(nd) == "table" and nd.nodeID and nd.isUndiscovered == false and not seenNode[nd.nodeID] then
-        seenNode[nd.nodeID] = true; out[#out + 1] = nd.nodeID
+  if f then
+    for _, m in ipairs({ 1414, 1415, try(C("C_Map", "GetBestMapForUnit"), "player") }) do
+      for _, nd in ipairs(try(f, m) or {}) do
+        if type(nd) == "table" and nd.nodeID and nd.isUndiscovered == false and not seenNode[nd.nodeID] then
+          seenNode[nd.nodeID] = true; out[#out + 1] = nd.nodeID
+        end
       end
     end
   end
@@ -913,12 +921,26 @@ function X:Build(yieldFn)
     ok = false
     for qid, lq in pairs(log) do       -- no Questie: just my log (titles, objectives, waypoints)
       local rec = { id = qid, t = lq.t, lv = lq.lv, rl = 0, xp = 0, st = "log", done = lq.done, elite = lq.elite or 0,
-        grp = lq.grp, o = {} }
+        grp = lq.grp, o = {}, dg = lq.dg, raid = lq.raid, pvp = lq.pvp, tag = lq.tag, failed = lq.failed }
       for j, lo in ipairs(lq.obj) do rec.o[j] = { k = LOGTYPE[lo.type or ""] or "other", id = 0, n = lo.n, have = lo.have } end
+      -- (QA-QUEST F10) zone de la quête (GetQuestUiMapID) : la zone de travail s'applique aussi sans Questie
+      local zm = tonumber(_ns((try(G("GetQuestUiMapID"), qid))))
+      if zm and zm > 0 then rec.zone = zm end
       local wp = C("C_QuestLog", "GetNextWaypoint")
       local m, x, y
       if wp then m, x, y = try(wp, qid) end
-      if tonumber(m) and tonumber(x) then rec.f = { map = m, x = r1(x * 100), y = r1(y * 100), k = "npc", id = 0 } end
+      if tonumber(m) and tonumber(x) then
+        local pt = { map = m, x = r1(x * 100), y = r1(y * 100) }
+        -- (QA-QUEST F10) le point du jeu d'une quête pas finie = la zone de l'objectif, pas le PNJ de remise : il va
+        -- sur le 1er objectif pas fini ; seulement une quête finie y met sa remise (« Rendre » posé sur le camp, avant)
+        if lq.done == 1 then
+          rec.f = { map = pt.map, x = pt.x, y = pt.y, k = "npc", id = 0 }
+        else
+          for j, lo in ipairs(lq.obj) do
+            if not lo.fin and rec.o[j] then rec.o[j].map, rec.o[j].x, rec.o[j].y = pt.map, pt.x, pt.y break end
+          end
+        end
+      end
       rec.who = squadQ[qid]
       add(rec)
     end

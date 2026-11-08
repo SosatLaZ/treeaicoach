@@ -106,8 +106,10 @@ return function(M, ctx)
   local oldTA = CQ.GetTimeAllowed
   CQ.GetTimeAllowed = function(id) if id == 9105 then return 1800, 1560 end end
   setQuests({ { id = 9105, title = "Course-test", complete = false, obj = {} } })
+  -- (QA-QUEST F28) le module Quêtes dit déjà le chrono (« Chrono : « X » à finir avant 07:56 ») : Avantages ne le
+  -- redit pas (une seule ligne pour un seul fait ; Avantages lit le journal par le module Quêtes)
   X.CheckTimers()
-  ok("questTimer", "Finis « Course-test » : chrono, il reste 4 min")
+  none("questTimer", "le chrono est déjà dit par le module Quêtes")
   CQ.GetTimeAllowed = oldTA
   if madeCQ then rawset(_G, "C_QuestLog", nil) end
   X.CheckTimers()

@@ -593,13 +593,26 @@ local function objLabel(q)
   return q.title
 end
 
+-- (QA-QUEST F3) un point posé à la main (repère de la minicarte, « Y aller », /tai way) ne passe plus devant le
+-- trajet pour toute la session : effacé à l'arrivée (≤ 20 m pendant 3 s), au changement de zone s'il est sur un
+-- autre continent, jamais gardé après un /reload sans un clic ; s'il est hors d'atteinte d'ici (autre continent)
+-- ou posé il y a plus de 10 min (sauf ton propre /tai way et ton corps), il passe après l'arrêt du trajet.
+M.CLEAR_YD, M.CLEAR_SEC, M.STALE_SEC = 20 / YD2M, 3, 600
+-- → "far" (hors d'atteinte d'ici : pas de flèche possible → après les quêtes qu'on peut viser), "old" (posé il y a
+-- plus de 10 min → après l'arrêt du trajet) ou false
+function M.CustomStale(c, me)
+  if type(c) ~= "table" or c.source == "corpse" then return false end
+  if me and not G.Vector(me, { mapID = c.mapID, x = c.x, y = c.y }) then return "far" end
+  return (c.source ~= "perso" and tonumber(c.at) ~= nil and now() - c.at > M.STALE_SEC) and "old" or false
+end
+
 -- Construit la liste triée des cibles. list = liste des quêtes (Quests.lastList) ; me = position.
 function M.BuildTargets(list, me)
   local out = {}
   local c = M.char and M.char.custom
   if type(c) == "table" and c.mapID and c.x then
     out[#out + 1] = { key = "custom", kind = "custom", title = c.name or "Point perso", label = c.name or "Point perso",
-      mapID = c.mapID, x = c.x, y = c.y, src = "perso" }
+      mapID = c.mapID, x = c.x, y = c.y, src = "perso", stale = M.CustomStale(c, me) or nil }
   end
   local st = _G.C_SuperTrack and _G.C_SuperTrack.GetSuperTrackedQuestID and try(_G.C_SuperTrack.GetSuperTrackedQuestID)
   for _, q in ipairs(list or {}) do
@@ -623,9 +636,12 @@ function M.BuildTargets(list, me)
   local Zp = T.ZonePlan
   local pt = Zp and Zp.CompassTarget and try(Zp.CompassTarget, me)
   if type(pt) == "table" then out[#out + 1] = pt end
+  local function rank(t)
+    if t.kind == "custom" then return (t.stale == "far" and 2.5) or (t.stale and 0.6) or 0 end
+    return (t.plan and 0.5) or (t.super and 1) or (t.kind == "zone" and 3) or 2
+  end
   table.sort(out, function(a, b)
-    local ra = a.kind == "custom" and 0 or (a.plan and 0.5) or (a.super and 1) or (a.kind == "zone" and 3) or 2
-    local rb = b.kind == "custom" and 0 or (b.plan and 0.5) or (b.super and 1) or (b.kind == "zone" and 3) or 2
+    local ra, rb = rank(a), rank(b)
     if ra ~= rb then return ra < rb end
     if (a.dist or 1e12) ~= (b.dist or 1e12) then return (a.dist or 1e12) < (b.dist or 1e12) end
     return tostring(a.key) < tostring(b.key)
@@ -667,7 +683,16 @@ function M.Rebuild(reason)
       M.pinned = nil
       if auto then
         if progressed then M.idx = found end
-        announce(M.targets[M.idx], prev.kind == "objective" and "Objectif fini → suivant" or "Cible suivante")
+        -- (QA-QUEST F13) un trajet recalculé / réordonné n'est pas « Objectif fini » : rien n'est annoncé quand
+        -- l'ancienne ou la nouvelle cible est un arrêt du trajet (le Planner dit déjà « Étape suivante : … »)
+        local nt = M.targets[M.idx]
+        if not (prev.plan or (nt and nt.plan)) then
+          local fini = progressed
+          if not fini and prev.kind == "objective" and prev.questID then
+            for _, t in ipairs(M.targets) do if t.key == "turn:" .. prev.questID then fini = true end end
+          end
+          announce(nt, (prev.kind == "objective" and fini) and "Objectif fini → suivant" or "Cible suivante")
+        end
       elseif found then
         M.idx = found
       end
@@ -702,8 +727,9 @@ function M.SetQuestTarget(qid)
   return nil
 end
 
--- point perso : /tai way 45.2 60.1 [nom] (coordonnées de la carte où tu es)
-function M.SetWaypoint(x, y, name, mapID)
+-- point perso : /tai way 45.2 60.1 [nom] (coordonnées de la carte où tu es) ; source = "perso" (/tai way), "corpse"
+-- (Speed), "detect", "finder", "plan"… ou nil (repère de la minicarte, suivi) ; at = posé quand (GetTime)
+function M.SetWaypoint(x, y, name, mapID, source)
   x, y = tonumber(x), tonumber(y)
   if not (x and y) then return nil end
   if x > 1 or y > 1 then x, y = x / 100, y / 100 end
@@ -711,7 +737,10 @@ function M.SetWaypoint(x, y, name, mapID)
   local me = M.Player()
   mapID = mapID or (me and me.mapID)
   if not mapID then return nil end
-  M.char.custom = { mapID = mapID, x = x, y = y, name = (name and name ~= "") and cut(name, 40) or nil }
+  M.char.custom = { mapID = mapID, x = x, y = y, name = (name and name ~= "") and cut(name, 40) or nil, source = source,
+    at = now() }
+  M.resume = nil
+  M:Clear("resume")
   M.pinned = nil
   M.Rebuild()
   M.idx = 1
@@ -725,9 +754,45 @@ function M.SetTarget(a, b)
   local t = (type(b) == "table" and b) or (type(a) == "table" and a ~= M and a) or nil
   if not t then return nil end
   if t.questID and not (t.x and t.y) then return M.SetQuestTarget(t.questID) end
-  local r = M.SetWaypoint(t.x, t.y, t.label, t.mapID)
+  local r = M.SetWaypoint(t.x, t.y, t.label, t.mapID, t.source)
   if r then r.source, r.questID = t.source, t.questID end
   return r
+end
+
+-- (QA-QUEST F3) hors d'atteinte d'ici (autre continent : pas de distance possible) → effacé ; le corps jamais
+-- (Speed le gère), et rien n'est décidé sans position (instance, chargement)
+function M.DropUnreachable()
+  local c = M.char and M.char.custom
+  if type(c) ~= "table" or c.source == "corpse" or not (c.mapID and c.x) then return false end
+  local me = M.Player()
+  if not me or G.Vector(me, { mapID = c.mapID, x = c.x, y = c.y }) then return false end
+  M.char.custom, M.pinned = nil, nil
+  return true
+end
+-- (QA-QUEST F3) /reload ou connexion : le point d'avant n'est pas repris tout seul ; une ligne propose de le
+-- reprendre d'un clic (le corps : Speed le revise s'il le faut)
+function M.ForgetSaved()
+  if M._sessionChecked then return end
+  M._sessionChecked = true
+  local c = M.char and M.char.custom
+  if type(c) ~= "table" then return end
+  M.char.custom = nil
+  if c.source == "corpse" or not (c.mapID and c.x) then return end
+  M.resume = c
+  M:Suggest("resume", ("Boussole : reprendre « %s » ?"):format(cut(c.name or "ton point", 30)), 1, { ttl = 120, sound = false,
+    tooltip = "La boussole visait ce point avant le /reload.\nClic : le viser de nouveau.", onClick = function() M.Resume() end })
+end
+function M.Resume()
+  local c = M.resume
+  M.resume = nil
+  M:Clear("resume")
+  if type(c) ~= "table" or not M.char then return nil end
+  c.at, c.arrivedAt = now(), nil
+  M.char.custom, M.pinned = c, nil
+  M.Rebuild()
+  M.idx = 1
+  M.Refresh()
+  return c
 end
 
 --- Un clic « y aller » vers ce que voit TreeAI.Detect : kind = "rare" | "treasure" | genre de service
@@ -782,6 +847,20 @@ function M.Compute()
     t.arrive = t.arrive or ARRIVE[t.kind] or 15
     if d and d <= t.arrive then st.arrived = true end
     if NT and NT.Track and d and not approx then pcall(NT.Track, t, me, d) end
+    -- (QA-QUEST F3) point posé à la main atteint (≤ 20 m pendant 3 s) : effacé, la boussole revient au trajet
+    local c = M.char and M.char.custom
+    if t.kind == "custom" and type(c) == "table" and c.source ~= "corpse" and d and not approx then
+      if d <= M.CLEAR_YD then
+        c.arrivedAt = c.arrivedAt or tnow
+        if tnow - c.arrivedAt >= M.CLEAR_SEC then
+          M.char.custom, M.pinned = nil, nil
+          M.Rebuild("arrived")
+          if M.Current() ~= t then return M.Compute() end
+        end
+      else
+        c.arrivedAt = nil
+      end
+    end
   end
   return st
 end
@@ -1067,7 +1146,8 @@ local function refresh()
     if st.eta and not st.arrived then s = s .. "  ·  " .. st.eta end
     if not st.facing then s = s .. " " .. G.Cardinal(st.bearing) end
   else
-    s = t.zone and ("Zone : " .. cut(t.zone, 28)) or ""
+    -- (QA-QUEST F4) « Pierre de foyer vers Orgrimmar » : pas de flèche, la consigne à la place de la distance
+    s = t.note or (t.zone and ("Zone : " .. cut(t.zone, 28))) or ""
   end
   if s ~= lastInfo then lastInfo = s; dist:SetText(s) end
   return st
@@ -1111,10 +1191,16 @@ end
 M.RebuildSoon = rebuildSoon
 
 function M:OnEnable()
+  M.ForgetSaved()                                    -- (QA-QUEST F3) rien de repris d'avant le /reload sans un clic
   createFrame()
   for _, ev in ipairs({ "QUEST_LOG_UPDATE", "QUEST_WATCH_LIST_CHANGED", "QUEST_TURNED_IN", "QUEST_ACCEPTED",
     "QUEST_REMOVED", "ZONE_CHANGED_NEW_AREA", "SUPER_TRACKING_CHANGED" }) do
-    self:RegisterEvent(ev, function() rebuildSoon() end)
+    if ev == "ZONE_CHANGED_NEW_AREA" then
+      -- (QA-QUEST F3) nouvelle zone : un point posé à la main sur un autre continent ne guide plus
+      self:RegisterEvent(ev, function() pcall(M.DropUnreachable) rebuildSoon() end)
+    else
+      self:RegisterEvent(ev, function() rebuildSoon() end)
+    end
   end
   self:RegisterEvent("PLAYER_ENTERING_WORLD", function() rebuildSoon("init") end)
   self:RegisterEvent("PLAYER_REGEN_ENABLED", function() if M.dirty then rebuildSoon() end M.Refresh() end)
@@ -1167,7 +1253,7 @@ T:RegisterSlash("way", function(rest)
   end
   local x, y, name = rest:match("^%s*([%d%.,]+)[%s,;]+([%d%.,]+)%s*(.-)%s*$")
   if x then x, y = x:gsub(",", "."), y:gsub(",", ".") end
-  local w = x and M.SetWaypoint(x, y, name)
+  local w = x and M.SetWaypoint(x, y, name, nil, "perso")
   if w then
     M:Print(("Point perso : %.1f, %.1f%s"):format(w.x * 100, w.y * 100, w.name and (" (" .. w.name .. ")") or ""))
   else

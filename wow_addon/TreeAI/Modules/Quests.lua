@@ -1119,17 +1119,23 @@ function M.OnZone(newZone)
   local old = lastZone
   lastZone = newZone
   if not M.lastList or not cfg("zoneHints") then return end
-  if old and old ~= "" and old ~= newZone then
+  -- (QA-QUEST F11) dit APRÈS le changement de zone (donc pas « avant de quitter ») ; jamais avec un trajet suivi
+  -- (ses arrêts disent déjà quoi faire), ni en vol, ni pour une quête de groupe / donjon qu'on ne fait pas seul
+  local onTaxi = try(_G.UnitOnTaxi, "player") and true or false
+  if old and old ~= "" and old ~= newZone and not planActive() and not onTaxi then
     local left = {}
     for _, q in ipairs(M.lastList) do
-      if q.zone == old and not q.complete and not q.failed and not q.grey then left[#left + 1] = q end
+      if q.zone == old and not q.complete and not q.failed and not q.grey and M.SoloOK(q.id) then left[#left + 1] = q end
     end
     table.sort(left, function(x, y) return x.ratio > y.ratio end)
     if #left > 0 then
       local q = left[1]
       local rem = M.Remaining(q, 2)
-      suggest("left", ("Finis « %s » avant de quitter %s%s"):format(
-        cut(q.title, 28), old, #left > 1 and (" (+" .. (#left - 1) .. ")") or ""), 2,
+      local art, rest = old:match("^(L[ae]s?) (.+)$")
+      local where = (art == "Les" and ("aux " .. rest)) or (art == "Le" and ("au " .. rest)) or (art == "La" and ("à la " .. rest))
+        or (old:match("^L'") and ("à l'" .. old:sub(3))) or ("à " .. old)
+      suggest("left", ("Pas finie %s : « %s »%s"):format(where, cut(q.title, 28),
+        #left > 1 and (" (+" .. (#left - 1) .. ")") or ""), 2,
         { ttl = 90, cooldown = 300, tooltip = rem ~= "" and ("Reste : " .. rem) or nil })
     end
   end

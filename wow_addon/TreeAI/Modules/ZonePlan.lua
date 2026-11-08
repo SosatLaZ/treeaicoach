@@ -330,6 +330,71 @@ function N.NearFirst(nodes, ord, start, dist, yd, cap, logCount)
   for _, i in ipairs(ord) do if not moved[i] then out[#out + 1] = i end end
   return out
 end
+-- (QA-QUEST F2) quêtes chronométrées en cours (timers = { [q] = secondes }) : tous leurs arrêts (remise comprise)
+-- passent en tête, avec ce qui doit les précéder (un objectif groupé avec celui d'une autre quête tire le « prendre »
+-- de cette quête) ; ordre relatif inchangé ; refusé si les précédences ou le journal ne suivent pas
+function N.TimersFirst(nodes, ord, timers, cap, logCount)
+  if type(timers) ~= "table" or not next(timers) then return ord end
+  local need = {}                                    -- [q] = rang : les arrêts de q de rang < need[q] vont en tête
+  for q in pairs(timers) do need[q] = 4 end
+  local hot, changed, guard = {}, true, 0
+  while changed and guard < 20 do
+    changed, guard = false, guard + 1
+    for _, i in ipairs(ord) do
+      if not hot[i] then
+        for q, r in pairs(nodes[i].qs) do
+          if need[q] and r < need[q] then
+            hot[i], changed = true, true
+            for q2, r2 in pairs(nodes[i].qs) do if (need[q2] or 0) < r2 then need[q2] = r2 end end
+            break
+          end
+        end
+      end
+    end
+  end
+  local head, rest = {}, {}
+  for _, i in ipairs(ord) do if hot[i] then head[#head + 1] = i else rest[#rest + 1] = i end end
+  if #head == 0 or #rest == 0 then return ord end
+  for _, i in ipairs(rest) do head[#head + 1] = i end
+  if N.Valid(nodes, head) and N.CapOK(nodes, head, cap, logCount) then return head end
+  return ord
+end
+-- (QA-QUEST F10) arrêts sans position (pas de Questie, pas de point du jeu) : après tous ceux qu'on sait trouver
+-- (un trajet « fictif » de 45 s les mettait en tête, sans lieu : « Ramasse « Rat fouisseur » · trajet 0 s ») ;
+-- ce qui doit les suivre (la remise de la même quête) part avec eux ; refusé si précédences / journal ne suivent pas
+function N.PositionlessLast(nodes, ord, cap, logCount)
+  local after = {}                                   -- [q] = rang : les arrêts de q de rang > after[q] vont au bout
+  local any = false
+  for _, i in ipairs(ord) do
+    if not nodes[i].x then
+      any = true
+      for q, r in pairs(nodes[i].qs) do if not after[q] or r < after[q] then after[q] = r end end
+    end
+  end
+  if not any then return ord end
+  local tail, changed, guard = {}, true, 0
+  while changed and guard < 20 do
+    changed, guard = false, guard + 1
+    for _, i in ipairs(ord) do
+      if not tail[i] then
+        local go = not nodes[i].x
+        if not go then
+          for q, r in pairs(nodes[i].qs) do if after[q] and r > after[q] then go = true break end end
+        end
+        if go then
+          tail[i], changed = true, true
+          for q, r in pairs(nodes[i].qs) do if not after[q] or r < after[q] then after[q] = r end end
+        end
+      end
+    end
+  end
+  local head, rest = {}, {}
+  for _, i in ipairs(ord) do if tail[i] then rest[#rest + 1] = i else head[#head + 1] = i end end
+  if #head == 0 or #rest == 0 then return ord end
+  for _, i in ipairs(rest) do head[#head + 1] = i end
+  if N.Valid(nodes, head) and N.CapOK(nodes, head, cap, logCount) then return head end
+  return ord
+end
 -- keep the old order unless the new one saves ≥ 10 % of the travel and ≥ 1 min
 function N.Choose(newCost, oldCost)
   if not oldCost then return "new" end
@@ -598,6 +663,13 @@ function Z:BuildRoute(P, yieldFn)
   local m, x, y
   if Geo.Player then m, x, y = Geo.Player() end
   local start = (m and x) and { map = m, x = x, y = y } or nil
+  -- (QA-QUEST F1) parti loin (> 400 yd) depuis le dernier calcul : l'ordre d'avant ne tient plus (hystérésis remise
+  -- à zéro, sinon « foyer → Orgrimmar » restait en tête une fois arrivé aux Salines)
+  if start and self.lastStart then
+    local d = worldDist(start, self.lastStart)
+    if not d or d > 400 then self.lastKeys = nil end
+  end
+  self.lastStart = start
   local prio = tonumber(opt("prio")) or 1
   local maxS = (tonumber(opt("maxMin")) or 0) * 60
   local grey = E.GreyLevel(level)
@@ -626,12 +698,23 @@ function Z:BuildRoute(P, yieldFn)
     -- « prendre » hors zone = toute la quête ; un objectif hors zone retire aussi la remise (pas finissable ici)
     local extra = self.char and self.char.extra[q]
     local inZone = true
+    -- (QA-QUEST F10) arrêt sans position (pas de Questie, pas de point du jeu) : jugé sur la zone de sa quête
+    -- (export, sinon GetQuestUiMapID du journal) — avant, il passait le filtre et partait aux Tarides
+    local qm
+    local function outOf(s)
+      if s.x then return not self:InZone(s.map, A) end
+      if qm == nil then
+        qm = tonumber(rec and rec.zone) or (lq and tonumber(_ns((try(G("GetQuestUiMapID"), q))))) or false
+        if qm and qm <= 0 then qm = false end
+      end
+      return qm and not self:InZone(qm, A) or false
+    end
     if extra then          -- détour choisi : gardé tel quel, arrêts hors zone marqués « hors zone »
       for _, s in ipairs(steps) do if s.x and not self:InZone(s.map, A) then inZone = false end end
     else
       local keep, pickOut, objOut, objIn, turnOut = {}, false, false, false, false
       for _, s in ipairs(steps) do
-        local outS = s.x and not self:InZone(s.map, A)
+        local outS = outOf(s)
         if outS then
           if s.k == "pick" then pickOut = true elseif s.k == "obj" then objOut = true else turnOut = true end
         else
@@ -672,6 +755,7 @@ function Z:BuildRoute(P, yieldFn)
       if lq then info.logHere = (info.logHere or 0) + 1 end
     end
     for _, s in ipairs(steps) do
+      -- s.value = score de l'ordre (jamais affiché) ; s.xp = XP réelle de l'arrêt (XP/h, détour : QA-QUEST F6)
       if prio == 2 then s.value = 1000                           -- finir la zone : chaque arrêt compte autant
       elseif prio == 3 and s.k == "turn" then s.value = (s.value or 0) * rewardBoost(q) end
       if timers[q] then s.value = (s.value or 0) * 5 + 5000 end   -- (QUESTQA) chrono en cours : d'abord
@@ -700,6 +784,14 @@ function Z:BuildRoute(P, yieldFn)
   local logCount = 0
   for _ in pairs(log) do logCount = logCount + 1 end
   local first = makeFirst(leg, start)
+  -- (QA-QUEST F1) la pierre de foyer seulement quand RIEN n'est à moins de 5 min d'ici (sinon : foyer → Orgrimmar →
+  -- vol → petite quête → vol retour, alors que la zone de quêtes est à 4 min à pied) ; Route l'affiche pareil
+  self.noHearth = nil
+  if first and start then
+    for _, nd in ipairs(nodes) do
+      if nd.x and leg(start, nd) <= 300 then first, self.noHearth = nil, true break end
+    end
+  end
   local legN = function(a, b) return leg(a, b) end
   local st0 = start or { }
   local ord = N.Greedy(nodes, st0, legN, { horizon = (prio == 2) and 60 or 40, cap = cap - 2, logCount = logCount,
@@ -722,6 +814,10 @@ function Z:BuildRoute(P, yieldFn)
     end
   end
   ord = N.NearFirst(nodes, ord, start, worldDist, N.NEAR, cap - 2, logCount)
+  ord = N.PositionlessLast(nodes, ord, cap - 2, logCount)   -- (QA-QUEST F10) sans lieu connu : au bout
+  -- (QA-QUEST F2) chrono en cours : ses arrêts d'abord (le bonus du glouton ne survit pas au 2-opt / Or-opt, à
+  -- l'hystérésis ni à NearFirst, qui ne voient que le chemin) ; précédences et journal gardés
+  ord = N.TimersFirst(nodes, ord, timers, cap - 2, logCount)
   -- (QUESTQA) journal plein : les quêtes à prendre attendent (dit une fois, en clair, dans la vue du trajet)
   local picks = 0
   for _, r in ipairs(requests) do if r.steps[1] and r.steps[1].k == "pick" then picks = picks + 1 end end
@@ -737,7 +833,7 @@ function Z:BuildRoute(P, yieldFn)
     end)
     for _, s in ipairs(nd.steps) do
       t = t + (s.svc or 0)
-      xp = xp + (s.value or 0)
+      xp = xp + (s.xp or 0)                 -- (QA-QUEST F6) XP réelle, pas le score de l'ordre (×1,5–1,75)
       s.area = nd.area
       s.eta = floor(t / 60 + 0.5)
       steps[#steps + 1] = s
@@ -753,14 +849,28 @@ function Z:BuildRoute(P, yieldFn)
   local xph = (t > 0 and prio ~= 2) and floor(xp * 3600 / t) or 0
   if opt("detour") ~= false and start then
     local rate = (t > 0) and (xp * 3600 / t) or 0
+    -- (QA-QUEST F21) coût du détour = son insertion la moins chère dans le trajet (entre deux arrêts, ou au bout), et
+    -- non plus 2 × le trajet depuis ici : une remise à Fossoyeuse sur le chemin de Moulin-de-Tarren ne coûte presque rien
+    local pts = { start }
+    for _, i in ipairs(ord) do if nodes[i].x then pts[#pts + 1] = nodes[i] end end
+    local function insertCost(turn)
+      local bestC = huge
+      for k = 1, #pts do
+        local a, b = pts[k], pts[k + 1]
+        local c = leg(a, turn) + (b and (leg(turn, b) - leg(a, b)) or 0)
+        if c < bestC then bestC = c end
+        if yieldFn then yieldFn() end
+      end
+      return max(1, bestC)
+    end
     local best
     for _, f in ipairs(far) do
       if f.lq.done == 1 then
         local turn = f.steps[#f.steps]
-        local s = turn and turn.x and leg(start, turn)
-        local gain = turn and turn.value or 0
+        local s = turn and turn.x and insertCost(turn)
+        local gain = turn and (turn.xp or turn.value) or 0
         if s and s < huge and s > 0 then
-          local r = gain * 3600 / (2 * s + 30)
+          local r = gain * 3600 / (s + 30)
           if r >= max(1.5 * rate, 1) and gain >= 0.5 * E.QuestXPEstimate(level) and (not best or r > best.r) then
             best = { q = f.q, title = (f.lq and f.lq.t) or (f.rec and f.rec.t) or ("quête " .. f.q), xp = floor(gain),
               sec = s, zone = Z.MapName(turn.map), r = r, cross = Z.Cont(turn.map) ~= A.cont }
@@ -938,12 +1048,46 @@ end
 function Z:Paused() local R = T.Route return R and R.char and R.char.paused or false end
 function Z:OnOptionChanged() self:Bump() end
 
+-- (QA-QUEST F4) 1er trajet du trajet = un transport (foyer, vol, bateau, zeppelin) : la boussole vise CE départ
+-- (maître de vol / quai à pied, ou « Pierre de foyer vers … » sans flèche), jamais la quête lointaine en ligne
+-- droite avec une durée à pied (« 8 km · 24 min » alors que la carte dit foyer + 2 min de vol)
+local function legTarget(me)
+  local Rt = T.Route
+  if not (Rt and Rt.IsEnabled and Rt:IsEnabled() and Rt.Stops) then return nil end
+  local ok, st = pcall(Rt.Stops, Rt, 1)
+  local f = ok and type(st) == "table" and st[1] or nil
+  if not f or f.step then return nil end
+  local Safe = T.SafeText or function(s) return s end
+  if f.kind == "hs" then
+    local name = cut((f.place and f.place.name) or "l'auberge", 28)
+    local label = "Pierre de foyer vers " .. name
+    return { key = "plan:hs:" .. name, kind = "zone", plan = true, leg = "hs", title = label, label = label,
+      note = "Lance ta pierre de foyer", src = "trajet" }
+  end
+  local p = f.from or f.place
+  if not (p and p.map and p.x and p.y) then return nil end
+  local label = Safe(tostring(f.text or "Trajet"))
+  local t = { key = fmt("plan:%s:%s:%d:%d", tostring(f.kind), tostring(p.map), floor(p.x * 10), floor(p.y * 10)),
+    kind = "travel", plan = true, leg = f.kind, title = label, label = label, mapID = p.map, x = p.x / 100, y = p.y / 100,
+    src = "trajet" }
+  if me and me.mapID and me.x and Geo.Dist then
+    local mx, my = me.x, me.y
+    if mx <= 1 and my <= 1 then mx, my = mx * 100, my * 100 end
+    t.dist = Geo.Dist(me.mapID, mx, my, p.map, p.x, p.y)
+  end
+  return t
+end
+Z.LegTarget = legTarget
+
 -- boussole : l'arrêt en cours (Compass.BuildTargets)
 function Z.CompassTarget(me)
   if not (Z:IsEnabled() and opt("compass") ~= false) or Z:Paused() then return nil end
   local P = T.Planner
   local s = P and P.steps and P.cursor and P.steps[P.cursor]
-  if not (s and s.map and s.x and not s._done and not s._other) then return nil end
+  if not (s and not s._done and not s._other) then return nil end
+  local lt = legTarget(me)
+  if lt then return lt end
+  if not (s.map and s.x) then return nil end
   local label = P.StepLabel and P:StepLabel(s) or "Arrêt"
   local t = { key = "plan:" .. skey(s), kind = s.k == "turn" and "turnin" or "objective", plan = true, questID = s.q,
     title = label, label = label, mapID = s.map, x = s.x / 100, y = s.y / 100, src = "trajet" }
@@ -1017,20 +1161,38 @@ function Z:CountZones()
   if not ticker then while self._counting do step() end end
   return self.counts
 end
--- zones offered in the menu / options: same continent (+ the picked ones), most quests at my level first
+-- zones offered in the menu / options: same continent (+ the picked ones), most quests at my level first ;
+-- (QA-QUEST F14) + les meilleures zones d'un autre continent (≥ 3 quêtes à mon niveau, 4 au plus) : sinon
+-- « un autre continent n'est pris que si tu le coches » ne pouvait jamais se cocher à la souris.
+-- (F24) e.n = nil tant que le comptage n'est pas fini (jamais « · 0 » pendant « comptage des quêtes »)
 function Z:ZoneChoices()
   local A = self:Allowed()
-  local counts = (self.counts and self.counts.n) or {}
-  local list = {}
-  for _, m in ipairs(self:KnownZones(A.cont)) do list[#list + 1] = { map = m, n = counts[m] or 0, name = Z.MapName(m) } end
+  local ready = self.counts and self.counts.n
+  local function cnt(m) return ready and (ready[m] or 0) or nil end
+  local list, seen = {}, {}
+  for _, m in ipairs(self:KnownZones(A.cont)) do
+    list[#list + 1] = { map = m, n = cnt(m), name = Z.MapName(m) }
+    seen[m] = true
+  end
   for m in pairs(self.char and self.char.zones or {}) do
     m = tonumber(m)
-    local seen = false
-    for _, e in ipairs(list) do if e.map == m then seen = true end end
-    if m and not seen then list[#list + 1] = { map = m, n = counts[m] or 0, name = Z.MapName(m), far = true } end
+    if m and not seen[m] then
+      seen[m] = true
+      list[#list + 1] = { map = m, n = cnt(m), name = Z.MapName(m), far = true }
+    end
+  end
+  if ready and A.cont then
+    local fz = {}
+    for m, n in pairs(ready) do
+      local c = (not seen[m] and n >= 3 and Z.ZoneOf(m) == m) and Z.Cont(m) or nil
+      if c and c ~= A.cont then fz[#fz + 1] = { map = m, n = n, name = Z.MapName(m), far = true } end
+    end
+    tsort(fz, function(a, b) if a.n ~= b.n then return a.n > b.n end return a.name < b.name end)
+    for i = 1, min(4, #fz) do list[#list + 1] = fz[i] end
   end
   tsort(list, function(a, b)
-    if a.n ~= b.n then return a.n > b.n end
+    local an, bn = a.n or 0, b.n or 0
+    if an ~= bn then return an > bn end
     return a.name < b.name
   end)
   return list
@@ -1140,8 +1302,8 @@ function Z:ZoneEntries()
     if shown >= 12 then break end
     local on = mode == "zones" and ch.zones[e.map]
     local cross = A.cont and Z.Cont(e.map) and Z.Cont(e.map) ~= A.cont
-    out[#out + 1] = { text = fmt("%s %s · %d%s", on and "☑" or "☐", cut(e.name, 28), e.n, cross and " (autre continent)" or ""),
-      fn = function() Z:SetMode("zone", e.map) end, keep = true }
+    out[#out + 1] = { text = fmt("%s %s%s%s", on and "☑" or "☐", cut(e.name, 28), e.n and fmt(" · %d", e.n) or "",
+      cross and " (autre continent)" or ""), fn = function() Z:SetMode("zone", e.map) end, keep = true }
     shown = shown + 1
   end
   if self._counting then out[#out + 1] = { text = "… comptage des quêtes", dim = true } end
@@ -1185,9 +1347,16 @@ function Z:HeadLines()
   local out = {}
   local P = T.Planner
   local file = P and P.src == "file"
+  -- (QA-QUEST) « + 1 voisine » : laquelle, en clair dans l'infobulle
+  local nb = {}
+  if A.mode == "auto" and A.maps then
+    for mm in pairs(A.maps) do if mm ~= A.here then nb[#nb + 1] = Z.MapName(mm) end end
+    tsort(nb)
+  end
   out[#out + 1] = { text = "Zone : " .. cut(A.label or "?", 40) .. " ▾", prio = 1, id = "zone:pick",
     onClick = function() Z:ShowZoneMenu() end, onRightClick = function() Z:ShowZoneMenu() end,
     tooltip = "Clic : choisir la zone de travail\n(auto, une ou plusieurs zones, toute la région)"
+      .. (#nb > 0 and ("\nVoisine" .. (#nb > 1 and "s" or "") .. " : " .. tconcat(nb, ", ")) or "")
       .. (self:MaskedText() and ("\n" .. self:MaskedText()) or "")
       .. (file and "\nPlan de TreeAI Coach : mêmes règles que le trajet en jeu" or "") }
   if A.cross then
@@ -1201,8 +1370,14 @@ function Z:HeadLines()
     lf = { n = n, max = tonumber((try(C("C_QuestLog", "GetMaxNumQuestsCanAccept")))) or 20, waiting = w }
   elseif file then lf = nil end
   if lf then
-    out[#out + 1] = { text = fmt("Journal plein (%d/%d) : %d quête%s à prendre ici attend%s une place", lf.n, lf.max,
-      lf.waiting, lf.waiting > 1 and "s" or "", lf.waiting > 1 and "ent" or ""), prio = 2, id = "zone:logfull",
+    -- (QA-QUEST F15) « plein » seulement quand il l'est ; sinon : les prises du plan ne tiendront pas toutes
+    local w = lf.waiting
+    out[#out + 1] = { text = (lf.n >= lf.max)
+        and fmt("Journal plein (%d/%d) : %d quête%s à prendre ici attend%s une place", lf.n, lf.max, w, w > 1 and "s" or "",
+          w > 1 and "ent" or "")
+        or fmt("Journal %d/%d : %d quête%s à prendre attendr%s une place", lf.n, lf.max, w, w > 1 and "s" or "",
+          w > 1 and "ont" or "a"),
+      prio = 2, id = "zone:logfull",
       tooltip = "Les quêtes à prendre restent hors du trajet tant que le journal est plein.\nUne remise ou un abandon libère une place." }
   end
   local d = self.detour
@@ -1227,7 +1402,7 @@ function Z:BuildOptions(P)
   local shown = 0
   for _, e in ipairs(self:ZoneChoices()) do
     if shown >= 14 then break end
-    P.check(fmt("%s · %d quête%s à ton niveau", e.name, e.n, e.n > 1 and "s" or ""),
+    P.check(e.n and fmt("%s · %d quête%s à ton niveau", e.name, e.n, e.n > 1 and "s" or "") or e.name,
       function() return Z.char and Z.char.mode == "zones" and Z.char.zones[e.map] and true or false end,
       function() Z:SetMode("zone", e.map) end)
     shown = shown + 1

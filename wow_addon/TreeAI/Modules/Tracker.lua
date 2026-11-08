@@ -800,11 +800,13 @@ local function verdictOf(qid)
   return nil
 end
 -- trop dure seul ? (difficulté du modèle : élite / groupe suggéré / donjon / trop haut)
+-- (QA-QUEST F22) mêmes règles que le trajet (ZonePlan:Accept) : élite = à plusieurs sous 3 joueurs ; « difficulté du
+-- modèle » seulement en solo (un duo fait la quête normale +2 que le trajet lui donne)
 function M.IsHard(it)
   local q, k = it.q, max(1, (M.ctx and M.ctx.group) or 1)
   if q.complete then return false end
-  if q.dungeon or (q.elite and k == 1) or (tonumber(q.suggestedGroup) or 0) > k then return true end
-  return (it.diff or 1) >= 3
+  if q.dungeon or (q.elite and k < 3) or (tonumber(q.suggestedGroup) or 0) > k then return true end
+  return k == 1 and (it.diff or 1) >= 3
 end
 -- infos pour TreeAI.Plain.Tag
 function M.PlainInfo(it)

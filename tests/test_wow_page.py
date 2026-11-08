@@ -344,6 +344,36 @@ def test_trajet_numbered_stops_from_the_plan(big: SimpleNamespace) -> None:
     assert t["source"] == "suivi" and all(st["title"] != "Quête Rendue Hier" for st in t["stops"])
 
 
+def test_trajet_shows_the_in_game_route_not_the_quest_log() -> None:
+    """QA-QUEST F5: the game follows its own route (the default): the tab numbers the stops the addon shows on its
+    « Prochaine étape » card (summary.plan.next, flights / hearth included), never the tracker's quest list with
+    « En cours » on an elite quest the duo route leaves out."""
+    s = _summary()
+    s["tracker"]["route"].insert(0, {"id": 1019, "title": "Hypercapaciteur bidulotron", "hard": True, "done": 0,
+                                     "total": 1, "zone": "Mille pointes"})
+    s["plan"] = {"v": 1, "src": "auto", "route": "auto", "title": "Trajet TreeAI", "step": 1, "steps": 14,
+                 "label": "Ramasse « Huile de basilic »", "next": [
+                     {"k": "obj", "q": 1001, "map": 1441, "label": "Ramasse « Huile de basilic » (0/5)", "min": 4},
+                     {"k": "hs", "map": 1454, "label": "Pierre de foyer vers Orgrimmar", "min": 6},
+                     {"k": "fly", "map": 1440, "label": "Vol pour Poste de Bois-brisé", "min": 9},
+                     {"k": "turn", "q": 1000, "map": 1440, "label": "Rendre « Quête 0 »", "min": 12}]}
+    t = live.trajet_view(_snap(summary=s), None)
+    assert t["source"] == "jeu" and [x["n"] for x in t["stops"]] == [1, 2, 3, 4]
+    assert [x["title"] for x in t["stops"]] == ["Ramasse « Huile de basilic » (0/5)", "Pierre de foyer vers Orgrimmar",
+                                               "Vol pour Poste de Bois-brisé", "Rendre « Quête 0 »"]
+    assert t["stops"][0]["current"] and not any(x["current"] for x in t["stops"][1:])
+    assert "dans ≈ 12 min" in t["stops"][3]["desc"] and not any("Hypercapaciteur" in x["title"] for x in t["stops"])
+    sec = {b["id"]: b for b in pw.tab_sections("trajet", _snap(summary=s))}["trajet.stops"]
+    assert sec["title"] == "Ton trajet" and [r.get("num") for r in sec["rows"]] == ["1", "2", "3", "4"]
+    assert sec["rows"][0]["badge"] == "En cours" and all(r.get("badge") != "En cours" for r in sec["rows"][1:])
+    # an older addon (no « next »): the quest log, titled as such, without numbers nor « En cours »
+    s["plan"].pop("next")
+    sec = {b["id"]: b for b in pw.tab_sections("trajet", _snap(summary=s))}["trajet.stops"]
+    assert sec["title"] == "Ton journal" and all("num" not in r for r in sec["rows"])
+    assert all(r.get("badge") != "En cours" for r in sec["rows"])
+    assert sec["rows"][0]["title"] == "Hypercapaciteur bidulotron" and sec["rows"][0].get("badge") == "À plusieurs"
+
+
 def test_abandon_is_the_addons_list_only() -> None:
     s = _summary()
     assert live.abandon_advice(s) == [{"title": "Quête 7", "why": "grise : presque plus d'XP"}]
@@ -430,7 +460,7 @@ def test_tab_bar_always_matches_the_content(tmp_path: Path, monkeypatch: pytest.
         assert view.visible_tab() == view.current_tab() == view.tabs.value() == "trajet"
         view.state = {"install": None, "live": _snap(), "rows": [], "mode": {}}
         view._render()
-        expect = {"trajet": "Ton trajet", "groupe": "Le groupe", "hv": "Achat-revente", "session": "Objectifs",
+        expect = {"trajet": "Ton journal", "groupe": "Le groupe", "hv": "Achat-revente", "session": "Objectifs",
                   "donjon": "En ce moment", "erreurs": "Fichier d'erreurs"}
         for key in ("hv", "session", "hv", "groupe", "donjon", "erreurs", "trajet", "session"):
             view.tabs._buttons[key].click()                           # a real click on the segment
@@ -467,7 +497,7 @@ def test_rows_are_updated_in_place(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         sec = view.tab_views["trajet"].views["trajet.stops"]
         rows_before = list(sec.rows)
         titles = [r.title.text() for r in sec.rows if not r.isHidden()]
-        assert titles[:2] == ["Quête 0", "Quête 1"] and sec.rows[0].num.text() == "1"
+        assert titles[:2] == ["Quête 0", "Quête 1"] and sec.rows[0].num is None   # (QA-QUEST F5) journal: no number
         s = _summary()
         s["tracker"]["route"][1]["done"] = 7                         # one quest progressed
         view.state = {"install": None, "live": _snap(summary=s), "rows": [], "mode": {}}

@@ -324,6 +324,9 @@ end
 -- version EN CLAIR (agent SIMPLE) : 1–2 raisons en mots, sans aucun nombre
 -- (« trop facile maintenant, presque pas d'XP »). Les calculs ne changent pas.
 function A.Plain(e)
+  -- (QA-QUEST F20) quête de groupe / donjon : le fait, pas une estimation d'XP/min d'un donjon fait seul
+  -- (« trop dure seul, presque pas d'XP » pour une quête de donjon niveau 33)
+  if e.verdict ~= "keep" and e.hard and not e.q.complete then return "à faire en groupe" end
   local list = {}
   local src = e.verdict == "keep" and e.pos or e.neg
   for _, r in ipairs(src or {}) do if r.p then list[#list + 1] = r.p end if #list >= 2 then break end end
@@ -572,11 +575,25 @@ function M.Instructions(e)
   M:Print(A.HowTo(e.q.title))
 end
 
+-- (QA-QUEST F20) quêtes que le trajet en cours fait (arrêts visibles du Planner) : jamais « plus tard » / « retire »
+-- à côté (« fais-la si tu passes à côté » alors qu'elle est l'arrêt 5 du trajet)
+function M.Planned()
+  local P = T.Planner
+  local set = {}
+  for _, s in ipairs(P and P.steps or {}) do
+    if s.q and not s._done and not s._other then set[tonumber(s.q) or s.q] = true end
+  end
+  return set
+end
 function M.Lines()
   local out = {}
   local ev = M.evals or {}
   local ctx = M.ctx or {}
-  local free = A.FreeList(ev)
+  local planned = M.Planned()
+  local free = {}
+  for _, e in ipairs(A.FreeList(ev)) do
+    if not (e.q and planned[tonumber(e.q.id) or e.q.id]) then free[#free + 1] = e end
+  end
   local full = (ctx.logMax or A.LOG_MAX) - (ctx.logCount or 0)
   local nAb = 0
   for _, e in ipairs(free) do if e.verdict == "abandon" then nAb = nAb + 1 end end
@@ -687,6 +704,11 @@ function M:OnEnable()
   end
   if not lite then M:On("COMBAT_END", function() M.Refresh(1.5) end) end
   M:On("SUMMARY", function() pcall(M.WriteSummary, M) end)
+  -- (QA-QUEST F20) le trajet vient d'être refait : les lignes sont refiltrées (sans réévaluer), une quête du
+  -- trajet n'est jamais « plus tard » à côté de son arrêt
+  M:On("PLAN_BUILT", function()
+    if M.evals and not (T.InCombat and T:InCombat()) then M.lines = M.Lines() push(M.lines) end
+  end)
   if T.RegisterSlash then
     T:RegisterSlash("abandon", function(rest) M.Report(rest) end, "quêtes à retirer : verdict + pourquoi (/tai abandon 2 = comment)")
   end

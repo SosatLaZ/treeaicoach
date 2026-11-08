@@ -1627,6 +1627,27 @@ def trajet_view(snap: dict, plan_file: Any = None) -> dict:
         out.update(stops=stops, source="plan", head=f"Étape {cursor} sur {len(steps)}"
                    + (f" · {route.get('title')}" if route and route.get("title") else ""))
         return out
+    # (QA-QUEST F5) the route the game follows (its own, the default): the addon exports the stops it shows on the
+    # « Prochaine étape » card and the Trajet page (summary.plan.next: same labels, flights / boats / hearth
+    # included, within the route horizon) → numbered as is, the first one is the stop in progress
+    nxt = [x for x in _list(sp.get("next")) if isinstance(x, dict) and _why(x.get("label"))]
+    if sp.get("src") == "auto" and nxt:
+        stops = []
+        for x in nxt[:STOPS_MAX]:
+            k = str(x.get("k") or "")
+            desc = []
+            zone = names.get(_i(x.get("map")))
+            if zone:
+                desc.append(zone)
+            if stops and _i(x.get("min")) > 0:
+                desc.append(f"dans ≈ {duration_text(_i(x.get('min')) * 60)}")
+            stops.append({"n": len(stops) + 1, "title": _why(x.get("label")), "desc": " · ".join(desc),
+                          "current": not stops, "kind": k})
+        out.update(stops=stops, source="jeu",
+                   head="Le trajet que suit le jeu, dans l'ordre de sa carte « Prochaine étape »")
+        return out
+    # no route to show: the quest log, best first — never numbered as stops, never « En cours » (an elite quest
+    # the route leaves out for a duo was shown « 1. … En cours »)
     fresh = (data_age(snap) or 0) < LIVE_WINDOW_S
     for r in _list(_d(s.get("tracker")).get("route")):
         if not isinstance(r, dict) or not r.get("title"):
@@ -1638,15 +1659,13 @@ def trajet_view(snap: dict, plan_file: Any = None) -> dict:
         prog = f"{_i(r.get('done'))}/{_i(r.get('total'))}" if _i(r.get("total")) and not r.get("ready") else ""
         dist = _yd_text(r.get("dist")) if fresh else ""
         desc = " · ".join(x for x in (prog, str(r.get("zone") or ""), dist, why if tag != "Long" else "") if x)
-        out["stops"].append({"n": len(out["stops"]) + 1, "title": str(r["title"]), "desc": desc,
-                             "current": not out["stops"], "kind": "turn" if r.get("ready") else "obj", "tag": tag})
+        out["stops"].append({"n": 0, "title": str(r["title"]), "desc": desc,
+                             "current": False, "kind": "turn" if r.get("ready") else "obj", "tag": tag})
         if len(out["stops"]) >= STOPS_MAX:
             break
     if out["stops"]:
         out["source"] = "suivi"
-        out["head"] = "Ordre du suivi de quêtes de l'addon (pas de trajet calculé)."
-        if sp.get("label") and sp.get("src") not in (None, "", "none", "file"):
-            out["head"] = f"Trajet en jeu : {_why(sp['label'])}"
+        out["head"] = "Ton journal, les meilleures quêtes d'abord (le trajet du jeu est sur sa carte « Prochaine étape »)"
     return out
 
 

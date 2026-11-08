@@ -49,6 +49,8 @@ local function inCombat() return T.InCombat and T:InCombat() or false end
 local function cut(s, n) s = tostring(s or "") if #s > n then return s:sub(1, n - 1) .. "…" end return s end
 local function opt(k) return not (R.db and R.db[k] == false) end
 local function data() return T.Data and T.Data.Travel or nil end
+-- (QA-QUEST F27) réponse à un clic : une ligne courte dans « Maintenant » (6 s), jamais le chat
+function R:Say(text) pcall(self.Suggest, self, "say", text, 1, { ttl = 6, sound = false }) end
 
 -- ===================================================================== formats
 local function minutes(sec)
@@ -313,7 +315,10 @@ end
 -- hearthstone: ready? bind point (learned on arrival, else matched by name in the travel data)
 function R.HearthReady()
   if not opt("hearth") then return false end
-  local cnt = try(G("GetItemCount"), HEARTHSTONE)
+  -- (QA-QUEST F8) Forever n'a que C_Item.GetItemCount (le global GetItemCount n'existe plus) : sans ça, une pierre
+  -- de foyer laissée en banque était comptée dans le trajet
+  local cnt = try(C("C_Item", "GetItemCount"), HEARTHSTONE)
+  if cnt == nil then cnt = try(G("GetItemCount"), HEARTHSTONE) end
   if cnt ~= nil and (tonumber(cnt) or 0) < 1 then return false end
   local s, d = try(C("C_Container", "GetItemCooldown"), HEARTHSTONE)
   if s == nil then s, d = try(G("GetItemCooldown"), HEARTHSTONE) end
@@ -373,7 +378,8 @@ end
 -- cands = { { q, title, lv, elite, dist (s de trajet), done, inLog } } ; ctx = { level, group, farMin }
 -- → keep, drop = { { q, title, why } }. Règles : trop dure (élite en solo, niveau ≥ +4 solo / +5 groupe),
 -- trop loin (trajet > max(farMin, 2,5 × médiane) ; ×1,5 pour une quête prête à rendre ; autre continent sans
--- transport) ; jamais moins de 3 quêtes gardées pour « trop loin ».
+-- transport) ; jamais moins de 3 quêtes gardées pour « trop loin ». (QA-QUEST F9) position inconnue (pas de
+-- Questie) = gardée, jamais « trop loin » ; quête chronométrée en cours (c.timer) = jamais proposée au retrait.
 function R.Select(cands, ctx)
   ctx = ctx or {}
   local level, group = tonumber(ctx.level) or 1, max(1, tonumber(ctx.group) or 1)
@@ -381,7 +387,8 @@ function R.Select(cands, ctx)
   local keep, drop, rest = {}, {}, {}
   for _, c in ipairs(cands or {}) do
     local lv = tonumber(c.lv) or level
-    if group <= 1 and c.elite then drop[#drop + 1] = { q = c.q, title = c.title, why = "élite" }
+    if c.timer then keep[#keep + 1] = c
+    elseif group <= 1 and c.elite then drop[#drop + 1] = { q = c.q, title = c.title, why = "élite" }
     elseif lv - level >= (group <= 1 and 4 or 5) then drop[#drop + 1] = { q = c.q, title = c.title, why = "trop dure" }
     else rest[#rest + 1] = c end
   end
@@ -393,7 +400,7 @@ function R.Select(cands, ctx)
   local far = {}
   for _, c in ipairs(rest) do
     local lim = c.done and limit * 1.5 or limit
-    if not c.dist or c.dist == huge or c.dist > lim then far[#far + 1] = c else keep[#keep + 1] = c end
+    if c.dist and (c.dist == huge or c.dist > lim) then far[#far + 1] = c else keep[#keep + 1] = c end
   end
   tsort(far, function(a, b) return (a.dist or huge) < (b.dist or huge) end)
   for _, c in ipairs(far) do
@@ -418,8 +425,8 @@ function R.ProposalText(keep, drop)
     why = tconcat(parts, ", ")
   end
   local k = #(keep or {})
-  return fmt("Garde %s %d quête%s, laisse %s %d (%s)", k > 1 and "ces" or "cette", k, k > 1 and "s" or "",
-    #drop > 1 and "ces" or "cette", #drop, why)
+  -- (QA-QUEST) « Garde 8 quêtes, mets-en 1 de côté (trop loin) » (avant : « laisse cette 1 »)
+  return fmt("Garde %d quête%s, mets-en %d de côté (%s)", k, k > 1 and "s" or "", #drop, why)
 end
 
 -- Planner:BuildAuto → requêtes filtrées (quêtes laissées adoptées) + proposition calculée sur le reste
@@ -436,6 +443,10 @@ function R:FilterRequests(requests, recs, log, ctx)
   if Gp then pm, px, py = Gp() end
   local here = (pm and px) and { map = pm, x = px, y = py } or nil
   local out, cands, dropped = {}, {}, 0
+  local Qm = T.modules and T.modules.Quests            -- (QA-QUEST F9) chronos en cours : jamais « laisse »
+  local okT, timers = false, nil
+  if Qm and Qm.Timers and Qm.lastList then okT, timers = pcall(Qm.Timers, Qm.lastList) end
+  timers = (okT and type(timers) == "table") and timers or {}
   for _, req in ipairs(requests) do
     if ch and ch.drop[req.q] then dropped = dropped + 1
     else
@@ -449,7 +460,7 @@ function R:FilterRequests(requests, recs, log, ctx)
       if here and p and dist == nil then dist = huge end
       cands[#cands + 1] = { q = req.q, title = (lq and lq.t) or (rec and rec.t) or ("quête " .. req.q),
         lv = (rec and rec.lv and rec.lv > 0 and rec.lv) or (lq and lq.lv) or nil, elite = elite, dist = dist,
-        done = lq and lq.done == 1 or false, inLog = lq ~= nil }
+        done = lq and lq.done == 1 or false, inLog = lq ~= nil, timer = timers[req.q] and true or nil }
     end
   end
   local keep, drop = R.Select(cands, { level = ctx.level, group = ctx.group, farMin = self.db and self.db.farMin or 10 })
@@ -461,7 +472,7 @@ function R:Adopt()
   if not (sel and self.char and #sel.drop > 0) then return 0 end
   for _, d in ipairs(sel.drop) do self.char.drop[d.q] = true end
   local n = #sel.drop
-  self:Print(fmt("%d quête%s laissée%s de côté (rien n'est abandonné).", n, n > 1 and "s" or "", n > 1 and "s" or ""))
+  self:Say(fmt("%d quête%s mise%s de côté (rien n'est abandonné)", n, n > 1 and "s" or "", n > 1 and "s" or ""))
   self.selection = nil
   local P = T.Planner
   if P and P.Refresh then pcall(P.Refresh, P, true) end
@@ -539,22 +550,26 @@ function R:CurrentStep()
 end
 -- « Suivre ce trajet » (clic) : SPF si présent, sinon la boussole / repère du Planner sur l'arrêt 1
 function R:Follow()
-  if inCombat() then self:Print("Guidage : après le combat.") return false end
+  if inCombat() then self:Say("Guidage : après le combat") return false end
   local P = T.Planner
-  if not self:HasRoute() then self:Print("Pas de trajet en cours.") return false end
+  if not self:HasRoute() then self:Say("Pas de trajet en cours") return false end
   self.char.paused = false
   local stops = self:SPFStops()
   if #stops > 0 and spf() then
     if call("NavigateRoute", OWNER, stops) then
       self.following, self._sentAt = true, now()
-      self:Print(fmt("Trajet envoyé à Shortest Path : %d arrêt%s, dans le Suivi Forever.", #stops, #stops > 1 and "s" or ""))
+      self:Say(fmt("Trajet envoyé à Shortest Path : %d arrêt%s, dans le Suivi Forever", #stops, #stops > 1 and "s" or ""))
       self:Render()
       return "spf"
     end
   end
   local first = self:Stops(1)[1]
+  if first and first.kind == "hs" and not first.step then  -- foyer d'abord : on se téléporte, rien à viser
+    self:Say("D'abord la pierre de foyer, vers " .. cut((first.place and first.place.name) or "ton auberge", 28))
+    return "hs"
+  end
   if first and P and P.Navigate then
-    local p = first.place
+    local p = first.from or first.place            -- vol / bateau : le départ (maître de vol, quai), pas l'arrivée
     local target = first.step or (p and p.map and { k = "fly", map = p.map, x = p.x, y = p.y, label = first.text })
     return P:Navigate(target) and "planner"
   end
@@ -600,8 +615,11 @@ local function stepSvc(steps, i)
   end
   return (s.k == "pick" or s.k == "turn") and 15 or 0
 end
--- liste des arrêts restants : { kind = "quest"|"walk"|"fly"|"boat"|"zeppelin"|"hs", text, sec, step, place }
--- + totaux (secondes, yards de marche). n = nombre max d'arrêts de quête parcourus.
+-- liste des arrêts restants : { kind = "quest"|"walk"|"fly"|"boat"|"zeppelin"|"hs", text, sec, step, place, from,
+-- at, ydAt, trAt } + totaux (secondes, yards de marche). n = nombre max d'arrêts de quête parcourus.
+-- place = où l'entrée mène (arrêt, ou ARRIVÉE du vol / bateau) ; from = (QA-QUEST F4) départ d'un vol / bateau /
+-- zeppelin (maître de vol, quai : là où marcher), nil pour le foyer ; at / ydAt / trAt = secondes, yards de marche,
+-- secondes de déplacement cumulées depuis maintenant à la fin de l'entrée.
 -- (LITE) mémorisé 5 s pour le même plan / la même étape (le panneau se redessine souvent, le trajet bouge peu)
 local stopsMemo = {}                 -- (QUESTQA) un mémo par n (1 = 1er arrêt, 64 = vue) : plus de recalcul en ping-pong
 function R:Stops(n)
@@ -631,12 +649,15 @@ function R:StopsRaw(n)
   local first = true
   local quests, prevKind = 0, nil
   local spfN, Cm = 0, T.Compass
+  -- (QA-QUEST F1) trajet en jeu calculé sans foyer (un arrêt à moins de 5 min) : pas de foyer ici non plus
+  local Zp = T.ZonePlan
+  local noHs = Zp and Zp.noHearth and P.src ~= "file" and Zp.IsEnabled and Zp:IsEnabled()
   for i = cur, #steps do
     local s = steps[i]
     if not s._done and not s._other then
       local here = world(s.x and s or nil)
       if prev and here then
-        local o = first and R.HearthReady() and { hearth = true, bind = R.BindPlace() } or nil
+        local o = first and not noHs and R.HearthReady() and { hearth = true, bind = R.BindPlace() } or nil
         local sec, legs
         if g then sec, legs = R.FastestWorld(g, prev, here, o) end
         if not sec or sec == huge then
@@ -652,22 +673,25 @@ function R:StopsRaw(n)
             { mapID = here.map, x = here.x / 100, y = here.y / 100 })
           if ss then sec = ss legs[1].sec = ss end
         end
-        local run = out.total
+        local run, trRun, lastTo = out.total, out.travel, prev
         for _, lg in ipairs(legs or {}) do
-          run = run + (lg.sec or 0)
+          run, trRun = run + (lg.sec or 0), trRun + (lg.sec or 0)
           if lg.mode == "walk" then out.yd = out.yd + (lg.yd or 0)
           elseif lg.mode ~= prevKind then          -- a plan step already shows this transport
-            local txt = lg.mode == "hs" and ("Pierre de foyer → " .. cut(lg.to.name or "auberge", 28))
+            -- (QA-QUEST F16) « Pierre de foyer vers Orgrimmar » (la flèche → n'existe pas dans les polices du jeu)
+            local txt = lg.mode == "hs" and ("Pierre de foyer vers " .. cut(lg.to.name or "l'auberge", 28))
               or fmt(LEGTXT[lg.mode] or "%s", cut(lg.to.name or "?", 30))
-            out[#out + 1] = { kind = lg.mode, text = txt, sec = lg.sec, place = lg.to, at = run, ydAt = out.yd }
+            out[#out + 1] = { kind = lg.mode, text = txt, sec = lg.sec, place = lg.to, from = lg.mode ~= "hs" and lastTo or nil,
+              at = run, ydAt = out.yd, trAt = trRun }
           end
+          lastTo = lg.to
         end
         out.travel, out.total = out.travel + sec, out.total + sec
       end
       local svc = stepSvc(steps, i)
       out.total = out.total + svc
       out[#out + 1] = { kind = TRANSPORT[s.k] and (s.k == "zep" and "zeppelin" or s.k) or "quest", step = s, sec = svc, place = here,
-        at = out.total, ydAt = out.yd }
+        at = out.total, ydAt = out.yd, trAt = out.travel }
       prev = here or prev
       prevKind = TRANSPORT[s.k] and (s.k == "zep" and "zeppelin" or s.k) or nil
       first = false
@@ -682,7 +706,8 @@ function R:StopsRaw(n)
   return out
 end
 -- (QUESTQA) horizon du trajet affiché : 1 h 30 ou 30 arrêts au plus (jamais « Trajet 307 min · 75 arrêts ») ;
--- la suite est refaite en route depuis le journal. → nombre d'entrées gardées, durée, yards, arrêts au-delà
+-- la suite est refaite en route depuis le journal. → nombre d'entrées gardées, durée, yards, arrêts au-delà,
+-- (QA-QUEST F7) secondes de déplacement dans l'horizon : LE total du trajet, le même partout (onglet, page, carte)
 R.HORIZON_S, R.HORIZON_STOPS = 90 * 60, 30
 function R.Horizon(st)
   local keep, quests = 0, 0
@@ -694,7 +719,22 @@ function R.Horizon(st)
   local last = st[keep]
   local total = last and (last.at or st.total) or 0
   local yd = last and (last.ydAt or st.yd) or 0
-  return keep, total, yd, max(0, (st.left or quests) - quests)
+  local travel = last and (last.trAt or st.travel) or 0
+  return keep, total, yd, max(0, (st.left or quests) - quests), min(travel, total)
+end
+-- (QA-QUEST F18) numéros d'arrêt partagés par l'onglet, la page Trajet et la carte du monde : des objectifs
+-- consécutifs du même coin (step.area, ZonePlan) = UN arrêt (« Arrêt 3/12 : Tue X + Ramasse Y »).
+-- → g = { [i] = numéro de l'arrêt de l'entrée st[i], n = nombre d'arrêts } (entrées 1..n, ou toutes)
+function R.Groups(st, n)
+  local g, k, lastArea = { n = 0 }, 0, nil
+  for i = 1, min(n or #st, #st) do
+    local e = st[i]
+    local a = e.step and e.step.area
+    if not (a and a == lastArea) then k = k + 1 end
+    g[i], lastArea = k, a
+  end
+  g.n = k
+  return g
 end
 
 -- ===================================================================== lignes (remplace la vue du Planner)
@@ -718,7 +758,7 @@ function R:PlanLines(P)
     return lines
   end
   local all = self:Stops(64)
-  local keepN, total, yd, beyond = R.Horizon(all)
+  local keepN, total, yd, beyond, travelH = R.Horizon(all)
   local st = {}
   for i = 1, keepN do st[i] = all[i] end
   st.here = all.here
@@ -732,7 +772,7 @@ function R:PlanLines(P)
     tooltip = fmt("%s%s · dont %s de déplacement%s\nClic : mettre en pause",
       (T.Plain and T.Plain.RouteName and T.Plain.RouteName(route.id, route.title)) or cut(route.title or route.id or "Plan", 30),
       xph and (" · " .. ((T.Fmt and T.Fmt.Num) and T.Fmt.Num(xph) or xph) .. " XP/h") or "",
-      minutes(min(all.travel or 0, total)),
+      minutes(travelH or min(all.travel or 0, total)),
       beyond > 0 and fmt("\nPuis %d arrêt%s de plus, recalculé%s en route", beyond, beyond > 1 and "s" or "", beyond > 1 and "s" or "") or "") }
   if P.planError then lines[#lines + 1] = { text = P.planError, prio = 1, id = "route:stale" } end
   if verdict ~= "ok" and P.VerdictText then
@@ -759,23 +799,28 @@ function R:PlanLines(P)
   local sel = self.selection
   local prop = sel and R.ProposalText(sel.keep, sel.drop)
   if prop then
+    -- (QA-QUEST F23) 8 lignes au plus dans l'infobulle, puis « … et 22 autres »
     local tip = {}
-    for _, d in ipairs(sel.drop) do tip[#tip + 1] = "• " .. cut(d.title, 40) .. " — " .. d.why end
+    for i, d in ipairs(sel.drop) do
+      if i > 8 then tip[#tip + 1] = fmt("… et %d autre%s", #sel.drop - 8, #sel.drop - 8 > 1 and "s" or "") break end
+      tip[#tip + 1] = "• " .. cut(d.title, 40) .. " — " .. d.why
+    end
     lines[#lines + 1] = { text = prop, prio = 2, onClick = function() R:Adopt() end,
       tooltip = tconcat(tip, "\n") .. "\nClic : adopter (rien n'est abandonné)" }
   elseif sel and (sel.dropped or 0) > 0 then
-    lines[#lines + 1] = { text = fmt("%d quête%s laissée%s de côté · clic : tout reprendre", sel.dropped,
+    lines[#lines + 1] = { text = fmt("%d quête%s mise%s de côté · clic : tout reprendre", sel.dropped,
       sel.dropped > 1 and "s" or "", sel.dropped > 1 and "s" or ""), prio = 1, onClick = function() R:ResetDrops() end }
   end
-  -- arrêts (ZONEPLAN : objectifs du même coin = un seul arrêt numéroté « A + B »)
+  -- arrêts (ZONEPLAN : objectifs du même coin = un seul arrêt numéroté « A + B ») ; (QA-QUEST F18) mêmes numéros
+  -- que la page Trajet et la carte du monde (R.Groups)
+  local num = R.Groups(st)
   local groups = {}
-  for _, e in ipairs(st) do
+  for i, e in ipairs(st) do
     local last = groups[#groups]
-    local a = e.step and e.step.area
-    if a and last and last.area == a then last.more[#last.more + 1] = e
-    else groups[#groups + 1] = { e = e, area = a, more = {} } end
+    if last and num[i] == num[i - 1] then last.more[#last.more + 1] = e
+    else groups[#groups + 1] = { e = e, more = {} } end
   end
-  count = #groups
+  count = num.n
   local shown = 0
   for k, gr in ipairs(groups) do
     local e = gr.e
@@ -794,28 +839,33 @@ function R:PlanLines(P)
       if s and s.out then txt = txt .. " (hors zone)" end
       click = function() P:Navigate(s) end
       if s and Zp and Zp.StopMenu and Zp:IsEnabled() then rclick = function() Zp:StopMenu(s) end end
+    elseif e.kind == "hs" then
+      -- (QA-QUEST F16) on se téléporte : ni direction ni distance vers l'auberge, un seul temps
+      txt = e.text .. " (" .. minutes(e.sec) .. ")"
     else
       txt = e.text .. " · " .. minutes(e.sec)
-      local p = e.place
+      local p = e.from or e.place                    -- vol / bateau : guider vers le départ (maître de vol, quai)
       click = p and p.map and function() P:Navigate({ k = "fly", map = p.map, x = p.x, y = p.y, label = e.text }) end or nil
     end
     local line = { text = fmt("Arrêt %d/%d : %s", k, count, txt), prio = k == 1 and 2 or 1, onClick = click, onRightClick = rclick }
     if k == 1 then
       line.id, line.pin = "plan:step", true
       local Pl = T.Plain                             -- mots simples (agent SIMPLE) : « tout près, au sud (≈ 3 min) »
-      if e.place and st.here and e.place.c == st.here.c then
-        local d = sqrt((e.place.n - st.here.n) ^ 2 + (e.place.w - st.here.w) ^ 2)
-        local w = Pl and Pl.Where and Pl.Where(d, dirTo(st.here, e.place)) or nil
+      local dest = e.kind ~= "hs" and (e.from or e.place) or nil
+      if dest and st.here and dest.c == st.here.c then
+        local d = sqrt((dest.n - st.here.n) ^ 2 + (dest.w - st.here.w) ^ 2)
+        local w = Pl and Pl.Where and Pl.Where(d, dirTo(st.here, dest)) or nil
         if w then line.text = line.text .. " " .. w
-        elseif not Pl then line.text = line.text .. fmt(" — %s %s", km(d), dirTo(st.here, e.place) or "") end
+        elseif not Pl then line.text = line.text .. fmt(" — %s %s", km(d), dirTo(st.here, dest) or "") end
       end
       -- (QUESTQA) « (≈ 6 min) » = fini dans ~6 min À PARTIR DE MAINTENANT (trajet + sur place), plus le seul
       -- temps sur place (« ≈ 1 min » pour un arrêt à 2 km : faux)
       local done = e.at or e.sec
-      local tm = Pl and Pl.Minutes and Pl.Minutes(done) or nil
+      local tm = e.kind ~= "hs" and Pl and Pl.Minutes and Pl.Minutes(done) or nil
       if tm then line.text = line.text .. " (" .. tm .. ")" end
       local travel = max(0, (done or 0) - (e.sec or 0))
-      line.tooltip = "Clic : guider vers cet arrêt" .. (rclick and "\nClic droit : ignorer cette quête…" or "\n/tai plan passer : étape suivante")
+      line.tooltip = (click and "Clic : guider vers cet arrêt" or "Utilise ta pierre de foyer : tu arrives à l'auberge")
+        .. (rclick and "\nClic droit : ignorer cette quête…" or "\n/tai plan passer : étape suivante")
         .. (((done or 0) >= 30) and fmt("\nFait dans %s (trajet %s, sur place %s)", tm or minutes(done), minutes(travel),
           minutes(e.sec or 0)) or "")
     end

@@ -342,6 +342,9 @@ end
 -- ----------------------------------------------------------------------------- quête chronométrée
 function M.CheckTimers()
   if not opt("questTimer") then return drop("questTimer") end
+  -- (QA-QUEST F28) le module Quêtes dit déjà le chrono (« Chrono : « X » à finir avant 07:56 ») : pas deux fois
+  local Qm = mod("Quests")
+  if Qm and Qm.IsEnabled and Qm:IsEnabled() then return drop("questTimer") end
   local CQ = g("C_QuestLog")
   local fn = CQ and CQ.GetTimeAllowed
   if type(fn) ~= "function" then return drop("questTimer") end

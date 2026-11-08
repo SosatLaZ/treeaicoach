@@ -125,6 +125,17 @@ local function nextStep()
   if s and s.map and s.x and s.y then return s end
   return nil
 end
+-- (QA-QUEST F25) le mal de résurrection (10 min) gêne si l'un des 3 prochains arrêts demande de se battre (pas
+-- seulement le suivant : à 28, l'arrêt après une remise est un combat dans les 10 min)
+function S.FightSoon(step)
+  if step and (step.k == "obj" or step.k == "grind") then return true end
+  local P = T.Planner
+  local list = P and P.GetActiveSteps and try(P.GetActiveSteps, P, 3)
+  for _, s in ipairs(type(list) == "table" and list or {}) do
+    if s.k == "obj" or s.k == "grind" then return true end
+  end
+  return false
+end
 local function bindName() return try(G("GetBindLocation")) end
 
 --- Position de l'auberge liée {map,x,y,name} (nil si inconnue ou si la pierre a été liée ailleurs depuis).
@@ -141,13 +152,22 @@ function S:RecordBind()
   self.char.bind = { map = map, x = x, y = y, name = bindName() }
 end
 
+-- (QA-QUEST F8) Forever n'a que C_Item.GetItemCount (le global GetItemCount n'existe plus : « pierre prête »
+-- était toujours faux en jeu)
+local function hearthCount()
+  local n = try(C("C_Item", "GetItemCount"), 6948)
+  if n == nil then n = try(G("GetItemCount"), 6948) end
+  return tonumber(n) or 0
+end
 local function hearthReady()
+  if hearthCount() < 1 then return false end
   local s, d = try(C("C_Container", "GetItemCooldown"), 6948)
   if not s then s, d = try(G("GetItemCooldown"), 6948) end
   s, d = tonumber(s), tonumber(d)
-  if not s or s == 0 then return (try(G("GetItemCount"), 6948) or 0) > 0 end
+  if not s or s == 0 then return true end
   return (s + (d or 0) - now()) <= 0
 end
+S.HearthReady = hearthReady
 
 -- ===================================================================== course au corps (agent DATA)
 -- Fantôme : UNE ligne en tête de « Maintenant » (« Cadavre : 230 m au NE (≈ 40 s) »), la boussole vise le corps
@@ -256,7 +276,7 @@ function S:CheckDeath(st, step, map, x, y)
     local dMN = dist(map, x, y, step.map, step.x, step.y)
     if dCN and dMN then
       local lvl = try(G("UnitLevel"), "player") or 1
-      local choice, gain, sick = E.DeathChoice(lvl, dMC, dCN, dMN, speed, step.k == "obj" or step.k == "grind")
+      local choice, gain, sick = E.DeathChoice(lvl, dMC, dCN, dMN, speed, S.FightSoon(step))
       if choice == "spirit" and gain >= E.DEATH_MIN_GAIN then
         advice = E.DeathText(gain, sick)
         tips[#tips + 1] = advice .. " — fantôme → étape suivante contre fantôme → corps → étape suivante, mal de résurrection compris."
@@ -279,7 +299,9 @@ function S:CheckDeath(st, step, map, x, y)
   end
   if advice then text = text .. " — mieux : gardien des esprits" end
   local aim = self.aim
-  self:Suggest("corpse", text, 2, { ttl = 8, death = true, sound = false, cooldown = 600, topic = "corpse",
+  -- (QA-QUEST F12) mort = obligation : ligne rouge « ! » en tête de la carte « Prochaine étape » (prio 3), avant les
+  -- étapes du trajet (avant : la carte disait à un fantôme d'aller prendre une quête)
+  self:Suggest("corpse", text, 3, { ttl = 8, death = true, sound = false, cooldown = 600, topic = "corpse",
     tooltip = table.concat(tips, "\n"),
     onClick = function() if aim then S.aim = nil S:AimCorpse(aim.map, aim.x, aim.y) end end })
   if advice then
@@ -295,12 +317,13 @@ function S:CheckHearth(st, step, map, x, y)
   if not (cfg("hearth") and b and step and not st.ghost and not st.dead and not st.taxi) or step.k == "hs" then
     self:Clear("hearth") return
   end
+  -- (QA-QUEST F8) l'itinéraire (Route) décide déjà du foyer pour le 1er trajet, vols et bateaux compris, et le
+  -- montre (« Pierre de foyer vers … ») : pas de 2e avis, calculé en ligne droite à pied, qui pourrait le contredire
+  local Rt = T.Route
+  if Rt and Rt.IsEnabled and Rt:IsEnabled() then self:Clear("hearth") return end
   local dMS = dist(map, x, y, step.map, step.x, step.y)
   local dBS = dist(b.map, b.x, b.y, step.map, step.x, step.y)
   if not (dMS and dBS) or dMS < E.HEARTH_MIN_DIST or not hearthReady() then self:Clear("hearth") return end
-  -- (QUESTQA) l'itinéraire montre déjà « Pierre de foyer → … » comme 1er arrêt : pas de 2e conseil
-  local Rt = T.Route                    -- (dernier calcul de la vue : rien n'est recalculé ici)
-  if Rt and Rt.IsEnabled and Rt:IsEnabled() and Rt.firstKind == "hs" then self:Clear("hearth") return end
   -- même vitesse que la boussole et l'itinéraire (NavTime : mesurée × détour appris), sinon la course du jeu
   local NT = T.NavTime
   local speed = runSpeed()

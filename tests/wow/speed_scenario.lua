@@ -33,8 +33,17 @@ return function(M, ctx)
   Geo.rects[1424] = { c = 0, x0 = 0, y0 = 0, x1 = 2000, y1 = 3000 }   -- client frame: x0→x1 follows the map y (Geo.World)
   local step = { k = "turn", map = 1424, x = 60, y = 50, label = "Rendre « Test »" }
   P.GetActiveSteps = function() return { step }, 1, 1, "test" end
-  local oldCount = rawget(_G, "GetItemCount")
-  rawset(_G, "GetItemCount", function(i) if i == 6948 then return 1 end return oldCount and oldCount(i) or 0 end)
+  -- (QA-QUEST F8) la pierre de foyer se compte par C_Item.GetItemCount (le global GetItemCount n'existe pas sur
+  -- Forever : on ne l'injecte plus) ; sans pierre dans les sacs, jamais « pierre de foyer maintenant »
+  local CI = rawget(_G, "C_Item")
+  local madeCI = CI == nil
+  if madeCI then CI = {} rawset(_G, "C_Item", CI) end
+  local oldCount, hsCount = CI.GetItemCount, 1
+  CI.GetItemCount = function(i, ...) if i == 6948 then return hsCount end return oldCount and oldCount(i, ...) or 0 end
+  -- l'itinéraire (Route) décide seul du foyer quand il est actif : le conseil de Speed ne vit que sans lui
+  local Rt = T.Route
+  local rtWas = Rt and Rt.db and Rt.db.enabled
+  if Rt and Rt.db then Rt.db.enabled = false end
   local function sugg(id)
     for _, e in ipairs(T:GetSuggestions() or {}) do if e.id == id then return e end end
   end
@@ -53,6 +62,18 @@ return function(M, ctx)
   S:Tick()
   local h = sugg("Speed:hearth")
   check(h and h.text == "Pierre de foyer maintenant : 5 min gagnées", "foyer conseillé : " .. tostring(h and h.text))
+  hsCount = 0                                                   -- pierre en banque : rien
+  S:Tick()
+  check(not sugg("Speed:hearth"), "pas de pierre de foyer dans les sacs : pas de conseil")
+  hsCount = 1
+  if Rt and Rt.db then                                          -- itinéraire actif : il montre lui-même le foyer
+    Rt.db.enabled = true
+    S:Tick()
+    check(not sugg("Speed:hearth"), "itinéraire actif : pas de 2e avis de foyer (Route le décide, vols compris)")
+    Rt.db.enabled = false
+    S:Tick()
+    check(sugg("Speed:hearth"), "itinéraire coupé : le conseil revient")
+  end
   step.x = 20                                                   -- étape à côté : rien
   S:Tick()
   check(not sugg("Speed:hearth"), "étape proche : pas de foyer")
@@ -78,6 +99,7 @@ return function(M, ctx)
   check(not sugg("Speed:death"), "vivant : plus de ligne de mort")
 
   -- Planner : la ligne `tip` de l'appli sous l'étape courante
+  if Rt and Rt.db then Rt.db.enabled = rtWas end
   P.GetActiveSteps = oldSteps
   local oR, oS, oC = P.route, P.steps, P.cursor
   P.route = { id = "xph", title = "XP/h max", xph = 20000, minutes = 30, verdict = "ok", reasons = {} }
@@ -93,5 +115,6 @@ return function(M, ctx)
   P.route, P.steps, P.cursor = oR, oS, oC
 
   Geo.Player, Geo.rects[1424] = oldPlayer, oldRect
-  rawset(_G, "GetItemCount", oldCount)
+  CI.GetItemCount = oldCount
+  if madeCI then rawset(_G, "C_Item", nil) end
 end

@@ -395,13 +395,53 @@ class Solver:
                 cur, route = res
         return self.prune(route) if self.mode == "rate" else route
 
+    #: QA-QUEST F26: a quest of the log whose stops are all this close (s) to the route's other stops is done on the
+    #: way (an expert does « Chargement de foudre » at the camp 300 m from the basilisks he kills anyway)
+    ON_THE_WAY_S = 180.0
+
+    def on_the_way(self, q: int, route: list[int]) -> bool:
+        """True when every stop of quest ``q`` in ``route`` is ≤ ON_THE_WAY_S from a stop of another quest."""
+        D, lim = self.D, self.ON_THE_WAY_S
+        mine = [n for n in route if self.nq[n] == q]
+        others = [n for n in route if self.nq[n] != q]
+        if not D or not mine or not others:
+            return False
+        return all(any(min(D[n][m], D[m][n]) <= lim for m in others) for n in mine)
+
+    def add_on_the_way(self, route: list[int]) -> list[int]:
+        """QA-QUEST F26: the final route of the rate mode also does the quests of the log it passes by — every stop of
+        the quest ≤ ON_THE_WAY_S from a stop of the route, and the whole quest adding ≤ max(5 min, 20 % of the route)
+        (a long farm is not « on the way ») — inserted at their cheapest place."""
+        D, lim = self.D, self.ON_THE_WAY_S
+        if not D or not route:
+            return route
+        changed = True
+        while changed:
+            changed = False
+            present = set(self.quests_in(route))
+            t0 = self.evaluate(route)[2]
+            for q in sorted(self.usable):
+                nodes = self.pb.quests[q].nodes
+                if q in present or not self.in_log[q] or not nodes or any(p not in present for p in self.pre[q]):
+                    continue
+                if not all(any(min(D[n][m], D[m][n]) <= lim for m in route) for n in nodes):
+                    continue
+                res = self.insert(route, q, None, force=True)
+                if res is not None and self.evaluate(res[1])[2] - t0 <= max(300.0, 0.2 * t0):
+                    route, changed = res[1], True
+                    break
+        return route
+
     def prune(self, route: list[int]) -> list[int]:
-        """Drop, one at a time, the quest (with its chain) whose removal raises the score most."""
+        """Drop, one at a time, the quest (with its chain) whose removal raises the score most — never a quest of
+        the log that is on the way (:meth:`on_the_way`)."""
         cur = self.evaluate(route)[0]
         while True:
             present = self.quests_in(route)
             best, best_r = cur, None
             for q in present:
+                if self.in_log[q] and self.on_the_way(q, route):
+                    continue
                 r = self.remove(route, self._closure({q}, set(present)))
                 sc = self.evaluate(r)[0]
                 if sc > best + 1e-9:
@@ -672,6 +712,8 @@ def solve(pb: Problem, mode: str = "rate", seconds: float = 4.0, quests: set[int
             s.lam = new
             break
         s.lam = new
+    if mode == "rate":
+        route = s.add_on_the_way(route)                 # QA-QUEST F26: a log quest on the way is done
     sc, xp, t = s.evaluate(route)
     inr = set(s.quests_in(route))
     return Result(route, sc, xp, t, s.lam, iters, sorted(q for q in s.usable if q not in inr))

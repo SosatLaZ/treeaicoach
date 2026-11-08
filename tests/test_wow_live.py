@@ -219,7 +219,9 @@ def test_tab_blocks_and_empty_states(snap: dict) -> None:
     assert hv[0]["rows"][0]["spark"] and "commission 5 %" in hv[0]["foot"].lower()   # foot = a sentence (capitalised)
     t = {b["id"]: b for b in pw.tab_blocks("trajet", snap)}
     stops = t["trajet.stops"]["rows"]
-    assert [r["num"] for r in stops] == ["1", "2", "3", "4"] and stops[0]["badge"] == "En cours"
+    # (QA-QUEST F5) no in-game route in this save: the quest log, never numbered as stops, never « En cours »
+    assert t["trajet.stops"]["title"] == "Ton journal" and len(stops) == 4
+    assert all("num" not in r for r in stops) and all(r.get("badge") != "En cours" for r in stops)
     assert pw.tab_blocks("quetes", snap) == pw.tab_blocks("trajet", snap)     # 3.9 name
 
 

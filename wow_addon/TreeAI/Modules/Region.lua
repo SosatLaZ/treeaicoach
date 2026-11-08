@@ -246,14 +246,16 @@ end
 -- ------------------------------------------------------------------ « Suivi du jeu » (clic explicite seulement)
 R.WATCH_MAX = 5
 --- Ajoute au suivi d'objectifs du jeu les quêtes de la zone (au plus 5, non suivies). Seulement depuis un clic.
+-- (QA-QUEST F27) réponse au clic : une ligne courte dans « Maintenant » (6 s), jamais le chat
+local function say(text) pcall(R.Suggest, R, "watch", text, 1, { ttl = 6, sound = false }) end
 function R.WatchZone()
   if not (T.InUserAction and T:InUserAction()) then return 0, "clic" end
-  if T.InCombat and T:InCombat() then T:Print("Impossible en combat.") return 0, "combat" end
+  if T.InCombat and T:InCombat() then say("Suivi du jeu : impossible en combat") return 0, "combat" end
   local idx = questsIndex()
   local QL = G("C_QuestLog")
   local addModern = QL and QL.AddQuestWatch
   local addOld = G("AddQuestWatch")
-  if not (addModern or addOld) then T:Print("Le suivi du jeu n'est pas disponible ici.") return 0, "api" end
+  if not (addModern or addOld) then say("Le suivi du jeu n'est pas disponible ici") return 0, "api" end
   local list = {}
   for _, info in pairs(idx.map) do
     if info.band == "here" and not info.q.watched then list[#list + 1] = info.q end
@@ -269,8 +271,8 @@ function R.WatchZone()
     if addModern then ok = pcall(addModern, q.id) else ok = q.index and pcall(addOld, q.index) end
     if ok then n = n + 1 end
   end
-  T:Print(n > 0 and fmt("%d quête%s de %s ajoutée%s au suivi du jeu.", n, n > 1 and "s" or "", idx.zone or "la zone", n > 1 and "s" or "")
-    or "Les quêtes de la zone sont déjà suivies.")
+  say(n > 0 and fmt("%d quête%s ajoutée%s au suivi du jeu", n, n > 1 and "s" or "", n > 1 and "s" or "")
+    or "Les quêtes de la zone sont déjà suivies")
   return n
 end
 
