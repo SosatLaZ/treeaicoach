@@ -776,7 +776,35 @@ function R:Render()
 end
 
 -- ===================================================================== cycle de vie
+-- (3.9.8) ménage : les anciennes versions empilaient nos trajets dans Shortest Path Forever (jusqu'à ~50 → carte
+-- qui rame). Au chargement, hors combat, on retire TOUS les trajets au nom « TreeAI » (API publique de SPF, testée).
+function R.PurgeSPF()
+  local S = rawget(_G, "ShortestPathForever")
+  local A = type(S) == "table" and S.API or nil
+  if type(A) ~= "table" then return 0 end
+  local Cm = T.Compass
+  local n = 0
+  local function c(fn, ...)
+    if type(A[fn]) ~= "function" then return nil end
+    if Cm and Cm.SPFCall then return Cm.SPFCall(A, fn, ...) end
+    return try(A[fn], ...)
+  end
+  for _, fn in ipairs({ "CancelAll", "ClearRoutes", "ClearAll" }) do
+    if type(A[fn]) == "function" then c(fn, OWNER) n = n + 1 end
+  end
+  for _, fn in ipairs({ "Cancel", "StopRoute", "ClearRoute" }) do
+    if type(A[fn]) == "function" then
+      for _ = 1, 60 do c(fn, OWNER) n = n + 1 end
+      break
+    end
+  end
+  return n
+end
+
 function R:OnEnable()
+  T:After(6, function()
+    if T.RunOutOfCombat then T:RunOutOfCombat("route-purge", R.PurgeSPF) else pcall(R.PurgeSPF) end
+  end)
   self:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player", function(_, _, _, _, spellID)
     if tonumber(spellID) == HEARTH_SPELL then R._hearthAt = now() end
   end)

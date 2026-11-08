@@ -911,7 +911,7 @@ local DEFAULT_SETTINGS = {
   layoutStyle = "confort", reflow = true,
   -- guidage (COHERE) : "auto" = Suivi Forever / Questie s'ils sont là (TreeAI ne double pas leur liste ni leur
   -- flèche), "treeai" = TreeAI guide tout (boussole + étapes dans « Maintenant »)
-  guide = "auto",
+  guide = "treeai",   -- (3.9.8) le joueur veut TreeAI seul : Suivi Forever n'est plus utilisé par défaut
   -- anti-bruit (réglé par le préréglage « calme / normal / tout », chaque valeur reste modifiable)
   preset = "normal",
   noise = { nowMinPrio = 1, perModule = 2, alertGap = 20, topicGap = 120 },
@@ -1760,10 +1760,12 @@ TreeAI.GUIDE_PREFIX = TreeAI.GUIDE_PREFIX or { "Quests:prog:", "Quests:done:" }
 -- sources des lignes « étape de quête » épinglées (une seule passe dans « Maintenant »)
 TreeAI.STEP_SOURCES = TreeAI.STEP_SOURCES or { plan = 1, Quests = 2 }
 TreeAI.GUIDE_MODES = { "auto", "treeai" }
-TreeAI.GUIDE_LABEL = { auto = "Suivi Forever (recommandé si installé)", treeai = "TreeAI" }
+TreeAI.GUIDE_LABEL = { auto = "Suivi Forever / Questie (si installés)", treeai = "TreeAI seul (recommandé)" }
 function TreeAI:GuideMode()
-  local m = self.settings and self.settings.guide
-  return m == "treeai" and "treeai" or "auto"
+  local s = self.settings
+  if s and (tonumber(s.guideV) or 0) < 1 then s.guideV, s.guide = 1, "treeai" end   -- (3.9.8) une fois : TreeAI seul
+  local m = s and s.guide
+  return m == "auto" and "auto" or "treeai"
 end
 function TreeAI:SetGuideMode(m)
   if not self.settings then return end

@@ -192,6 +192,8 @@ end
 local function inCombat() return T.InCombat and T:InCombat() or false end
 M.InCombat = inCombat
 function M.SPF()
+  -- (3.9.8) TreeAI autonome : Suivi Forever ignoré tant que le joueur n'a pas choisi « Guidage : Suivi Forever »
+  if not (T.GuideMode and T:GuideMode() == "auto") then return nil end
   local S = rawget(_G, "ShortestPathForever")
   local A = type(S) == "table" and S.API or nil
   if type(A) ~= "table" or type(A.Estimate) ~= "function" then return nil end
