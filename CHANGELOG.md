@@ -3,6 +3,17 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 3.9.6 · 8 novembre 2026
+
+- **WoW : interface rangée** : options en une seule entrée, catégories à gauche, page qui défile, plus aucun
+  chevauchement ; « Maintenant » en 3 sections (Urgent → Quête en cours → Ensuite).
+- **Trajet** façon Suivi Forever : vols, bateaux, zeppelins, pierre de foyer ; « Garde ces quêtes, laisse celles
+  trop loin » ; un clic l'envoie à Shortest Path Forever.
+- **Vitesse** : pierre de foyer au bon moment, point de vol en passant, gardien des esprits quand ça vaut le coup.
+- **Stats et vrais taux de drop** : « encore ~11 loups, jusqu'à 22 si pas de chance ».
+- **Équipe** : conseils même si tes amis n'ont pas TreeAI (quête à partager, buff, poison, arme grise…).
+- **Moins de doublons**, onglet « Touches », boutons d'onglet ; encore moins de lag (~3× moins qu'en 3.9.4).
+
 ## 3.9.5 · 8 novembre 2026
 
 - **WoW : beaucoup moins de lag** : l'addon fait ~2,4× moins de calculs avec tout allumé (≈ 5× en profil

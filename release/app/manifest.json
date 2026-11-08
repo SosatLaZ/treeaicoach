@@ -1,25 +1,25 @@
 {
- "version": "3.9.5",
+ "version": "3.9.6",
  "exe": "TreeAICoach-app.exe",
- "sha256": "707680c49624d29837cf3e00a290e9506d56cc27dfb9bef0bd01e6954c73714f",
+ "sha256": "d41e4ae68adf41bb813078902a904a2d66346f7f704cf14e41a717470a85f358",
  "chunks": [
   {
-   "name": "3.9.5/part-01.zip",
-   "size": 88089586,
-   "sha256": "e344a7b6fa0a9fe6d09edfdce94317bd8a2bf33ae4ac2e52cd3cc8dfb3a6f20c",
+   "name": "3.9.6/part-01.zip",
+   "size": 88089592,
+   "sha256": "aff78e3a6b48d7887cc8087fcefa681098b0c02a454520481ceb6eda65a9f87d",
    "files": 130
   },
   {
-   "name": "3.9.5/part-02.zip",
-   "size": 13142859,
-   "sha256": "56f562db3a17dd4b6039477339c7cb7d401097cbc5d9e3890f4e1405212c8cdc",
-   "files": 647
+   "name": "3.9.6/part-02.zip",
+   "size": 13203547,
+   "sha256": "6fad69f3f7e37e25a310e94e9b0d7db06fd9f8862f759deeaeb2b3f7d1b21866",
+   "files": 652
   }
  ],
- "total_size": 101232445,
+ "total_size": 101293139,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "WoW : beaucoup moins de lag, tout reste allum\u00e9."
+ "notes": "WoW : interface rang\u00e9e, trajet avec vols/bateaux/zeppelins, stats et taux de drop, conseils d'\u00e9quipe, encore moins de lag."
 }

@@ -1,6 +1,6 @@
 {
-  "version": "3.9.5",
+  "version": "3.9.6",
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334,
-  "notes": "WoW : beaucoup moins de lag, tout reste allumé."
+  "notes": "WoW : interface rangée, trajet avec vols/bateaux/zeppelins, stats et taux de drop, conseils d'équipe, encore moins de lag."
 }
