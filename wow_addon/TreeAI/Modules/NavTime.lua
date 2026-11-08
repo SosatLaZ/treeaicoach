@@ -156,6 +156,7 @@ function N.Track(target, me, dist)
   return tr
 end
 
+local function cutZone(z) z = tostring(z or "?") return (T.Cut and T.Cut(z, 28)) or z end
 function N.Arrive(tr)
   tr = tr or N.trip
   N.trip = nil
@@ -177,6 +178,17 @@ function N.Arrive(tr)
     N.LearnDetour(tr.map, tr.moving * sp / tr.crow0)
   end
   N.last = entry
+  -- (ZONEFIX) journal de la boussole : prévu contre réel, pour chaque trajet chronométré
+  local NTr = T.NavTrace
+  if NTr and NTr.Log then
+    local Zp = T.ZonePlan
+    local zone = (Zp and Zp.MapName and Zp.MapName(tr.map)) or tostring(tr.map or "?")
+    local over = floor((actual - tr.pred) / max(1, tr.pred) * 100 + 0.5)       -- + = plus long que prévu
+    NTr.Log("temps", ("trajet de %d m : prévu %s, réel %s (%+d %%) · %s · %s%s%s"):format(floor(tr.crow0 * 0.9144 + 0.5),
+      NTr.Sec(tr.pred), NTr.Sec(actual), over, cutZone(zone),
+      (tr.mode == "m" and "monté") or (tr.mode == "s" and "à la nage") or "à pied",
+      tr.src == "spf" and " · Suivi Forever" or "", clean and "" or " (gêné : combat / pause)"))
+  end
   if T.Fire then pcall(T.Fire, T, "NAV_ARRIVED", entry) end
   return entry
 end

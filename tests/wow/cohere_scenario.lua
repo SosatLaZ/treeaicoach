@@ -54,7 +54,12 @@ return function(M, ctx)
   st = C.Refresh()
   check(st and st.dup == "spf", "SPF guide : boussole TreeAI cachée, une seule flèche")
   local fr = _G.TreeAICompassFrame
-  if fr then check(not fr:IsShown(), "cadre de la boussole caché") end
+  -- (ZONEFIX) une seule flèche : la boussole s'efface, réduite à une ligne qui dit pourquoi (« Suivi Forever te guide »)
+  if fr then
+    local wd = C.Widgets and C.Widgets()
+    check(not fr:IsShown() or (wd and wd.mini and fr:GetHeight() < 40 and tostring(wd.tag:GetText()):find("Suivi Forever", 1, true)),
+      "cadre de la boussole effacé (une ligne : « Suivi Forever te guide »)")
+  end
   cur = nil
   C.ClearWaypoint()
 

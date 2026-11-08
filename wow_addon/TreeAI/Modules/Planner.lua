@@ -582,6 +582,7 @@ function P:Evaluate()
   if not steps then return nil end
   local log = logSnap()
   self.log = log
+  self.evalRev = (self.evalRev or 0) + 1             -- (ZONEFIX) étapes faites / à d'autres revues : mémos à refaire
   local me = myName()
   local lastQuestDone = 0
   for i, s in ipairs(steps) do
@@ -653,9 +654,100 @@ function P:Evaluate()
   end
   if self.cursor and cursor ~= self.cursor then self:OnStepChanged(self.cursor, cursor) end
   self.cursor = cursor
+  if self.navBy == "compass" then self:ReleaseNav() end
   -- fallback contract for the Tracker: Planner.active = { route = { title, steps }, idx }
   self.active = (cursor <= #steps) and { route = { title = self.route and self.route.title, steps = steps }, idx = cursor } or nil
   return cursor
+end
+
+-- (ZONEFIX) un arrêt choisi à la main (point « plan » de la boussole) : rendu au trajet dès que CET arrêt est fait
+-- (avant : effacé au premier changement d'étape, même quand le joueur allait justement vers lui)
+local function stepKeyOf(s) return tostring(s.k) .. ":" .. tostring(s.q or "") .. ":" .. tostring(s.o or "") end
+function P:ReleaseNav()
+  local Cm = T.Compass
+  local c = Cm and Cm.char and Cm.char.custom
+  if not (type(c) == "table" and c.source == "plan") then
+    if self.navBy == "compass" and not (type(c) == "table") then self.navBy = nil end
+    return false
+  end
+  if c.stepKey then
+    for i = self.cursor or 1, #(self.steps or {}) do
+      local s = self.steps[i]
+      if not s._done and not s._other and stepKeyOf(s) == c.stepKey then return false end
+    end
+  end
+  self.navBy = nil
+  if type(Cm.ClearWaypoint) == "function" then pcall(Cm.ClearWaypoint) end
+  return true
+end
+
+-- (ZONEFIX) prise / remise à ≈ 100 m de toi (plus loin dans le trajet) : elle devient l'arrêt 1, tout de suite — carte,
+-- boussole, page Trajet et suivi le disent ensemble. Une remise seulement d'une quête finie ; une prise seulement s'il
+-- reste de la place dans le journal. Hors combat, jamais pendant un calcul.
+P.QUICK_YD = 110
+local function timed(q)                              -- chrono en cours sur cette quête ? (elle seule est lue)
+  q = tonumber(q)
+  local Qm = T.modules and T.modules.Quests
+  if not (q and Qm and Qm.Timers and type(Qm.lastList) == "table") then return false end
+  for _, e in ipairs(Qm.lastList) do
+    if e.id == q then
+      local ok, t = pcall(Qm.Timers, { e })
+      return ok and type(t) == "table" and t[q] ~= nil
+    end
+  end
+  return false
+end
+function P:QuickWin()
+  if inCombat() or co or not (self.steps and self.cursor) then return false end
+  local steps, cur, log = self.steps, self.cursor, self.log or {}
+  local first = steps[cur]
+  if not first or first._quick then return false end
+  local map, x, y = playerPos()
+  if not (map and x and Geo.Dist) then return false end
+  if (first.k == "pick" or first.k == "turn") and first.x then
+    local d0 = Geo.Dist(map, x, y, first.map, first.x, first.y)
+    if d0 and d0 <= P.QUICK_YD then return false end
+  end
+  local nlog = 0
+  for _ in pairs(log) do nlog = nlog + 1 end
+  local cap = tonumber((try(C("C_QuestLog", "GetMaxNumQuestsCanAccept")))) or 20
+  for i = cur + 1, min(#steps, cur + 60) do
+    local s = steps[i]
+    local q = tonumber(s.q)
+    if q and s.x and not s._done and not s._other and (s.k == "pick" or s.k == "turn") then
+      local ok = (s.k == "turn" and log[q] and log[q].done == 1) or (s.k == "pick" and not log[q] and nlog < cap - 1)
+      local d = ok and Geo.Dist(map, x, y, s.map, s.x, s.y)
+      if d and d <= P.QUICK_YD then
+        if timed(first.q) then return false end      -- une quête chronométrée en cours reste devant (QA-QUEST F2)
+        tremove(steps, i)
+        tinsert(steps, cur, s)
+        s._quick = true
+        local NTr = T.NavTrace
+        if NTr and NTr.Log then
+          NTr.Log("trajet", fmt("arrêt pris en passant : %s (à %d m) devant %s", cut(self:StepLabel(s), 40),
+            floor(d * 0.9144 + 0.5), cut(self:StepLabel(first), 40)))
+        end
+        self:StepsChanged()
+        self:Evaluate()
+        self._sig, self._lastRender = nil, nil   -- affiché tout de suite (onglet, carte : même arrêt 1)
+        self:Render()
+        local Cm = T.Compass
+        if Cm and type(Cm.Rebuild) == "function" then pcall(Cm.Rebuild, "plan") end
+        if T.Fire then pcall(T.Fire, T, "PLAN_BUILT") end
+        return true
+      end
+    end
+  end
+  return false
+end
+
+-- (ZONEFIX) étapes réordonnées SUR PLACE (même table : arrêt pris en passant, réparation, « passer ») : les listes
+-- mémorisées (Route:Stops, la carte) se refont tout de suite — sinon la carte gardait l'ancien ordre jusqu'à 30 s
+P.stepsRev = 0
+function P:StepsChanged()
+  self.stepsRev = (self.stepsRev or 0) + 1
+  local W = T.Window
+  if W and W.ForgetStops then pcall(W.ForgetStops) end
 end
 
 -- measured legs → Export (detour factor, efficiency)
@@ -756,23 +848,33 @@ end
 -- (label always filled, with progress), current index, total, route title. Done / other members' steps are
 -- skipped. nil when no plan is active.
 local PUBLIC = { "k", "q", "o", "map", "x", "y", "label", "eta", "who", "tip" }
+-- (ZONEFIX) même plan, même étape, même journal lu : la même liste, sans la refaire (le suivi, le radar, la vitesse
+-- et les quêtes la demandent souvent ; lecture seule)
+local activeMemo = {}
 function P:GetActiveSteps(n)
   n = tonumber(n) or 3
   local steps, cur = self.steps, self.cursor
   if not (steps and cur and self.route) or cur > #steps then return nil end
-  local out = {}
-  for i = cur, #steps do
-    local s = steps[i]
-    if not s._done and not s._other then
-      local c = {}
-      for _, k in ipairs(PUBLIC) do c[k] = s[k] end
-      c.label = self:StepLabel(s) .. progress(s, self.log)
-      out[#out + 1] = c
-      if #out >= n then break end
+  local m = activeMemo[n]
+  if not (m and m.steps == steps and m.cur == cur and m.len == #steps and m.rev == self.stepsRev and m.ev == self.evalRev
+      and m.log == self.log and m.route == self.route) then
+    local out = {}
+    for i = cur, #steps do
+      local s = steps[i]
+      if not s._done and not s._other then
+        local c = {}
+        for _, k in ipairs(PUBLIC) do c[k] = s[k] end
+        c.label = self:StepLabel(s) .. progress(s, self.log)
+        out[#out + 1] = c
+        if #out >= n then break end
+      end
     end
+    m = { steps = steps, cur = cur, len = #steps, rev = self.stepsRev, ev = self.evalRev, log = self.log, route = self.route,
+      out = out[1] and out or nil }
+    activeMemo[n] = m
   end
-  if #out == 0 then return nil end
-  return out, cur, #steps, self.route.title or self.route.id
+  if not m.out then return nil end
+  return m.out, cur, #steps, self.route.title or self.route.id
 end
 
 -- ===================================================================== plan automatique (sans fichier)
@@ -853,7 +955,12 @@ function P:BuildAuto(yieldFn)
   local levels, galereWhy = {}, nil
   local grey = E.GreyLevel(ctx.level)
   local map = try(C("C_Map", "GetBestMapForUnit"), "player")
+  -- (ZONEFIX) même sans le module Trajet : les règles du trajet (donjon, élite seul, JcJ, raid, échouée, trop haute,
+  -- ignorée) — l'ancien plan gardait toute quête du journal, « Goûts changeants » (donjon) en arrêt 1 (capture 20)
+  local Zr = T.ZonePlan
+  local gN = max(1, tonumber((try(G("GetNumGroupMembers")))) or 1)
   local function consider(q, rec, lq)
+    if Zr and Zr.Accept and not Zr:Accept(q, rec, lq, ctx.level, gN) then return end
     local v, why = E.QuestVerdict(rec or { lv = lq and lq.lv or ctx.level, o = {} }, ctx)
     local lv = (rec and rec.lv) or (lq and lq.lv) or 0
     if lv > grey and (not rec or not rec.zone or rec.zone == map) then
@@ -985,6 +1092,7 @@ function P:Repair(force)
       for i = 1, #trial do steps[i] = trial[i] end
       P:Toast(fmt("Itinéraire mis à jour (−%d min)", floor(gain / 60 + 0.5)))
     end
+    P:StepsChanged()
     if P.src == "file" and P.char then P.char.repaired = { key = P.key, steps = copySteps(steps) } end
     P:Evaluate()
     P:Render()
@@ -1118,6 +1226,20 @@ end
 function P:Say(text)
   pcall(self.Suggest, self, "nav", text, 1, { ttl = 6, sound = false })
 end
+-- (ZONEFIX) l'arrêt 1 (ou son départ : maître de vol, quai) : la boussole le vise déjà, c'est le même objet que la
+-- carte → aucun point perso en plus (un point perso restait devant le trajet : « Prendre « Impasse aux Serres-Roch… » »
+-- à 65 m derrière toi pendant que la carte disait « Ramasse … »)
+function P:IsCurrentStop(s)
+  if type(s) ~= "table" then return false end
+  local cur = self.steps and self.cursor and self.steps[self.cursor]
+  if cur and (s == cur or (s.q and s.k == cur.k and s.q == cur.q and tostring(s.o or "") == tostring(cur.o or ""))) then return true end
+  local Rt = T.Route
+  local lt = Rt and Rt.LegTarget and Rt.LegTarget(nil)
+  if lt and lt.mapID and s.map == lt.mapID and s.x and math.abs(s.x / 100 - lt.x) < 0.002 and math.abs(s.y / 100 - lt.y) < 0.002 then
+    return true
+  end
+  return false
+end
 function P:Navigate(s)
   s = s or (self.steps and self.cursor and self.steps[self.cursor])
   if not (s and s.map and s.x) then self:Say("Pas de position connue pour cette étape") return false end
@@ -1125,8 +1247,14 @@ function P:Navigate(s)
   local label = self:StepLabel(s)
   local x, y = s.x / 100, s.y / 100
   local Cmp = T.Compass
+  if type(Cmp) == "table" and type(Cmp.FollowRoute) == "function" and self:IsCurrentStop(s) and Cmp.FollowRoute() then
+    self.navBy = "route"
+    return true
+  end
   if type(Cmp) == "table" and type(Cmp.SetTarget) == "function" then
-    local ok = try(Cmp.SetTarget, Cmp, { mapID = s.map, x = x, y = y, label = label, source = "plan", questID = s.q })
+    -- un autre arrêt choisi à la main : la boussole le vise jusqu'à ce qu'il soit fait (ou atteint, ou 5 min)
+    local key = s.q and (tostring(s.k) .. ":" .. tostring(s.q) .. ":" .. tostring(s.o or "")) or nil
+    local ok = try(Cmp.SetTarget, Cmp, { mapID = s.map, x = x, y = y, label = label, source = "plan", questID = s.q, stepKey = key })
     if ok ~= false then self.navBy = "compass" return true end
   end
   local spf = G("ShortestPathForever")
@@ -1314,8 +1442,33 @@ function P:CycleRoute()
   for i, r in ipairs(routes) do if r == self.route then idx = i end end
   self:SelectRoute(routes[idx % #routes + 1].id)
 end
+-- (ZONEFIX, PERF4) le ticker (3 s) ne refait l'onglet / la carte que si quelque chose a pu changer : tu as bougé ; le
+-- plan, l'étape, le journal lu, la sélection, la zone ou la pause ont changé ; un rendu attend ou est demandé — sinon
+-- une fois toutes les 5 min. Les évènements (journal, groupe, clics) redessinent comme avant.
+P.RENDER_HEARTBEAT = 300
+local tick = {}
+--- → vrai si un rendu du ticker est utile ; snap = noter l'état tel qu'un rendu vient de le montrer
+function P:TickChanged(snap)
+  local map, x, y = playerPos()
+  local R, Zp = T.Route, T.ZonePlan
+  local paused = (R and R.char and R.char.paused) and true or false
+  local sel, zrev = R and R.selection or false, Zp and Zp.rev or 0
+  local steps, t = self.steps, now()
+  local len = steps and #steps or 0
+  if not snap and self._sig ~= nil and not self._renderDirty and t - (tick.at or -1e9) < P.RENDER_HEARTBEAT
+      and tick.map == map and tick.x == x and tick.y == y and tick.steps == steps and tick.cur == self.cursor
+      and tick.len == len and tick.rev == self.stepsRev and tick.ev == self.evalRev and tick.log == self.log
+      and tick.route == self.route and tick.paused == paused and tick.sel == sel and tick.zrev == zrev then
+    return false
+  end
+  tick.map, tick.x, tick.y, tick.steps, tick.cur, tick.len, tick.rev, tick.ev = map, x, y, steps, self.cursor, len,
+    self.stepsRev, self.evalRev
+  tick.log, tick.route, tick.paused, tick.sel, tick.zrev, tick.at = self.log, self.route, paused, sel, zrev, t
+  return true
+end
 function P:Render()
   if inCombat() then self._renderDirty = true return end
+  self:TickChanged(true)                             -- ce rendu-ci vaut pour le ticker (pas de second rendu derrière)
   local lines = self:Lines()
   local sig = {}
   for _, l in ipairs(lines) do sig[#sig + 1] = l.text end
@@ -1340,6 +1493,31 @@ function P:Render()
   end
 end
 
+--- (ZONEFIX) journal : le trajet vient d'être refait — pourquoi, combien d'arrêts, le 1er, la zone, le mode
+function P:TraceBuilt()
+  local NTr = T.NavTrace
+  local why = self._why
+  self._why = nil
+  if not (NTr and NTr.Log) then return end
+  local n, first = 0, nil
+  for i = self.cursor or 1, #(self.steps or {}) do
+    local s = self.steps[i]
+    if not s._done and not s._other then n = n + 1; first = first or s end
+  end
+  local Zp = T.ZonePlan
+  local zone, style
+  if Zp and Zp.IsEnabled and Zp:IsEnabled() then
+    zone = Zp.label and (Zp.label .. (((Zp.char and Zp.char.mode) or "auto") == "auto" and " (auto)" or " (choisie)"))
+    style = Zp.StyleName and Zp:StyleName() or nil
+  end
+  local first0 = not self._traced
+  self._traced = true
+  NTr.Log("trajet", fmt("refait (%s) : %d arrêt%s · 1er : %s%s%s", why and tconcat(why, ", ") or (first0 and "connexion" or "?"),
+    n, n > 1 and "s" or "",
+    first and cut(self:StepLabel(first), 40) or "aucun", zone and (" · zone " .. cut(zone, 40)) or "",
+    style and (" · " .. style) or ""))
+end
+
 -- full refresh (debounced from events), out of combat
 local function logSig(log)
   local ids = {}
@@ -1361,9 +1539,11 @@ function P:Refresh(force)
     local sig = logSig(logSnap())
     if force or not self.auto or (self._autoStale and sig ~= self._autoSig) then
       self._autoStale, self._autoSig = false, sig
+      if force then self:NoteWhy("recalcul demandé") end
       self:StartJob(function()
         P:BuildAuto(budgetYield)   -- no pcall here: Lua 5.1 cannot yield across pcall (resume catches errors)
         P:EnsureSteps(); P:Evaluate(); P:Render()
+        pcall(P.TraceBuilt, P)
         if P._syncDirty then P:SendSync(false) end
         -- (QA-QUEST F20) trajet refait : ceux qui le citent (Abandon : jamais « plus tard » pour un arrêt) se relisent
         if T.Fire then pcall(T.Fire, T, "PLAN_BUILT") end
@@ -1387,8 +1567,21 @@ function P:Refresh(force)
   self:Render()
   if self._syncDirty then self:SendSync(false) end
 end
-function P:Dirty(autoStale)
+-- (ZONEFIX) pourquoi le trajet est refait (journal de la boussole) : les déclencheurs depuis le dernier calcul
+local WHY = { QUEST_LOG_UPDATE = "journal", UNIT_QUEST_LOG_CHANGED = "journal", QUEST_ACCEPTED = "quête prise",
+  QUEST_REMOVED = "quête retirée", QUEST_TURNED_IN = "quête rendue", PLAYER_LEVEL_UP = "niveau", ZONE_CHANGED_NEW_AREA = "zone",
+  GROUP_ROSTER_UPDATE = "groupe", EXPORT_UPDATED = "données", COMBAT_END = "fin du combat" }
+function P:NoteWhy(why)
+  if not why then return end
+  why = WHY[why] or tostring(why)
+  local w = self._why or {}
+  for _, x in ipairs(w) do if x == why then return end end
+  if #w < 3 then w[#w + 1] = why end
+  self._why = w
+end
+function P:Dirty(autoStale, why)
   if autoStale then self._autoStale = true end
+  self:NoteWhy(why)
   if self._pending then return end
   self._pending = true
   T:After(1.5, function()
@@ -1452,31 +1645,34 @@ end
 
 -- ===================================================================== cycle de vie
 function P:OnEnable()
-  local function dirty() P:Dirty(true) end
+  local function dirty(_, ev) P:Dirty(true, ev) end
   for _, ev in ipairs({ "QUEST_LOG_UPDATE", "QUEST_ACCEPTED", "QUEST_REMOVED", "PLAYER_LEVEL_UP",
     "ZONE_CHANGED_NEW_AREA", "GROUP_ROSTER_UPDATE" }) do self:RegisterEvent(ev, dirty) end
-  self:RegisterUnitEvent("UNIT_QUEST_LOG_CHANGED", "player", dirty)
+  self:RegisterUnitEvent("UNIT_QUEST_LOG_CHANGED", "player", function() P:Dirty(true, "UNIT_QUEST_LOG_CHANGED") end)
   self:RegisterEvent("QUEST_TURNED_IN", function(_, _, qid)
     qid = tonumber(qid)
     if qid and P.char then P.char.turned[qid] = true end
-    P:Dirty(true)
+    P:Dirty(true, "QUEST_TURNED_IN")
   end)
   self:On("COMBAT_END", function()
-    if P._dirty or P._renderDirty then P._dirty = false; P:Dirty(false) end
+    if P._dirty or P._renderDirty then P._dirty = false; P:Dirty(false, "COMBAT_END") end
   end)
-  self:On("EXPORT_UPDATED", function() P:Dirty(true) end)
+  self:On("EXPORT_UPDATED", function() P:Dirty(true, "EXPORT_UPDATED") end)
   self:On("SUMMARY", function() pcall(P.WriteSummary, P) end)
   self:On("SQUAD_UPDATE", function() P:Render() end)
   T:RegisterComm("PLN", self, function(_, payload, sender) P:OnSync(payload, sender) end)
   self.ticker = T:NewTicker(3, function()
     if inCombat() or not P.steps then return end
-    -- arrival on a non-quest step (fly / hs / meet…) within 40 yd → done
-    local s = P.steps[P.cursor or 0]
-    if s and not s.q and s.x then
-      local d = where(s)
-      if d and d < 40 and P.char then P.char.skip[P.key .. ":" .. P.cursor] = true; P:Evaluate() end
+    if P:TickChanged() then
+      -- arrival on a non-quest step (fly / hs / meet…) within 40 yd → done
+      local s = P.steps[P.cursor or 0]
+      if s and not s.q and s.x then
+        local d = where(s)
+        if d and d < 40 and P.char then P.char.skip[P.key .. ":" .. P.cursor] = true; P:Evaluate() end
+      end
+      P:QuickWin()
+      P:Render()
     end
-    P:Render()
     if P._syncDirty or (P._lastSync and now() - P._lastSync > 60) then P:SendSync(false) end
   end)
   self:Dirty(true)
@@ -1495,6 +1691,7 @@ local function slash(rest)
     if s and P.char then
       if s.q then   -- a quest step is read from the quest log: passing it = moving it after the next step
         if P.steps[P.cursor + 1] then local x = tremove(P.steps, P.cursor); tinsert(P.steps, P.cursor + 1, x) end
+        P:StepsChanged()
       else
         P.char.skip[P.key .. ":" .. P.cursor] = true
       end

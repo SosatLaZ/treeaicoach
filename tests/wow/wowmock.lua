@@ -83,6 +83,8 @@ function M.Reset()
                  [1416] = { top = 3000, left = 2500, w = 2000, h = 1500, continent = 0 } }
   M.mapNames = { [1424] = "Contreforts de Hautebrande", [1416] = "Montagnes d'Alterac" }
   M.waypoints = {}                             -- [questID] = { mapID, x, y } (C_QuestLog.GetNextWaypoint, modern)
+  M.watchOrder = {}                            -- (ZONEFIX) objective tracker watch list, in watch order (questIDs)
+  M.watchLog = {}                              -- { id, on, combat, t } every change (tests: who changed it, when)
   M.superTrack = nil
   M.loggingCombat, M.loggingChat = false, false
   -- forever: restrictions and secret values (see the « forever » section)
@@ -644,6 +646,36 @@ local function abandonQuest(id)
   return true
 end
 M.AbandonServer = abandonQuest
+
+-- (ZONEFIX) quest watch list as the client keeps it: only quests of the log, at most `cap` (Mainline / Forever
+-- Constants.QuestWatchConsts.MAX_QUEST_WATCHES = 25 ; Classic MAX_WATCHABLE_QUESTS = 5), a quest leaving the log
+-- leaves the list ; every change fires QUEST_WATCH_LIST_CHANGED(questID, added) synchronously (SynchronousEvent).
+function M.Watched(id)
+  id = tonumber(id)
+  if not (id and qAt(id)) then return false end
+  for _, w in ipairs(M.watchOrder) do if w == id then return true end end
+  return false
+end
+function M.PruneWatches()
+  for i = #M.watchOrder, 1, -1 do if not qAt(M.watchOrder[i]) then table.remove(M.watchOrder, i) end end
+end
+function M.WatchQuest(id, on, cap)
+  id = tonumber(id)
+  M.PruneWatches()
+  if not (id and qAt(id)) then return false end
+  local at
+  for i, w in ipairs(M.watchOrder) do if w == id then at = i end end
+  if on then
+    if at or #M.watchOrder >= (cap or 25) then return false end
+    M.watchOrder[#M.watchOrder + 1] = id
+  else
+    if not at then return false end
+    table.remove(M.watchOrder, at)
+  end
+  M.watchLog[#M.watchLog + 1] = { id = id, on = on and true or false, combat = M.inCombat and true or false, t = M.now }
+  M.FireEvent("QUEST_WATCH_LIST_CHANGED", id, on and true or false)
+  return true
+end
 
 function M.Install(flavor)
   M.flavor = flavor or "modern"
@@ -1264,6 +1296,14 @@ function M.Install(flavor)
         local q = qAt(id)
         if q and q.timer then return q.timer[1], q.timer[2] end
       end,
+      -- (ZONEFIX) watch list (QuestLogDocumentation: AddQuestWatch(questID) → wasWatched, RemoveQuestWatch(questID)
+      -- → wasRemoved, GetQuestWatchType(questID) → QuestWatchType? (Automatic 0 / Manual 1), GetNumQuestWatches,
+      -- GetQuestIDForQuestWatchIndex(luaIndex) → questID?)
+      AddQuestWatch = function(id) return M.WatchQuest(id, true, 25) end,
+      RemoveQuestWatch = function(id) return M.WatchQuest(id, false) end,
+      GetQuestWatchType = function(id) if M.Watched(id) then return 1 end return nil end,
+      GetNumQuestWatches = function() M.PruneWatches() return #M.watchOrder end,
+      GetQuestIDForQuestWatchIndex = function(i) M.PruneWatches() return M.watchOrder[i] end,
     }
     G.C_Container.GetContainerItemQuestInfo = function(bag, slot)
       local s = bagSlot(bag, slot)
@@ -1327,6 +1367,19 @@ function M.Install(flavor)
     local q = M.quests[i or M.questSel or 1]
     local o = q and q.objectives and q.objectives[j]
     if o then return o.text, o.type or "monster", o.done end
+  end
+  if not modern then   -- (ZONEFIX) client classique : suivi par index du journal (AddQuestWatch(questIndex)…)
+    local function idAt(i) local q = M.quests[i] return (q and not q.header) and qid(i) or nil end
+    G.AddQuestWatch = function(i) return M.WatchQuest(idAt(i), true, 5) end
+    G.RemoveQuestWatch = function(i) return M.WatchQuest(idAt(i), false) end
+    G.IsQuestWatched = function(i) return M.Watched(idAt(i)) and 1 or nil end
+    G.GetNumQuestWatches = function() M.PruneWatches() return #M.watchOrder end
+    G.GetQuestIndexForWatch = function(k)
+      M.PruneWatches()
+      local id = M.watchOrder[k]
+      local _, i = qAt(id)
+      return i
+    end
   end
   G.SelectQuestLogEntry = function(i) M.questSel = i end
   G.GetQuestLogSelection = function() return M.questSel or 0 end

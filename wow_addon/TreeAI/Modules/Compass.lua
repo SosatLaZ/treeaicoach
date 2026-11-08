@@ -18,17 +18,18 @@ if not (T and T.RegisterModule) then return end
 
 local M = T:RegisterModule("Compass", {
   title = "Boussole",
+  -- (ZONEFIX) en combat : la flèche reste (sans texte), sauf si l'option « Cacher en combat » est cochée
   defaults = { enabled = true, shown = true, units = "m", autoNext = true, announce = true, scale = 1, locked = false,
-               hideCombat = true, hideDup = true },
+               hideCombat = false, hideDup = true },
   charDefaults = { point = "TOP", x = 0, y = -120, custom = nil },
   options = {
     { key = "shown", type = "toggle", label = "Afficher la boussole (flèche vers la cible)" },
     { key = "autoNext", type = "toggle", label = "Passer à la cible suivante quand un objectif est fini" },
     { key = "announce", type = "toggle", label = "Annoncer la nouvelle cible dans « Maintenant »" },
     { key = "locked", type = "toggle", label = "Verrouiller la boussole" },
-    { key = "hideCombat", type = "toggle", label = "Cacher la boussole en combat" },
+    { key = "hideCombat", type = "toggle", label = "Cacher la boussole en combat (sinon : la flèche seule, sans texte)" },
     { key = "hideDup", type = "toggle",
-      label = "Une seule flèche : cacher la boussole si Blizzard / Shortest Path / TomTom guide déjà vers la même cible" },
+      label = "Une seule flèche : la boussole s'efface quand une autre flèche vise le même endroit (à 20 m près)" },
     { key = "scale", type = "range", label = "Taille de la boussole", min = 0.5, max = 2, step = 0.1 },
   },
 })
@@ -282,19 +283,34 @@ function M.DropOwnWaypoint()
   end
   return false
 end
+-- (ZONEFIX) « une seule flèche » seulement quand l'autre flèche vise LE MÊME endroit (à 20 m près) : un repère
+-- Blizzard sans rapport (« 467 m » sur la capture 20) ne cache plus la boussole. → "blizzard" / "spf" / "tomtom" ou nil
+M.DUP_YD = 20 / YD2M
+local function sameSpot(t, mapID, x, y)
+  if not (t and t.mapID and t.x and tonumber(mapID) and tonumber(x) and tonumber(y)) then return false end
+  if x > 1 or y > 1 then x, y = x / 100, y / 100 end
+  local d = G.Vector({ mapID = mapID, x = x, y = y }, t)
+  return d ~= nil and d <= M.DUP_YD
+end
+M.SameSpot = sameSpot
 function M.OtherGuide(t)
   if not t then return nil end
   local ST, CM = _G.C_SuperTrack, _G.C_Map
+  -- quête suivie en super-suivi par le jeu : sa flèche vise le point de la quête (GetNextWaypoint) → même endroit ?
   if t.questID and ST and ST.GetSuperTrackedQuestID then
-    local q = try(ST.GetSuperTrackedQuestID)
-    if q and q ~= 0 and q == t.questID then return "blizzard" end
+    local q = _ns(try(ST.GetSuperTrackedQuestID))
+    if q and q ~= 0 and q == t.questID then
+      local QL = _G.C_QuestLog
+      local wm, wx, wy
+      if QL and QL.GetNextWaypoint then wm, wx, wy = try(QL.GetNextWaypoint, q) end
+      if sameSpot(t, wm, wx, wy) then return "blizzard" end
+    end
   end
   local wm, px, py
   if t.mapID and t.x then wm, px, py = userWaypoint() end
   if wm then
-    local onTarget = wm == t.mapID and near(px, t.x) and near(py, t.y)
     local superUser = not (ST and ST.IsSuperTrackingUserWaypoint) or try(ST.IsSuperTrackingUserWaypoint)
-    if onTarget and superUser then return "blizzard" end
+    if superUser and sameSpot(t, wm, px, py) then return "blizzard" end
   end
   -- nos propres « Aller là » : le guide posé par un clic sur CETTE cible
   if M.guide and M.guide.key == t.key then
@@ -311,6 +327,8 @@ function M.OtherGuide(t)
   end
   return nil
 end
+-- une ligne courte qui dit pourquoi la boussole s'efface (option « une seule flèche », guidage confié à Suivi Forever)
+M.DUP_TXT = { blizzard = "Flèche du jeu sur la même cible", spf = "Suivi Forever te guide", tomtom = "TomTom vise la même cible" }
 
 -- (COHERE) Shortest Path guide-t-il en ce moment (sa flèche + « Arrêt n sur N » à l'écran) ? Lecture seule :
 -- API publique (Active / IsNavigating / IsActive / CurrentStop), sinon notre propre envoi (Route.following).
@@ -599,21 +617,46 @@ end
 -- autre continent, jamais gardé après un /reload sans un clic ; s'il est hors d'atteinte d'ici (autre continent)
 -- ou posé il y a plus de 10 min (sauf ton propre /tai way et ton corps), il passe après l'arrêt du trajet.
 M.CLEAR_YD, M.CLEAR_SEC, M.STALE_SEC = 20 / YD2M, 3, 600
+-- (ZONEFIX) un arrêt du trajet choisi à la main (clic sur la carte / la page) : devant le trajet 5 min au plus (et
+-- rendu au trajet dès que cet arrêt est fait : Planner.ReleaseNav)
+M.PLAN_STALE_SEC = 300
 -- → "far" (hors d'atteinte d'ici : pas de flèche possible → après les quêtes qu'on peut viser), "old" (posé il y a
 -- plus de 10 min → après l'arrêt du trajet) ou false
 function M.CustomStale(c, me)
   if type(c) ~= "table" or c.source == "corpse" then return false end
   if me and not G.Vector(me, { mapID = c.mapID, x = c.x, y = c.y }) then return "far" end
-  return (c.source ~= "perso" and tonumber(c.at) ~= nil and now() - c.at > M.STALE_SEC) and "old" or false
+  local life = (c.source == "plan") and M.PLAN_STALE_SEC or M.STALE_SEC
+  return (c.source ~= "perso" and tonumber(c.at) ~= nil and now() - c.at > life) and "old" or false
 end
 
 -- Construit la liste triée des cibles. list = liste des quêtes (Quests.lastList) ; me = position.
+-- (ZONEFIX) la cible du trajet = l'arrêt 1 de la carte (Route, même objet) ; repli : l'ancien contrat ZonePlan
+local function routeTarget(me)
+  local Rt = T.Route
+  if Rt and Rt.CompassTarget then return try(Rt.CompassTarget, Rt, me) end
+  local Zp = T.ZonePlan
+  return Zp and Zp.CompassTarget and try(Zp.CompassTarget, me) or nil
+end
+M.RouteTarget = routeTarget
+-- (ZONEFIX) rang : le corps d'abord (fantôme) ; un point posé à la main juste avant (clic, /tai way) ; puis TOUJOURS
+-- l'arrêt 1 du trajet ; un point à la main vieilli (5 min pour un arrêt du trajet, 10 min sinon) passe après
+local function targetRank(t)
+  if t.kind == "custom" then return (t.corpse and -1) or (t.stale == "far" and 2.5) or (t.stale and 0.6) or 0 end
+  return (t.plan and 0.5) or (t.super and 1) or (t.kind == "zone" and 3) or 2
+end
+local function byRank(a, b)
+  if a._rank ~= b._rank then return a._rank < b._rank end
+  local da, db = a.dist or 1e12, b.dist or 1e12
+  if da ~= db then return da < db end
+  return tostring(a.key) < tostring(b.key)
+end
 function M.BuildTargets(list, me)
   local out = {}
   local c = M.char and M.char.custom
   if type(c) == "table" and c.mapID and c.x then
     out[#out + 1] = { key = "custom", kind = "custom", title = c.name or "Point perso", label = c.name or "Point perso",
-      mapID = c.mapID, x = c.x, y = c.y, src = "perso", stale = M.CustomStale(c, me) or nil }
+      mapID = c.mapID, x = c.x, y = c.y, src = "perso", stale = M.CustomStale(c, me) or nil, source = c.source,
+      corpse = c.source == "corpse" or nil }
   end
   local st = _G.C_SuperTrack and _G.C_SuperTrack.GetSuperTrackedQuestID and try(_G.C_SuperTrack.GetSuperTrackedQuestID)
   for _, q in ipairs(list or {}) do
@@ -633,20 +676,21 @@ function M.BuildTargets(list, me)
       out[#out + 1] = t
     end
   end
-  -- (ZONEPLAN) l'arrêt en cours du trajet passe devant (après un point perso)
-  local Zp = T.ZonePlan
-  local pt = Zp and Zp.CompassTarget and try(Zp.CompassTarget, me)
-  if type(pt) == "table" then out[#out + 1] = pt end
-  local function rank(t)
-    if t.kind == "custom" then return (t.stale == "far" and 2.5) or (t.stale and 0.6) or 0 end
-    return (t.plan and 0.5) or (t.super and 1) or (t.kind == "zone" and 3) or 2
+  -- (ZONEPLAN) l'arrêt en cours du trajet passe devant (après un point perso) ; (ZONEFIX) pendant un recalcul du
+  -- trajet (quelques images sans étapes), l'ancien arrêt 1 reste visé : la boussole ne saute plus d'une cible à l'autre
+  local pt = routeTarget(me)
+  if type(pt) ~= "table" then
+    local P = T.Planner
+    local busy = P and ((P.Busy and P:Busy()) or (P.route and not P.steps))
+    local last = M.lastPlan
+    if busy and type(last) == "table" and now() - (last.seenAt or 0) < 30 then pt = last end
+  else
+    pt.seenAt = now()
+    M.lastPlan = pt
   end
-  table.sort(out, function(a, b)
-    local ra, rb = rank(a), rank(b)
-    if ra ~= rb then return ra < rb end
-    if (a.dist or 1e12) ~= (b.dist or 1e12) then return (a.dist or 1e12) < (b.dist or 1e12) end
-    return tostring(a.key) < tostring(b.key)
-  end)
+  if type(pt) == "table" then out[#out + 1] = pt end
+  for _, t in ipairs(out) do t._rank = targetRank(t) end   -- une fois par cible (pas à chaque comparaison du tri)
+  table.sort(out, byRank)
   return out
 end
 
@@ -662,6 +706,22 @@ end
 
 -- Garde la cible choisie à la main (pinned) tant qu'elle existe ; sinon la plus proche. Si la cible
 -- suivie disparaît (quête finie → remise) ou change d'objectif (objectif fini) : annonce la suivante.
+-- (ZONEFIX) journal de la boussole (NavTrace.lua) : chaque changement de cible, avec sa raison
+function M.TraceTarget(prev, cur, why)
+  local NTr = T.NavTrace
+  if not (NTr and NTr.Log) or (prev and prev.key) == (cur and cur.key) then return end
+  local r
+  if not cur then r = "plus rien à viser"
+  elseif cur.corpse then r = "ton corps"
+  elseif cur.kind == "custom" then r = (cur.source == "plan" and "arrêt choisi à la main") or "point posé à la main"
+  elseif why == "cycle" or why == "quest" then r = "clic : " .. (why == "cycle" and "cible suivante" or "cette quête")
+  elseif cur.plan then
+    r = (why == "plan" and "trajet recalculé : son arrêt 1") or (cur.leg and ("départ du trajet : " .. tostring(cur.leg)))
+      or "arrêt 1 du trajet"
+  elseif cur.super then r = "quête suivie par le jeu"
+  else r = "quête la plus proche (pas de trajet)" end
+  NTr.Log("cible", NTr.Target(prev) .. " → " .. NTr.Target(cur) .. " (" .. r .. ")")
+end
 function M.Rebuild(reason)
   -- planification hors combat (Forever : valeurs « secrètes » en combat) ; refaite à PLAYER_REGEN_ENABLED
   if inCombat() and reason ~= "force" then M.dirty = true return M.targets end
@@ -700,6 +760,14 @@ function M.Rebuild(reason)
     end
   end
   M.WriteSummary()
+  -- (ZONEFIX) nouvelle cible (trajet recalculé, arrêt fini) : affichée tout de suite, même immobile (l'animation ne
+  -- tourne plus à l'arrêt : sans ça la boussole gardait l'ancienne cible jusqu'au prochain pas)
+  local cur = M.Current()
+  M.TraceTarget(prev, cur, reason)
+  if M._frame and reason ~= "arrived" and not M._inRefresh and (not prev ~= not cur or (prev and cur and (prev.key ~= cur.key
+      or prev.mapID ~= cur.mapID or prev.x ~= cur.x or prev.y ~= cur.y or prev.label ~= cur.label))) then
+    M.Refresh()
+  end
   return M.targets
 end
 
@@ -707,9 +775,11 @@ function M.Cycle(step)
   local n = #M.targets
   if n == 0 then M.Rebuild() n = #M.targets end
   if n == 0 then M:Print("Aucune cible : pas de quête suivie ni de point perso (/tai way x y).") return nil end
+  local before = M.Current()
   M.idx = ((M.idx - 1 + (step or 1)) % n) + 1
   M.pinned = true
   local t = M.Current()
+  M.TraceTarget(before, t, "cycle")
   announce(t, "Cible")
   M.Refresh()
   return t
@@ -719,7 +789,9 @@ function M.SetQuestTarget(qid)
   if #M.targets == 0 then M.Rebuild() end
   for i, t in ipairs(M.targets) do
     if t.questID == qid then
+      local before = M.Current()
       M.idx, M.pinned = i, true
+      M.TraceTarget(before, t, "quest")
       announce(t, "Cible")
       M.Refresh()
       return t
@@ -756,8 +828,20 @@ function M.SetTarget(a, b)
   if not t then return nil end
   if t.questID and not (t.x and t.y) then return M.SetQuestTarget(t.questID) end
   local r = M.SetWaypoint(t.x, t.y, t.label, t.mapID, t.source)
-  if r then r.source, r.questID = t.source, t.questID end
+  if r then r.source, r.questID, r.stepKey = t.source, t.questID, t.stepKey end
   return r
+end
+--- (ZONEFIX) « guider » vers l'arrêt en cours : la boussole revient au trajet (aucun point perso, sauf le corps) ;
+--- vrai quand elle vise bien l'arrêt 1 du trajet
+function M.FollowRoute()
+  local c = M.char and M.char.custom
+  if type(c) == "table" and c.source ~= "corpse" then M.char.custom = nil end
+  M.pinned = nil
+  M.Rebuild("force")
+  for i, t in ipairs(M.targets) do if t.plan then M.idx = i break end end
+  M.Refresh()
+  local cur = M.Current()
+  return (cur and cur.plan) and true or false
 end
 
 -- (QA-QUEST F3) hors d'atteinte d'ici (autre continent : pas de distance possible) → effacé ; le corps jamais
@@ -826,28 +910,41 @@ function M.Compute()
   M.me = me
   if not t then return { none = true, hidden = me == nil } end
   local st = { target = t, me = me, hidden = me == nil }
-  if me and t.mapID then
-    local d, bearing, approx = G.Vector(me, t)
+  local d, bearing, approx
+  if t.mapID then
+    -- coordonnées monde de la cible : la flèche suit le joueur entre deux calculs (UnitPosition, sans table)
+    st.tc, st.tn, st.tw = G.World(t.mapID, t.x, t.y)
+    if me then d, bearing, approx = G.Vector(me, t) end
+    if not d and st.tn then
+      -- (ZONEFIX) pas de position sur la carte (grotte, sous-carte sans coordonnées) : la position monde suffit — la
+      -- boussole ne disparaît plus « de temps en temps » en passant sous un pont ou dans une mine
+      local py, px, _, inst = try(_G.UnitPosition, "player")
+      py, px, inst = _ns(py), _ns(px), _ns(inst)
+      if py and px and (inst == nil or inst == st.tc) then
+        local n, w = st.tn - py, st.tw - px
+        d, bearing, approx = sqrt(n * n + w * w), atan2(w, n), false
+        st.hidden, st.world = false, true
+      end
+    end
+  end
+  if d then
     st.dist, st.bearing, st.approx = d, bearing, approx
     local facing = _ns(try(_G.GetPlayerFacing))
     st.facing = facing
     st.rel = G.Relative(bearing, facing)
-    -- coordonnées monde de la cible : la flèche suit le joueur entre deux calculs (UnitPosition, sans table)
-    st.tc, st.tn, st.tw = G.World(t.mapID, t.x, t.y)
     local tnow = now()
-    if t ~= M.travelT or tnow - (M.travelAt or 0) > 3 then
+    if me and (t ~= M.travelT or tnow - (M.travelAt or 0) > 3) then
       M.travelT, M.travelAt, M.travelSec = t, tnow, M.Travel(me, t)
     end
     local NT = T.NavTime
-    if M.travelSec then st.sec, st.spf = M.travelSec, true
-    elseif d then
-      st.sec = (NT and NT.Model) and NT.Model(d, t.mapID) or d / M.Speed()
-    end
+    if M.travelSec and M.travelT == t then st.sec, st.spf = M.travelSec, true
+    else st.sec = (NT and NT.Model) and NT.Model(d, t.mapID) or d / M.Speed() end
     st.eta = st.sec and G.ETA(st.sec * RUN, RUN)
-    t.dist = d or t.dist
+    st.secPerYd = (st.sec and d > 1) and st.sec / d or nil      -- (ZONEFIX) temps relu 5 ×/s en marchant
+    t.dist = d
     t.arrive = t.arrive or ARRIVE[t.kind] or 15
-    if d and d <= t.arrive then st.arrived = true end
-    if NT and NT.Track and d and not approx then pcall(NT.Track, t, me, d) end
+    if d <= t.arrive then st.arrived = true end
+    if NT and NT.Track and not approx and me then pcall(NT.Track, t, me, d) end
     -- (QA-QUEST F3) point posé à la main atteint (≤ 20 m pendant 3 s) : effacé, la boussole revient au trajet
     local c = M.char and M.char.custom
     if t.kind == "custom" and type(c) == "table" and c.source ~= "corpse" and d and not approx then
@@ -869,7 +966,8 @@ end
 -- ------------------------------------------------------------------ cadre (le nôtre, jamais Blizzard)
 -- Inspiré des meilleures flèches (idées seulement) : TomTom (grande flèche, couleur selon l'alignement,
 -- demi-tour), Shortest Path (une seule flèche, durée réelle), Questie / Zygor / RXP (étape en sous-titre,
--- arrivée claire). Rotation lissée ≤ 30 Hz seulement quand tu bouges ou tournes ; 4 Hz à l'arrêt ; textes 1 Hz.
+-- arrivée claire). (ZONEFIX) Rotation lissée 20 à 30 Hz et distance / temps 5 fois par seconde quand tu bouges ou
+-- tournes ; à l'arrêt : aucun OnUpdate (un coup d'œil par seconde, réveil aux évènements de mouvement).
 local W, H = 200, 112
 M.W, M.H = W, H
 local frame, arrow, shadow, ring, check, dist, label, tag
@@ -899,8 +997,16 @@ function G.Shortest(a, b)
   return d
 end
 
-local shown, target, lastFacing, acc, full, busy = nil, nil, nil, 0, 0, false
+-- (ZONEFIX) mises à jour : la flèche ≥ 20 Hz (jusqu'à 30) et la distance / le temps 5 fois par seconde TANT QUE tu
+-- bouges ou tournes (évènements du jeu PLAYER_STARTED_MOVING / TURNING / LOOKING, sinon un coup d'œil par seconde à
+-- ta position) ; à l'arrêt ou cachée : plus d'OnUpdate du tout. Le texte n'est réécrit que si l'arrondi change.
+local shown, target, lastFacing = nil, nil, nil
 local lastR, lastLabel, lastInfo, lastTag
+local lastQ, lastE                                 -- dernier texte rapide : yards, secondes
+local mini, textOff, anim = false, false, false
+local moving, turning = false, false
+local acc, textAcc, fullAcc, still = 0, 0, 0, 0
+local lastPy, lastPx
 local function paint(rel)
   if rel == lastR then return end
   lastR = rel
@@ -918,22 +1024,25 @@ local function setTag(s, r, g, b)
   if s then tag:SetTextColor(r, g, b) end
 end
 
---- un pas d'animation : cible d'angle (cap absolu de la cible − orientation), approche lissée
+--- un pas d'animation : cible d'angle (cap absolu de la cible − orientation), approche lissée ;
+--- → vrai tant que quelque chose bouge (ta position, ton orientation, la flèche pas encore sur sa cible)
 function M.Step(dt)
   local st = M.state
-  if not (frame and st and st.bearing and frame:IsShown() and not st.arrived) then busy = false return end
+  if not (frame and st and st.bearing and frame:IsShown() and not st.arrived and not mini) then return false end
   local facing = _ns(try(_G.GetPlayerFacing))
-  if not facing then busy = false return end
+  if not facing then return false end
   local bearing = st.bearing
+  local posMoved = false
   if st.tn and st.tc then                            -- position fine sans allocation (UnitPosition)
     local py, px, _, inst = try(_G.UnitPosition, "player")
     py, px, inst = _ns(py), _ns(px), _ns(inst)
     if py and px and (inst == nil or inst == st.tc) then
+      if py ~= lastPy or px ~= lastPx then posMoved, lastPy, lastPx = true, py, px end
       local n, w = st.tn - py, st.tw - px
       if n * n + w * w > 4 then bearing = atan2(w, n) st.bearing = bearing end
     end
   end
-  local moved = facing ~= lastFacing
+  local turned = facing ~= lastFacing
   lastFacing = facing
   target = (bearing - facing) % (2 * pi)
   st.facing, st.rel = facing, target
@@ -944,15 +1053,103 @@ function M.Step(dt)
   paint(shown)
   local behind = target > BEHIND and target < 2 * pi - BEHIND
   st.behind = behind
-  if behind then setTag("Derrière toi", 1, 0.35, 0.3) else setTag(nil) end
-  -- (3.9.9) 30 Hz seulement quand la flèche tourne ; en ligne droite (le cap bouge à peine) 10 Hz suffisent
-  busy = ((moved or abs(d) >= 0.004) and 0.033) or ((T.NavTime and T.NavTime.moving) and 0.1) or false
+  if not textOff then if behind then setTag("Derrière toi", 1, 0.35, 0.3) else setTag(nil) end end
+  return posMoved or turned or abs(d) >= 0.004
 end
 M.Spin = function() M.Step(0.1) end
+
+-- distance + temps depuis UnitPosition (aucune conversion de carte) ; → vrai à l'arrivée (calcul complet tout de suite)
+local function fastText()
+  local st = M.state
+  if textOff or mini or not (frame and st and st.tn and st.dist and not st.arrived and not st.approx) then return false end
+  local py, px, _, inst = try(_G.UnitPosition, "player")
+  py, px, inst = _ns(py), _ns(px), _ns(inst)
+  local d
+  if py and px then
+    if inst ~= nil and inst ~= st.tc then return false end
+    local n, w = st.tn - py, st.tw - px
+    d = sqrt(n * n + w * w)
+  else                                               -- client sans UnitPosition : la position sur la carte
+    local me = M.Player()
+    d = me and st.target and G.Vector(me, st.target)
+    if not d then return false end
+  end
+  st.dist = d
+  if st.target then st.target.dist = d end
+  -- (ZONEFIX) au yard / à la seconde près : le texte n'est refait (et posé) que si ce qui s'affiche a pu changer
+  local q, e = floor(d + 0.5), st.secPerYd and floor(d * st.secPerYd + 0.5) or -1
+  if q ~= lastQ or e ~= lastE or not st.facing or not lastInfo then
+    lastQ, lastE = q, e
+    if st.secPerYd then st.sec = d * st.secPerYd; st.eta = G.ETA(st.sec * RUN, RUN) end
+    local s = G.Dist(d, M.db.units)
+    if st.eta then s = s .. "  ·  " .. st.eta end
+    if not st.facing then s = s .. " " .. G.Cardinal(st.bearing) end
+    if s ~= lastInfo then lastInfo = s; dist:SetText(s) end
+  end
+  local t = st.target
+  local arrive = t and (t.arrive or ARRIVE[t.kind] or 15)
+  return arrive ~= nil and d <= arrive
+end
+M.FastText = fastText
+
+local animAt, animN, textN, moveS, rateAt = 0, 0, 0, 0, -1e9   -- cadence obtenue (journal), pas de table par image
+local function onUpdate(_, el)
+  el = el or 0
+  acc, textAcc, fullAcc = acc + el, textAcc + el, fullAcc + el
+  if acc < 0.033 then return end                   -- ≤ 30 Hz
+  local dt = acc
+  acc = 0
+  if fullAcc >= 1 then fullAcc = 0 M.Refresh() end  -- calcul complet 1 fois par seconde tant que ça bouge
+  local active = M.Step(dt)
+  animN = animN + 1
+  if moving then moveS = moveS + dt end
+  if textAcc >= 0.2 then                            -- 5 Hz : distance / temps
+    textAcc = 0
+    if not textOff then textN = textN + 1 end
+    if fastText() then fullAcc = 0 M.Refresh() end
+  end
+  if active or moving or turning then still = 0
+  else
+    still = still + dt
+    if still >= 0.5 then M.SetAnim(false) end      -- immobile : plus rien par image
+  end
+end
+--- l'animation (OnUpdate) posée seulement quand quelque chose bouge et que la flèche est à l'écran
+--- (journal) une marche d'au moins 3 s : la cadence vraiment obtenue (flèche, texte), une ligne par minute au plus
+local function traceRate()
+  local NTr = T.NavTrace
+  local dur = now() - animAt
+  if not (NTr and NTr.Log) or dur < 3 or moveS < 2 or now() - rateAt < 60 then return end
+  rateAt = now()
+  NTr.Log("marche", ("%s en mouvement : flèche %d Hz, texte %d Hz%s"):format(NTr.Sec(dur), floor(animN / dur + 0.5),
+    floor(textN / dur + 0.5), textOff and " (combat : flèche seule)" or ""))
+end
+function M.SetAnim(on)
+  if not frame then return false end
+  if on and frame:IsShown() and not mini then
+    still = 0
+    if not anim then
+      anim, acc, textAcc = true, 0, 0
+      animAt, animN, textN, moveS = now(), 0, 0, 0
+      frame:SetScript("OnUpdate", onUpdate)
+    end
+  elseif not on and anim then
+    anim = false
+    frame:SetScript("OnUpdate", nil)
+    traceRate()
+  end
+  return anim
+end
+function M.Animating() return anim end
+function M.SetMoving(kind, on)
+  if kind == "turn" then turning = on and true or false else moving = on and true or false end
+  if on then M.SetAnim(true) end
+end
 
 local function createFrame()
   if frame or type(_G.CreateFrame) ~= "function" then return frame end
   frame = _G.CreateFrame("Button", "TreeAICompassFrame", _G.UIParent)
+  M._frame = frame
   frame:SetSize(W, H)
   frame:SetPoint(M.char.point or "TOP", _G.UIParent, M.char.point or "TOP", M.char.x or 0, M.char.y or -120)
   frame:SetFrameStrata("MEDIUM")
@@ -979,15 +1176,28 @@ local function createFrame()
     local tt = _G.GameTooltip
     if not tt then return end
     pcall(tt.SetOwner, tt, f, "ANCHOR_BOTTOM")
+    local st = M.state or {}
+    if mini and st.dup then
+      -- (ZONEFIX) pourquoi la boussole s'efface : une autre flèche vise le même endroit, à 20 m près
+      pcall(tt.AddLine, tt, M.DUP_TXT[st.dup] or "Une autre flèche te guide", 1, 0.82, 0.2)
+      pcall(tt.AddLine, tt, "Elle vise le même endroit que la boussole (à moins de 20 m) : une seule flèche à l'écran.",
+        0.85, 0.85, 0.85, true)
+      pcall(tt.AddLine, tt, "Option : Boussole > « Une seule flèche » (décocher : les deux restent)", 0.6, 0.6, 0.6, true)
+      pcall(tt.Show, tt)
+      return
+    end
     -- (UIREDO) ce que c'est · distance + temps · pourquoi · ce que fait chaque clic (une ligne chacun)
     local t = M.Current()
     if t then
       pcall(tt.AddLine, tt, t.title or t.label or "Cible", 1, 0.82, 0.2, true)
       if t.npc then pcall(tt.AddLine, tt, t.npc, 0.85, 0.85, 0.85) end
-      local st = M.state or {}
       if st.dist then
         pcall(tt.AddLine, tt, (st.approx and "≈ " or "") .. G.Dist(st.dist, M.db.units) .. (st.eta and (" · " .. st.eta) or "")
           .. (st.spf and " (chemin réel)" or " à pied"), 0.6, 0.8, 1)
+      end
+      if t.plan then pcall(tt.AddLine, tt, "Arrêt 1 du trajet (la carte « Prochaine étape » dit le même)", 0.85, 0.85, 0.85, true)
+      elseif t.kind == "custom" and t.source ~= "corpse" then
+        pcall(tt.AddLine, tt, "Point choisi à la main : la boussole revient au trajet une fois atteint", 0.85, 0.85, 0.85, true)
       end
       if t.why then pcall(tt.AddLine, tt, t.why, 0.85, 0.85, 0.85, true) end
     else
@@ -1052,18 +1262,12 @@ local function createFrame()
   if dist.SetFont then pcall(dist.SetFont, dist, "Fonts\\FRIZQT__.TTF", 16, "OUTLINE") end
   if tag.SetFont then pcall(tag.SetFont, tag, "Fonts\\FRIZQT__.TTF", 11, "OUTLINE") end
   frame:SetScale(tonumber(M.db.scale) or 1)
-  frame:SetScript("OnUpdate", function(_, el)
-    el = el or 0
-    acc, full = acc + el, full + el
-    if acc < (busy or 0.25) then return end
-    local step = acc
-    acc = 0
-    if full >= 1 then full = 0 M.Refresh() end    -- calcul complet 1 fois par seconde, même sans cap
-    M.Step(step)
-  end)
+  frame:SetScript("OnShow", function() if not mini then M.SetAnim(true) end end)
   return frame
 end
 M.CreateFrame = createFrame
+--- (tests, Horizon) les éléments du cadre : flèche, distance, étape, étiquette
+function M.Widgets() return { frame = frame, arrow = arrow, dist = dist, label = label, tag = tag, mini = mini } end
 
 -- TreeAI est le seul guide par défaut (choix du joueur : « SPF m'induit en erreur ») : Shortest Path ne sert —
 -- durées ET effacement de la boussole — que si le joueur a choisi « Guidage : Suivi Forever » (réglage commun
@@ -1084,16 +1288,57 @@ function M.SPFGuiding()
   return spfCall(A, "Active") == true
 end
 
+-- (ZONEFIX) la boussole s'efface pour une autre flèche sur la même cible : une ligne courte à sa place (le pourquoi)
+local function showMini(text)
+  if not mini then
+    mini = true
+    M.SetAnim(false)
+    arrow:Hide() shadow:Hide() ring:Hide() check:Hide() dist:Hide() label:Hide()
+    if ring.ag and ring.ag.Stop then ring.ag:Stop() end
+    frame:SetHeight(22)
+    tag:ClearAllPoints()
+    tag:SetPoint("CENTER", frame, "CENTER", 0, 0)
+    tag:Show()
+    lastTag = nil
+  end
+  setTag(text, 0.8, 0.8, 0.8)
+  if not frame:IsShown() then frame:Show() end
+end
+local function leaveMini()
+  if not mini then return end
+  mini = false
+  frame:SetHeight(H)
+  tag:ClearAllPoints()
+  tag:SetPoint("TOP", frame, "TOP", 0, -50)
+  dist:Show() label:Show()
+  lastTag, lastR = nil, nil
+  setTag(nil)
+end
+-- combat : la flèche seule (ni distance, ni étape, ni « Derrière toi »)
+local function setTextOff(off)
+  if off == textOff then return end
+  textOff = off
+  if off then dist:Hide() label:Hide() tag:Hide()
+  else dist:Show() label:Show() tag:Show(); lastInfo, lastLabel, lastTag = nil, nil, nil end
+end
+local function hideAll(why)
+  M.hideWhy = why
+  if mini then leaveMini() end
+  if frame:IsShown() then frame:Hide() end
+  if ring.ag and ring.ag.Stop then ring.ag:Stop() end
+  M.SetAnim(false)
+end
+
 local OFF = { none = true, hidden = true, off = true }
 local function refresh()
   local want = M.db and M.db.shown ~= false and M:IsEnabled()
   local Hz = T.Horizon
   local wantHz = Hz and Hz.db and Hz.db.shown ~= false and Hz:IsEnabled()
-  local fight = M.db and M.db.hideCombat ~= false and inCombat()
-  -- (NAV) rien à montrer (boussole et bande coupées, ou combat) : aucun calcul, aucune lecture d'API
-  if frame and (fight or not (want or wantHz)) then
-    if frame:IsShown() then frame:Hide() end
-    if ring.ag and ring.ag.Stop then ring.ag:Stop() end
+  local fight = inCombat()
+  local hideFight = fight and M.db and M.db.hideCombat == true
+  -- (NAV) rien à montrer (boussole et bande coupées, ou combat avec l'option cochée) : aucun calcul, aucune lecture
+  if frame and (hideFight or not (want or wantHz)) then
+    hideAll(hideFight and "combat" or "off")
     return OFF
   end
   local st = M.Compute()
@@ -1116,12 +1361,19 @@ local function refresh()
       if not st.dup and M.SPFGuiding() then st.dup = "spf" end
     end
   end
-  if not want or st.hidden or st.none or st.dup or st.hiddenDead then
-    if frame:IsShown() then frame:Hide() end
-    if ring.ag and ring.ag.Stop then ring.ag:Stop() end
+  if not want or st.hidden or st.none or st.hiddenDead or (st.dup and fight) then
+    hideAll((not want and "off") or (st.hiddenDead and "dead") or (st.hidden and "pos") or (st.none and "none") or "dup")
     return st
   end
+  if st.dup then
+    M.hideWhy = "dup"
+    showMini(M.DUP_TXT[st.dup] or "Une autre flèche te guide")
+    return st
+  end
+  M.hideWhy = nil
+  leaveMini()
   if not frame:IsShown() then frame:Show() end
+  setTextOff(fight)
   local t = st.target
   local lt = cut(t.label or t.title or "Cible", 40)
   if lt ~= lastLabel then lastLabel = lt; label:SetText(lt) end
@@ -1129,7 +1381,7 @@ local function refresh()
     arrow:Hide() shadow:Hide()
     ring:Show() check:Show()
     if ring.ag and ring.ag.Play and not (ring.ag.IsPlaying and ring.ag:IsPlaying()) then ring.ag:Play() end
-    setTag(t.kind == "objective" and "Dans la zone" or "Arrivé", 0.3, 1, 0.4)
+    if not textOff then setTag(t.kind == "objective" and "Dans la zone" or "Arrivé", 0.3, 1, 0.4) end
   else
     if ring:IsShown() then ring:Hide() check:Hide() if ring.ag and ring.ag.Stop then ring.ag:Stop() end end
     if st.rel then
@@ -1137,6 +1389,8 @@ local function refresh()
       if not shown then shown = st.rel end
       paint(shown)
       if lastTag == "Arrivé" or lastTag == "Dans la zone" then setTag(nil) end
+      -- la flèche pas encore sur sa cible (nouvelle cible, tu as tourné) : l'animation repart
+      if abs(G.Shortest(shown, st.rel)) >= 0.004 then M.SetAnim(true) end
     else
       arrow:Hide() shadow:Hide()
     end
@@ -1150,14 +1404,57 @@ local function refresh()
     -- (QA-QUEST F4) « Pierre de foyer vers Orgrimmar » : pas de flèche, la consigne à la place de la distance
     s = t.note or (t.zone and ("Zone : " .. cut(t.zone, 28))) or ""
   end
-  if s ~= lastInfo then lastInfo = s; dist:SetText(s) end
+  if s ~= lastInfo then lastInfo, lastQ = s, nil; dist:SetText(s) end
   return st
 end
+-- (journal) boussole affichée / cachée / effacée en ligne courte, et pourquoi (sur un changement seulement)
+local VIS_TXT = { shown = "affichée", off = "cachée : coupée (option ou module)",
+  combat = "cachée en combat (option « Cacher en combat »)", dead = "cachée : mort (la fenêtre du jeu reste lisible)",
+  pos = "cachée : pas de position (instance, chargement, taxi)", none = "cachée : aucune cible" }
+local function traceVis(st)
+  local why = M.hideWhy or "shown"
+  if why == "dup" then why = "dup:" .. tostring(type(st) == "table" and st.dup or "?") end
+  if why == M._traceVis then return end
+  M._traceVis = why
+  local NTr = T.NavTrace
+  if not (NTr and NTr.Log) then return end
+  local txt = VIS_TXT[why]
+  if not txt then
+    local d = type(st) == "table" and st.dup
+    txt = "en ligne courte : " .. ((d and M.DUP_TXT[d]) or "une autre flèche te guide") .. " (même endroit à 20 m près)"
+  end
+  NTr.Log("boussole", txt)
+end
 function M.Refresh()
-  local st = refresh()
+  M._inRefresh = true
+  local ok, st = pcall(refresh)
+  M._inRefresh = false
+  if not ok then error(st, 0) end
+  traceVis(st)
   local Hz = T.Horizon                               -- bande d'horizon : suit la boussole (même règle d'un seul guide)
   if Hz and Hz.Sync then pcall(Hz.Sync, st) end
   return st
+end
+
+--- (ZONEFIX) coup d'œil d'une seconde quand rien n'anime la flèche : as-tu bougé / tourné depuis ?
+function M.Glance()
+  if not (frame and frame:IsShown()) or anim or mini then return false end
+  local py, px = try(_G.UnitPosition, "player")
+  py, px = _ns(py), _ns(px)
+  if not py then                                     -- client sans UnitPosition : la position sur la carte
+    local me = M.Player()
+    if me then py, px = me.x * 100000 + me.mapID, me.y end
+  end
+  local f = _ns(try(_G.GetPlayerFacing))
+  if (py and (py ~= lastPy or px ~= lastPx)) or (f and f ~= lastFacing) then
+    -- (ZONEFIX) l'orientation vue ici aussi : à l'arrivée (flèche cachée), le pas d'animation ne la relit pas, et
+    -- un coup d'œil croyait « tu as tourné » à chaque seconde (calcul complet + animation pour rien)
+    lastPy, lastPx, lastFacing = py, px, f or lastFacing
+    M.Refresh()
+    M.SetAnim(true)
+    return true
+  end
+  return false
 end
 
 function M.Show(on)
@@ -1183,6 +1480,10 @@ function M.WriteSummary()
 end
 
 -- ------------------------------------------------------------------ cycle de vie
+local function horizonWanted()
+  local Hz = T.Horizon
+  return Hz and Hz.db and Hz.db.shown ~= false and Hz:IsEnabled() and true or false
+end
 local pending
 local function rebuildSoon(reason)
   if pending then return end
@@ -1193,6 +1494,9 @@ M.RebuildSoon = rebuildSoon
 
 function M:OnEnable()
   M.ForgetSaved()                                    -- (QA-QUEST F3) rien de repris d'avant le /reload sans un clic
+  -- (ZONEFIX) une fois : la boussole reste en combat (flèche seule) ; avant, l'option « Cacher en combat » était
+  -- cochée d'office et la boussole « disparaissait de temps en temps » (à chaque combat)
+  if M.db and not M.db.combatV then M.db.combatV, M.db.hideCombat = 1, false end
   createFrame()
   for _, ev in ipairs({ "QUEST_LOG_UPDATE", "QUEST_WATCH_LIST_CHANGED", "QUEST_TURNED_IN", "QUEST_ACCEPTED",
     "QUEST_REMOVED", "ZONE_CHANGED_NEW_AREA", "SUPER_TRACKING_CHANGED" }) do
@@ -1203,9 +1507,17 @@ function M:OnEnable()
       self:RegisterEvent(ev, function() rebuildSoon() end)
     end
   end
-  self:RegisterEvent("PLAYER_ENTERING_WORLD", function() rebuildSoon("init") end)
+  self:RegisterEvent("PLAYER_ENTERING_WORLD", function() rebuildSoon("init") M.Refresh() end)
   self:RegisterEvent("PLAYER_REGEN_ENABLED", function() if M.dirty then rebuildSoon() end M.Refresh() end)
   self:RegisterEvent("PLAYER_REGEN_DISABLED", function() M.Refresh() end)
+  -- (ZONEFIX) l'animation suit tes mouvements (rien par image à l'arrêt) ; un autre repère posé / retiré = revu
+  for ev, v in pairs({ PLAYER_STARTED_MOVING = { "move", true }, PLAYER_STOPPED_MOVING = { "move", false },
+    PLAYER_STARTED_TURNING = { "turn", true }, PLAYER_STOPPED_TURNING = { "turn", false },
+    PLAYER_STARTED_LOOKING = { "turn", true }, PLAYER_STOPPED_LOOKING = { "turn", false } }) do
+    self:RegisterEvent(ev, function() M.SetMoving(v[1], v[2]) end)
+  end
+  self:RegisterEvent("USER_WAYPOINT_UPDATED", function() M.Refresh() end)
+  self:On("PLAN_BUILT", function() if not inCombat() then pcall(M.Rebuild, "plan") end end)
   -- mort / relevé : cacher tout de suite (fenêtre de mort lisible), réafficher une fois vivant
   for _, ev in ipairs({ "PLAYER_DEAD", "PLAYER_ALIVE", "PLAYER_UNGHOST" }) do
     self:RegisterEvent(ev, function()
@@ -1221,15 +1533,29 @@ function M:OnEnable()
     M._spfSub = spfCall(A, "Subscribe", function() if frame then pcall(M.Refresh) end end) or true
   end
   self:On("QUESTS_UPDATED", function() rebuildSoon() end)
-  -- ticker : flèche même cadre caché (pour réapparaître en sortant d'instance), cibles toutes les 10 s
+  -- ticker (1 s) : immobile et affichée → un coup d'œil (as-tu bougé ?) ; effacée pour une raison qui peut changer
+  -- seule (autre flèche, pas de position, pas de cible) → revue toutes les 2 s ; coupée, morte, en instance, en combat
+  -- (option) → rien (les évènements la réveillent) ; cibles revues toutes les 10 s quand elle est à l'écran et que tu
+  -- as bougé, sinon toutes les 60 s (le journal, le trajet, un point posé la refont tout de suite, par évènement)
   if not M.ticker then
     local n = 0
+    local SOFT = { dup = true, pos = true, none = true }
     M.ticker = T:NewTicker(1, function()
       n = n + 1
-      if frame and not frame:IsShown() then M.Refresh() end
-      if n % 10 == 0 then pcall(M.Rebuild) end
+      if frame and frame:IsShown() and not M.hideWhy then M.Glance()
+      elseif frame and SOFT[M.hideWhy or ""] and n % 2 == 0 then M.Refresh()
+      elseif frame and M.hideWhy == "off" and horizonWanted() then M.Refresh() end   -- la bande seule : elle suit
+      if n % 10 == 0 and frame and (frame:IsShown() or M.hideWhy == "none") and not inCombat() then
+        local py, px = lastPy, lastPx
+        if M.hideWhy == "none" or n % 60 == 0 or py ~= M._rbPy or px ~= M._rbPx then
+          M._rbPy, M._rbPx = py, px
+          pcall(M.Rebuild)
+        end
+      end
     end)
   end
+  -- (PERF4, si le cœur l'offre) réveil dès que tu te remets à bouger : la flèche repart sans attendre le coup d'œil
+  if T.OnMotion then T:OnMotion("Compass", function() if frame and frame:IsShown() then M.Glance() end end) end
   T:After(2, function() pcall(M.Rebuild, "init") M.Refresh() end)
 end
 

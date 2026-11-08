@@ -10,6 +10,9 @@ return function(M, ctx)
   local Z, P, X, R = T.ZonePlan, T.Planner, T.Export, T.Route
   check(Z and P and X and R, "ZonePlan + Planner + Export + Route loaded")
   if not (Z and P and X and R) then return end
+  -- the generic event storm clicks every row (zone menu, « Mode », « Pause »…): start from the defaults
+  R.char.paused = false
+  Z.char.mode, Z.char.zones, Z.char.style, Z.char.ignore, Z.char.extra = "auto", {}, 1, {}, {}
   local N = Z.Engine
 
   -- ------------------------------------------------------------ pure engine
@@ -115,23 +118,38 @@ return function(M, ctx)
     end
     return set, qs
   end
-  local function line(pat) for _, l in ipairs(P:Lines() or {}) do if tostring(l.text):find(pat) then return l end end end
+  local function strip(t) return (tostring(t or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
+  local function line(pat) for _, l in ipairs(P:Lines() or {}) do if strip(l.text):find(pat) then return l end end end
   exportNow()
   check(TreeAIDB.export and TreeAIDB.export.work and TreeAIDB.export.work.mode == "auto", "export carries the work zone for the app")
   Z.lastKeys = nil
   replan()
   local ms, qs = maps()
   check(P.src == "auto" and P.route and P.route.id == "auto" and #P.steps >= 4, "in-game route without the app (" .. tostring(P.steps and #P.steps) .. " steps)")
-  check(ms[1424] and ms[1425] and not ms[1426] and not ms[1427], "auto = my zone + neighbour, nothing far, no other continent")
-  check(qs[1004] and not qs[1005] and not qs[1006] and not qs[1003], "neighbour quest in, far / other-continent quests out")
+  -- (ZONEFIX) auto = MY zone only; the neighbour's quest is said on one line (« Autres zones »), not mixed in
+  check(ms[1424] and not ms[1425] and not ms[1426] and not ms[1427], "auto = my zone only, nothing far, no other continent")
+  check(not qs[1004] and not qs[1005] and not qs[1006] and not qs[1003], "neighbour / far / other-continent quests out")
   check(not qs[2002], "elite quest left out solo")
+  local oz = line("^Autres zones : ")
+  check(oz and strip(oz.text):find("Zone B", 1, true) and Z.others and Z.others.n >= 2, "« Autres zones : … (Zone B…) » said once: "
+    .. tostring(oz and oz.text))
+  -- my zone nearly empty (2 quests ignored, < 3 left) → the neighbours fill in, and the label says so
+  Z.char.ignore[1001], Z.char.ignore[1002], Z.char.ignore[2001] = "a", "b", "c"
+  Z:Bump(); replan()
+  local msF, qsF = maps()
+  check(qsF[1004] and msF[1425] and Z.fill and Z.fill[1425] and tostring(P.route.zone):find("Zone B", 1, true),
+    "zone A empty → neighbour B fills in (« " .. tostring(P.route.zone) .. " »)")
+  Z.char.ignore = {}
+  Z:Bump(); replan()
+  ms, qs = maps()
+  check(not qs[1004] and not Z.fill, "zone A has quests again → neighbour out")
   local a1, a2
   for _, s in ipairs(P.steps) do
     if s.k == "obj" and s.q == 1001 then a1 = s.area end
     if s.k == "obj" and s.q == 1002 then a2 = s.area end
   end
   check(a1 and a1 == a2, "wolves + fangs in the same spot = one stop")
-  local zl = line("^Zone : Zone A %+ 1 voisine ▾")
+  local zl = line("^Zone : Zone A ▾")
   check(zl and zl.onClick, "zone picker line in the route view")
   local merged = line("^Arrêt %d+/%d+ : .* %+ ")
   check(merged, "merged stop shown once, numbered")
@@ -187,11 +205,10 @@ return function(M, ctx)
   -- ------------------------------------------------------------ ignore list (right click on a stop)
   replan()
   local stop
-  for _, l in ipairs(P:Lines()) do if l.onRightClick and tostring(l.text):find("Ours") then stop = l end end
-  if not stop then for _, l in ipairs(P:Lines()) do if l.onRightClick and tostring(l.text):find("^Arrêt") then stop = l end end end
+  for _, l in ipairs(P:Lines()) do if l.onRightClick and tostring(l.text):find("^Arrêt") then stop = l end end
   check(stop, "stops have a right-click menu")
   local s4
-  for _, s in ipairs(P.steps) do if s.q == 1004 then s4 = s end end
+  for _, s in ipairs(P.steps) do if s.q == 1002 then s4 = s end end
   Z:StopMenu(s4)
   local _, sents = Z:GetMenu()
   local ign
@@ -200,11 +217,11 @@ return function(M, ctx)
   if ign then ign.fn() end
   replan()
   local _, q3 = maps()
-  check(Z.char.ignore[1004] and not q3[1004], "ignored quest leaves the route")
-  Z:Unignore(1004)
+  check(Z.char.ignore[1002] and not q3[1002], "ignored quest leaves the route")
+  Z:Unignore(1002)
   replan()
   _, q3 = maps()
-  check(q3[1004], "un-ignored → back")
+  check(q3[1002], "un-ignored → back")
 
   -- ------------------------------------------------------------ hysteresis in the live loop: same input → same order
   local before = {}

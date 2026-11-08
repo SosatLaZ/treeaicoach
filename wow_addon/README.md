@@ -34,6 +34,7 @@ Data/Pets.lua  Modules/Hunter.lua  Modules/Classes.lua  Modules/Leveling.lua  Mo
 Modules/Quests.lua  Modules/Compass.lua  Modules/NavTime.lua  Modules/Horizon.lua  Modules/Detect.lua  Modules/Stats.lua
 Modules/Macros.lua  Modules/Binds.lua  Modules/Tracker.lua  Modules/Todo.lua  Modules/Region.lua  Modules/Hub.lua
 Modules/Export.lua  Modules/Planner.lua  Modules/Speed.lua  Modules/Route.lua  Modules/PathDraw.lua  Modules/ZonePlan.lua
+Modules/ZoneWatch.lua  Modules/NavTrace.lua
 Modules/Inventory.lua  Modules/Boost.lua  Modules/Fight.lua  Modules/Pro.lua  Modules/Abandon.lua  Modules/Auction.lua
 Modules/Prof.lua  Modules/Glow.lua  Modules/Highlight.lua  Modules/PvP.lua  Modules/PvPMark.lua  Modules/Dungeon.lua
 Modules/DungeonPrep.lua  Modules/Radar.lua  Modules/MinimapPins.lua  Modules/Gear.lua  Modules/Talents.lua
@@ -104,6 +105,27 @@ jamais repris après un /reload sans un clic (`Compass:ForgetSaved` / ligne « B
 trajet s'il a > 10 min (sauf `/tai way`) ou est hors d'atteinte. `summary.plan.next = { {k, q, map, label, min} }`
 (arrêts de la carte, horizon) → onglet « Trajet » de l'appli ; message `PLAN_BUILT` après chaque trajet en jeu.
 Rejeu : `tests/wow/qaquest_scenario.lua` (variantes `QAQ_VARIANT=full|noquestie|org`).
+**ZONEFIX** (4.0.1, `tests/wow/zonefix_scenario.lua`, `ZF_VARIANT=full|noquestie`) : ZonePlan dans le mode sûr
+(`T.SAFE_MODULES.ZonePlan`, rallumé une fois : `db.safeV`, jamais contre `T.db.modChoice.ZonePlan == false`). Zone
+choisie = trajet DANS la zone (le plus proche d'abord, ≤ 1 h `R.HORIZON_S`, remise voisine seulement en chemin
+`s.onWay`, ≤ 45 s), voisines seulement pour compléter une zone trop maigre (auto) ; `Z.others` → « Autres zones : N
+quêtes (…) ». Donjons : tag Questie d'abord, puis `T.Dungeon.QuestDungeon(id)` / `T.Dungeon.IsDone(d)` s'ils existent
+(`Z.DungeonOf(q)`, `Z.DungeonDone(q)` ; raison « donjon fait » : jamais, sauf prête à rendre). Modes du trajet
+`Z.STYLES` (`Z:StyleIndex()`, `Z:SetStyle(i)`, par perso), thèmes `Z:Themes()` / `Z:ThemeParts()` (titre de la carte
+`W.CardTitle`), « Zones à faire » `Z:ZonesToDo()` / `Z:PickZone(map)`. Boussole = arrêt 1 de la carte :
+`Route:CompassTarget(me)` (même objet que `Route:Stops(1)`, `kind = "zone"` sans position), `Compass.FollowRoute()`,
+`Planner:Navigate(s)` (arrêt 1 → le trajet, autre arrêt → point « plan » 5 min, `Planner:ReleaseNav`), arrêt à ≤ 110 yd
+pris en passant (`Planner:QuickWin`), `Planner.stepsRev` / `StepsChanged()` (étapes réordonnées sur place),
+`Planner.evalRev`. Une autre flèche ne l'efface que sur le MÊME endroit (20 m, `Compass.SameSpot`) → ligne courte
+`Compass.DUP_TXT` ; combat : flèche seule (`hideCombat` = option). Cadence : animation seulement en mouvement
+(`Compass.SetMoving`, évènements PLAYER_STARTED_MOVING / TURNING / LOOKING, sinon `Compass.Glance` 1 ×/s), flèche
+20-30 Hz, texte 5 Hz ; à l'arrêt aucun OnUpdate. Ticker du Planner : rendu si `Planner:TickChanged()` (position, plan,
+étape, journal lu, zone, pause) ou toutes les 5 min ; `Route:Stops` gardé à l'arrêt (≤ 5 min). « Suivi auto par zone »
+(`Modules/ZoneWatch.lua`, options `autoWatch` / `watchMax`) : `Z:WatchWanted(log)`, `Z:WatchPass()` (hors combat, 1 / 2 s),
+`char.watchManual` (choix à la main gardés). Journal de la boussole (`Modules/NavTrace.lua`, `T.NavTrace`) :
+`NavTrace.Log(kind, texte)` sur un CHANGEMENT d'état seulement (anneau 300 lignes / 30 Ko, `TreeAIDB.diag.nav`, hors
+combat — en combat gardé en mémoire), `NavTrace.Lines(n)`, `ExportLines(n)` (rapport `/tai erreurs`) ; section
+« Trajet / boussole » de TreeAI-erreurs.txt ; page `navlog` (Outils → « Journal de la boussole »).
 
 `Modules/Quests.lua` (agent Q): aide aux quêtes PvE — à rendre par zone, « finis ici avant de partir »,
 toasts de progression, quêtes grises (clic = ouvrir, l'abandon reste manuel), « à faire à 4 » (+ Group),

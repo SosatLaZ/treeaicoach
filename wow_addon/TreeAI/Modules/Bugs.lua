@@ -164,6 +164,10 @@ function M.Collect(note)
     end
   end
 
+  -- (ZONEFIX 4.0.1) journal de la boussole et du trajet (Modules/NavTrace.lua) : les 25 dernières décisions ici, tout
+  -- l'anneau (300) dans la section « Trajet / boussole » que l'appli écrit depuis diag.nav
+  local NTr = T.NavTrace
+  for _, s in ipairs(NTr and NTr.ExportLines and try(NTr.ExportLines, 25) or {}) do add(s) end
   add("== Coût des modules (/tai perf)")
   local perf = T.PerfLines and try(T.PerfLines, T) or {}
   for _, s in ipairs(type(perf) == "table" and perf or {}) do add(s) end

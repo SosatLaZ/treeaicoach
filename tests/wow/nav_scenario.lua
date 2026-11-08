@@ -78,7 +78,9 @@ return function(M, ctx)
   T.settings.guide, T.settings.guideV = "auto", 1                   -- player picked « Guidage : Suivi Forever »
   C.travelT = nil
   st = C.Refresh()
-  check(st.dup == "spf" and not fr:IsShown(), "opt-in + SPF guiding → compass hidden (one arrow)")
+  -- (ZONEFIX) one arrow: the compass steps aside, reduced to one short line that says why (no arrow, no distance)
+  check(st.dup == "spf" and C.hideWhy == "dup" and (not fr:IsShown() or fr:GetHeight() < 40),
+    "opt-in + SPF guiding → compass reduced to one line (one arrow)")
   if how == "blizzard" then   -- (FIDELITY F11) TreeAI's own Blizzard waypoint is removed: SPF's arrow only
     local CMw = rawget(_G, "C_Map")
     check(not (CMw and CMw.HasUserWaypoint and CMw.HasUserWaypoint()), "our « Aller là » waypoint removed when SPF guides")

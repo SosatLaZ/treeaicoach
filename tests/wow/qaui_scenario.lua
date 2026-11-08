@@ -44,7 +44,9 @@ return function(M, ctx)
     end
   end
   -- UI-16 / F30 : hero = the zone name only (no « Histoire : »)
-  check(c.hero.title:GetText() == "Mille pointes", "card hero = zone name (" .. tostring(c.hero.title:GetText()) .. ")")
+  -- (ZONEFIX) the zone first, then the theme when there is one (« Mille pointes · Librevent »), never « Histoire : »
+  local ht = tostring(c.hero.title:GetText())
+  check(ht:find("^Mille pointes") and not ht:find("Histoire", 1, true), "card hero = zone name (+ theme) (" .. ht .. ")")
   -- W-05 : « n arrêts proches », no « en cours » on the card
   local hs = tostring(c.hero.sub:GetText())
   check(not hs:find("en cours", 1, true) and (hs:find("arrêt", 1, true) or hs:find("min", 1, true)), "card summary wording (" .. hs .. ")")

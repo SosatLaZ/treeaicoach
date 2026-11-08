@@ -87,7 +87,7 @@ return function(M, ctx)
     -- Shimmering Flats (east of Thousand Needles): 2 quests + the elite one
     { id = 5130, title = "Chargement de foudre", level = 30, map = 1441, objectives = { obj("Huile de basilic : 0/5", 0, 5, "item") } },
     { id = 5131, title = "Un cahot sur la route", level = 30, map = 1441, objectives = { obj("Basilic cristallin tué : 0/10", 0, 10) } },
-    { id = 5102, title = "Hypercapaciteur bidulotron", level = 30, tag = ELITE, elite = true, map = 1441,
+    { id = 5182, title = "Hypercapaciteur bidulotron", level = 30, tag = ELITE, elite = true, map = 1441,
       objectives = { obj("Hypercapaciteur bidulotron : 0/1", 0, 1, "item") } },
     -- Ashenvale leftovers (Splintertree Post)
     { id = 5201, title = "La patte d'Ursangous", level = 25, map = 1440, objectives = { obj("Patte d'Ursangous : 0/1", 0, 1, "item") } },
@@ -135,10 +135,10 @@ return function(M, ctx)
     [5108] = quest("Interruption des hurlements", 30, 25, 400, 613, 613),
     [5130] = quest("Chargement de foudre", 30, 25, 400, 611, 611, nil, { 8130 }),
     [5131] = quest("Un cahot sur la route", 30, 25, 400, 614, 614, { 7131 }),
-    [5102] = quest("Hypercapaciteur bidulotron", 30, 25, 400, 611, 611, nil, { 8102 }),
+    [5182] = quest("Hypercapaciteur bidulotron", 30, 25, 400, 611, 611, nil, { 8102 }),
     [5132] = quest("Pièces de voiture-fusée", 30, 25, 400, 614, 614, nil, { 8132 }),          -- to take on the flats
     [5133] = quest("Le contremaître Mécazod", 30, 26, 400, 611, 611, { 7133 }),               -- to take on the flats
-    [5160] = quest("Course contre la montre", 29, 25, 400, 614, 614, nil, { 8160 }),         -- timed (15 min)
+    [5240] = quest("Course contre la montre", 29, 25, 400, 614, 614, nil, { 8160 }),         -- timed (15 min)
     [5201] = quest("La patte d'Ursangous", 25, 20, 331, 700, 700, nil, { 8201 }),
     [5205] = quest("Les estafettes d'Ashenvale", 25, 20, 331, 700, 702, { 7205 }),
     [5110] = quest("La flamme sacrée", 25, 20, 1638, 620, 620, nil, { 8110 }),
@@ -425,16 +425,16 @@ return function(M, ctx)
   dump("B1")
   f = first()
   check(f and f.step and f.step.map == 1441 and f.kind ~= "hs", "F1: standing on the flats, the flats quests first: " .. stopsText())
-  local tq = addQuest(5160, "Course contre la montre", 29, 1441, { obj("Caisse de pièces : 0/1", 0, 1, "item") })
+  local tq = addQuest(5240, "Course contre la montre", 29, 1441, { obj("Caisse de pièces : 0/1", 0, 1, "item") })
   tq.timer = { 900, 600 }                                -- 5 min left
   M.Advance(4, 0.05); exportNow(); replan(); tick(1)
   dump("B2")
   local st = R:Stops(64)
   local s1, s2 = st[1] and st[1].step, st[2] and st[2].step
-  check(s1 and s1.q == 5160 and s1.k == "obj" and s2 and s2.q == 5160 and s2.k == "turn",
+  check(s1 and s1.q == 5240 and s1.k == "obj" and s2 and s2.q == 5240 and s2.k == "turn",
     "F2: the timed quest first, its objective then its turn-in: " .. stopsText())
   local dropT = false
-  for _, d in ipairs(R.selection and R.selection.drop or {}) do if d.q == 5160 then dropT = true end end
+  for _, d in ipairs(R.selection and R.selection.drop or {}) do if d.q == 5240 then dropT = true end end
   check(not dropT, "F9: a running timer is never proposed « trop loin »")
   check(not sugg("Edge2:questTimer"), "F28: the timer is said once (Quests), not again by Avantages")
   -- F3: manual compass points (minimap pin, « Y aller », /tai way)
@@ -492,9 +492,9 @@ return function(M, ctx)
     M.Advance(4, 0.5)
     check(not (Cm.char.custom and Cm.char.custom.source == "corpse"), "alive: the corpse point is gone")
   end
-  progress(5131, 1, 10); progress(5130, 1, 5); complete(5160)
+  progress(5131, 1, 10); progress(5130, 1, 5); complete(5240)
   M.Advance(4, 0.05); exportNow(); replan(); tick(2)
-  for _, id in ipairs({ 5130, 5131, 5160 }) do turnIn(id, 2800) end
+  for _, id in ipairs({ 5130, 5131, 5240 }) do turnIn(id, 2800) end
   M.player.level = 29
   M.FireEvent("PLAYER_LEVEL_UP", 29)
   M.Advance(6, 0.05); exportNow(); replan(); tick(2)
@@ -569,7 +569,13 @@ return function(M, ctx)
   M.Advance(4, 0.05); exportNow(); replan(); tick(2)
   dump("D1")
   if VARIANT == "full" then
-    check(find("^Détour rentable : rendre « Cœurs tonnants »"), "F21: the Undercity turn-in on the way is proposed (insertion cost)")
+    -- (ZONEFIX) a turn-in just outside the zone ON the way (≤ 45 s of detour) is in the route itself (« hors zone »);
+    -- a bigger detour is only proposed
+    local onWay = false
+    for _, s in ipairs(P.steps or {}) do if s.q == 5111 and s.k == "turn" and s.onWay and not s._other then onWay = true end end
+    check(onWay or find("^Détour rentable : rendre « Cœurs tonnants »"),
+      "F21: the Undercity turn-in on the way: in the route (insertion cost ≤ 45 s) or proposed")
+    check(find("^Arrêt %d+/%d+ : Rendre « Cœurs tonnants » %(hors zone%)") or not onWay, "F21: …said « hors zone » on its stop")
   end
   local n = 0
   for _, q in ipairs(M.quests) do if q.id then n = n + 1 end end

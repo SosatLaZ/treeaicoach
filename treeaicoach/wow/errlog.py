@@ -24,6 +24,7 @@ log = logging.getLogger(__name__)
 
 FILE_NAME = "TreeAI-erreurs.txt"
 MAX_ITEMS = 60
+NAV_MAX = 300
 COMMAND = "/tai erreurs"
 
 _lock = threading.Lock()
@@ -157,6 +158,12 @@ def build_text(db: Any, now: float | None = None) -> str:
             if isinstance(v, (dict, list)):
                 v = ", ".join(_s(x, 60) for x in (_seq(v) or [f"{a}={b}" for a, b in _d(v).items()]))
             out.append(f"  {k} : {_s(v, 200)}")
+        out.append("")
+    nav = [_s(x, 300) for x in _seq(_d(d.get("nav")).get("lines")) if isinstance(x, str)]
+    if nav:
+        # ZONEFIX (4.0.1): the compass / route decisions the addon keeps by itself (ring of the last 300, ≤ 30 KB)
+        out.append(f"== Trajet / boussole ({len(nav)} évènements, les plus récents d'abord) ==")
+        out.extend(reversed(nav[-NAV_MAX:]))
         out.append("")
     lines = [_s(x, 400) for x in _seq(ex.get("lines"))]
     if lines:
