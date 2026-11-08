@@ -521,6 +521,8 @@ function M.Build()
       local p, d
       if C then
         local pts = C.QuestPoints(q, me)
+        -- (4.1 BUGHUNT) ni le jeu ni Questie : le destinataire appris quand le joueur lui a parlé (carnet des PNJ)
+        if (type(pts) ~= "table" or #pts == 0) and q.complete and T.NpcBook then pts = T.NpcBook.Points(q.id, "end") end
         p, d = C.Nearest(pts, me)
       end
       local it = { key = q.id, q = q, p = p and p.mapID and p or nil, dist = d or q.dist, npc = p and p.name }

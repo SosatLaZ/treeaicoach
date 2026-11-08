@@ -274,6 +274,34 @@ function M.Rebuild()
       end
     end
   end
+  -- (4.1 BUGHUNT) sans Questie (ou objet qu'il ne connaît pas) : les monstres qui ont VRAIMENT lâché l'objet d'un
+  -- objectif non fini, appris au butin par Stats (corps fouillés par toi : TreeAIDB.stats.drops / names)
+  local St = T.Stats
+  local A = St and type(St.Account) == "function" and try(St.Account)
+  if type(A) == "table" and type(A.drops) == "table" and type(A.names) == "table" then
+    local want = {}
+    for k, e in pairs(byName) do
+      local item = not e.done and not e.ready and tonumber(A.names[k])
+      if item then want[item] = e end
+    end
+    if next(want) then
+      local n = 0
+      for npc, d in pairs(A.drops) do
+        n = n + 1
+        if n > 3000 then break end
+        if type(npc) == "number" and not mobNpc[npc] and type(d) == "table" and type(d.i) == "table" then
+          for item, r in pairs(d.i) do
+            local e = want[item]
+            if e and type(r) == "table" and (tonumber(r[2]) or 0) > 0 then
+              mobNpc[npc] = { quest = e.quest, qid = e.qid, obj = e.obj, have = e.have, need = e.need, item = item,
+                key = e.key, learned = true }
+              break
+            end
+          end
+        end
+      end
+    end
+  end
   D.byName, D.byID, D.upcoming, D.mobName, D.mobNpc = byName, byID, upcoming, mobName, mobNpc
   D.ver = D.ver + 1
   kindCache = {}

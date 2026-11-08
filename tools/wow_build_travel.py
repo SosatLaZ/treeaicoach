@@ -25,6 +25,11 @@ CONTINENT_MAPS = {1414, 1415, 1945, 947}
 DOCK_ZONE = {1: 1413, 4: 1411, 6: 1445, 8: 1439, 10: 1439, 12: 1420, 14: 1420, 22: 1412, 24: 1439}
 
 
+# (4.1 BUGHUNT) names the frFR client tables leave in English: shown in French (never an English name on screen)
+NAME_FR = {"Thunder Bluff": "Les Pitons-du-Tonnerre", "Darkshire": "Sombre-Comté", "Feathermoon": "Bastion de Pennelune",
+           "Ratchet": "Cabestan"}
+
+
 def _words(s: str) -> set[str]:
     s = str(s).lower().replace("hillsbrad", "hautebrande").replace(",", " ").replace("'", " ")
     return {w for w in s.split() if len(w) > 3}
@@ -74,7 +79,7 @@ def build() -> str:
     ]
     for d, (name, c, x, y) in sorted(TR.DOCKS.items()):
         mid, mx, my = zone_of(maps, c, x, y, name, DOCK_ZONE.get(d, 0))
-        out.append(f"    [{d}] = {{ {q(name)}, {c}, {x}, {y}, {mid}, {mx}, {my} }},")
+        out.append(f"    [{d}] = {{ {q(NAME_FR.get(name, name))}, {c}, {x}, {y}, {mid}, {mx}, {my} }},")
     out.append("  },")
     out.append("  lines = {")
     for kind, fac, period, legs in TR.LINES:
@@ -88,6 +93,7 @@ def build() -> str:
         c, x, y = int(r[1]), float(r[2]), float(r[3])
         mid, mx, my = zone_of(maps, c, x, y, str(r[0]))
         name = str(r[0]).split(",")[0]
+        name = NAME_FR.get(name, name)
         out.append(f"    [{int(nid)}] = {{ {q(name)}, {c}, {x}, {y}, {mid}, {mx}, {my}, {q(r[4] or '')} }},")
     out.append("  },")
     out.append("  flights = {")

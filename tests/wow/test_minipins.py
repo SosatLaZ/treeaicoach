@@ -41,8 +41,9 @@ def test_radar_off_by_default_with_migration():
 
 def test_layer_options():
     src = SRC.read_text(encoding="utf-8")
-    for key in ("target", "rares", "danger", "drops", "squad", "taxi", "services"):
+    for key in ("rares", "danger", "drops", "squad", "taxi", "services"):
         assert f"{key} = true" in src, key
+    assert "target = false" in src   # 4.1: one pointer on screen (the compass), the minimap target pin is opt-in
     assert "path = true" not in src   # 4.0: « chemin sûr » removed with SafePath (a dead option)
 
 

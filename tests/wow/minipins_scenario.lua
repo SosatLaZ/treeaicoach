@@ -8,6 +8,8 @@ return function(M, ctx)
   local check = ctx.check
   check(MP and R and C and MP.db and MP.db.enabled, "MinimapPins + Radar + Compass registered, MinimapPins enabled")
   if not (MP and R and C) then return end
+  check(MP.db.target == false, "(4.1) cible de la boussole sur la minimap : coupée d'office (un seul pointeur)")
+  MP.db.target = true   -- the layer, once the player ticks it
   local pi = math.pi
   local function near(a, b, eps) return a and b and math.abs(a - b) <= (eps or 1e-6) end
   local function pt(px, py, x, y, msg) check(near(px, x, 1e-4) and near(py, y, 1e-4), msg .. (": %s, %s"):format(tostring(px), tostring(py))) end

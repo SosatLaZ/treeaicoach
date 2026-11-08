@@ -37,7 +37,9 @@ for _, l in ipairs(LAYERS) do opts[#opts + 1] = { key = l, type = "toggle", labe
 local MP = T:RegisterModule("MinimapPins", {
   title = "Points sur la minimap",
   description = "Nos repères sur la minimap de Blizzard, seulement ce que Questie ne montre pas.",
-  defaults = { enabled = true, target = true, rares = true, danger = true, drops = true,
+  -- (4.1 BUGHUNT) « target » coupé d'office : UN pointeur à l'écran, la boussole (plus de flèche « 76 m » au bord
+  -- de la minimap qui double la boussole) ; une option à cocher pour la remettre
+  defaults = { enabled = true, target = false, rares = true, danger = true, drops = true,
                squad = true, taxi = true, services = true },
   charDefaults = { drops = {}, services = {} },
   options = opts,
@@ -550,6 +552,7 @@ end
 -- ------------------------------------------------------------------ évènements
 local driver
 function MP:OnEnable()
+  if type(self.db) == "table" and not self.db.v41 then self.db.v41, self.db.target = 1, false end   -- (4.1) une fois
   self.char.drops = self.char.drops or {}
   self.char.services = self.char.services or {}
   local mm = minimap()

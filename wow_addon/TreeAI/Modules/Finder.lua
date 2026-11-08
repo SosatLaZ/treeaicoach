@@ -955,3 +955,187 @@ T:RegisterSlash("cherche", function(rest)
   F:Refresh(true)
   F.Show(true)   -- tout est dans la fenêtre (rien dans le chat)
 end, "chercher autour de moi : /tai cherche [familier|rare|équipement|maître|vol|marchand|trésor|donjon]")
+
+-- ===================================================================== CARNET DES PNJ (4.1 BUGHUNT)
+-- Moins de dépendance à Questie : chaque PNJ (ou objet) de QUÊTE à qui le joueur parle est retenu avec sa place —
+-- donneur (QUEST_DETAIL : GetQuestID), destinataire (QUEST_PROGRESS / QUEST_COMPLETE), PNJ à dialogue — position =
+-- celle du joueur à ce moment (on est à côté), carte = carte du joueur. (Les services : Detect, déjà.)
+-- Compte entier (les PNJ sont les mêmes pour tous les persos) : TreeAIDB.npcBook = { v = 1, n = { [id] = fiche },
+-- qs = { [quête] = id du donneur }, qe = { [quête] = id du destinataire } } ; ≤ 800 fiches (les plus vieilles sortent).
+-- Fiche = { nm = nom, m = carte, x, y (0..1), t = time(), r = rôles (« q » quête, « g » dialogue, « o » objet) }. Lecture : T.NpcBook.Get / ByName / Starter / Finisher /
+-- Points (même forme que les points de la boussole : { mapID, x, y, name, src = "appris" }) / Near(rôle, carte).
+-- Hors combat seulement, valeurs secrètes ignorées, jamais rien d'envoyé.
+do
+  local NB = {}
+  T.NpcBook = NB
+  local CAP = 800
+  local function store()
+    local db = G("TreeAIDB")
+    if type(db) ~= "table" then return nil end
+    local s = db.npcBook
+    if type(s) ~= "table" or s.v ~= 1 then s = { v = 1, n = {}, qs = {}, qe = {} } db.npcBook = s end
+    if type(s.n) ~= "table" then s.n = {} end
+    if type(s.qs) ~= "table" then s.qs = {} end
+    if type(s.qe) ~= "table" then s.qe = {} end
+    return s
+  end
+  NB.Store = store
+  local function fold(s) return (tostring(s or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")) end
+  local function idOf(guid)
+    guid = pub(guid)
+    if type(guid) ~= "string" then return nil end
+    local kind, id = guid:match("^(%a+)%-%d+%-%d+%-%d+%-%d+%-(%d+)")
+    id = tonumber(id)
+    if not id then return nil end
+    if kind == "GameObject" then return -id, true end   -- objets : clé négative (jamais confondus avec un PNJ)
+    if kind == "Creature" or kind == "Vehicle" then return id, false end
+    return nil
+  end
+  NB.IdOf = idOf
+  --- le PNJ à qui on parle : retenu (rôle) ; renvoie sa fiche
+  function NB.Learn(role, qid, finish)
+    if inCombat() then return nil end
+    local s = store()
+    local id, obj = idOf(try(G("UnitGUID"), "npc"))
+    if not (s and id) then return nil end
+    local p = me()
+    local e = s.n[id]
+    if not e then
+      local n = 0
+      local oldK, oldT
+      for k, v in pairs(s.n) do
+        n = n + 1
+        local t = type(v) == "table" and tonumber(v.t) or 0
+        if not oldT or t < oldT then oldK, oldT = k, t end
+      end
+      if n >= CAP and oldK then s.n[oldK] = nil end
+      e = { r = "" }
+      s.n[id] = e
+    end
+    local nm = pub(try(G("UnitName"), "npc"))
+    if type(nm) == "string" and nm ~= "" then e.nm = nm end
+    if p and p.map and p.x then e.m, e.x, e.y = p.map, floor(p.x * 10 + 0.5) / 1000, floor(p.y * 10 + 0.5) / 1000 end
+    e.t = tonumber(try(G("time"))) or e.t
+    local r = obj and "o" or role
+    if r and not tostring(e.r or ""):find(r, 1, true) then e.r = tostring(e.r or "") .. r end
+    qid = tonumber(pub(qid))
+    if qid and qid > 0 then
+      if finish then s.qe[qid] = id else s.qs[qid] = id end
+    end
+    return e
+  end
+  local function rec(id)
+    local s = store()
+    local e = s and id and s.n[id]
+    if type(e) ~= "table" then return nil end
+    return { id = id, name = e.nm, mapID = e.m, x = e.x, y = e.y, t = e.t, roles = e.r or "" }
+  end
+  function NB.Get(id) return rec(tonumber(id)) end
+  function NB.ByName(name)
+    local s = store()
+    local f = fold(name)
+    if not (s and f ~= "") then return nil end
+    for id, e in pairs(s.n) do if type(e) == "table" and fold(e.nm) == f then return rec(id) end end
+    return nil
+  end
+  function NB.Starter(qid) local s = store() return s and rec(s.qs[tonumber(qid) or -1]) end
+  function NB.Finisher(qid) local s = store() return s and rec(s.qe[tonumber(qid) or -1]) end
+  --- points d'une quête appris en jeu : which = "end" (rendre) | "start" (prendre) → { {mapID, x, y, name, src} } ou {}
+  function NB.Points(qid, which)
+    local e = (which == "start") and NB.Starter(qid) or NB.Finisher(qid)
+    if e and e.mapID and e.x then return { { mapID = e.mapID, x = e.x, y = e.y, name = e.name, src = "appris" } } end
+    return {}
+  end
+  --- PNJ d'un rôle (« q », « g », « o ») appris sur une carte (ou partout) : fiches, les plus récents d'abord
+  function NB.Near(role, mapID)
+    local s, out = store(), {}
+    if not s then return out end
+    for id, e in pairs(s.n) do
+      if type(e) == "table" and (not role or tostring(e.r or ""):find(role, 1, true)) and (not mapID or e.m == mapID) then
+        out[#out + 1] = rec(id)
+      end
+    end
+    table.sort(out, function(a, b) return (a.t or 0) > (b.t or 0) end)
+    return out
+  end
+  local qidNow = function() return try(G("GetQuestID")) end
+  local ON = {
+    QUEST_DETAIL = function() NB.Learn("q", qidNow(), false) end,
+    QUEST_PROGRESS = function() NB.Learn("q", qidNow(), true) end,
+    QUEST_COMPLETE = function() NB.Learn("q", qidNow(), true) end,
+    QUEST_GREETING = function() NB.Learn("q") end,
+    GOSSIP_SHOW = function() NB.Learn("g") end,
+  }   -- marchands, maîtres, vols, banque : Detect.Learn les retient déjà (D:Services / D:Nearest) — pas en double
+  NB.On = ON
+  local ev = G("CreateFrame") and G("CreateFrame")("Frame")
+  if ev then
+    for e in pairs(ON) do pcall(ev.RegisterEvent, ev, e) end
+    ev:SetScript("OnEvent", function(_, e) local fn = ON[e] if fn then pcall(fn) end end)
+  end
+end
+
+-- ===================================================================== QUÊTES DU JEU (4.1 BUGHUNT)
+-- Ce que le jeu sait déjà, sans Questie : quêtes à PRENDRE sur une carte (C_QuestLine.GetAvailableQuestLines, les
+-- « ! » de la carte du monde ; RequestQuestLinesForMap une fois par carte, QUESTLINE_UPDATE quand elles arrivent),
+-- quêtes du journal posées sur une carte (C_QuestLog.GetQuestsOnMap) et point d'une quête sur une carte donnée
+-- (GetNextWaypointForMap, sinon GetNextWaypoint). Lecture seule ; x, y en 0..1 (forme des points de la boussole).
+-- Pour QUESTS (« Quelles quêtes prendre ») : T.GameQuests.Available(carte) → { {questID, name, line, mapID, x, y,
+-- src = "jeu"} } ; InLog(carte) ; Point(quête, carte).
+do
+  local GQ = { ver = 0 }
+  T.GameQuests = GQ
+  local asked = {}
+  local function playerMap() local p = me() return p and p.map end
+  local function n01(v) v = tonumber(pub(v)) return v and v >= 0 and v <= 1 and v or nil end
+  function GQ.Available(mapID)
+    local QL = G("C_QuestLine")
+    mapID = tonumber(mapID) or playerMap()
+    if not (type(QL) == "table" and type(QL.GetAvailableQuestLines) == "function" and mapID) then return {}, "absent" end
+    if type(QL.RequestQuestLinesForMap) == "function" and (not asked[mapID] or now() - asked[mapID] > 300) then
+      asked[mapID] = now()
+      try(QL.RequestQuestLinesForMap, mapID)
+    end
+    local out = {}
+    local lines = try(QL.GetAvailableQuestLines, mapID)
+    for _, l in ipairs(type(lines) == "table" and lines or {}) do
+      local q = type(l) == "table" and tonumber(pub(l.questID))
+      if q and not pub(l.isHidden) then
+        out[#out + 1] = { questID = q, name = type(pub(l.questName)) == "string" and l.questName or nil,
+          line = type(pub(l.questLineName)) == "string" and l.questLineName or nil,
+          mapID = tonumber(pub(l.startMapID)) or mapID, x = n01(l.x), y = n01(l.y), src = "jeu" }
+      end
+    end
+    return out
+  end
+  function GQ.InLog(mapID)
+    local QL = G("C_QuestLog")
+    mapID = tonumber(mapID) or playerMap()
+    if not (type(QL) == "table" and type(QL.GetQuestsOnMap) == "function" and mapID) then return {} end
+    local out = {}
+    local list = try(QL.GetQuestsOnMap, mapID)
+    for _, e in ipairs(type(list) == "table" and list or {}) do
+      local q = type(e) == "table" and tonumber(pub(e.questID))
+      if q then out[#out + 1] = { questID = q, mapID = mapID, x = n01(e.x), y = n01(e.y), src = "jeu" } end
+    end
+    return out
+  end
+  function GQ.Point(qid, mapID)
+    local QL = G("C_QuestLog")
+    qid = tonumber(qid)
+    if not (type(QL) == "table" and qid) then return nil end
+    local m, x, y
+    if mapID and type(QL.GetNextWaypointForMap) == "function" then
+      x, y = try(QL.GetNextWaypointForMap, qid, mapID)
+      m = mapID
+    end
+    if not (n01(x) and n01(y)) and type(QL.GetNextWaypoint) == "function" then m, x, y = try(QL.GetNextWaypoint, qid) end
+    m, x, y = tonumber(pub(m)), n01(x), n01(y)
+    if m and x and y and (x > 0 or y > 0) then return { mapID = m, x = x, y = y, src = "jeu" } end
+    return nil
+  end
+  local ev = G("CreateFrame") and G("CreateFrame")("Frame")
+  if ev then
+    pcall(ev.RegisterEvent, ev, "QUESTLINE_UPDATE")
+    ev:SetScript("OnEvent", function() GQ.ver = GQ.ver + 1 end)
+  end
+end
