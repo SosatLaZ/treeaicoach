@@ -32,4 +32,4 @@ def test_guide_option_and_ids():
     for gid in ("Quests:near", "Quests:chain", "Compass:target"):
         assert f'["{gid}"]' in core
     assert "SetGuideMode" in opts and "Guidage" in opts
-    assert "Suivi Forever (recommandé si installé)" in core
+    assert "TreeAI seul (recommandé)" in core
