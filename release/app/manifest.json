@@ -1,25 +1,25 @@
 {
- "version": "4.1.3",
+ "version": "4.1.4",
  "exe": "TreeAICoach-app.exe",
- "sha256": "7941a7ee4bbf7284389ac56e125f3f755dccc4b5a0615993e64cf857f06de04a",
+ "sha256": "b7857e2066256d2327fcb4b588e7fea41d2af8e98f7bef08abc62d8a40957bbe",
  "chunks": [
   {
-   "name": "4.1.3/part-01.zip",
-   "size": 88057303,
-   "sha256": "75c07b3bc58186d8624e39e5f781504828229209e66827991d1022e956b4d2b9",
+   "name": "4.1.4/part-01.zip",
+   "size": 88057302,
+   "sha256": "ecfab9f6e48e62615b881bd85ed1c55bd091c56ab46edf7ca261b766faf80d8a",
    "files": 127
   },
   {
-   "name": "4.1.3/part-02.zip",
-   "size": 14157229,
-   "sha256": "8849d10bf63e34fed5b931057fd0a91008f6a7a2f9b44721bd3878643a9da847",
+   "name": "4.1.4/part-02.zip",
+   "size": 14157401,
+   "sha256": "3782d3033d7ddf826670137efd33732dcd47d445f4d9ad5e9e4682dda90bf259",
    "files": 688
   }
  ],
- "total_size": 102214532,
+ "total_size": 102214703,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "TreeAI 4.1.3 : vrai plus court trajet (exact), chemins appris, boussole par le chemin, qu\u00eates d'achat vers le marchand, carr\u00e9 des joueurs corrig\u00e9."
+ "notes": "TreeAI 4.1.4 : \u00ab Rendre \u00bb finit d'abord la qu\u00eate juste \u00e0 c\u00f4t\u00e9."
 }

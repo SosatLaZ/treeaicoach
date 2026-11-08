@@ -3,6 +3,11 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 4.1.4 · 9 novembre 2026
+
+- **« Rendre mes quêtes »** ne te fait plus partir quand une quête pas finie a son objectif juste là (≤ 250 m) :
+  tu la finis d'abord, puis tu vas rendre.
+
 ## 4.1.3 · 8 novembre 2026
 
 - **Le vrai plus court trajet** : ordre exact jusqu'à 10 arrêts (vérifié contre toutes les combinaisons), pierre de

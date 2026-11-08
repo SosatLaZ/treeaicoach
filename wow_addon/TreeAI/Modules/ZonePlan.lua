@@ -1297,7 +1297,14 @@ function Z:BuildRoute(P, yieldFn)
       if lq then masked["passée"] = masked["passée"] or {}; masked["passée"][#masked["passée"] + 1] = q end
       return
     end
-    if bmode == "turnin" and not (lq and lq.done == 1) then return end
+    if bmode == "turnin" and not (lq and lq.done == 1) then
+      -- (4.1.4) « Rendre » : une quête pas finie dont l'objectif est juste là (≤ 250 m, distance du jeu) se finit d'abord
+      local f = lq and rawget(_G, "C_QuestLog") and _G.C_QuestLog.GetDistanceSqToQuest
+      local ok, d2 = false, nil
+      if f then ok, d2 = pcall(f, q) end
+      d2 = ok and type(d2) == "number" and not (rawget(_G, "issecretvalue") and _G.issecretvalue(d2)) and d2 or nil
+      if not (d2 and d2 <= 250 * 250) then return end
+    end
     if bmode == "pickup" and (lq or not (pickSet and pickSet[q])) then return end
     local ok, why = self:Accept(q, rec, lq, level, group)
     if not ok then
