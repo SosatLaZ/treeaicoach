@@ -1430,10 +1430,13 @@ TreeAI.SAFE_MODULES = TreeAI.SAFE_MODULES or {
   -- (REPLACE 4.0.1) sans autres addons : icônes de quêtes (muettes tant que Questie dessine les siennes), Suivi TreeAI
   -- (remplace le suivi du jeu), page « Mes addons » (rien d'automatique)
   QuestPins = true, Addons = true,   -- (4.0.5) Watch retiré : le suivi du jeu reste le suivi
+  -- (4.1) demandés par le joueur : métiers (montée, session métier) et « Courses en ville » (rien sans un clic)
+  Prof = true, CityRun = true,
 }
 -- (4.0.1) entrés dans le mode sûr après la 4.0 : allumés une fois chez les joueurs en mode sûr (voir _ApplyProfileOnce)
-TreeAI.SAFE_ADDED = { ZonePlan = 1, PathDraw = 1, Highlight = 1 }
-TreeAI.SAFE_V = 3
+-- (4.1) Prof + CityRun : allumés une fois (SAFE_V 4) chez les joueurs en mode sûr, sauf s'ils les ont coupés eux-mêmes
+TreeAI.SAFE_ADDED = { ZonePlan = 1, PathDraw = 1, Highlight = 1, Prof = 4, CityRun = 4 }
+TreeAI.SAFE_V = 4
 -- (4.0.5) sortis du mode sûr : coupés UNE fois chez tout le monde (le Suivi TreeAI cachait le suivi du jeu)
 -- (4.1 LAYOUT) valeur = version qui les coupe : à l'écran il ne reste que les boutons rapides, la boussole et la
 -- pastille (+ ses repères) ; bande d'horizon (2e flèche + texte au centre), radar, barres de combat (« c-1… »),
@@ -1652,9 +1655,11 @@ function TreeAI:_ApplyProfileOnce()
     end
     if self:ModuleProfile() ~= "sur" then return end
     local choice = type(db.modChoice) == "table" and db.modChoice or {}
-    for n in pairs(self.SAFE_ADDED or {}) do
+    for n, v in pairs(self.SAFE_ADDED or {}) do
       local mod = self.modules[n]
-      if mod and mod.db and mod.db.enabled == false and choice[n] ~= false then
+      -- valeur = version qui l'ajoute (1 = 4.0.1 : reproposé à chaque migration, comme avant) ; respecte modChoice
+      v = tonumber(v) or 1
+      if (v <= 1 or fromV < v) and mod and mod.db and mod.db.enabled == false and choice[n] ~= false then
         mod.db.enabled = true
         if self._modulesStarted then moduleEnable(mod) end
       end

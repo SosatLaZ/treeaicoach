@@ -111,13 +111,14 @@ return function(M, ctx)
   check(B.rendre and B.rendre.icon and B.rendre.text and B.rendre.text:GetText() == "Rendre", "icône + mot court")
   check(B.rendre.badge and B.rendre.badge:GetText() == "2" and B.rendre.badge:IsShown(), "pastille de nombre")
   -- fallback: the window page that does the same
-  local pages = { rendre = "quests", prendre = "quests", zone = "route", groupe = "group", journal = "journal" }
+  -- (4.1 LAYOUT) « Trajet » est dans la page Quêtes (anciens ids redirigés : W.Resolve)
+  local pages = { rendre = "quests", prendre = "quests", zone = "quests", groupe = "group", journal = "journal" }
   for id, page in pairs(pages) do
     W.Close()
     M.Advance(0.3, 0.1)
     B[id]:Click("LeftButton")
     M.Advance(0.3, 0.1)
-    check(W.IsOpen() and W.CurrentPage() == page, ("sans QuestBrain : « %s » ouvre la page %s (%s)"):format(id, page,
+    check(W.IsOpen() and W.CurrentPage() == (W.Resolve and W.Resolve(page) or page), ("sans QuestBrain : « %s » ouvre la page %s (%s)"):format(id, page,
       tostring(W.CurrentPage())))
   end
   W.Close()
@@ -277,6 +278,18 @@ return function(M, ctx)
   S.db.text = true
   S:OnOptionChanged("text")
   check(not S.compact and B.rendre.text:IsShown(), "mots revenus")
+
+  -- ------------------------------------------------------------------ (4.1 CITYRUN) « Suivant » en session (T.focus)
+  do
+    local oldF, oldFS, moves = T.focus, T.FocusStep, {}
+    T.focus = { kind = "city", owner = "test", label = "Courses en ville" }
+    T.FocusStep = function(d) moves[#moves + 1] = d return true end
+    B.suivant:Click("LeftButton")
+    B.suivant:Click("RightButton")
+    check(moves[1] == 1 and moves[2] == -1, "session : « Suivant » = étape suivante, clic droit = précédente ("
+      .. tostring(moves[1]) .. ", " .. tostring(moves[2]) .. ")")
+    T.focus, T.FocusStep = oldF, oldFS
+  end
 
   -- ------------------------------------------------------------------ hygiene
   T.QuestBrain = nil

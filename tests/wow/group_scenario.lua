@@ -93,7 +93,17 @@ return function(M, ctx)
   -- inspection discrète (Delta : à portée d'inspection, hors combat, 1 / 10 s)
   M.Advance(36, 1)
   settle(2)
-  check(has("Delta : arme grise · rien en torse"), "inspection : arme grise, emplacement vide :\n" .. text())
+  -- (4.1 INTEG) « Équipement du groupe » (GroupGear) allumé : c'est lui qui le dit (une seule alerte d'équipement) ;
+  -- sans lui, la carte du groupe garde son signal « arme grise · rien en torse »
+  local GGm = T.GroupGear
+  if GGm and GGm._active then
+    check(not has("arme grise") and not has("rien en torse"), "équipement : pas de 2e alerte sur la carte du groupe :\n" .. text())
+    local dl
+    for _, m in ipairs(GGm.Members()) do if m.name == "Delta" then dl = GGm.MemberEntry(m) end end
+    check(dl and dl.text:find("faible", 1, true), "Équipement du groupe : Delta « faible » (" .. tostring(dl and dl.text) .. ")")
+  else
+    check(has("Delta : arme grise · rien en torse"), "inspection : arme grise, emplacement vide :\n" .. text())
+  end
   check(T.Team.GearOf("Player-0-D") and T.Team.GearOf("Player-0-D").links[16], "Team.GearOf (Dungeon) : liens de l'équipement inspecté")
   local n = M.inspects or 0
   M.Advance(30, 1)

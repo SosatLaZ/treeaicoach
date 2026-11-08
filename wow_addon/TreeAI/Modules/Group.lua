@@ -837,7 +837,8 @@ end
 function E.Flags(m)
   local f, prio = {}, 1
   local gear = m.gear
-  if gear and not gear.partial then
+  local GG = T.GroupGear   -- (4.1 INTEG) « Équipement du groupe » allumé : lui seul parle d'équipement (pas 2 alertes)
+  if gear and not gear.partial and not (type(GG) == "table" and GG._active) then
     local w = gear.weapon
     if w and w.quality == 0 then f[#f + 1] = "arme grise"
     elseif w and w.quality == 1 and (tonumber(m.level) or 0) >= 15 then f[#f + 1] = "arme blanche" end

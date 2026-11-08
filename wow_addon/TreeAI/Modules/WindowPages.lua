@@ -195,10 +195,12 @@ function W.RenderRoute(Ly)
         paused and "Clic : reprendre" or "Clic : mettre en pause")
     end
     -- mode, zone de travail, autres zones, détour, suivi (lignes du producteur, sans les arrêts dessinés en dessous)
+    local headSeen = {}   -- (4.1 INTEG) les lignes du producteur reviennent dans PlanLines : une seule fois
     if Zp and Zp.HeadLines and zon then
       local ok, zl = pcall(Zp.HeadLines, Zp)
       for _, l in ipairs(ok and type(zl) == "table" and zl or {}) do
         if l.text then
+          headSeen[l.id or strip(l.text)] = true
           local b = Ly.row({ id = l.id, text = l.text, prio = l.prio, icon = l.icon or W.TAB_ICON.route, tooltip = l.tooltip,
             onClick = l.onClick, onRightClick = l.onRightClick })
           if l.id == "zone:pick" then W.zoneRow = b end   -- (ONBOARD) cible « zone » de la visite guidée
@@ -209,7 +211,7 @@ function W.RenderRoute(Ly)
     for _, l in ipairs(type(plan) == "table" and plan or {}) do
       local t = strip(l.text)
       if l.id ~= "route:head" and l.id ~= "plan:step" and not t:find("^Arrêt %d") and not t:find("^… %d") and not t:find("^Zone")
-          and l.onClick then
+          and l.onClick and not headSeen[l.id or t] then
         Ly.row({ text = l.text, prio = l.prio, tooltip = l.tooltip, onClick = l.onClick, onRightClick = l.onRightClick })
       end
     end
@@ -226,9 +228,18 @@ function W.RenderRoute(Ly)
           Ly.text(fmt("… et %d autres arrêts, affichés au fur et à mesure.", #st - k + 1), "S", "muted")
           break
         end
-        local item = W.StopItem(P, e, k, st, grp, via, k)
+        -- (4.1 INTEG) un arrêt = une ligne (même quête au même endroit, même PNJ) : le titre de l'arrêt entier
+        -- (Route.StopLabel), comme la carte et la boussole — plus deux lignes pour le même lieu
+        local sameStop = grp and k > 1 and e.step and st[k - 1].step and grp[k] == grp[k - 1]
+        if not sameStop then
+          local item = W.StopItem(P, e, k, st, grp, via, k)
+          if e.step and grp and grp[k + 1] == grp[k] and type(R.StopLabel) == "function" then
+            local okL, gl = pcall(R.StopLabel, P, st, k, grp)
+            if okL and type(gl) == "string" then item.title = strip(gl) end
+          end
+          if W.Match(item.title, item.sub) then Ly.step(item, k == 1); shown = shown + 1 end
+        end
         if e.kind and e.kind ~= "quest" then via = true end
-        if W.Match(item.title, item.sub) then Ly.step(item, k == 1); shown = shown + 1 end
       end
       if (tonumber(beyond) or 0) > 0 and W.Query() == "" then
         Ly.text(fmt("… et %d arrêt%s de plus, recalculé%s en route.", beyond, beyond > 1 and "s" or "", beyond > 1 and "s" or ""),
@@ -300,8 +311,12 @@ function W.NextItem()
   local wd = Cm and Cm.Widgets and select(2, pcall(Cm.Widgets))
   local fr = type(wd) == "table" and wd.frame
   if fr and meth(fr, "IsShown") and not (wd.mini) then
-    local lbl = strip(meth(wd.label, "GetText") or "")
-    local dst = strip(meth(wd.dist, "GetText") or "")
+    -- (4.1 INTEG) le texte entier de la cible (la boussole le coupe à 40 lettres faute de place), sa distance telle
+    -- qu'elle est écrite sur la boussole
+    local cur = Cm.Current and select(2, pcall(Cm.Current))
+    local full = type(cur) == "table" and (cur.label or cur.title) or nil
+    local lbl = strip(type(full) == "string" and full or meth(wd.label, "GetText") or "")
+    local dst = strip(meth(wd.dist, "GetText") or ""):gsub("%s+", " ")
     if lbl ~= "" then return { n = 1, title = lbl, sub = dst } end
   end
   local g = W.Guide(1)

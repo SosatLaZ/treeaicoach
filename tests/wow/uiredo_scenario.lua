@@ -127,8 +127,12 @@ return function(M, ctx)
   check(kinds.hero == 1 and (kinds.step or 0) >= 3 and (kinds.quest or 0) >= 1, "Quêtes : trajet + étapes + quêtes du journal")
   local hero1
   for _, r in ipairs(W.lastLay.rects) do if r.kind == "hero" then hero1 = r.label break end end
-  check(W.lastLay.rects[1].label == "Prochaine étape" and tostring(hero1):find("^Trajet"),
-    "Quêtes : « Prochaine étape » en tête, puis le trajet (" .. tostring(W.lastLay.rects[1].label) .. ")")
+  -- (4.1 LAYOUT41) en tête les 4 modes de T.QuestBrain (gros boutons), puis « Prochaine étape », puis le trajet
+  local first, nTiles = 1, 0
+  while W.lastLay.rects[first] and W.lastLay.rects[first].kind == "tile" do first, nTiles = first + 1, nTiles + 1 end
+  check(nTiles == (TreeAI.QuestBrain and 4 or 0), "Quêtes : les 4 modes en tête (" .. nTiles .. ")")
+  check(W.lastLay.rects[first] and W.lastLay.rects[first].label == "Prochaine étape" and tostring(hero1):find("^Trajet"),
+    "Quêtes : « Prochaine étape » sous les modes, puis le trajet (" .. tostring(W.lastLay.rects[first] and W.lastLay.rects[first].label) .. ")")
   check(win.action:IsShown() and win.action.label:GetText() == "Pause", "Quêtes : bouton « Pause » en bas à droite")
   win.action:GetScript("OnClick")(win.action)
   check(R.char.paused == true and win.action.label:GetText() == "Reprendre", "Pause → Reprendre")

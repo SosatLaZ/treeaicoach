@@ -332,6 +332,17 @@ function W.ForgetStops() stopsKeep = {} end
 --- bateau, foyer) avant elle ; k = rang affiché. Titre : « Prendre « Titre entier » », « Ramasse « X » » ; sous-titre :
 --- « objectif 0/4 · « Quête » · 640 m au nord · ≈ 3 min » pour l'arrêt 1, « … · dans ≈ 12 min » ensuite (le temps du
 --- trajet, transports compris : jamais une ligne droite à pied vers un arrêt lointain).
+--- (4.1 INTEG) l'arrêt que vise la boussole : SA ligne de distance (même texte, même arrondi que la boussole), sinon nil
+function W.CompassWhere(step)
+  local Cm = T.Compass
+  if not (step and type(Cm) == "table" and Cm.Current and Cm.Widgets) then return nil end
+  local cur = try(Cm.Current)
+  if not (type(cur) == "table" and cur.plan and cur.step == step) then return nil end
+  local wd = try(Cm.Widgets)
+  if not (type(wd) == "table" and wd.frame and not wd.mini and meth(wd.frame, "IsShown")) then return nil end
+  local d = strip(meth(wd.dist, "GetText") or ""):gsub("%s+", " ")
+  return d ~= "" and d or nil
+end
 function W.StopItem(P, e, i, st, grp, via, k)
   local s = e.step
   local step = { n = (grp and grp[i]) or k, kind = s and s.k or e.kind, q = s and s.q }
@@ -347,7 +358,7 @@ function W.StopItem(P, e, i, st, grp, via, k)
     if via or (k or 1) > 1 then
       local m = minutesTxt(max(0, (tonumber(e.at) or 0) - (tonumber(e.sec) or 0)))
       where = m and ("dans " .. m) or nil
-    else where = whereTxt(st.here, e.place) end
+    else where = W.CompassWhere(s) or whereTxt(st.here, e.place) end
     local parts = {}
     -- (4.0 QA) « nouvelle quête » / « quête finie » : la pastille « ! » / « ? » le dit déjà
     if s.k == "obj" then

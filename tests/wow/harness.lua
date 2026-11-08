@@ -357,8 +357,19 @@ local function storm()
     if R and R.char then R.char.paused = false end
     if Z and Z.char then Z.char.mode, Z.char.zones, Z.char.style, Z.char.ignore, Z.char.extra = "auto", {}, 1, {}, {} end
     if Z and Z.db then Z.db.autoWatch = true end
-    if W and W.db then W.db.card = true end
+    -- (4.1 INTEG) the card is off by default since STRIP: scenarios that read it turn it on as the player would
+    -- (Réglages → Affichage → card toggle = W:OnOptionChanged), so it is really built and shown
+    if W and W.db then W.db.card = true if W._active and W.OnOptionChanged then pcall(W.OnOptionChanged, W, "card") end end
     if C and C.db then C.db.shown = true end
+    -- (4.1 INTEG) the strip's « Suivant » (stop 1 passed for the session) and mode buttons (Rendre / À prendre /
+    -- Zone / Groupe) were clicked too: scenarios start with no stop passed and the default quest mode
+    local QB = T.QuestBrain
+    if type(QB) == "table" then
+      if QB.Unskip then pcall(QB.Unskip) end
+      if QB.char then QB.char.mode, QB.char.modeBy = nil, nil end
+      if Z and Z.Bump then pcall(Z.Bump, Z, "harness reset") end
+      M.Advance(3, 0.5)   -- the route of the default mode is rebuilt (≈ 1.5 s) and pushed before the scenario starts
+    end
     -- (PROFLEVEL) a « Session métier » started by a click of the storm ends here (route resumed, compass released)
     local PLv = mods.Prof and mods.Prof.Level
     if PLv and PLv.FocusOn and PLv.FocusOn() and PLv.StopFocus then PLv.StopFocus("silent") end

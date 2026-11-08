@@ -66,11 +66,11 @@ local DEFS = {
     match = { "pickup", "pick", "prendre", "take", "accept", "available" }, page = "quests",
     title = "Quêtes à prendre",
     tip = "Les meilleures quêtes à prendre près de toi : XP par minute trajet compris, suites, groupe, niveau." },
-  { id = "suivant", label = "Suivant", icon = ICON .. "Ability_Rogue_Sprint", bind = "TREEAI_STRIP_SUIVANT", page = "route",
+  { id = "suivant", label = "Suivant", icon = ICON .. "Ability_Rogue_Sprint", bind = "TREEAI_STRIP_SUIVANT", page = "quests",
     title = "Étape suivante",
     tip = "Passe à l'étape suivante (celle-ci est faite, ou tu veux la sauter)." },
   { id = "zone", label = "Zone", icon = ICON .. "INV_Misc_Map_01", bind = "TREEAI_QB_ZONE",
-    match = { "zone", "here", "ici", "all", "tout" }, page = "route",
+    match = { "zone", "here", "ici", "all", "tout" }, page = "quests",
     title = "Tout faire dans la zone",
     tip = "Toutes les quêtes utiles de la zone où tu es, dans le meilleur ordre." },
   { id = "groupe", label = "Groupe", icon = ICON .. "Spell_Holy_PrayerOfHealing", bind = "TREEAI_QB_GROUP",
@@ -83,7 +83,7 @@ local DEFS = {
     tip = "Les quêtes à abandonner (grises, trop loin, impossibles seul), en un coup d'œil." },
   { id = "fenetre", label = "TreeAI", icon = ICON .. "INV_Misc_Book_09", bind = "TREEAI_MAIN",
     title = "Fenêtre TreeAI",
-    tip = "Ouvre ou ferme la fenêtre TreeAI (Maintenant, Quêtes, Trajet, Groupe, Options)." },
+    tip = "Ouvre ou ferme la fenêtre TreeAI (Quêtes, Groupe, Donjons, Personnage, HV, Conseils pro, Réglages)." },
 }
 S.DEFS = DEFS
 local DEF = {}
@@ -270,7 +270,7 @@ local function skip()
     if #C.targets == 0 and type(C.Rebuild) == "function" then try(C.Rebuild) end
     if #C.targets > 1 then try(C.Cycle, 1) return "compass" end
   end
-  openPage("route")
+  openPage("quests")
   return "page"
 end
 --- mode de quêtes suivant (touche « mode suivant »)
@@ -298,6 +298,12 @@ function S.Do(id, button)
     return "window"
   end
   if id == "suivant" then
+    -- (4.1 CITYRUN) session métier / courses en ville (T.focus) : étape suivante de la session, clic droit = précédente
+    if type(T.focus) == "table" and type(T.FocusStep) == "function" then
+      pcall(T.FocusStep, button == "RightButton" and -1 or 1)
+      S.Refresh(true)
+      return "focus"
+    end
     if button == "RightButton" then openPage(d.page) return "page" end
     local how = skip()
     S.Refresh(true)
@@ -360,10 +366,15 @@ local function showTip(b)
     local s = type(nx) == "table" and (nx.line or nx.title)
     if type(s) == "string" and not secret(s) then meth(tt, "AddLine", "Maintenant : " .. s, 0.8, 0.8, 0.8, true) end
   end
+  local inFocus = b.id == "suivant" and type(T.focus) == "table" and type(T.FocusStep) == "function"
+  if inFocus then
+    meth(tt, "AddLine", (type(T.focus.label) == "string" and T.focus.label or "Session") .. " : clic = étape suivante, clic droit = précédente",
+      0.4, 1, 0.4, true)
+  end
   if st.active then meth(tt, "AddLine", "Mode choisi.", 0.4, 1, 0.4) end
   meth(tt, "AddLine", st.key and ("Touche : " .. st.key)
     or "Touche : aucune (options des boutons rapides : « Raccourcis conseillés »)", 0.4, 0.8, 1, true)
-  if d.page and b.id ~= "fenetre" then meth(tt, "AddLine", "Clic droit : la page de la fenêtre", 0.4, 0.8, 1) end
+  if d.page and b.id ~= "fenetre" and not inFocus then meth(tt, "AddLine", "Clic droit : la page de la fenêtre", 0.4, 0.8, 1) end
   meth(tt, "Show")
 end
 

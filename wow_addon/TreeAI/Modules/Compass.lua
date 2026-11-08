@@ -48,6 +48,19 @@ local function try(fn, ...)
 end
 local function now() return try(_G.GetTime) or 0 end
 local cut = T.Cut   -- (4.0) Core : n caractères UTF-8 (« … » compris), jamais une lettre accentuée coupée
+--- (4.1 INTEG) le texte de la cible dans la boîte (40 lettres) : un arrêt à plusieurs quêtes trop long garde la 1re
+--- entière et le nombre des autres (« Rendre « A » (+2) »), pas « Rendre « A » + Ren… » ; la fenêtre dit tout
+function M.ShortLabel(s)
+  s = tostring(s or "")
+  local _, n = s:gsub("[^\128-\191]", "")
+  if n <= 40 then return s end
+  local head, rest = s:match("^(.-) %+ (.+)$")
+  if head then
+    local _, more = rest:gsub(" %+ ", "")
+    return cut(head .. " (+" .. (more + 1) .. ")", 40)
+  end
+  return cut(s, 40)
+end
 local function low(s) return tostring(s or ""):lower() end
 local function quests() return T.GetModule and T:GetModule("Quests") or nil end
 
@@ -1375,7 +1388,7 @@ local function refresh()
   if not frame:IsShown() then frame:Show() end
   setTextOff(fight)
   local t = st.target
-  local lt = cut(t.label or t.title or "Cible", 40)
+  local lt = M.ShortLabel(t.label or t.title or "Cible")
   if lt ~= lastLabel then lastLabel = lt; label:SetText(lt) end
   if st.arrived then
     arrow:Hide() shadow:Hide()

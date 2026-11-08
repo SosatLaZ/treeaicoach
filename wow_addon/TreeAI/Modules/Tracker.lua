@@ -1268,6 +1268,8 @@ function M:OnEnable()
   end
   self:On("SUMMARY", function() pcall(M.WriteSummary) end)
   self:On("QUESTS_UPDATED", function(_, _, list) onQuests(type(list) == "table" and list or nil) end)
+  -- (4.1 INTEG) trajet refait (mode de quêtes, « Suivant ») : « À faire maintenant » de Todo ne double plus l'arrêt 1
+  self:On("PLAN_BUILT", function() pushSoon() end)
   self:RegisterEvent("PLAYER_REGEN_ENABLED", function() if M.dirty then M.Refresh(1.5) end end)
   hookTips()
   -- le cœur appelle :AutoRefresh() (StartAutoRefresh) ; sinon notre propre minuterie
