@@ -37,7 +37,7 @@ local M = T:RegisterModule("Auction", {
   charDefaults = { ledger = {}, seen = {}, spent = {}, deposits = {}, flips = {} },
   options = {
     { key = "window", type = "toggle", label = "Fenêtre d'aide à l'ouverture de l'HV" },
-    { key = "tips", type = "toggle", label = "Annoncer les affaires dans le panneau" },
+    { key = "tips", type = "toggle", label = "Annoncer les affaires dans « Maintenant »" },
     { key = "minMargin", type = "range", label = "Marge minimale sous le marché (%)", min = 5, max = 60, step = 5 },
     { key = "minProfit", type = "range", label = "Profit minimal par achat (pa)", min = 0, max = 1000, step = 10 },
     { key = "budget", type = "range", label = "Budget d'achat par jour (po, 0 = illimité)", min = 0, max = 5000, step = 10 },
@@ -987,6 +987,11 @@ local function held(id)
 end
 
 -- seulement les achats-reventes SÛRS (preuves de ventes) + les reventes au marchand (sans risque)
+--- (4.0 QA) « 1 achat-revente sûr » / « 3 achats-reventes sûrs » (pas « achat(s)-revente(s) sûr(s) »)
+function M.DealsCount(n)
+  n = tonumber(n) or 0
+  return n == 1 and "1 achat-revente sûr" or (n .. " achats-reventes sûrs")
+end
 function M.FindDeals(items, j)
   local neutral, hrs = M.IsNeutral(), hours()
   local minMargin, minProfit = n0(cfg("minMargin", 20)) / 100, n0(cfg("minProfit", 20)) * 100
@@ -1040,7 +1045,7 @@ function M.FindDeals(items, j)
   if d and cfg("tips", true) and M.Suggest then
     local fresh = d.id ~= M._dealSound   -- son « bonne affaire » seulement pour une nouvelle meilleure affaire sûre
     M._dealSound = d.id
-    M:Suggest("deals", ("HV : %d achat(s)-revente(s) sûr(s), meilleur %s +%s net"):format(#M.deals, itemName(d.id), money(d.profit)), 2,
+    M:Suggest("deals", ("HV : %s, meilleur %s +%s net"):format(M.DealsCount(#M.deals), itemName(d.id), money(d.profit)), 2,
       { ttl = 300, sound = fresh or nil, soundKind = "ah" })
   elseif not d and M.Clear then
     M._dealSound = nil
@@ -2141,7 +2146,7 @@ function M.Report(what)
     age and ("il y a " .. age .. " min") or "jamais", money(g.budget), money(g.reserve)))
   if #M.deals == 0 then
     P(F.NONE_TEXT .. ".")
-    for _, w in ipairs((M.none and M.none.why) or { "Ouvre l'HV et fais un scan complet (plusieurs scans espacés sur 3 jours)." }) do P("  " .. w) end
+    for _, w in ipairs((M.none and M.none.why) or { "Fais un scan complet à l'HV (plusieurs scans espacés sur 3 jours)." }) do P("  " .. w) end
   end
   for i = 1, min(6, #M.deals) do P(i .. ". " .. M.DealText(M.deals[i])) end
   local nb = 0
@@ -2451,7 +2456,8 @@ function M.TabLines()
   local g = M.Gold()
   local open = function() M.ShowWindow() end
   local tip = "Clic : fenêtre de l'HV (achats, mises en vente et annulations : un clic par action)."
-  local lines = { { text = ("Budget HV %s · %d achat(s)-revente(s) sûr(s) · plan +%s"):format(money(g.budget), #M.deals, money(M.planGain)),
+  local lines = { { text = ("Budget HV %s · %s%s"):format(money(g.budget), M.DealsCount(#M.deals),
+      (tonumber(M.planGain) or 0) > 0 and (" · plan +" .. money(M.planGain)) or ""),
     prio = 2, onClick = open, tooltip = tip } }
   for i = 1, min(5, #M.deals) do
     local d = M.deals[i]
@@ -2463,7 +2469,7 @@ function M.TabLines()
   end
   if #M.deals == 0 then
     lines[#lines + 1] = { text = F.NONE_TEXT .. ".", prio = 1, onClick = open, tooltip = tip }
-    for _, w in ipairs((M.none and M.none.why) or { "Ouvre l'HV et fais un scan complet (plusieurs scans espacés sur 3 jours)." }) do
+    for _, w in ipairs((M.none and M.none.why) or { "Fais un scan complet à l'HV (plusieurs scans espacés sur 3 jours)." }) do
       lines[#lines + 1] = { text = w, prio = 1 }
     end
   end

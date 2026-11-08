@@ -26,7 +26,7 @@ local F = T:RegisterModule("Finder", {
     { key = "now", type = "toggle", label = "Une ligne dans « Maintenant » quand un truc qui change tout est tout près", section = "Chercher" },
     { key = "nearMin", type = "range", label = "« Tout près » = à moins de (minutes de trajet)", min = 1, max = 15, step = 1, section = "Chercher" },
     { key = "learn", type = "toggle", label = "Retenir les bêtes que je cible (position, famille, niveau)", section = "Chercher" },
-    { key = "open", type = "button", label = "Ouvrir « Chercher un truc qui change tout »", section = "Chercher",
+    { key = "open", type = "button", label = "Ouvrir « Chercher autour de moi »", section = "Chercher",
       onClick = function() local M = T.Finder if M and M.Show then M.Show(true) end end },
   },
 })
@@ -148,8 +148,8 @@ function F.PetValue(D, b, ctx)
   if ab and rank and rank > 0 then
     local have = (ctx.known or {})[ab] or 0
     local w = (F.ABILITY_W[ab] or 2) + ((ab == "Hurlement furieux" and (ctx.group or 1) >= 3) and 3 or 0)
-    if rank > have then add((rank - have) * w, fmt("%s rang %d%s (ton familier : %s)", ab, rank, probable and " probable" or "",
-      have > 0 and ("rang " .. have) or "aucun")) end
+    if rank > have then add((rank - have) * w, fmt("%s rang %d%s (%s)", ab, rank, probable and " probable" or "",
+      have > 0 and ("ton familier : rang " .. have) or "ton familier ne l'a pas")) end
   end
   -- famille comparée à ton familier actuel (modificateurs de l'époque)
   local cur = fams[ctx.petFam or -1]
@@ -774,9 +774,9 @@ function F:Publish(list)
   if #lines == 0 then
     lines[1] = { text = "Rien qui change tout ici pour l'instant.", prio = 1, tooltip = "Clique sur « Chercher » pour tout voir (familier, rares, maîtres, vols, trésors, donjons)." }
   end
-  lines[#lines + 1] = { text = "Chercher", control = true, label = "Chercher", onClick = function() F.Show(true) end, tooltip = "Ouvrir « Chercher un truc qui change tout »" }
+  lines[#lines + 1] = { text = "Chercher", control = true, label = "Chercher", onClick = function() F.Show(true) end, tooltip = "Ouvrir « Chercher autour de moi »" }
   lines[#lines + 1] = { text = "Actualiser", control = true, label = "Actualiser", onClick = function() F:Refresh(true) end, tooltip = "Recalculer maintenant" }
-  if T.SetTabLines then pcall(T.SetTabLines, T, TAB, lines, "Finder") end
+  if F._active and T.SetTabLines then pcall(T.SetTabLines, T, TAB, lines, "Finder") end   -- (4.0 QA) coupé : rien
 end
 local lastRun = -1000
 --- retour d'un clic : une ligne brève dans le panneau (jamais la discussion)
@@ -842,7 +842,7 @@ function F.CreateFrame()
   end
   f.title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   f.title:SetPoint("TOPLEFT", f, "TOPLEFT", 10, -8)
-  f.title:SetText("Chercher un truc qui change tout")
+  f.title:SetText("Chercher autour de moi")
   f.close = btn(f, "×", 20, 18, function() F.Show(false) end, { "Fermer" })
   f.close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -6, -6)
   local eb = _G.CreateFrame("EditBox", "TreeAIFinderSearch", f, "InputBoxTemplate")
@@ -950,4 +950,4 @@ T:RegisterSlash("cherche", function(rest)
   F.lastQuery = tostring(rest or "")
   F:Refresh(true)
   F.Show(true)   -- tout est dans la fenêtre (rien dans le chat)
-end, "chercher un truc qui change tout : /tai cherche [familier|rare|équipement|maître|vol|marchand|trésor|donjon]")
+end, "chercher autour de moi : /tai cherche [familier|rare|équipement|maître|vol|marchand|trésor|donjon]")

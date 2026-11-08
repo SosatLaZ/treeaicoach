@@ -180,8 +180,12 @@ return function(M, ctx)
   T:SelectTab("hv")
   check(TreeAIDB.chars[T:CharKey()].movers.panel, "panneau déplacé")
   check(T:ResetInterface(), "réinitialiser l'interface")
-  check(not TreeAIDB.chars[T:CharKey()].movers.panel and T:GetActiveTab() == "now" and panel:IsShown(),
-    "réinitialisé : place auto, onglet « Maintenant », panneau affiché")
+  -- (4.0 QA) la carte « Prochaine étape » reste l'affichage : elle revient (place auto), le panneau texte reste caché
+  local Wn = T.Window
+  local cardHUD = Wn and Wn.CardIsHUD and Wn.CardIsHUD()
+  check(not TreeAIDB.chars[T:CharKey()].movers.panel and T:GetActiveTab() == "now"
+      and (cardHUD and (Wn.GetCard() and Wn.GetCard():IsShown() and not panel:IsShown()) or (not cardHUD and panel:IsShown())),
+    "réinitialisé : place auto, onglet « Maintenant », carte affichée (ou panneau sans carte)")
   check(T._lastLayout and T._lastLayout.panel, "réinitialisé : placement auto refait")
 
   -- 7. course auto (binding du jeu, jamais ToggleAutoRun) : la touche du joueur est lue et respectée

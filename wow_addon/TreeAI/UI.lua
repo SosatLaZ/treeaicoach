@@ -311,10 +311,12 @@ end
 local function showTooltip(owner, title, lines)
   local tt = _G.GameTooltip
   if not tt then return end
+  -- (4.0 QA) « → », « ✓ »… absents des polices du jeu : la même table que les lignes (SafeText)
+  local function sf(x) local ok, r = pcall(TreeAI.SafeText, x) return (ok and r) or x end   -- (valeur secrète : telle quelle)
   tt:SetOwner(owner, "ANCHOR_LEFT")
-  tt:AddLine(title, 1, 1, 1, true)
+  tt:AddLine(sf(title or ""), 1, 1, 1, true)
   for _, l in ipairs(lines or {}) do
-    if l == " " then tt:AddLine(" ") else tt:AddLine(l[1], l[2] or 0.8, l[3] or 0.8, l[4] or 0.8, true) end
+    if l == " " then tt:AddLine(" ") else tt:AddLine(sf(l[1] or ""), l[2] or 0.8, l[3] or 0.8, l[4] or 0.8, true) end
   end
   tt:Show()
 end
@@ -454,8 +456,16 @@ local function toggleCompass()
   TreeAI:HandleSlash("boussole")
 end
 
+--- (4.0 QA) un clic refusé (combat…) : le message rouge du jeu au centre de l'écran, jamais une ligne dans le chat
+function TreeAI:CombatRefused(msg)
+  msg = msg or L["Impossible en combat."]
+  local ef = _G.UIErrorsFrame
+  if ef and ef.AddMessage and pcall(ef.AddMessage, ef, msg, 1, 0.3, 0.2) then return end
+  self:Print(msg)
+end
+
 local function toggleMacros()
-  if TreeAI:InCombat() then TreeAI:Print(L["Impossible en combat."]); return end
+  if TreeAI:InCombat() then TreeAI:CombatRefused(); return end
   local M = TreeAI.GetModule and TreeAI:GetModule("Macros")
   if M and type(M.TogglePanel) == "function" then TreeAI.safecall(M.TogglePanel, M) end
 end
@@ -1608,7 +1618,7 @@ local function makeAlert()
   if alert or not _G.CreateFrame then return alert end
   local template = _G.BackdropTemplateMixin and "BackdropTemplate" or nil
   alert = _G.CreateFrame("Button", "TreeAIAlert", _G.UIParent, template)
-  alert:SetSize(230, 22)
+  alert:SetSize(300, 22)   -- (4.0 QA) 230 px coupait « Fais de la place : sacs pleins, le butin est p… »
   alert:SetFrameStrata("HIGH")
   alert:SetClampedToScreen(true)
   alert:RegisterForClicks("LeftButtonUp", "RightButtonUp")
@@ -2148,7 +2158,7 @@ function TreeAI:AutoLayout(force)
   -- 2. encadré d'alerte : juste sous la minimap (sinon la place libre la plus proche)
   local al = S.alert
   if al and not keep("alert") then
-    local aw, ah = 230 * (al.scale or 1), 40 * (al.scale or 1)
+    local aw, ah = 300 * (al.scale or 1), 40 * (al.scale or 1)
     local tx, ty = W - 140, H - 230
     if mm then tx, ty = mm.l + mm.w / 2, mm.b - ah / 2 - 8 end
     local l, b = bestSpot(g, aw, ah, tx, ty)
@@ -2613,12 +2623,19 @@ local function buildEditBar()
   end
   local t = editBar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   t:SetPoint("LEFT", editBar, "LEFT", 8, 0)
-  t:SetText("|cff33cc66TreeAI|r " .. L["édition"])
+  t:SetText("|cffffd133" .. L["Mode édition"] .. "|r TreeAI")
   editBar.lock = barButton(editBar, "", 112, function() TreeAI:SetFramesLocked(not TreeAI:FramesLocked()) end)
   editBar.auto = barButton(editBar, L["Tout remettre auto"], 112 + 122, function() TreeAI:ResetMovable(nil) end)
-  editBar.help = barButton(editBar, L["Comment ?"], 112 + 244, function()
-    TreeAI:Print(L["Glisse un cadre (aimant : grille 10 px, bords, autres cadres), molette = taille, clic droit = place auto."])
-  end)
+  -- (4.0 QA) « Comment ? » : une infobulle (survol ou clic), jamais une ligne dans le chat
+  local function helpTip(b)
+    showTooltip(b, L["Comment ?"], {
+      { L["Glisse un cadre (aimant : grille 10 px, bords, autres cadres), molette = taille, clic droit = place auto."], 0.85, 0.85, 0.85 } })
+  end
+  editBar.help = barButton(editBar, L["Comment ?"], 112 + 244, function() if editBar.help then helpTip(editBar.help) end end)
+  if editBar.help then
+    editBar.help:SetScript("OnEnter", helpTip)
+    editBar.help:SetScript("OnLeave", hideTooltip)
+  end
   editBar.done = barButton(editBar, L["Fini"], 112 + 366, function() TreeAI:SetEditMode(false) end)
   -- Échap = « Fini » (UISpecialFrames cache la barre -> on quitte le mode édition)
   if TreeAI.Theme and TreeAI.Theme.Window then
@@ -2633,12 +2650,13 @@ end
 
 --- Mode édition : calque coloré + nom sur chaque cadre TreeAI ; glisser, molette, clic droit.
 function TreeAI:SetEditMode(on)
-  if on and self:InCombat() then self:Print(L["Impossible en combat."]); return false end
+  if on and self:InCombat() then self:CombatRefused(); return false end
   editing = on and true or false
   if editing then
     if self._RegisterCoreMovables then self._RegisterCoreMovables() end
     if not panel then self:CreatePanel() end
-    if panel and not panel:IsShown() then self:ShowPanel() end
+    -- (4.0 QA) la carte « Prochaine étape » est l'affichage : le panneau texte seulement s'il est déjà ouvert
+    if panel and not panel:IsShown() and not (self.CardIsHUD and self.CardIsHUD()) then self:ShowPanel() end
     if self.ShowAlert then self:ShowAlert({ text = L["Encadré d'alerte (exemple)"], prio = 3 }, true) end
     if alert then alert.hold = true end
     for _, id in ipairs(moverOrder) do
@@ -2670,7 +2688,7 @@ TreeAI:RegisterSlash("editer", function() TreeAI:SetEditMode(not editing) end)
 -- cadres de base : panneau, encadré d'alerte ; boussole et suivi dès qu'ils existent
 local function registerCore()
   if panel and not movables.panel then
-    TreeAI:RegisterMovable(panel, "panel", "Panneau TreeAI", {
+    TreeAI:RegisterMovable(panel, "panel", "Panneau texte (ancien)", {
       onMoved = function(point, x, y, sc)
         local c, s = char(), acc()
         if c then c.point, c.x, c.y, c.manual = point, x, y, true end
@@ -2717,7 +2735,7 @@ end
 function TreeAI:ResetInterface()
   if self:InCombat() then
     self:RunOutOfCombat("resetui", function() self:ResetInterface() end)
-    self:Print(L["Réinitialisation après le combat."])
+    self:CombatRefused(L["Réinitialisation après le combat."])
     return false
   end
   local db = moverDB()
@@ -2744,10 +2762,12 @@ function TreeAI:ResetInterface()
   if mods.Compass and mods.Compass.db then mods.Compass.db.scale = 1 end
   if mods.Radar and mods.Radar.db then mods.Radar.db.size, mods.Radar.db.compact = 170, false end
   if editing then self:SetEditMode(false) end
-  self:ShowPanel()
+  -- (4.0 QA) la carte « Prochaine étape » reste l'affichage (à la place automatique du panneau) ; le panneau texte
+  -- seulement sans carte. Le retour des cadres à leur place est la réponse au clic : rien dans le chat.
+  local Wn = self.Window
+  if not (Wn and Wn.ShowHUD and Wn.ShowHUD(true)) then self:ShowPanel() end
   self:AutoLayout(true)
   st.v = LAYOUT_V
-  self:Print(L["Interface TreeAI réinitialisée : chaque cadre est à sa place automatique."])
   return true
 end
 

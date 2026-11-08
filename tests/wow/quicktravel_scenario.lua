@@ -212,7 +212,9 @@ return function(M, ctx)
   })
   local w = Q:ShowReady(true)
   check(w and w:IsShown(), "fenêtre « Tout le monde prêt ? » ouverte")
-  check(w and w.sum and tostring(w.sum:GetText()):find("attendre", 1, true), "résumé : qui attendre : " .. tostring(w and w.sum and w.sum:GetText()))
+  -- (4.0 QA) le résumé tient dans la fenêtre : « n/m prêts : voir ci-dessous » (le détail est sur chaque ligne)
+  check(w and w.sum and tostring(w.sum:GetText()):find("prêts : voir ci-dessous", 1, true) and w.sum:GetWidth() <= 340,
+    "résumé court, dans la fenêtre : " .. tostring(w and w.sum and w.sum:GetText()))
   if w then
     check(w.bReady:IsShown() and w.bConvert:IsShown() and w.bLoot:IsShown(), "chef : appel, convertir, butin visibles")
     check(not w.bInvite:IsShown(), "tous les amis déjà là : pas d'« Inviter »")

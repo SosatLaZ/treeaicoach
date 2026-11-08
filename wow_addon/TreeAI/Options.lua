@@ -54,7 +54,7 @@ local function wrapFS(parent, font, width, text)
   fs:SetWidth(width)
   if fs.SetWordWrap then fs:SetWordWrap(true) end
   if fs.SetNonSpaceWrap then fs:SetNonSpaceWrap(true) end
-  fs:SetText(text)
+  fs:SetText(TreeAI.SafeText and TreeAI.SafeText(tostring(text or "")) or text)   -- (4.0 QA) « → » « ✓ » : carrés vides
   return fs
 end
 local function tooltip(owner, title, tip)
@@ -267,8 +267,10 @@ local function buildMain(content, width)
     __newindex = function(_, k, v) if TreeAI.settings then TreeAI.settings[k] = v end end,
   })
   local P = layout(content, width)
-  P.text("TreeAI Coach  |cff999999v" .. tostring(TreeAI.version) .. "|r", "GameFontNormalLarge")
-  P.text(L["Conseils uniquement: l'addon n'agit jamais à ta place."])
+  local Wn = TreeAI.Window
+  local ver = (Wn and Wn.Version and Wn.Version()) or tostring(TreeAI.version)   -- (4.0 QA) la version du TOC
+  P.text("TreeAI Coach  |cff999999v" .. ver .. "|r", "GameFontNormalLarge")
+  P.text(L["TreeAI conseille ; il n'agit à ta place que pour les automatismes que tu coches (quêtes, marchand)."])
   P.text("|cff999999" .. L["Chaque module a sa page (liste à gauche)."] .. "|r")
 
   P.header(L["Démarrer"])
@@ -283,7 +285,7 @@ local function buildMain(content, width)
     TreeAI:ApplyPreset(nxt)
     refreshAll()
   end, presetText)
-  P.text("|cff999999" .. L["Calme : 3 lignes, l'utile seulement · Normal : 5 lignes · Tout : 8 lignes, même les petits conseils."] .. "|r")
+  P.text("|cff999999" .. L["Simple : 3 conseils utiles · Mode calme : 3, alertes rares · Normal : 5 · Tout : 8, même les petits."] .. "|r")
   -- (COHERE) qui guide les quêtes à l'écran : Suivi Forever / Questie (s'ils sont là) ou TreeAI — jamais deux
   P.button("", nil, function()
     TreeAI:SetGuideMode(TreeAI:GuideMode() == "treeai" and "auto" or "treeai")
@@ -305,7 +307,7 @@ local function buildMain(content, width)
   }, 2)
   if TreeAI.Tour and TreeAI.Tour.OptionsButton then TreeAI.Tour.OptionsButton(P) end   -- (ONBOARD) « Visite guidée »
 
-  P.header(L["Panneau"])
+  P.header(L["Panneau texte (ancien)"])
   P.check(L["Afficher le panneau"], function() return S.panel.shown end,
     function(v) if v then TreeAI:ShowPanel() else TreeAI:HidePanel() end end)
   P.check(L["Mode mini (une seule ligne) pour ce personnage"], function() return TreeAI.IsMini and TreeAI:IsMini() end,
@@ -365,8 +367,11 @@ local function buildMain(content, width)
     { L["Déplacer les cadres"], function() if TreeAI.SetEditMode then TreeAI:SetEditMode(true) end end },
     { L["Placer automatiquement"], function() if TreeAI.AutoLayout then TreeAI:AutoLayout(true) end end },
     -- (LITE) performances : coût par module, profil essentiel / tout, liste des modules (Plus → Modules)
-    { L["Coût des modules (/tai perf)"], function() if TreeAI.PrintPerf then TreeAI:PrintPerf() end end },
-    { L["Modules : un par ligne"], function() if TreeAI.SelectTab then TreeAI:SelectTab("modules") end end },
+    { L["Coût des fonctions"], function()
+      local Wn = TreeAI.Window   -- (4.0 QA) dans la page « Fonctions » de la fenêtre, jamais dans le chat
+      if not (Wn and Wn.ShowPerf and Wn.ShowPerf()) and TreeAI.PrintPerf then TreeAI:PrintPerf() end
+    end },
+    { L["Fonctions (allumer / couper)"], function() if TreeAI.SelectTab then TreeAI:SelectTab("modules") end end },
   }, 2)
   P.button(L["Réinitialiser l'interface"], nil, function()
     if TreeAI.ResetInterface then TreeAI:ResetInterface() end
@@ -434,7 +439,7 @@ local function buildAppearance(content, width)
     function() local s = S() return s and s.snapFree ~= false end,
     function(v) local s = S(); if s then s.snapFree = v and true or false end end)
 
-  P.header(L["Panneau"])
+  P.header(L["Panneau texte (ancien)"])
   P.check(L["Afficher le panneau"], function() return panelGet("shown") end,
     function(v) if v then TreeAI:ShowPanel() else TreeAI:HidePanel() end end)
   P.slider(L["Échelle"], 0.6, 1.6, 0.05, function() return panelGet("scale") end, function(v) panelSet("scale", v) end)
@@ -555,10 +560,24 @@ local function buildModule(content, name, mod, width)
     TreeAI:RequestRefresh()
   end
   if type(mod.options) == "table" and #mod.options > 0 then
-    if not mod.options[1].section then P.header(L["Réglages"]) end
+    -- (4.0 QA) un titre par section, pas un par case : beaucoup de modules répètent `section` sur chaque option,
+    -- d'autres reviennent à une section plus haut. Une option sans `section` suit la précédente ; les sections
+    -- gardent l'ordre de leur première apparition, les options leur ordre dans la section.
+    local secOrder, bySec, cur = {}, {}, false
     for _, o in ipairs(mod.options) do
+      if o.section then cur = o.section end
+      if not bySec[cur] then bySec[cur] = {}; secOrder[#secOrder + 1] = cur end
+      local b = bySec[cur]
+      b[#b + 1] = o
+    end
+    local ordered = {}
+    for _, sec in ipairs(secOrder) do
+      for i, o in ipairs(bySec[sec]) do ordered[#ordered + 1] = { o = o, head = i == 1 and (sec or L["Réglages"]) or nil } end
+    end
+    for _, it in ipairs(ordered) do
+      local o = it.o
       local key = o.key
-      if o.section then P.header(o.section) end
+      if it.head then P.header(it.head) end
       if o.type == "choice" and type(o.values) == "table" and #o.values > 0 then
         P.button("", nil, function()
           if not mod.db then return end
@@ -773,7 +792,7 @@ function TreeAI:GetOptionLayout(page)
 end
 
 function TreeAI:OpenOptions(which)
-  if self:InCombat() then self:Print(L["Impossible en combat."]); return end
+  if self:InCombat() then if self.CombatRefused then self:CombatRefused() else self:Print(L["Impossible en combat."]) end return end
   if not canvas then self:InitOptions() end
   local target = homePage
   if which == "sounds" then target = soundsPage
@@ -851,8 +870,7 @@ local WIZ_STEPS = 3
 
 local function finishWizard()
   if TreeAI.db then TreeAI.db.onboarded = TreeAI.version or true end
-  if wiz then wiz:Hide() end
-  TreeAI:Print(L["Prêt ! /tai aide pour toutes les commandes, /tai bienvenue pour revoir l'assistant."])
+  if wiz then wiz:Hide() end   -- (4.0 QA) la fenêtre qui se ferme suffit : rien dans le chat
 end
 
 local function quickToggle(modName, fallbackSlash)
@@ -902,8 +920,13 @@ local function buildWizard()
       else
         TreeAI:SetPanelPosition(sp[1])
       end
-      TreeAI:ShowPanel()
-      if TreeAI.SetMini then TreeAI:SetMini(false) end
+      -- (4.0 QA) la carte « Prochaine étape » suit la place choisie (celle du panneau) ; le panneau texte, seulement
+      -- si la carte ne le remplace pas
+      local Wn = TreeAI.Window
+      if not (Wn and Wn.ShowHUD and Wn.ShowHUD(true)) then
+        TreeAI:ShowPanel()
+        if TreeAI.SetMini then TreeAI:SetMini(false) end
+      end
     end), 16 + ((i - 1) % 3) * 124, -150 - math.floor((i - 1) / 3) * 26)
   end
   -- étape 3 : boutons rapides
@@ -928,9 +951,9 @@ local function buildWizard()
 
   local TEXT = {
     L["TreeAI te conseille pendant que tu joues : prochaine quête, familier, munitions, sacs, groupe, HV."]
-      .. "\n\n" .. L["Tout arrive dans un petit panneau ; seul l'important s'affiche dans un encadré en coin."]
-      .. "\n" .. L["Rien n'est automatique : c'est toi qui joues."],
-    L["Combien de conseils veux-tu voir ?"] .. "\n\n\n\n\n" .. L["Où mettre le panneau ? (tu peux aussi le glisser)"],
+      .. "\n\n" .. L["Ta prochaine étape s'affiche sur une petite carte ; tout le reste est dans la fenêtre TreeAI (clic sur la pastille de la minimap)."]
+      .. "\n" .. L["Aucun automatisme sans ton accord : c'est toi qui joues."],
+    L["Combien de conseils veux-tu voir ?"] .. "\n\n\n\n\n" .. L["Où mettre la carte « Prochaine étape » ? (ou glisse-la)"],
     L["Raccourcis utiles :"] .. "\n" .. L["Macros : les macros prêtes pour ta classe (glisse-les dans ta barre)."]
       .. "\n" .. L["Touches : quoi lier où.  Boussole : flèche vers ton objectif."],
   }
@@ -955,7 +978,7 @@ end
 --- Ouvre l'assistant à l'étape `step` (1..3). Hors combat seulement.
 function TreeAI:ShowWizard(step)
   if not _G.CreateFrame then return false end
-  if self:InCombat() then self:Print(L["Impossible en combat."]); return false end
+  if self:InCombat() then if self.CombatRefused then self:CombatRefused() else self:Print(L["Impossible en combat."]) end return false end
   if not wiz then buildWizard() end
   wiz.step = math.min(WIZ_STEPS, math.max(1, tonumber(step) or 1))
   wiz.refresh()

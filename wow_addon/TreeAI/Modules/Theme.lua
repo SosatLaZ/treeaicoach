@@ -907,7 +907,7 @@ end
 function Th:KeyHint(b)
   local k = self:KeyText(b)
   if k then return "Touche : " .. k end
-  return "Touche : aucune (Échap → Options → Raccourcis → TreeAI)"
+  return "Touche : aucune (Échap > Options > Raccourcis > TreeAI)"
 end
 function Th:RefreshHotKeys() for b in pairs(self._hotkeys) do self:HotKey(b) end end
 

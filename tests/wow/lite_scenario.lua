@@ -45,7 +45,9 @@ return function(M, ctx)
   check(#ml >= 30, "modules tab lists the modules (" .. #ml .. ")")
   local fightLine
   for _, e in ipairs(ml) do if e.id == "mod:Fight" then fightLine = e end end
-  check(fightLine and fightLine.text:find("OFF") and fightLine.text:find("—"), "Fight line: state + one-line description")
+  -- (4.0 QA) the line = state + title (+ « (bêta) ») ; the one-line description is the tooltip (not cut at 96 chars)
+  check(fightLine and fightLine.text:find("OFF") and not fightLine.text:find("—") and tostring(fightLine.tooltip or ""):find("Clic", 1, true),
+    "Fight line: state + title, description in the tooltip")
   T:UserAction(fightLine.onClick)
   check(mod("Fight")._active == true and not mod("Fight")._suspended, "click: Fight on, no /reload")
   M.Advance(3, 0.5)

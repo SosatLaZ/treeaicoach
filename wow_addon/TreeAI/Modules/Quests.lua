@@ -28,7 +28,7 @@ local M = T:RegisterModule("Quests", {
                greyHint = true, zoneHints = true, questieHints = true },
   charDefaults = { btn = { point = "CENTER", x = -260, y = -140 } },
   options = {
-    { key = "nextStep", type = "toggle", label = "Ligne « Étape : … » dans le panneau" },
+    { key = "nextStep", type = "toggle", label = "Ligne « Étape : … » dans « Maintenant »" },
     { key = "toasts", type = "toggle", label = "Progression des objectifs (Sang de lion : 2/10)" },
     { key = "zoneHints", type = "toggle", label = "Rappels « à rendre » / « finis ici avant de partir »" },
     { key = "greyHint", type = "toggle", label = "Proposer d'abandonner les quêtes grises" },

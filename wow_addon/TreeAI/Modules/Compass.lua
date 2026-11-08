@@ -349,10 +349,11 @@ function M.ClearRouteOnDeath()
 end
 
 local PIN_TXT = { spf = "Shortest Path te guide", tomtom = "point TomTom posé", blizzard = "repère posé sur la carte" }
-function M.GoTo(t)
+function M.GoTo(t, say)
   t = t or M.Current()
   local how = M.Pin(t)
   M.guide = (how and t) and { key = t.key, how = how } or nil
+  if not say then return how end   -- (4.0 QA) un clic : la flèche / le repère répondent, rien dans le chat
   if how then M:Print(("Aller là : %s (%s)."):format(cut(t.label or t.title, 40), PIN_TXT[how]))
   elseif t then M:Print("Aller là : suis la flèche de la boussole" .. (inCombat() and " (guidage après le combat)." or "."))
   else M:Print("Aucune cible (/tai cible, /tai way x y).") end
@@ -1178,7 +1179,7 @@ end, "point perso pour la boussole : /tai way x y [nom]")
 -- toolbar button of the panel (UI.lua toggleCompass): a real toggle, silent (the user clicks, no chat help)
 function M.Toggle() M.Show(not (frame and frame:IsShown())) end
 
-T:RegisterSlash("aller", function() M.GoTo() end, "boussole : « Aller là » (Shortest Path / TomTom / repère de carte)")
+T:RegisterSlash("aller", function() M.GoTo(nil, true) end, "boussole : « Aller là » (Shortest Path / TomTom / repère de carte)")
 local function cibleSlash() local t = M.Cycle(1) if t then M:Print("Cible : " .. (t.label or t.title or "?")) end end
 T:RegisterSlash("cible", cibleSlash, "boussole : cible suivante")
 T:RegisterSlash("target", cibleSlash)

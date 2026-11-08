@@ -30,7 +30,7 @@ local M = T:RegisterModule("QuickFight", {
     petHp = 70, ammoBuy = 1000, pos = nil,
   },
   options = {
-    { key = "bar", type = "toggle", label = "Afficher la barre de raccourcis", section = "Barre" },
+    { key = "bar", type = "toggle", label = "Afficher la barre de combat", section = "Barre" },
     { key = "scale", type = "range", label = "Taille de la barre (%)", min = 60, max = 160, step = 10 },
     { key = "timer", type = "toggle", label = "Minuteur de repos (« plein dans 12 s »)" },
     { key = "ready", type = "toggle", label = "Indicateur « prêt à engager »" },
@@ -496,7 +496,7 @@ local function createBar()
     gr:SetScript("OnDragStop", function() if bar then bar:StopMovingOrSizing() savePos() end end)
     gr:SetScript("OnEnter", function(self)
       tooltip(self, "Raccourcis", { "Glisse pour déplacer (hors combat).",
-        "Les boutons n'apparaissent que quand ils servent.", "Réglages : Options > Raccourcis." })
+        "Les boutons n'apparaissent que quand ils servent.", "Réglages : Options > Barre de combat." })
     end)
     gr:SetScript("OnLeave", hideTip)
   end
@@ -598,7 +598,7 @@ local function createAmmoButton()
       local c = floor(o.cost * n + 0.5)
       lines[#lines + 1] = "Prix : " .. ((T.Fmt and T.Fmt.Money) and T.Fmt.Money(c) or tostring(c))
     end
-    lines[#lines + 1] = ("Stock visé : %d (Options > Raccourcis)."):format(tonumber(opt("ammoBuy")) or 1000)
+    lines[#lines + 1] = ("Stock visé : %d (Options > Barre de combat)."):format(tonumber(opt("ammoBuy")) or 1000)
     lines[#lines + 1] = "Vérifie la place dans ton carquois."
     tooltip(self, ("Acheter %d %s"):format(n, o and o.name or "munitions"), lines)
   end)

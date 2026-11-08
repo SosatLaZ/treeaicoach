@@ -63,7 +63,6 @@ local strings = {
   ["Module activé"] = "Module activé",
   ["Réglages"] = "Réglages",
   -- options
-  ["Conseils uniquement: l'addon n'agit jamais à ta place."] = "Conseils uniquement : l'addon n'agit jamais à ta place.",
   ["Général"] = "Général",
   ["Activer TreeAI"] = "Activer TreeAI",
   ["Afficher le panneau"] = "Afficher le panneau",

@@ -20,7 +20,7 @@ local G = _G
 local API = T.API or {}
 
 local OPTIONS = {
-  { key = "bar", type = "toggle", label = "Afficher la barre de raccourcis", section = "Barre" },
+  { key = "bar", type = "toggle", label = "Afficher la barre de quête", section = "Barre" },
   { key = "btnItem", type = "toggle", label = "Bouton : objet de quête", section = "Barre" },
   { key = "btnTarget", type = "toggle", label = "Bouton : cibler le prochain objectif", section = "Barre" },
   { key = "btnShare", type = "toggle", label = "Bouton : partager les quêtes au groupe", section = "Barre" },
@@ -37,9 +37,12 @@ local OPTIONS = {
 }
 local defaults = { enabled = true }
 for _, o in ipairs(OPTIONS) do defaults[o.key] = true end
+-- (4.0 QA) les automatismes de quête et de dialogue ne s'allument jamais tout seuls (ni par « Tout allumer ») :
+-- coupés par défaut, proposés UNE fois par une ligne (« oui » = clic), ou cochés dans les options
+defaults.autoQuest, defaults.autoReward, defaults.autoGossip = false, false, false
 
 local M = T:RegisterModule("Quick", {
-  title = "Raccourcis",
+  title = "Barre de quête",
   defaults = defaults,
   charDefaults = {},
   options = OPTIONS,
@@ -49,7 +52,7 @@ M.OPTIONS = OPTIONS
 
 -- profil léger : la barre fait partie de l'essentiel ; rangée dans « Quêtes et trajet » des options
 if type(T.MODULE_INFO) == "table" and not T.MODULE_INFO.Quick then
-  T.MODULE_INFO.Quick = { lite = true, desc = "Raccourcis : barre d'actions rapides, quêtes acceptées et rendues" }
+  T.MODULE_INFO.Quick = { lite = true, desc = "Barre de quête : objet de quête, cible, partage, foyer ; quêtes automatiques si tu le veux" }
 end
 do
   local fam = T.OPTIONS_FAMILY
@@ -641,8 +644,7 @@ local function ensureBar()
       "Accepte les quêtes, les rend et choisit la récompense quand le choix est évident.",
       "Deux améliorations possibles : tu choisis toi-même.", "Maj enfoncée chez un PNJ = pause.", "Clic : activer / couper." }
   end, function()
-    M.db.autoQuest = not opt("autoQuest")
-    M.Layout()
+    M.SetAuto(not opt("autoQuest"))
   end)
   makeButton("item", true, 134400, function(self)
     return { link = self.link, "Clic : utiliser l'objet de « " .. tostring(self.questTitle or "quête") .. " »" }
@@ -766,6 +768,7 @@ end
 --- Relayout : seulement hors combat (cadres sécurisés) ; en combat, refait à la sortie (une seule fois).
 function M.Layout()
   if not M._active then return end
+  if M.db and not M.db.autoAsked and M.ProposeAuto then M.ProposeAuto() end   -- « non » (clic droit) retenu de suite
   T:RunOutOfCombat("Quick:layout", function()
     if not opt("bar") then if bar then bar:Hide() end M.shown = {} return end
     if not ensureBar() then return end
@@ -807,6 +810,45 @@ local function soon()
   after(0.2, function() pending = false M.Layout() end)
 end
 M.Soon = soon
+
+-- ===================================================================== automatismes : proposés une fois (4.0 QA)
+-- Jamais allumés en douce (ni par défaut, ni par « Tout allumer ») : une ligne pose la question une fois
+-- (clic = oui, clic droit = non), une ligne confirme ce qui vient d'être allumé. « mod: » : l'orage de clics du
+-- harnais laisse cette question tranquille.
+local AUTO_ID = "mod:quick:auto"
+M.AUTO_ID = AUTO_ID
+local AUTO_TEXT = "Accepter et rendre les quêtes tout seul ? Clic : oui · clic droit : non"
+function M.AutoConfirm(on)
+  if on then
+    M:Suggest("auto", "Quêtes automatiques activées : Maj enfoncée chez un PNJ = pause", 1,
+      { ttl = 15, cooldown = 0, sound = false, tab = "now", kind = "always",
+        tooltip = "Accepter, rendre, récompense évidente (deux améliorations : tu choisis). Options > Barre de quête pour couper." })
+  else
+    M:Clear("auto")
+  end
+end
+--- le joueur répond (ligne, bouton de la barre) : quêtes acceptées / rendues + récompense évidente, et la confirmation
+function M.SetAuto(on)
+  if not M.db then return end
+  on = on and true or false
+  M.db.autoQuest, M.db.autoReward, M.db.autoAsked = on, on, true
+  T:ClearSuggestion(AUTO_ID)
+  M.AutoConfirm(on)
+  M.Layout()
+end
+function M.ProposeAuto()
+  if not (M.db and M._active) or M.db.autoAsked then return end
+  if M.db.autoQuest then M.db.autoAsked = true return end                 -- déjà coché à la main
+  if T.IsDismissed and T:IsDismissed(AUTO_ID, AUTO_TEXT) then              -- clic droit : non merci
+    M.db.autoAsked = true
+    return
+  end
+  T:Suggest(AUTO_ID, AUTO_TEXT, 2, { module = "Quick", ttl = 0, sound = false, tab = "now", kind = "always",
+    icon = "Interface\\GossipFrame\\ActiveQuestIcon",
+    tooltip = "Accepte les quêtes proposées, les rend et prend la récompense quand le choix est évident "
+      .. "(deux améliorations : tu choisis). Maj enfoncée chez un PNJ = pause. Options > Barre de quête pour changer.",
+    onClick = function() M.SetAuto(true) end })
+end
 
 -- ===================================================================== butin automatique
 local function cvar(k)
@@ -880,8 +922,17 @@ function M:OnEnable()
   ev("LEARNED_SPELL_IN_TAB", function() mountCache = nil soon() end)
   ev("NEW_MOUNT_ADDED", function() mountCache = nil soon() end)
   ev("CVAR_UPDATE", function() if cvar("autoLootDefault") == "1" then M:Clear("loot") end end)
-  after(2, function() M.LootHint() M.Layout() M.SyncQuests() end)
+  after(2, function() M.LootHint() M.Layout() M.SyncQuests() M.ProposeAuto() end)
   M.Layout()
+end
+
+function M:OnInit()
+  -- (4.0 QA) une fois : les automatismes de quête / dialogue sauvés « oui » par l'ancien défaut repartent coupés
+  -- (la question ci-dessus les propose ; un clic les remet)
+  if self.db and self.db.autoV ~= 1 then
+    self.db.autoV = 1
+    if not self.db.autoAsked then self.db.autoQuest, self.db.autoReward, self.db.autoGossip = false, false, false end
+  end
 end
 
 --- redemande au module Quêtes de montrer / cacher son propre bouton d'objet (un seul à l'écran)
@@ -893,11 +944,17 @@ end
 function M:OnDisable()
   T:RunOutOfCombat("Quick:layout", function() if bar then bar:Hide() end end)
   M:Clear("loot")
+  T:ClearSuggestion(AUTO_ID)
   after(0.1, M.SyncQuests)
 end
 
 function M:OnOptionChanged(key)
   if key == "btnMount" then mountCache = nil end
+  if key == "autoQuest" then   -- coché / décoché dans les options : réponse donnée + confirmation
+    M.db.autoAsked = true
+    T:ClearSuggestion(AUTO_ID)
+    M.AutoConfirm(M.db.autoQuest)
+  end
   if key == "lootHint" then M._lootHinted = false M.LootHint() end
   M.Layout()
   M.SyncQuests()

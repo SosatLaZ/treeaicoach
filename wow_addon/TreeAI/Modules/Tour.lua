@@ -202,7 +202,7 @@ local function hasHubEntry(id)
   return false
 end
 -- (polices du jeu : ni « → » ni « ▾ », des carrés vides en jeu ; « > » comme le reste de TreeAI)
-local REPLAY = "La rejouer : menu de la pastille > « Visite guidée »."
+local REPLAY = "La rejouer : clic droit sur la pastille > « Visite guidée »."
 M.STEPS = {
   { id = "hub", title = "Le menu TreeAI",
     can = function() return fromRegistry("hub") ~= nil or hubButton() ~= nil end,
@@ -231,7 +231,7 @@ M.STEPS = {
       if kind == "panel" then
         return "Quoi faire maintenant. Clic sur une ligne : l'action ; survol : le pourquoi."
       end
-      return "Ce qu'il faut faire maintenant. Clic dessus : TreeAI t'y guide."
+      return "Ce qu'il faut faire maintenant. Clic sur une étape : la boussole t'y guide."
     end },
   { id = "zone", title = "Ta zone de quêtes",
     can = function() return fromRegistry("zone") ~= nil or modOn("ZonePlan") end,   -- cible enregistrée ET visible
@@ -320,7 +320,7 @@ end
 M.TIPS = {
   { id = "ah", title = "Première fois à l'HV",
     text = "Mode rafale : une touche par action sûre (acheter, vendre, annuler).",
-    note = "Bouton « Lier à une touche » en bas de la fenêtre TreeAI.",
+    note = "Bouton « Lier à une touche » en bas de la fenêtre HV de TreeAI.",
     when = function()
       local A = T.modules and T.modules.Auction
       return modOn("Auction") and type(A) == "table" and visible(A.win)
@@ -411,6 +411,15 @@ local function build()
   meth(box, "SetClampedToScreen", true)
   meth(box, "EnableMouse", true)
   meth(box, "SetSize", BOX_W, 110)
+  -- (4.0 QA) Échap ferme la bulle (UISpecialFrames) au lieu d'ouvrir le menu du jeu par-dessus
+  local sf = rawget(G, "UISpecialFrames")
+  if type(sf) == "table" then sf[#sf + 1] = "TreeAITourCallout" end
+  meth(box, "SetScript", "OnHide", function()
+    if M._hiding then return end            -- caché par nous (étape suivante, combat…) : rien à faire
+    if M.mode == "tour" then M.Finish("skip")
+    elseif M.mode == "tip" then M.HideTip(true)
+    elseif M.mode == "pointer" then M.HidePointer() end
+  end)
   local th = Th()
   if not (th and th.Skin and th:Skin(box, "window")) and box.SetBackdrop then
     meth(box, "SetBackdrop", { bgFile = WHITE, edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 12,
@@ -436,7 +445,9 @@ local function build()
   meth(box.primary, "SetPoint", "BOTTOMRIGHT", box, "BOTTOMRIGHT", -PAD, PAD)
   box.secondary = newButton(box, 120, function() T:UserAction(onSecondary) end, false)
   meth(box.secondary, "SetPoint", "BOTTOMLEFT", box, "BOTTOMLEFT", PAD, PAD)
+  M._hiding = true
   meth(box, "Hide")
+  M._hiding = false
 
   -- halo pulsé autour de la cible (n'attrape pas la souris : on peut cliquer le vrai élément à travers)
   glow = G.CreateFrame("Frame", "TreeAITourGlow", G.UIParent)
@@ -584,7 +595,9 @@ function M.PlaceOn(f)
 end
 
 local function hideFrames()
+  M._hiding = true   -- (4.0 QA) le OnHide de la bulle ne prend que l'Échap du joueur
   if box then meth(box, "Hide") end
+  M._hiding = false
   if arrow then meth(arrow, "Hide") end
   if glow then
     if glow.pulse then meth(glow.pulse, "Stop") end
@@ -825,7 +838,7 @@ function M.ResetTips()
 end
 
 -- ===================================================================== /tai aide : une bulle sur la pastille
-local HELP_COMBAT = "Aide : tout TreeAI est sous la pastille de la minimap (clic = menu). Toutes les commandes : /tai aide tout."
+local HELP_COMBAT = "Aide : tout part de la pastille de la minimap (clic : la fenêtre TreeAI, clic droit : le menu)."
 --- Montre la pastille (vrai) ; faux = pas de pastille visible (l'appelant garde l'ancienne aide).
 function M.HelpPointer()
   if inCombat() then T:Print(HELP_COMBAT) return true end

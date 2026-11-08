@@ -17,7 +17,7 @@ local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 
 local Q = T:RegisterModule("QuickTravel", {
-  title = "Raccourcis : vols, auberge, courses, groupe",
+  title = "Voyage et groupe",
   defaults = { enabled = true, taxi = true, inn = true, errands = true, ready = true, meet = true, vendors = {} },
   charDefaults = { friends = {} },
   options = {
@@ -1034,7 +1034,11 @@ local function buildWindow()
   end
   f.hdrH = hdrH
   f.sum = Th and Th.Text and Th:Text(f, "M", "gold") or try(f.CreateFontString, f, nil, "OVERLAY", "GameFontNormal")
-  if f.sum then try(f.sum.SetPoint, f.sum, "TOPLEFT", f, "TOPLEFT", 10, -(hdrH + 6)) end
+  if f.sum then
+    try(f.sum.SetPoint, f.sum, "TOPLEFT", f, "TOPLEFT", 10, -(hdrH + 6))
+    try(f.sum.SetWidth, f.sum, WIN_W - 20)       -- (4.0 QA) dans la fenêtre, jamais par-dessus le monde
+    try(f.sum.SetWordWrap, f.sum, false)
+  end
   f.rows = {}
   local function btn(label, fn, tip)
     local b = Th and Th.Button and Th:Button(f, label, 100, 20, function() if not inCombat() then pcall(fn) Q.RefreshReady() end end, tip)
@@ -1060,11 +1064,9 @@ function Q.RefreshReady()
   local rows = Q.MemberRows()
   local okN = 0
   for _, r in ipairs(rows) do if r.ok then okN = okN + 1 end end
-  if f.sum then
-    local missing = {}
-    for _, r in ipairs(rows) do if not r.ok then missing[#missing + 1] = shortName(r.name) .. " (" .. (r.why or "?") .. ")" end end
-    try(f.sum.SetText, f.sum, #missing == 0 and fmt("Tout le monde est prêt (%d/%d)", okN, #rows)
-      or fmt("%d/%d prêts — attendre : %s", okN, #rows, cut(tconcat(missing, ", "), 70)))
+  if f.sum then   -- (4.0 QA) le détail est sur chaque ligne dessous : le résumé ne le répète pas
+    try(f.sum.SetText, f.sum, okN == #rows and fmt("Tout le monde est prêt (%d/%d)", okN, #rows)
+      or fmt("%d/%d prêts : voir ci-dessous", okN, #rows))
   end
   local Th = T.Theme
   local y = -(f.hdrH + 26)
