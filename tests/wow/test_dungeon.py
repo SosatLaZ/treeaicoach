@@ -9,6 +9,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 ADDON = ROOT / "wow_addon" / "TreeAI"
 MOD = ADDON / "Modules" / "Dungeon.lua"
+PREP = ADDON / "Modules" / "DungeonPrep.lua"
 DATA = ADDON / "Data" / "Dungeons.lua"
 
 
@@ -16,15 +17,38 @@ def test_toc_order():
     lines = [ln.strip() for ln in (ADDON / "TreeAI.toc").read_text(encoding="utf-8").splitlines()]
     assert lines.index("Data\\Dungeons.lua") < lines.index("Modules\\Dungeon.lua")
     assert lines.index("Modules\\Fight.lua") < lines.index("Modules\\Dungeon.lua")
+    assert lines.index("Modules\\Dungeon.lua") < lines.index("Modules\\DungeonPrep.lua")
 
 
 def test_no_automation():
-    src = "\n".join(ln for ln in MOD.read_text(encoding="utf-8").splitlines() if not ln.lstrip().startswith("--"))
+    src = "\n".join(ln for p in (MOD, PREP) for ln in p.read_text(encoding="utf-8").splitlines()
+                    if not ln.lstrip().startswith("--"))
     for bad in ("CastSpellByName", "TargetUnit", "SendChatMessage", "SendAddonMessage", "COMBAT_LOG_EVENT",
                 "SetBinding", "SelectQuestLogEntry", "SetSelectedQuest", "ShowUIPanel"):
         assert bad not in src, bad
     # SetRaidTarget only from the click handler, guarded by combat
     assert src.count("try(G.SetRaidTarget") == 1 and "Pas de marque en combat" in src
+    # quest sharing: only QuestLogPushQuest(index) from a click, refused in combat; no secure templates
+    assert "Partage après le combat" in src and "Secure" not in src and "SetParent" not in src
+    for bad in ("ConfirmLootRoll", "RollOnLoot", "AcceptQuest", "UseContainerItem"):
+        assert bad not in src, bad
+
+
+def test_hooks_and_budget():
+    hub = (ADDON / "Modules" / "Hub.lua").read_text(encoding="utf-8")
+    assert "T.HUB_EXTRA" in hub
+    team = (ADDON / "Modules" / "Team.lua").read_text(encoding="utf-8")
+    assert "function M.GearOf(guid)" in team
+    sim = (ROOT / "tests/wow/session_sim.lua").read_text(encoding="utf-8")
+    assert re.search(r"kinstrModuleMin = \{[^}]*Dungeon = 80", sim)
+
+
+def test_extra_data():
+    src = DATA.read_text(encoding="utf-8")
+    assert "extra = {" in src and "jobs = {" in src
+    for key in ("DM", "WC", "SFK", "BFD", "RFK", "GNOMER", "SM"):
+        block = src.split("extra = {", 1)[1].split(f"{key} = {{", 1)[1].split("} },\n", 1)[0]
+        assert "pulls" in src and "cc =" in block, key
 
 
 def test_data_sanity():
@@ -45,7 +69,7 @@ def test_data_sanity():
 
 
 @pytest.mark.skipif(not shutil.which("luac5.1"), reason="luac5.1 absent")
-@pytest.mark.parametrize("path", [MOD, DATA])
+@pytest.mark.parametrize("path", [MOD, PREP, DATA])
 def test_syntax_no_globals(path):
     assert subprocess.run(["luac5.1", "-p", str(path)], capture_output=True).returncode == 0
     listing = subprocess.run(["luac5.1", "-l", "-p", str(path)], capture_output=True, text=True).stdout
@@ -60,3 +84,17 @@ def test_dungeon_scenario(flavor):
                        capture_output=True, text=True, timeout=60, cwd=ROOT)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "RESULT ok" in r.stdout
+
+
+ALLOW = sum((["--allow", n] for n in ("LibQuestieDB", "QuestDB", "NpcDB", "ObjectDB", "ItemDB", "QuestLogPushQuest",
+                                       "LOOT_ITEM_SELF")), [])
+
+
+@pytest.mark.skipif(not shutil.which("lua5.1"), reason="lua5.1 absent")
+@pytest.mark.parametrize("flavor", ["forever", "modern", "legacy"])
+def test_dungeon2_scenario(flavor):
+    r = subprocess.run(["lua5.1", str(ROOT / "tests/wow/harness.lua"), "-q", "--flavor", flavor, "--class", "HUNTER", *ALLOW,
+                        "--scenario", str(ROOT / "tests/wow/dungeon2_scenario.lua"), str(ADDON)],
+                       capture_output=True, text=True, timeout=60, cwd=ROOT)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "RESULT ok" in r.stdout and "violations=0" in r.stdout
