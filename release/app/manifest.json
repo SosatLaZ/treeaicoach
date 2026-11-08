@@ -1,25 +1,25 @@
 {
- "version": "4.0.7",
+ "version": "4.1.0",
  "exe": "TreeAICoach-app.exe",
- "sha256": "a5f524017287da7e9260eaaf54a1061af12fa26d1dcd633f7bf412baa82c998b",
+ "sha256": "05a165d7874a7df8d0218f11053ceb250d282fd2b7fb3489f58f876affc3a607",
  "chunks": [
   {
-   "name": "4.0.7/part-01.zip",
-   "size": 88018739,
-   "sha256": "5b3206db4522b10aa472e8b01885d9a313835be4efc8a4ca2f6edb9de8a96ee2",
+   "name": "4.1.0/part-01.zip",
+   "size": 88018736,
+   "sha256": "65d5eedd44ba12c6e6f8df6f4646e6bb7e05da302ca1ef8cb098f4cb283cae4a",
    "files": 127
   },
   {
-   "name": "4.0.7/part-02.zip",
-   "size": 14008895,
-   "sha256": "37fd6ab3ea748798c65f18c8e1b1825ebfe52b732c21de82317f83a04fdad1d1",
-   "files": 684
+   "name": "4.1.0/part-02.zip",
+   "size": 14119058,
+   "sha256": "7c7d92428641db449a8d737ec5241fab1088a69118164f3c83baae4ba888be7a",
+   "files": 687
   }
  ],
- "total_size": 102027634,
+ "total_size": 102137794,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "TreeAI 4.0.7 : les sacs redeviennent cliquables, moins de d\u00e9pendance \u00e0 Questie, noms des vols en fran\u00e7ais, une seule fl\u00e8che."
+ "notes": "TreeAI 4.1 : boutons simples en haut \u00e0 gauche, cerveau des qu\u00eates (Rendre / \u00c0 prendre / Zone / Groupe), fen\u00eatre en 7 pages, \u00e9quipement du groupe et \u00e9changes, courses en ville pour les m\u00e9tiers, \u00e9cran propre."
 }

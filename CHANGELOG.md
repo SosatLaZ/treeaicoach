@@ -3,6 +3,31 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 4.1.0 · 8 novembre 2026
+
+**Les quêtes d'abord, un écran propre.**
+- **Boutons en haut à gauche** (à la place de la carte) : Rendre (n) · À prendre (n) · Suivant · Zone · Groupe ·
+  Journal · TreeAI, avec leur touche (« Touches » = Alt-1…Alt-8 en un clic, seulement sur des touches libres) ; ne
+  passent jamais sur tes portraits, ta cible, ton familier, le suivi ou la minimap.
+- **Cerveau des quêtes** : « Rendre mes quêtes » (ordre le plus rapide, vols / bateaux / foyer), « Quêtes à prendre »
+  (classées par XP à la minute, avec la raison), « Tout faire ici », « Avec le groupe ». Une quête à un endroit = une
+  étape ; jamais un donjon comme zone ; le même texte et la même distance partout ; marche sans Questie.
+- **Fenêtre en 7 pages** : Quêtes (les 4 modes en gros boutons), Groupe, Donjons, Personnage, HV, Conseils pro,
+  Réglages (raccourcis, ce qui s'affiche, fonctions). S'ouvre à droite, puis là où tu la laisses. Plus de pubs.
+- **À l'écran par défaut** : les boutons, la boussole, le bouton de la minimap. Bande du haut, radar, 2e flèche,
+  Suivi TreeAI, Dégâts : coupés (un clic pour les rallumer).
+- **Accepter / rendre les quêtes tout seul** (option, Maj = pas cette fois) ; la meilleure récompense entourée, jamais
+  choisie à ta place.
+- **Groupe** : allumé d'office ; équipement de tes potes (TreeAI ou inspection), échanges conseillés (« ≈ +12 % pour
+  … »), à qui sert un butin ; bouton « Partager ».
+- **Métiers** : allumés d'office ; « Courses en ville » (tout ce qu'il faut en ville, dans l'ordre le plus court, la
+  boussole d'arrêt en arrêt), « Me concentrer sur les métiers », étapes cliquables (clic = celle-ci, clic droit =
+  passer), maître vs HV vs tes compos avec le coût par point ; « Besoin / en trop » sur chaque compo ; points métiers
+  sur la carte.
+- **Suivi Forever** : une ligne pour lui donner l'ordre de TreeAI ou le rendre silencieux (son trajet différait).
+- **Corrigés** : erreur Pro.lua ×677 (et la même cause partout), les erreurs d'autres addons (Questie, OpenMap) ne
+  sont plus prises pour celles de TreeAI ni écrites dans le chat, la boussole ne tourne plus à l'arrêt.
+
 ## 4.0.7 · 8 novembre 2026
 
 - **Les sacs redeviennent cliquables** : quand tes sacs sont ouverts, aucun cadre TreeAI ne passe au-dessus (ils

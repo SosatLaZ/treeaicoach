@@ -1,6 +1,6 @@
 {
-  "version": "4.0.7",
+  "version": "4.1.0",
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334,
-  "notes": "TreeAI 4.0.7 : les sacs redeviennent cliquables, moins de dépendance à Questie, noms des vols en français, une seule flèche."
+  "notes": "TreeAI 4.1 : boutons simples en haut à gauche, cerveau des quêtes (Rendre / À prendre / Zone / Groupe), fenêtre en 7 pages, équipement du groupe et échanges, courses en ville pour les métiers, écran propre."
 }
