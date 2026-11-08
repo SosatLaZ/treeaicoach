@@ -79,4 +79,5 @@ Modules\Shortcuts.lua
 Modules\Window.lua
 Modules\WindowPages.lua
 Modules\JournalPage.lua
+Modules\ProfLevel.lua
 Modules\Tour.lua

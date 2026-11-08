@@ -68,6 +68,13 @@ function M.Reset()
   M.items = {}
   M.bags = {}
   M.merchantOpen = false
+  -- PROFLEVEL (4.0.2): bank (read only while open, like the client; GetItemCount(id, true) counts it), merchant goods,
+  -- trade skill window and profession trainer (see M.SetBank / M.SetTradeSkill / M.SetTrainer)
+  M.bank, M.bankOpen = {}, false
+  M.merchantItems = {}   -- { {id=, price= (per lot), stack= (lot size), maxStack=, avail= (lots, -1 = unlimited)} }
+  M.trade = { open = false, recipes = {} }   -- line=, name=, rank=, max=, recipes[spell] = {name, learned, diff, maxTrivial, mats, item}
+  M.trainer = { open = false, services = {} }  -- tradeskill=, line= (name), services = { {name=, cat=, req=, cost=} }
+  M.crafted, M.bought = {}, {}
   M.ah = { open = false, list = {}, owned = {}, bids = {}, cancels = {}, queries = {}, mail = {} }
   M.hardware, M.hwCalls = false, 0
   M.macroFail, M.macroBlockedCalls = nil, 0   -- "forbidden" | "nilret" (see CreateMacro)
@@ -597,7 +604,7 @@ local function auraTuple(a)
 end
 
 local function bagSlot(bag, slot)
-  local b = M.bags[bag]
+  local b = M.bags[bag] or (M.bankOpen and M.bank[bag]) or nil   -- PROFLEVEL: bank containers, bank open only
   return b and b.slots[slot]
 end
 
@@ -1147,11 +1154,14 @@ function M.Install(flavor)
     if not it then return nil end
     return it.id, it.type, it.subType, it.equipLoc, 134400 + it.id, it.classID, it.subclassID
   end
-  G.GetItemCount = function(item)
+  G.GetItemCount = function(item, includeBank)
     local it = itemFromArg(item)
     if not it then return 0 end
     local n = 0
     for _, b in pairs(M.bags) do for _, s in pairs(b.slots) do if s.id == it.id then n = n + s.count end end end
+    if includeBank then   -- PROFLEVEL: the client knows the bank contents even with the bank closed
+      for _, b in pairs(M.bank) do for _, s in pairs(b.slots) do if s.id == it.id then n = n + s.count end end end
+    end
     return n
   end
   G.GetItemIcon = function(item) local it = itemFromArg(item) return it and 134400 + it.id end
@@ -1177,17 +1187,134 @@ function M.Install(flavor)
   G.RepairAllItems = function()
     if not M.merchantOpen then M.Violation("api", "RepairAllItems with no merchant") end
   end
-  G.GetMerchantNumItems = function() return 0 end
+  -- PROFLEVEL (4.0.2): merchant goods (C globals of the camelot FrameXML; GetMerchantItemInfo = Era only, pruned on
+  -- forever where C_MerchantFrame.GetItemInfo answers). BuyMerchantItem(i, qty) = qty items (multiple of the lot);
+  -- like every TreeAI purchase it must come from a click, one per click, never in combat.
+  local function mitem(i) return M.merchantOpen and (M.merchantItems or {})[i] or nil end
+  G.GetMerchantNumItems = function() return M.merchantOpen and #(M.merchantItems or {}) or 0 end
+  G.GetMerchantItemID = function(i) local it = mitem(i) return it and it.id end
+  G.GetMerchantItemLink = function(i) local it = mitem(i) return it and M.ItemLink(it.id) end
+  G.GetMerchantItemMaxStack = function(i)
+    local it = mitem(i)
+    if not it then return 0 end
+    return it.maxStack or (M.items[it.id] and M.items[it.id].stack) or 20
+  end
+  G.GetMerchantItemInfo = function(i)
+    local it = mitem(i)
+    if not it then return nil end
+    local d = M.items[it.id] or {}
+    return d.name, 134400 + it.id, it.price or 0, it.stack or 1, it.avail or -1, true, true, false, nil
+  end
+  G.BuyMerchantItem = function(i, qty)
+    local it = mitem(i)
+    if not it then M.Violation("api", "BuyMerchantItem with no merchant / bad index") return end
+    if M.inCombat then M.Violation("combat", "BuyMerchantItem in combat") return end
+    if not M.hardware then M.Violation("automation", "BuyMerchantItem outside a click") return end
+    M.hwCalls = M.hwCalls + 1
+    if M.hwCalls > 1 then M.Violation("automation", "BuyMerchantItem: more than one purchase in one click") return end
+    local lot = it.stack or 1
+    qty = tonumber(qty) or lot
+    local maxStack = G.GetMerchantItemMaxStack(i)
+    if qty > maxStack then M.Violation("api", ("BuyMerchantItem qty %d > max stack %d"):format(qty, maxStack)) return end
+    if qty % lot ~= 0 then M.Violation("api", ("BuyMerchantItem qty %d not a multiple of the lot %d"):format(qty, lot)) return end
+    local cost = math.floor((it.price or 0) * qty / lot)
+    if cost > M.player.money then M.Violation("api", "BuyMerchantItem without enough money") return end
+    M.player.money = M.player.money - cost
+    M.AddToBags(it.id, qty)
+    M.bought[#M.bought + 1] = { id = it.id, qty = qty, cost = cost }
+  end
   G.CloseMerchant = function() M.merchantOpen = false end
+  -- PROFLEVEL (4.0.2): the profession window (M.trade) — C_TradeSkillUI on modern / forever (CraftRecipe(recipe, n):
+  -- one command = n casts, like the game's « Create » button), the Era globals on legacy (DoTradeSkill(index, n));
+  -- a craft must come from a click, one per click, never in combat, with the reagents in the bags.
+  local itemCount = G.GetItemCount   -- (kept: the forever flavour prunes the Era global later)
+  local function trecipe(id) return M.trade.open and M.trade.recipes[id] or nil end
+  local function tmakeable(r)
+    local n
+    local m = r.mats or {}
+    for k = 1, #m - 1, 2 do
+      local c = math.floor(itemCount(m[k]) / m[k + 1])
+      n = n and math.min(n, c) or c
+    end
+    return n or 0
+  end
+  local function tcraft(id, n)
+    local r = trecipe(id)
+    if M.inCombat then M.Violation("combat", "craft in combat") return end
+    if not M.hardware then M.Violation("automation", "craft outside a click") return end
+    M.hwCalls = M.hwCalls + 1
+    if M.hwCalls > 1 then M.Violation("automation", "more than one craft command in one click") return end
+    if not r then M.Violation("api", "craft: recipe not in the open profession window") return end
+    if not r.learned then M.Violation("api", "craft: recipe not learned") return end
+    n = tonumber(n) or 1
+    if n < 1 or tmakeable(r) < n then M.Violation("api", "craft: not enough reagents for " .. n) return end
+    local m = r.mats or {}
+    for k = 1, #m - 1, 2 do M.RemoveFromBags(m[k], m[k + 1] * n) end
+    if r.item then M.AddToBags(r.item, n) end
+    M.crafted[#M.crafted + 1] = { spell = id, n = n }
+  end
+  local function tids()
+    local out = {}
+    if M.trade.open then for id in pairs(M.trade.recipes) do out[#out + 1] = id end end
+    table.sort(out)
+    return out
+  end
+  if modern then
+    G.C_TradeSkillUI = G.C_TradeSkillUI or {}
+    local TS = G.C_TradeSkillUI
+    TS.GetFilteredRecipeIDs = tids
+    TS.GetRecipeInfo = function(id)
+      local r = trecipe(id)
+      if not r then return nil end
+      return { recipeID = id, name = r.name or "?", learned = r.learned and true or false, relativeDifficulty = r.diff,
+        maxTrivialLevel = r.maxTrivial or 0, numSkillUps = 1, canSkillUp = (r.diff or 0) < 3, craftable = tmakeable(r) > 0,
+        categoryID = 0, itemLevel = 0, firstCraft = false, disabled = false, favorite = false, supportsQualities = false,
+        skillLineAbilityID = id, supportsCraftingStats = false, hasSingleItemOutput = true, alwaysUsesLowestQuality = false,
+        canCreateMultiple = true, isRecraft = false, isDummyRecipe = false, isGatheringRecipe = false,
+        isEnchantingRecipe = false, isSalvageRecipe = false }
+    end
+    TS.GetBaseProfessionInfo = function()
+      if not M.trade.open then return nil end
+      return { professionID = M.trade.line or 0, professionName = M.trade.name or "", skillLevel = M.trade.rank or 0,
+        maxSkillLevel = M.trade.max or 0, sourceCounter = 0, expansionName = "", skillModifier = 0, isPrimaryProfession = true }
+    end
+    TS.GetCraftableCount = function(id) local r = trecipe(id) return r and tmakeable(r) or 0 end
+    TS.CraftRecipe = function(id, n) tcraft(id, n) end
+  else
+    G.GetNumTradeSkills = function() return #tids() end
+    G.GetTradeSkillInfo = function(i)
+      local id = tids()[i]
+      local r = id and M.trade.recipes[id]
+      if not r then return nil end
+      local kinds = { [0] = "optimal", "medium", "easy", "trivial" }
+      return r.name, kinds[r.diff or 0] or "optimal", tmakeable(r), false
+    end
+    G.GetTradeSkillLine = function()
+      if not M.trade.open then return "UNKNOWN", 0, 0 end
+      return M.trade.name or "", M.trade.rank or 0, M.trade.max or 0
+    end
+    G.DoTradeSkill = function(i, n) tcraft(tids()[i], n) end
+  end
+  -- profession trainer (M.trainer): C globals of the camelot FrameXML (and Era); BuyTrainerService is never mocked here
+  local function tsvc(i) return M.trainer.open and M.trainer.services[i] or nil end
+  G.IsTradeskillTrainer = function() return (M.trainer.open and M.trainer.tradeskill) and true or false end
+  G.GetNumTrainerServices = function() return M.trainer.open and #M.trainer.services or 0 end
+  G.GetTrainerServiceInfo = function(i) local sv = tsvc(i) if sv then return sv.name, "", sv.cat or "available", false end end
+  G.GetTrainerServiceSkillReq = function(i)
+    local sv = tsvc(i)
+    if sv then return M.trainer.line, sv.req or 0, (sv.req or 0) <= (M.trainer.rank or 999) end
+  end
+  G.GetTrainerServiceCost = function(i) local sv = tsvc(i) if sv then return sv.cost or 0, 0 end end
+  G.GetTrainerServiceSkillLine = function(i) local sv = tsvc(i) if sv then return M.trainer.line end end
   G.PickupItem = function() if M.inCombat then M.Violation("protected", "PickupItem in combat") end end
   G.EquipItemByName = function() end
   G.ClearCursor = function() end
   G.CursorHasItem = function() return false end
 
   -- bags ---------------------------------------------------------------------------------------
-  local function numSlots(bag) local b = M.bags[bag] return b and b.size or 0 end
+  local function numSlots(bag) local b = M.bags[bag] or (M.bankOpen and M.bank[bag]) return b and b.size or 0 end
   local function numFree(bag)
-    local b = M.bags[bag]
+    local b = M.bags[bag] or (M.bankOpen and M.bank[bag])
     if not b then return 0, 0 end
     local used = 0
     for _ in pairs(b.slots) do used = used + 1 end
@@ -1195,6 +1322,19 @@ function M.Install(flavor)
   end
   local function useItem(bag, slot)
     if not bagSlot(bag, slot) then return end
+    if M.bank[bag] and not M.bags[bag] then   -- PROFLEVEL: a bank slot, bank open = the stack moves to the bags
+      if M.inCombat then M.Violation("combat", "UseContainerItem (bank) in combat") return end
+      if not M.hardware then M.Violation("automation", "bank withdraw (UseContainerItem) outside a click") return end
+      M.hwCalls = M.hwCalls + 1
+      if M.hwCalls > 1 then M.Violation("automation", "more than one bank withdraw in one click") return end
+      if M.merchantOpen then M.Violation("api", "UseContainerItem on a bank slot with a merchant open (sells it)") return end
+      local s = M.bank[bag].slots[slot]
+      M.bank[bag].slots[slot] = nil
+      M.AddToBags(s.id, s.count)
+      M.withdrawn = M.withdrawn or {}
+      M.withdrawn[#M.withdrawn + 1] = { id = s.id, count = s.count }
+      return
+    end
     if not M.merchantOpen and M.inCombat then
       M.Violation("protected", "UseContainerItem from insecure code in combat")
     end
@@ -1705,6 +1845,71 @@ function M.SetMerchant(open)
   M.merchantOpen = open and true or false
   M.FireEvent(open and "MERCHANT_SHOW" or "MERCHANT_CLOSED")
 end
+-- PROFLEVEL (4.0.2) scenario helpers: bags, bank, trade skill window, trainer
+function M.RemoveFromBags(id, n)
+  for b = 0, 4 do
+    local bag = M.bags[b]
+    for slot = 1, bag and bag.size or 0 do
+      local s = bag.slots[slot]
+      if n > 0 and s and s.id == id then
+        local take = math.min(n, s.count)
+        s.count, n = s.count - take, n - take
+        if s.count <= 0 then bag.slots[slot] = nil end
+      end
+    end
+  end
+  return n == 0
+end
+function M.AddToBags(id, n)
+  local stack = (M.items[id] and M.items[id].stack) or 20
+  for b = 0, 4 do
+    local bag = M.bags[b]
+    for slot = 1, bag and bag.size or 0 do
+      local s = bag.slots[slot]
+      if n > 0 and s and s.id == id and s.count < stack then
+        local add = math.min(n, stack - s.count)
+        s.count, n = s.count + add, n - add
+      end
+    end
+  end
+  for b = 0, 4 do
+    local bag = M.bags[b]
+    for slot = 1, bag and bag.size or 0 do
+      if n > 0 and not bag.slots[slot] then
+        local add = math.min(n, stack)
+        bag.slots[slot], n = { id = id, count = add }, n - add
+      end
+    end
+  end
+  return n == 0
+end
+--- bank containers of the flavour: forever = character bank tabs (Enum.BagIndex.CharacterBankTab_1..), else -1 + 5..10
+function M.BankBagIDs()
+  local En = rawget(_G, "Enum")
+  local BI = type(En) == "table" and En.BagIndex
+  if type(BI) == "table" and BI.CharacterBankTab_1 then
+    local out = {}
+    for i = 1, 9 do if BI["CharacterBankTab_" .. i] then out[#out + 1] = BI["CharacterBankTab_" .. i] end end
+    return out
+  end
+  return { -1, 5, 6, 7, 8, 9, 10 }
+end
+function M.SetBankItem(bag, slot, id, count)
+  M.bank[bag] = M.bank[bag] or { size = 28, slots = {} }
+  M.bank[bag].slots[slot] = id and { id = id, count = count or 1 } or nil
+end
+function M.SetBank(open)
+  M.bankOpen = open and true or false
+  M.FireEvent(open and "BANKFRAME_OPENED" or "BANKFRAME_CLOSED")
+end
+function M.SetTradeSkill(open)
+  M.trade.open = open and true or false
+  if open then M.FireEvent("TRADE_SKILL_SHOW") M.FireEvent("TRADE_SKILL_LIST_UPDATE") else M.FireEvent("TRADE_SKILL_CLOSE") end
+end
+function M.SetTrainer(open)
+  M.trainer.open = open and true or false
+  M.FireEvent(open and "TRAINER_SHOW" or "TRAINER_CLOSED")
+end
 
 -- run "/cmd args" through SlashCmdList like the chat box does; returns true if a handler ran
 function M.RunSlash(line)
@@ -1793,7 +1998,7 @@ function M.InstallAH(G, modern)
   end
   G.GetInboxItem = function(i, a)
     local m = M.ah.mail[i]
-    if not (m and m.item) then return nil end
+    if not (m and m.item) or (a or 1) ~= 1 then return nil end   -- one attachment per mail in this mock
     local it = M.items[m.item.id] or {}
     return it.name, m.item.id, 134400, m.item.count, 1, true
   end
@@ -2627,6 +2832,14 @@ function M.ApplyForever(G)
   stub(G.C_AddOns, "GetAddOnInfo", function(i)
     local name = M.addonName or "TreeAI"
     if i == 1 or i == name then return name, name, "", true, nil, "INSECURE" end
+  end)
+  -- PROFLEVEL (4.0.2): character bank tabs bought (Enum.BagIndex ids) = the tabs seeded in WowMock.bank
+  G.C_Bank = G.C_Bank or {}
+  stub(G.C_Bank, "FetchPurchasedBankTabIDs", function()
+    local out = {}
+    for id in pairs(M.bank or {}) do if type(id) == "number" and id >= 6 then out[#out + 1] = id end end
+    table.sort(out)
+    return out
   end)
   G.C_MerchantFrame = G.C_MerchantFrame or {}
   stub(G.C_MerchantFrame, "GetItemInfo", function(i)

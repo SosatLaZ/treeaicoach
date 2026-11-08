@@ -13,15 +13,19 @@
 -- Données : Data/Recipes.lua (tables client, tools/wow_build_data.py). Onglet « Métiers » (créé seulement si tu as
 -- un métier), `/tai metiers`. « Fais N× X maintenant » ne monte dans « Maintenant » que si ta fenêtre de métier est
 -- ouverte (sinon : onglet seulement). Calculs hors combat, ≤ 1×/3 s. Lua 5.1, aucune globale.
+-- (PROFLEVEL 4.0.2) Le planificateur (E.Session / E.Split, = treeaicoach/wow/professions.py) sert l'onglet ET la page
+-- « Métiers » + la session métier de Modules/ProfLevel.lua (extension de ce module : banque, courrier, marchands,
+-- mode focus). Recettes : la compétence pour apprendre une recette d'entraîneur n'est pas dans les tables du client
+-- (estimée = seuil jaune, la vraie est lue chez le maître) ; une recette CONNUE est utilisable tout de suite.
 local T = _G.TreeAI
 if not T or not T.RegisterModule then return end
 local API = T.API or {}
 
 local M = T:RegisterModule("Prof", {
   title = "Métiers",
-  defaults = { enabled = true, overtime = 0, target = 0, knownOnly = false, nowTip = true, gather = true,
-    squad = true, camp = true, steps = 4 },
-  charDefaults = { known = {}, target = {}, nodes = {} },
+  defaults = { enabled = true, overtime = 0, target = 0, knownOnly = true, nowTip = true, gather = true,
+    squad = true, camp = true, steps = 4, plMode = "full", askAH = true, plCompass = true },
+  charDefaults = { known = {}, target = {}, nodes = {}, cal = {}, pl = {} },
   options = {
     { key = "overtime", type = "range", label = "« Heures sup. » (Legacy) : rangs pris", min = 0, max = 5, step = 1, section = "Calcul" },
     { key = "target", type = "range", label = "Compétence visée (0 = fin du rang actuel)", min = 0, max = 300, step = 5, section = "Calcul" },
@@ -31,6 +35,8 @@ local M = T:RegisterModule("Prof", {
     { key = "gather", type = "toggle", label = "Aide à la récolte (nœuds, zones, infobulles des nœuds et des bêtes)", section = "Affichage" },
     { key = "squad", type = "toggle", label = "Métiers du groupe (fabriquer pour les amis)", section = "Affichage" },
     { key = "camp", type = "toggle", label = "Astuces de camp (Forever)", section = "Affichage" },
+    { key = "askAH", type = "toggle", label = "Session métier : me demander avant de prévoir un achat à l'HV", section = "Session métier" },
+    { key = "plCompass", type = "toggle", label = "Session métier : la boussole va au PNJ de chaque étape", section = "Session métier" },
   },
 })
 if T.MODULE_TAB then T.MODULE_TAB.Prof = "prof" end
@@ -87,62 +93,224 @@ function E.Makeable(r, stock)
   end
   return n or 0
 end
--- chemin glouton : à chaque point, la recette au plus bas coût attendu par point.
--- opts = { known = {[sort]=true} | nil, overtime, knownOnly (= recettes connues + entraîneur seulement) }
-function E.Plan(rows, skill, target, price, stock, opts)
-  opts = opts or {}
+-- ------------------------------------------------------------------ planificateur (PROFLEVEL 4.0.2, = professions.py)
+-- Une fabrication à la fois (comptes entiers) : à chaque fabrication, la recette UTILISABLE au meilleur rapport
+-- (coût ou compos rares) / point attendu ; la compétence avance de chance × points (espérance : 1 / chance
+-- fabrications par point en jaune / vert). Mode « full » (complet) : atteindre la cible, ce qui manque s'achète
+-- (marchand au prix exact, sinon HV / estimation, sinon E.UNKNOWN : « à farmer / demander ») ; tes compos coûtent 0
+-- (+ 5 % de leur valeur pour départager). Mode « exact » (pile-poil) : seulement tes compos + celles d'un marchand,
+-- le plus de points possible pour la valeur consommée (vider les sacs). Au plafond du rang : le rang suivant chez le
+-- maître si le niveau le permet (sinon arrêt). Utilisable = connue (lue dans la fenêtre du métier), apprise avec le
+-- métier (drapeau 1), ou recette d'entraîneur dont l'exigence est atteinte (lue chez lui, sinon = seuil jaune) ;
+-- un patron inconnu seulement si inp.patterns.
+E.UNKNOWN = 10000
+E.CRAFT_SEC = 3.5
+E.STICKY, E.LEARN_COST = 0.85, 1.3
+E.FLAG_AUTO, E.FLAG_EST = 1, 2
+local EPS = 1e-9
+--- utilisable à `sk` ? → ok, à apprendre (« trainer » / « pattern » / nil)
+function E.Usable(r, sk, known, learnAt, patterns)
+  local flags = r[11] or 0
+  if flags % 2 == 1 or (known and known[r[1]]) then return true, nil end   -- appris avec le métier / connue
+  local item = r[8] or 0
+  if item ~= 0 and not patterns then return false, nil end
+  local need = (learnAt and learnAt[r[1]]) or r[4] or 1
+  if sk < need then return false, nil end
+  if item ~= 0 then return true, "pattern" end
+  return true, known and "trainer" or nil      -- liste des recettes pas encore lue : peut-être déjà connue
+end
+--- chance d'un point (Classic) d'une recette utilisable : orange 1, jaune / vert (gris − sk) / (gris − jaune) + heures sup.
+function E.Chance2(r, sk, overtime)
+  local y, gr = r[5] or 0, r[6] or 0
+  if gr <= 0 or sk >= gr then return 0 end
+  if sk < y or gr <= y then return 1 end
+  local c = (gr - sk) / (gr - y) + E.OVERTIME * max(0, min(5, floor(tonumber(overtime) or 0)))
+  return max(0, min(1, c))
+end
+--- couleur d'une recette utilisable à sk (sans « pas encore » : l'exigence est jugée par E.Usable)
+function E.Color2(r, sk)
+  local y, gr = r[5] or 0, r[6] or 0
+  if gr <= 0 or sk >= gr then return "grey" end
+  if sk < y then return "orange" end
+  return sk < (y + gr) / 2 and "yellow" or "green"
+end
+--- inp = { rows, skill, target, cap, level, mode = "full"|"exact", stock = {[id]=n}, known = {[sort]=true}|nil,
+---   learnAt = {[sort]=exigence lue chez l'entraîneur}, patterns, vendor = {[id]=prix unitaire}, price = {[id]=prix}
+---   ou fonction(id), value = {[id]=valeur d'une compo possédée}, overtime, ranks, craftSec, maxCrafts }
+--- → { seq = { {kind="craft", spell, name, from, to, crafts, color, colorTo, learn, row} | {kind="train", at, rank,
+---   level, cap} }, steps (les « craft »), train, learn = { {spell, name, at, kind, item} }, use = {[id]=n},
+---   buy = {[id]=n}, unknown = {[id]=n}, var = {[id]=true} (compo d'une fabrication jaune / verte), cost, crafts,
+---   reached, skill (espérance), cap, stop = "target"|"cap"|"level"|"none"|"mats"|"guard", nextRank, time }
+function E.Session(inp)
+  local rows = inp.rows or {}
+  local skill = floor(tonumber(inp.skill) or 0)
+  local target = min(300, floor(tonumber(inp.target) or 0))
+  local cap = floor(tonumber(inp.cap) or 300)
+  local level = tonumber(inp.level) or 60
+  local exact = inp.mode == "exact"
+  local known, learnAt, patterns = inp.known, inp.learnAt, inp.patterns
+  local vendor, value, price = inp.vendor or {}, inp.value or {}, inp.price
+  local pf
+  if type(price) == "function" then pf = price else pf = function(id) return price and price[id] end end
+  local ot = inp.overtime
   local st = {}
-  for k, v in pairs(stock or {}) do st[k] = v end
-  local steps, shopping, used, total = {}, {}, {}, 0
-  local s, guard = floor(tonumber(skill) or 0), 0
-  target = floor(tonumber(target) or 0)
-  local base = {}  -- coût sans stock, mis en cache (le stock ne fait que baisser)
-  local function cost(r)
-    local m = r[10] or {}
-    for k = 1, #m - 1, 2 do if (st[m[k]] or 0) > 0 then return E.CraftCost(r, price, st) end end
-    local b = base[r]
-    if not b then b = E.CraftCost(r, price, nil) base[r] = b end
-    return b
-  end
-  while s < target and guard < 400 do
-    guard = guard + 1
-    local best, bestV, bestC
-    for _, r in ipairs(rows) do
-      if r[4] <= s and s < r[6] and (not opts.knownOnly or r[8] == 0 or (opts.known and opts.known[r[1]])) then
-        local c = E.Chance(s, r[5], r[6], opts.overtime, r[4])
-        if c > 0 then
-          local v = (cost(r) + 1) / (c * (r[7] or 1))
-          if not bestV or v < bestV then best, bestV, bestC = r, v, c end
+  for k, v in pairs(inp.stock or {}) do if (tonumber(v) or 0) > 0 then st[k] = v end end
+  local res = { seq = {}, steps = {}, train = {}, learn = {}, use = {}, buy = {}, unknown = {}, var = {}, cost = 0, crafts = 0 }
+  local planned, last, stick = {}, nil, nil
+  local s, guard = skill, 0
+  local maxCrafts = tonumber(inp.maxCrafts) or 3000
+  while true do
+    local sk = floor(s + EPS)
+    if sk >= target then res.stop = "target" break end
+    if sk >= cap then
+      local nr
+      for _, r in ipairs(inp.ranks or E.RANKS) do if r[4] > cap then nr = r break end end
+      if not nr then res.stop = "cap" break end
+      if level < nr[2] then res.stop, res.nextRank = "level", nr break end
+      local t = { kind = "train", at = sk, rank = nr[1], level = nr[2], cap = nr[4] }
+      res.train[#res.train + 1] = t
+      res.seq[#res.seq + 1] = t
+      cap, last = nr[4], nil
+    else
+      guard = guard + 1
+      if guard > maxCrafts then res.stop = "guard" break end
+      local best, bestV, bestC, bestL
+      for _, r in ipairs(rows) do
+        local ok, needL = E.Usable(r, sk, known, learnAt, patterns)
+        if ok then
+          local c = E.Chance2(r, sk, ot)
+          if c > 0 then
+            local m, cst, scarce, feasible = r[10] or {}, 0, 0, true
+            for k = 1, #m - 1, 2 do
+              local id, n = m[k], m[k + 1]
+              local have = st[id] or 0
+              local u = have < n and have or n
+              local miss = n - u
+              if miss > 0 then
+                local vp = vendor[id]
+                if vp then cst = cst + miss * vp
+                elseif exact then feasible = false break
+                else cst = cst + miss * (pf(id) or E.UNKNOWN) end
+              end
+              scarce = scarce + u * (value[id] or 1)
+            end
+            if feasible then
+              local v
+              if exact then v = (scarce + cst + 1) / (c * (r[7] or 1))
+              else v = (cst + scarce * 0.05 + 1) / (c * (r[7] or 1)) end
+              -- moins d'allers-retours : la recette en cours garde la main à 15 % près ; une recette encore à
+              -- apprendre (visite au maître) doit faire 30 % mieux
+              if stick == r[1] then v = v * E.STICKY end
+              if needL and not planned[r[1]] then v = v * E.LEARN_COST end
+              if not bestV or v < bestV - EPS or (v <= bestV + EPS and (c > bestC + EPS or (c >= bestC - EPS and r[1] < best[1]))) then
+                best, bestV, bestC, bestL = r, v, c, needL
+              end
+            end
+          end
         end
       end
-    end
-    if not best then break end
-    local crafts = 1 / bestC
-    local m = best[10] or {}
-    for k = 1, #m - 1, 2 do
-      local id, need = m[k], m[k + 1] * crafts
-      local use = min(st[id] or 0, need)
-      st[id] = (st[id] or 0) - use
-      if use > 0 then used[id] = (used[id] or 0) + use end
-      if need - use > 0 then
-        shopping[id] = (shopping[id] or 0) + (need - use)
-        total = total + (need - use) * (price(id) or 10000)
+      if not best then res.stop = exact and "mats" or "none" break end
+      local m = best[10] or {}
+      for k = 1, #m - 1, 2 do
+        local id, n = m[k], m[k + 1]
+        local have = st[id] or 0
+        local u = have < n and have or n
+        if u > 0 then st[id] = have - u res.use[id] = (res.use[id] or 0) + u end
+        local miss = n - u
+        if miss > 0 then
+          res.buy[id] = (res.buy[id] or 0) + miss
+          local p = vendor[id] or pf(id)
+          if p then res.cost = res.cost + miss * p else res.unknown[id] = (res.unknown[id] or 0) + miss end
+        end
+        if bestC < 1 then res.var[id] = true end
+      end
+      if bestL and not planned[best[1]] then
+        planned[best[1]] = true
+        res.learn[#res.learn + 1] = { spell = best[1], name = best[9], at = sk, kind = bestL, item = best[8] }
+      end
+      s = s + bestC * (best[7] or 1)
+      res.crafts, stick = res.crafts + 1, best[1]
+      local to = floor(s + EPS)
+      if last and last.spell == best[1] then
+        last.crafts, last.to, last.colorTo = last.crafts + 1, to, E.Color2(best, sk)
+      else
+        last = { kind = "craft", spell = best[1], name = best[9], from = sk, to = to, crafts = 1, color = E.Color2(best, sk),
+          colorTo = E.Color2(best, sk), learn = bestL, row = best }
+        res.seq[#res.seq + 1] = last
+        res.steps[#res.steps + 1] = last
       end
     end
-    local last = steps[#steps]
-    local to = min(target, s + (best[7] or 1))
-    if last and last.spell == best[1] then
-      last.to, last.crafts = to, last.crafts + crafts
-    else
-      steps[#steps + 1] = { spell = best[1], name = best[9], from = s, to = to, crafts = crafts, color = E.Color(s, best),
-        recipe = best[8], row = best }
-    end
-    s = s + (best[7] or 1)
   end
-  for _, x in ipairs(steps) do x.crafts = floor(x.crafts + 0.999) end
-  for k, v in pairs(shopping) do shopping[k] = floor(v + 0.999) end
-  for k, v in pairs(used) do used[k] = floor(v + 0.999) end
-  return { steps = steps, shopping = shopping, used = used, cost = floor(total), reached = s }
+  res.reached, res.skill, res.cap = floor(s + EPS), s, cap
+  res.time = res.crafts * (tonumber(inp.craftSec) or E.CRAFT_SEC)
+  return res
+end
+--- logistique d'un plan : d'où viennent les compos utilisées (sacs, puis banque, puis courrier ; la réserve de quête
+--- est prise dans les sacs d'abord) et quoi acheter où (marchand : marge si fabrications jaunes / vertes et prix
+--- ≤ 1 pa, arrondi au lot ; HV : prix connu ; sinon à farmer / demander).
+--- have = { bags = {}, bank = {}, mail = {} } ; reserve = {[id]=n} ; vinfo = {[id]={prix unitaire, lot}} ;
+--- price = {[id]=prix} ou fonction → { bank = {[id]=n}, mail = {[id]=n}, vendor = { {id, n, buy, margin, unit, cost} },
+--- ah = { {id, n, unit, cost} }, farm = { {id, n} }, vendorCost, ahCost }
+function E.Split(res, have, reserve, vinfo, price)
+  have, reserve, vinfo = have or {}, reserve or {}, vinfo or {}
+  local bags, bank, mail = have.bags or {}, have.bank or {}, have.mail or {}
+  local pf
+  if type(price) == "function" then pf = price else pf = function(id) return price and price[id] end end
+  local out = { bank = {}, mail = {}, vendor = {}, ah = {}, farm = {}, vendorCost = 0, ahCost = 0 }
+  local ids = {}
+  for id in pairs(res.use or {}) do ids[#ids + 1] = id end
+  tsort(ids)
+  for _, id in ipairs(ids) do
+    local n = res.use[id]
+    local rsv = reserve[id] or 0
+    local inBags = max(0, (bags[id] or 0) - rsv)
+    rsv = max(0, rsv - (bags[id] or 0))
+    local inBank = max(0, (bank[id] or 0) - rsv)
+    rsv = max(0, rsv - (bank[id] or 0))
+    local inMail = max(0, (mail[id] or 0) - rsv)
+    local rest = max(0, n - inBags)
+    local b = min(rest, inBank)
+    if b > 0 then out.bank[id] = b end
+    rest = rest - b
+    local ml = min(rest, inMail)
+    if ml > 0 then out.mail[id] = ml end
+  end
+  ids = {}
+  for id in pairs(res.buy or {}) do ids[#ids + 1] = id end
+  tsort(ids)
+  for _, id in ipairs(ids) do
+    local n = res.buy[id]
+    local vi = vinfo[id]
+    if vi then
+      local unit, lot = vi[1] or 0, max(1, vi[2] or 1)
+      local margin = (res.var and res.var[id] and unit <= 100) and max(1, ceil(n * 0.1)) or 0
+      local want = n + margin
+      local purchase = ceil(want / lot) * lot
+      out.vendor[#out.vendor + 1] = { id = id, n = n, buy = purchase, margin = purchase - n, unit = unit, cost = purchase * unit }
+      out.vendorCost = out.vendorCost + purchase * unit
+    elseif res.unknown and res.unknown[id] then
+      out.farm[#out.farm + 1] = { id = id, n = n }
+    else
+      local unit = pf(id) or 0
+      out.ah[#out.ah + 1] = { id = id, n = n, unit = unit, cost = n * unit }
+      out.ahCost = out.ahCost + n * unit
+    end
+  end
+  return out
+end
+-- ancien contrat (onglet « Métiers », tests) : { steps, shopping, used, cost, reached } ; opts.knownOnly = pas de
+-- patrons inconnus (défaut des nouvelles pages : ils sont listés à part, « patrons qui valent le coup »)
+function E.Plan(rows, skill, target, price, stock, opts)
+  opts = opts or {}
+  local res = E.Session({ rows = rows, skill = skill, target = target, cap = 300, price = price, stock = stock,
+    known = opts.known, learnAt = opts.learnAt, patterns = not opts.knownOnly, overtime = opts.overtime, mode = "full",
+    vendor = opts.vendor })
+  local steps = {}
+  for _, x in ipairs(res.steps) do
+    steps[#steps + 1] = { spell = x.spell, name = x.name, from = x.from, to = x.to, crafts = x.crafts, color = x.color,
+      recipe = (x.learn == "pattern") and x.row[8] or 0, row = x.row, learn = x.learn }
+  end
+  return { steps = steps, shopping = res.buy, used = res.use, cost = floor(res.cost), reached = res.reached, res = res }
 end
 -- couleur d'un nœud de récolte (Classic) : orange < +25, jaune < +50, vert < +100, gris ensuite
 function E.NodeColor(skill, req)
@@ -286,9 +454,20 @@ function M.ScanKnown()
     end
     if not (line and d.lines[line]) and type(info) == "table" then line = M.LineOf(info.professionName or info.parentProfessionName) end
     local ids = try(listIDs)
+    local cal, sk = {}, nil
+    for _, p in ipairs(M.profs or {}) do if p.line == line then sk = p.rank end end
     for _, id in ipairs(type(ids) == "table" and ids or {}) do
       local r = try(C.GetRecipeInfo, id)
-      if type(r) == "table" and r.learned == true then known[tonumber(id) or 0] = 1 end
+      if type(r) == "table" and r.learned == true then
+        known[tonumber(id) or 0] = 1
+        -- (PROFLEVEL) couleurs du jeu à ta compétence : gris exact (maxTrivialLevel), jaune corrigé (relativeDifficulty)
+        local gx, dif = tonumber(r.maxTrivialLevel), tonumber(r.relativeDifficulty)
+        if (gx and gx > 0) or (dif and sk) then cal[tonumber(id) or 0] = { g = gx, d = dif, s = sk } end
+      end
+    end
+    if line and next(cal) then
+      M.char.cal = type(M.char.cal) == "table" and M.char.cal or {}
+      M.char.cal[line] = cal
     end
   else
     line = M.LineOf((try(g("GetTradeSkillLine"))))
@@ -296,9 +475,20 @@ function M.ScanKnown()
     if rows then
       local byName = {}
       for _, r in ipairs(rows) do byName[fold(r[9])] = r[1] end
+      local DIFF = { optimal = 0, medium = 1, easy = 2, trivial = 3 }
+      local cal, sk = {}, nil
+      for _, p in ipairs(M.profs or {}) do if p.line == line then sk = p.rank end end
       for i = 1, min(tonumber((try(g("GetNumTradeSkills")))) or 0, 500) do
         local name, kind = try(g("GetTradeSkillInfo"), i)
-        if name and kind ~= "header" and byName[fold(name)] then known[byName[fold(name)]] = 1 end
+        local spell = name and kind ~= "header" and byName[fold(name)]
+        if spell then
+          known[spell] = 1
+          if DIFF[kind] and sk then cal[spell] = { d = DIFF[kind], s = sk } end   -- (PROFLEVEL) couleur du jeu
+        end
+      end
+      if next(cal) then
+        M.char.cal = type(M.char.cal) == "table" and M.char.cal or {}
+        M.char.cal[line] = cal
       end
     end
   end
@@ -392,26 +582,42 @@ function M.PlanFor(pr)
   local d = D()
   local rows = d and d.r[pr.line]
   if not rows or #rows == 0 then return nil end
-  local stock = M.Stock(rows)
-  local known = M.char.known[pr.line]
   local target = M.TargetFor(pr)
-  local res = E.Plan(rows, pr.rank, target, price, stock,
-    { known = known, knownOnly = M.db.knownOnly, overtime = M.db.overtime })
+  local known = M.char.known[pr.line]
+  if type(known) == "table" and not next(known) then known = nil end
+  local L = M.Level
+  local res, stock
+  -- (PROFLEVEL) même plan que la page « Métiers » : sacs + banque + courrier − réserve de quête, prix du marchand / HV
+  local plan = L and L.Compute and L.Compute(pr.line, "full", target)
+  if plan then
+    res = { steps = {}, shopping = plan.res.buy, used = plan.res.use, cost = plan.cost, reached = plan.res.reached, plan = plan }
+    for _, x in ipairs(plan.res.steps) do
+      res.steps[#res.steps + 1] = { spell = x.spell, name = x.name, from = x.from, to = x.to, crafts = x.crafts, color = x.color,
+        recipe = 0, row = x.row, learn = x.learn }
+    end
+    stock = {}
+    for id, n in pairs(plan.have.bags) do stock[id] = n end
+  else
+    stock = M.Stock(rows)
+    res = E.Plan(rows, pr.rank, target, price, stock,
+      { known = known, knownOnly = M.db.knownOnly, overtime = M.db.overtime })
+  end
   res.target, res.stock = target, stock
   -- « maintenant » : meilleure recette faisable avec les sacs, jusqu'à ce qu'elle change de couleur
   -- (4.0 QA) seulement une recette que tu CONNAIS (lue dans la fenêtre du métier) : sans liste lue, pas de « maintenant »
   local best, bestN
-  for _, r in ipairs(rows) do
-    if known and known[r[1]] and r[4] <= pr.rank and pr.rank < r[6] then
+  local cal = (L and L.Rows) and L.Rows(pr.line) or rows
+  for _, r in ipairs(cal) do
+    if known and known[r[1]] and pr.rank < r[6] then
       local n = E.Makeable(r, stock)
-      local c = E.Chance(pr.rank, r[5], r[6], M.db.overtime, r[4])
+      local c = E.Chance2(r, pr.rank, M.db.overtime)
       if n > 0 and c >= 0.5 and (not best or c > bestN.c or (c == bestN.c and r[6] > best[6])) then
         best, bestN = r, { n = n, c = c }
       end
     end
   end
   if best then
-    local col = E.Color(pr.rank, best)
+    local col = E.Color2(best, pr.rank)
     local untilChange = col == "orange" and (best[5] - pr.rank) or ceil((best[5] + best[6]) / 2 - pr.rank)
     res.now = { row = best, n = max(1, min(bestN.n, untilChange > 0 and untilChange or bestN.n)), color = col }
   end
@@ -720,6 +926,8 @@ function M.Build()
   local kinds, profsBy = {}, {}
   for line, v in pairs(d.lines) do kinds[line] = v[1] end
   for _, pr in ipairs(M.profs) do profsBy[pr.line] = pr.rank end
+  -- (PROFLEVEL) session métier en cours : l'étape du moment (épinglée) + « Quitter la session »
+  if M.Level and M.Level.TabLines then for _, l in ipairs(M.Level.TabLines()) do lines[#lines + 1] = l end end
   local earned, nl, ns, gap = E.Legacy(profsBy, kinds)
   out.legacy = { earned = earned, nextLine = nl, nextStep = ns, gap = gap }
   local hasCraft = false
@@ -864,6 +1072,8 @@ end
 function M:AutoRefresh() M.Update() end
 
 function M:TRADE_SKILL_SHOW() M.TradeOpen = true M.Refresh(0.3) end
+-- (PROFLEVEL) la banque compte : relevée par ProfLevel (PL.On.BANKFRAME_OPENED), puis recalcul
+function M:BANKFRAME_OPENED() M.Refresh(1) end
 function M:TRADE_SKILL_CLOSE() M.TradeOpen = false M.Refresh(0.3) end
 function M:TRADE_SKILL_LIST_UPDATE() if not T:InCombat() then pcall(M.ScanKnown) end M.Refresh(0.5) end
 M.TRADE_SKILL_UPDATE = M.TRADE_SKILL_LIST_UPDATE
@@ -871,7 +1081,8 @@ M.TRADE_SKILL_UPDATE = M.TRADE_SKILL_LIST_UPDATE
 function M:WriteSummary()
   local s = T:Summary()
   if type(s) ~= "table" or not M.out then return end
-  s.prof = { profs = M.out.profs, legacy = M.out.legacy, plans = M.out.plans, updated = epoch() }
+  s.prof = { profs = M.out.profs, legacy = M.out.legacy, plans = M.out.plans, updated = epoch(),
+    level = M.Level and M.Level.Summary and M.Level.Summary() or nil }
 end
 
 local function slash(rest)
@@ -885,6 +1096,8 @@ local function slash(rest)
       if name == "" or fold(pr.name):find(fold(name), 1, true) then M.char.target[pr.line] = n end
     end
     M:Print(fmt("Cible : %d", n))
+  elseif M.Level and M.Level.Slash and M.Level.Slash(a) then
+    return
   elseif a == "debug" then
     local api = M.LegacyAPI()
     M:Print(fmt("Recettes : %s · métiers : %d · API Legacy : %s", D() and D().build or "absentes", #(M.profs or {}),
@@ -895,19 +1108,30 @@ local function slash(rest)
 end
 
 function M:OnEnable()
+  -- un seul handler par événement et par module (Core) : celui de Prof, puis le complément de ProfLevel
+  local L = M.Level
+  local mine = {}
   for _, ev in ipairs({ "SKILL_LINES_CHANGED", "CHAT_MSG_SKILL", "TRADE_SKILL_SHOW", "TRADE_SKILL_LIST_UPDATE",
     "TRADE_SKILL_UPDATE", "TRADE_SKILL_CLOSE", "BAG_UPDATE_DELAYED", "PLAYER_LEVEL_UP", "ZONE_CHANGED_NEW_AREA",
     "BANKFRAME_OPENED", "UNIT_SPELLCAST_SENT" }) do
-    M:RegisterEvent(ev, M[ev] or function() M.Refresh(1) end)
+    mine[ev] = true
+    local base = M[ev] or function() M.Refresh(1) end
+    local extra = L and ((L.After and L.After[ev]) or (L.On and L.On[ev]))
+    M:RegisterEvent(ev, extra and function(...) base(...) extra(...) end or base)
+  end
+  if L and L.On then
+    for ev, fn in pairs(L.On) do if not mine[ev] then M:RegisterEvent(ev, fn) end end
   end
   hookTooltips()
   M:On("SUMMARY", function() pcall(M.WriteSummary, M) end)
   if T.RegisterSlash then
-    T:RegisterSlash("metiers", slash, "metiers [cible N [métier]|debug] : montée de métier la moins chère, achats, récolte")
+    T:RegisterSlash("metiers", slash, "metiers [focus|pilepoil|complet|page|cible N [métier]|debug] : montée de métier, session métier, achats, récolte")
   end
+  if L and L.OnEnable then pcall(L.OnEnable) end
   M.Refresh(2)
 end
 function M:OnDisable()
+  if M.Level and M.Level.OnDisable then pcall(M.Level.OnDisable) end
   if T.SetTabLines and M.tabRegistered then pcall(T.SetTabLines, T, "prof", {}, "Prof") end
 end
 function M:OnOptionChanged() M.Refresh(0.2) end

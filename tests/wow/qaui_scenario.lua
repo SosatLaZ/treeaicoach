@@ -205,7 +205,7 @@ return function(M, ctx)
   H.mode = "main"
   local jeu = {}
   for _, e in ipairs(H.Entries()) do if e.group == "jeu" then jeu[#jeu + 1] = e end end
-  check(#jeu >= 6 and #jeu <= 9, "Jeu: the window pages (" .. #jeu .. ")")
+  check(#jeu >= 6 and #jeu <= 10, "Jeu: the window pages (" .. #jeu .. ")")   -- (PROFLEVEL) + « Métiers »
   for _, e in ipairs(jeu) do check(not e.desc and e.id:find("^tab:"), "Jeu entry compact: " .. tostring(e.id)) end
   -- UI-18 : Échap on the bêta list → the next menu opens on the main list
   H.Toggle()

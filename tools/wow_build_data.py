@@ -10,7 +10,8 @@ French locale. Output:
       levelling builds from treeaicoach/wow/talent_builds.py)
 
   wow_addon/TreeAI/Data/Recipes.lua + treeaicoach/wow/data/recipes.json.gz  (tradeskill recipes: SkillLineAbility
-  colours, SpellReagents, SpellEffect 24 crafted item, recipe items; ``--only recipes``)
+  colours, SpellReagents, SpellEffect 24 crafted item, recipe items + their required skill, vendor unit prices
+  (ItemSparse BuyPrice / VendorStackCount), leather farming bands; ``--only recipes``)
 
 Usage:  python tools/wow_build_data.py [--cache DIR] [--build 1.60.1.70862] [--offline] [--only taxi|talents|recipes]
 CSV files are downloaded once into --cache (default: a temp dir) and reused. Same CSVs -> same bytes out.
@@ -521,8 +522,8 @@ PROF_LINES = {171: ("c", "Alchimie"), 164: ("c", "Forge"), 333: ("c", "Enchantem
               356: ("s", "Pêche")}
 PROF_TABLES = ("SkillLineAbility", "SpellName", "SpellEffect", "SpellReagents", "ItemSparse", "Item",
                "ItemEffect", "ItemXItemEffect")
-# Reagents sold by ordinary vendors (Classic item ids; thread, vials, flux, dyes, spices, wood…). BuyPrice comes
-# from ItemSparse. Ids missing from the build are dropped.
+# Reagents sold by ordinary vendors (Classic item ids; thread, vials, flux, dyes, spices, wood…). Unit price =
+# ItemSparse BuyPrice / VendorStackCount (vials and spices come in bundles of 5). Ids missing from the build are dropped.
 VENDOR_MATS = (159, 1179, 1205, 2320, 2321, 2324, 2325, 2596, 2604, 2605, 2665, 2678, 2692, 2880, 2894, 3371,
                3372, 3466, 3713, 3857, 4289, 4291, 4340, 4341, 4342, 4399, 4400, 4470, 4536, 6217, 6260, 6261,
                6530, 8343, 8925, 10290, 10647, 10648, 11291, 14341, 17194, 17196, 18256, 18567)
@@ -563,11 +564,38 @@ GATHER_ZONES = {
 }
 
 
+# PROFLEVEL (4.0.2) — where to skin a leather / hide you lack: beasts of these levels (skinning ≈ 5 × level above
+# 20), best zones (FR names as the client shows them; checked against AreaTable by tests/wow/test_prof.py).
+FARM = {
+    2318: (5, 20, 1, ("Les Tarides", "Forêt des Pins argentés", "Marche de l'Ouest", "Loch Modan", "Sombrivage")),
+    783: (5, 20, 1, ("Les Tarides", "Forêt des Pins argentés", "Marche de l'Ouest", "Loch Modan", "Sombrivage")),
+    2319: (20, 30, 100, ("Les Serres-Rocheuses", "Orneval", "Contreforts de Hautebrande", "Les Paluns",
+                         "Mille pointes")),
+    4232: (20, 30, 100, ("Les Serres-Rocheuses", "Orneval", "Contreforts de Hautebrande", "Les Paluns",
+                         "Mille pointes")),
+    4234: (30, 40, 150, ("Mille pointes", "Hautes-terres Arathies", "Désolace", "Vallée de Strangleronce",
+                         "Marécage d'Âprefange")),
+    4235: (30, 40, 150, ("Mille pointes", "Hautes-terres Arathies", "Désolace", "Vallée de Strangleronce",
+                         "Marécage d'Âprefange")),
+    4304: (40, 50, 200, ("Feralas", "Tanaris", "Les Hinterlands", "Marais des Chagrins")),
+    8169: (40, 50, 200, ("Feralas", "Tanaris", "Les Hinterlands", "Marais des Chagrins")),
+    8170: (50, 60, 250, ("Cratère d'Un'Goro", "Berceau-de-l'Hiver", "Gangrebois", "Silithus")),
+    8171: (50, 60, 250, ("Cratère d'Un'Goro", "Berceau-de-l'Hiver", "Gangrebois", "Silithus")),
+}
+# recipe row flags (index 10): 1 = learned with the profession (AcquireMethod 1), 2 = learn skill ESTIMATED (trainer
+# recipe: the client tables carry MinSkillLineRank = 1, the real requirement is trainer data on the server; TreeAI
+# plans it from its yellow threshold — never too early — and learns the real value at the trainer)
+FLAG_AUTO, FLAG_EST = 1, 2
+
+
 def build_recipes(T: dict) -> dict:
-    """Tradeskill recipes per profession line: [spell, item, count, min, yellow, grey, skillups, recipeItem,
-    name, [reagent, n, …]] + reagent table {id: [name, buyPrice, vendor 0/1, sellPrice]} + gathering nodes.
+    """Tradeskill recipes per profession line: [spell, item, count, learn, yellow, grey, skillups, recipeItem,
+    name, [reagent, n, …], flags] + reagent table {id: [name, unitBuyPrice, vendor 0/1, sellPrice, vendorBundle]}
+    + gathering nodes + leather farming bands.
     Colours (Classic): orange < yellow (TrivialSkillLineRankLow) ≤ yellow < (yellow+grey)/2 ≤ green < grey
-    (TrivialSkillLineRankHigh)."""
+    (TrivialSkillLineRankHigh). learn = skill to learn it: 1 for recipes learned with the profession, the recipe
+    item's RequiredSkillRank for patterns, else MinSkillLineRank when the client has it, else the yellow threshold
+    (estimate, flag 2: Forever's tables hold no trainer requirement)."""
     names = {r["ID"]: r["Name_lang"] for r in T["SpellName"]}
     create: dict[str, tuple[int, int]] = {}
     for r in T["SpellEffect"]:
@@ -614,8 +642,19 @@ def build_recipes(T: dict) -> dict:
         flat = reag.get(s, [])
         mats.update(flat[0::2])  # crafted items are named by the recipe itself (only reagents are listed)
         yellow, grey = i(r["TrivialSkillLineRankLow"]), i(r["TrivialSkillLineRankHigh"])
-        per[line].append([sid, item, count, max(1, i(r["MinSkillLineRank"])), yellow, grey,
-                          max(1, i(r["NumSkillUps"])), teach.get(s, 0), name, flat])
+        recipe_item = teach.get(s, 0)
+        req = i(sparse[str(recipe_item)].get("RequiredSkillRank")) if recipe_item and str(recipe_item) in sparse else 0
+        flags = 0
+        if r["AcquireMethod"] == "1":
+            learn, flags = 1, FLAG_AUTO
+        elif i(r["MinSkillLineRank"]) > 1:
+            learn = i(r["MinSkillLineRank"])
+        elif req > 0:
+            learn = req
+        else:
+            learn, flags = max(1, yellow), FLAG_EST
+        per[line].append([sid, item, count, learn, yellow, grey, max(1, i(r["NumSkillUps"])), recipe_item, name,
+                          flat, flags])
     for rows in per.values():
         rows.sort(key=lambda x: (x[3], x[4], x[0]))
     vendor = set(VENDOR_MATS)
@@ -623,15 +662,19 @@ def build_recipes(T: dict) -> dict:
     for line, nodes in GATHER.items():
         gather[line] = [[iid, skill] for iid, skill in nodes if str(iid) in sparse]
         mats.update(iid for iid, _ in nodes)
+    mats.update(FARM)
     mat_tab = {}
     for m in sorted(mats):
         sp = sparse.get(str(m))
         if not sp:
             continue
-        mat_tab[m] = [sp["Display_lang"], i(sp["BuyPrice"]), 1 if m in vendor else 0, i(sp["SellPrice"])]
+        bundle = max(1, i(sp.get("VendorStackCount"), 1))
+        unit = -(-i(sp["BuyPrice"]) // bundle)  # price of ONE item (rounded up)
+        mat_tab[m] = [sp["Display_lang"], unit, 1 if m in vendor else 0, i(sp["SellPrice"]), bundle if m in vendor else 1]
+    farm = {iid: [lo, hi, skill, list(z)] for iid, (lo, hi, skill, z) in FARM.items() if str(iid) in sparse}
     return {"lines": {line: [k, n] for line, (k, n) in PROF_LINES.items()}, "recipes": per, "mats": mat_tab,
             "gather": gather, "zones": {line: [[a, b, list(z)] for a, b, z in bands]
-                                        for line, bands in GATHER_ZONES.items()}}
+                                        for line, bands in GATHER_ZONES.items()}, "farm": farm}
 
 
 def _lua_val(v) -> str:
@@ -645,10 +688,12 @@ def _lua_val(v) -> str:
 def write_recipes_lua(build: str, rec: dict, path: str | None = None) -> int:
     """Compact Lua table T.Data.Recipes (≤ 300 KB). Returns the byte size."""
     out = [HEADER.format(build=build),
-           "-- Métiers : recettes { sort, objet créé, quantité, compétence mini (orange), jaune, gris, points,\n"
-           "-- objet-recette (0 = entraîneur/auto), nom FR, { compo, n, … } } ; vert = (jaune + gris) / 2.\n"
-           "-- mats[id] = { nom, prix d'achat, vendu par un marchand (1/0), prix de revente } ; gather = nœuds\n"
-           "-- { objet, compétence } ; zones = { de, à, { zones conseillées } }.\n",
+           "-- Métiers : recettes { sort, objet créé, quantité, compétence pour l'apprendre, jaune, gris, points,\n"
+           "-- objet-recette (0 = entraîneur/auto), nom FR, { compo, n, … }, drapeaux } ; vert = (jaune + gris) / 2 ;\n"
+           "-- drapeaux : 1 = appris avec le métier, 2 = compétence pour l'apprendre estimée (= jaune : le client n'a\n"
+           "-- pas l'exigence de l'entraîneur ; la vraie est lue chez lui). mats[id] = { nom, prix d'achat À L'UNITÉ,\n"
+           "-- vendu par un marchand (1/0), prix de revente, lot du marchand } ; gather = nœuds { objet, compétence } ;\n"
+           "-- zones = { de, à, { zones conseillées } } ; farm[cuir] = { niv. des bêtes de, à, dépeçage, { zones } }.\n",
            "local T = TreeAI\nif type(T) ~= \"table\" then return end\nT.Data = T.Data or {}\n",
            f"T.Data.Recipes = {{\n  build = {lua_str(build)},\n  lines = {{\n"]
     for line, (k, n) in sorted(rec["lines"].items()):
@@ -666,6 +711,9 @@ def write_recipes_lua(build: str, rec: dict, path: str | None = None) -> int:
     out.append("  },\n  zones = {\n")
     for line, bands in sorted(rec["zones"].items()):
         out.append(f"    [{line}] = {_lua_val(bands)},\n")
+    out.append("  },\n  farm = {\n")
+    for iid, v in sorted((rec.get("farm") or {}).items()):
+        out.append(f"    [{iid}] = {_lua_val(v)},\n")
     out.append("  },\n}\n")
     data = "".join(out).encode("utf-8")
     path = path or os.path.join(ADDON_DATA, "Recipes.lua")
