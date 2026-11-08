@@ -20,7 +20,7 @@ def code():
 def test_toc_after_compass_and_squad():
     lines = [l.strip() for l in (ADDON / "TreeAI.toc").read_text(encoding="utf-8").splitlines()]
     r = lines.index("Modules\\Radar.lua")
-    for dep in ("Compass", "Squad", "Quests"):
+    for dep in ("Compass", "Group", "Quests"):
         assert lines.index(f"Modules\\{dep}.lua") < r, dep
 
 

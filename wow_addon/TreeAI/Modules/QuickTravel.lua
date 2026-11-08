@@ -9,8 +9,8 @@
 --    marchands vus sont retenus avec ce qu'ils vendent (munitions / nourriture / boisson) : données du jeu.
 --  4 groupe : fenêtre « Tout le monde prêt ? » (PV, mana, munitions, familier de chacun : Squad pour les amis
 --    TreeAI, API du jeu pour les autres), boutons du chef (appel « prêt », inviter les amis du dernier groupe,
---    convertir en raid / groupe, mode de butin) et « Point de rencontre » (ta position envoyée au groupe,
---    ≤ 1 envoi / 15 s, la boussole des amis s'y pointe).
+--    convertir en raid / groupe, mode de butin) et « Point de rencontre » (ta position envoyée au groupe par le
+--    protocole unique du module Groupe, ≤ 1 envoi / 15 s ; la boussole des amis s'y pointe).
 -- Toute action du jeu part d'un clic du joueur ; rien en combat ; aucun cadre Blizzard modifié ni ancré
 -- (nos cadres sont posés sur UIParent à la position lue des fenêtres du jeu). Lua 5.1, aucune globale.
 local T = _G.TreeAI
@@ -18,8 +18,7 @@ if not (T and T.RegisterModule) then return end
 
 local Q = T:RegisterModule("QuickTravel", {
   title = "Raccourcis : vols, auberge, courses, groupe",
-  defaults = { enabled = true, taxi = true, inn = true, errands = true, ready = true, meet = true, meetCompass = true,
-               vendors = {} },
+  defaults = { enabled = true, taxi = true, inn = true, errands = true, ready = true, meet = true, vendors = {} },
   charDefaults = { friends = {} },
   options = {
     { key = "taxi", type = "toggle", label = "Maître de vol : meilleure destination + « Prendre ce vol »", section = "Voyage" },
@@ -27,7 +26,6 @@ local Q = T:RegisterModule("QuickTravel", {
     { key = "errands", type = "toggle", label = "Courses groupées avant de quitter la ville", section = "Courses" },
     { key = "ready", type = "toggle", label = "Fenêtre « Tout le monde prêt ? » et boutons du chef", section = "Groupe" },
     { key = "meet", type = "toggle", label = "Point de rencontre partagé avec le groupe", section = "Groupe" },
-    { key = "meetCompass", type = "toggle", label = "La boussole suit le point de rencontre reçu", section = "Groupe" },
   },
 })
 T.QuickTravel = Q
@@ -43,7 +41,6 @@ end
 local floor, max, min, sqrt, huge = math.floor, math.max, math.min, math.sqrt, math.huge
 local fmt, tconcat, tsort = string.format, table.concat, table.sort
 local WALK, DETOUR, BOARD, MIN_GAIN = 7.0, 1.3, 20, 45
-local MEET_GAP, MEET_RECV_GAP, MEET_TTL = 15, 10, 600
 local AMMO_LOW, FOOD_LOW, WATER_LOW, REPAIR_AT = 600, 10, 10, 60
 local MAX_VENDOR_MAPS, MAX_VENDORS = 40, 12
 
@@ -980,8 +977,13 @@ function Q.CycleLoot()
   return ok and nxt or nil
 end
 
--- --- point de rencontre (comm « QTM », ≤ 1 envoi / 15 s, réception ≤ 1 / 10 s par membre)
-local lastMeet, recvAt = -1e9, {}
+-- --- point de rencontre : envoyé / reçu par le module Groupe (protocole unique « GRP ») ; ici, les mêmes fonctions
+--     pour la fenêtre et /tai rdv (GROUPMERGE, 4.0 : plus de message « QTM » à part ; les QTM des amis encore en 3.9
+--     sont décodés par Groupe)
+local function groupMod()
+  local Gm = T.modules and T.modules.Group
+  return (type(Gm) == "table" and type(Gm.SendMeet) == "function" and Gm.IsEnabled and Gm:IsEnabled()) and Gm or nil
+end
 function Q.EncodeMeet(map, x, y, label)
   return { v = 1, m = floor(map), x = floor(x * 10 + 0.5), y = floor(y * 10 + 0.5), l = cut(label or "", 30) }
 end
@@ -995,53 +997,18 @@ function Q.DecodeMeet(p)
 end
 function Q.SendMeet()
   if not (opt("meet") and inGroup()) then return false, "group" end
-  local t = clock()
-  if t - lastMeet < MEET_GAP then return false, "gap" end
-  local Gp = T.Geo and T.Geo.Player
-  local map, x, y
-  if Gp then map, x, y = Gp() end
-  if not (map and x and y) then return false, "pos" end
-  local label = str(try(g("GetSubZoneText"))) or str(try(g("GetZoneText"))) or ""
-  if not (T.Send and pcall(T.Send, T, "QTM", Q.EncodeMeet(map, x, y, label))) then return false, "send" end
-  lastMeet = t
-  Q:Suggest("meet", "Point de rencontre envoyé au groupe : ici" .. (label ~= "" and (" (" .. cut(label, 24) .. ")") or ""),
-    1, { ttl = 30, tab = "group", sound = false })
-  return true
+  local Gm = groupMod()
+  if not Gm then return false, "group" end
+  return Gm:SendMeet()
 end
-local function isMember(sender)
-  local S = T.Squad
-  if type(S) == "table" and type(S.IsMember) == "function" then
-    local ok = try(S.IsMember, S, sender)
-    if ok ~= nil then return ok end
-  end
-  return pub(try(g("UnitInParty"), shortName(sender))) or pub(try(g("UnitInRaid"), shortName(sender))) or false
-end
+--- (compat 3.9.x) un QTM reçu : décodé ici, affiché par Groupe (membre du groupe seulement, ≤ 1 / 10 s)
 function Q.OnMeet(payload, sender)
   if not opt("meet") or type(sender) ~= "string" then return nil end
-  if not isMember(sender) then return nil end
-  local t = clock()
-  if t - (recvAt[sender] or -1e9) < MEET_RECV_GAP then return nil end
+  local Gm = groupMod()
+  if not (Gm and Gm.IsMember and Gm:IsMember(sender)) then return nil end
   local m = Q.DecodeMeet(payload)
   if not m then return nil end
-  recvAt[sender] = t
-  local who = cut(shortName(sender), 14)
-  local function aim()
-    local Cp = T.Compass
-    if type(Cp) == "table" and type(Cp.SetTarget) == "function" then
-      return try(Cp.SetTarget, Cp, { mapID = m.map, x = m.x, y = m.y, label = "Rendez-vous : " .. who, source = "meet" })
-    end
-  end
-  if opt("meetCompass") and not inCombat() then aim() end
-  local where = ""
-  local p, Gm = me(), geo()
-  if p and Gm and Gm.Vector then
-    local d = Gm.Vector(p, { mapID = m.map, x = m.x / 100, y = m.y / 100 })
-    if d then where = " — " .. distText(d) end
-  end
-  Q:Suggest("meet", fmt("Rejoins %s au point de rencontre%s%s", who, m.label ~= "" and (" (" .. cut(m.label, 22) .. ")") or "",
-    where), 2, { ttl = MEET_TTL, tab = "group", sound = false, onClick = aim,
-      tooltip = { "Point de rencontre", "Envoyé par " .. who, "Clic : la boussole y va" } })
-  return m
+  return Gm:OnMeet(cut(shortName(sender), 14), m.map, m.x / 100, m.y / 100, m.label)
 end
 
 -- --- fenêtre « Tout le monde prêt ? »
@@ -1148,7 +1115,7 @@ function Q.RefreshReady()
   end
   local lead = isLeader() or not inGroup()
   place(f.bReady, 0, 0, inGroup())
-  place(f.bMeet, 1, 0, inGroup() and opt("meet"))
+  place(f.bMeet, 1, 0, inGroup() and opt("meet") and groupMod() ~= nil)
   local inv = #Q.FriendsToInvite()
   if f.bInvite then
     local lbl = inv > 0 and fmt("Inviter (%d)", inv) or "Inviter"
@@ -1240,7 +1207,6 @@ function Q:OnEnable()
   self:RegisterEvent("PARTY_LEADER_CHANGED", function() if win and try(win.IsShown, win) then pcall(Q.RefreshReady) end end)
   self:RegisterEvent("READY_CHECK", function() if opt("ready") and not inCombat() then Q:ShowReady(true) end end)
   self:On("COMBAT_START", function() Q.HideTaxi() Q.HideCard() end)
-  if T.RegisterComm then T:RegisterComm("QTM", self, function(_, payload, sender) pcall(Q.OnMeet, payload, sender) end) end
   pcall(Q.PushTab)
   errandsSoon()
 end

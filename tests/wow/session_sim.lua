@@ -70,6 +70,11 @@ local BUDGET = {
   framePhaseRatio = 1.6,         -- busiest of the 5 frame phases / average phase (1.0 = flat; 1-Hz spikes → ≫ 1)
   allocKBps = (opts.profile == "tout") and 280 or 160,   -- KB allocated / s in frames (GC pressure)          -- Edge CPU, avg kilo-instructions / minute (25 checks, rotating)
 }
+-- GROUPMERGE (4.0): Squad + Missions + Team + Group = ONE « Groupe » module (Modules/Group.lua), 4 TreeAI clients:
+-- one cap for all of it (3.9.9 here: Squad 231 + Missions 185 + Team 16; the audit measured ≈ 1800 on its run), and its
+-- protocol (« GRP », deltas only) at most 1 message / 5 s per client outside a join / reload minute
+BUDGET.kinstrModuleMin.Group = 150
+BUDGET.groupMsgsPerMin = 12
 
 local BASE = {}
 for k, v in pairs(_G) do BASE[k] = v end
@@ -432,6 +437,8 @@ local function reload(c)
   c.env, c.M = newWorld({ idx = c.idx, name = c.name, class = oldM.player.class }, oldM)
   loadAddon(c, sv)
   c.segmentStart = MINUTE
+  R.joinMin = R.joinMin or {}
+  R.joinMin[MINUTE], R.joinMin[MINUTE + 1] = true, true   -- full states exchanged again (Groupe): not steady state
   return sv
 end
 
@@ -443,6 +450,7 @@ local function pump()
       c.sentIdx = c.sentIdx + 1
       local m = M.sentAddon[c.sentIdx]
       c.sends[#c.sends + 1] = M.now
+      if m.msg:sub(1, 6) == "1~GRP~" then c.grp = c.grp or {}; c.grp[#c.grp + 1] = M.now end
       for _, o in ipairs(order) do
         local deliver = (m.channel ~= "WHISPER") or (tostring(m.target):match("^[^%-]+") == o.name)
         if deliver and o.M.prefixes[m.prefix] then
@@ -1362,6 +1370,11 @@ for _, c in ipairs(order) do
   for m, n in pairs(perMin) do if n > mx then mx, mxm = n, m end end
   local avg = #c.sends / opts.minutes
   P(("comms %-10s %4d msgs, %.1f/min avg, max %d (min %d)"):format(c.name, #c.sends, avg, mx, mxm))
+  local gm, gmx, gmm = {}, 0, 0
+  for _, t in ipairs(c.grp or {}) do local m = math.floor((t - T0) / 60) gm[m] = (gm[m] or 0) + 1 end
+  for m, n in pairs(gm) do if m >= 1 and not (R.joinMin or {})[m] and n > gmx then gmx, gmm = n, m end end
+  P(("  groupe %-8s %4d msgs GRP, max %d in a steady minute (min %d)"):format("", #(c.grp or {}), gmx, gmm))
+  if gmx > BUDGET.groupMsgsPerMin then fail(("%s sent %d « GRP » messages in minute %d > %d (≤ 1 / 5 s)"):format(c.name, gmx, gmm, BUDGET.groupMsgsPerMin)) end
   if mx > BUDGET.msgsPerMinMax then fail(("%s sent %d addon messages in minute %d > %d"):format(c.name, mx, mxm, BUDGET.msgsPerMinMax)) end
   if avg > BUDGET.msgsPerMinAvg then fail(("%s sends %.1f addon messages/min > %d"):format(c.name, avg, BUDGET.msgsPerMinAvg)) end
 end

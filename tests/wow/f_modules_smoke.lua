@@ -1,4 +1,6 @@
--- Smoke test of the Leveling / Group / Inventory addon modules (agent F) against a tiny WoW mock.
+-- Smoke test of the Leveling / Inventory addon modules (agent F) against a tiny WoW mock.
+-- (4.0, GROUPMERGE : l'ancien Group, protocole brut S1/Q1 sans le cœur, est fondu dans le module « Groupe »,
+-- testé par tests/wow/group_spec.lua et group_scenario.lua)
 -- Usage: lua5.1 f_modules_smoke.lua <Modules dir> [path to Core.lua]
 local dir = arg[1]
 local frames, sugg, chat, sent, used = {}, {}, {}, {}, {}
@@ -74,7 +76,7 @@ if arg[2] then
   TreeAI.Suggest = function(self, id, text, prio, o) sugg[#sugg+1] = id .. " [" .. tostring(prio) .. "] " .. tostring(text) return S(self, id, text, prio, o) end
   TreeAI._sendRawHook = true
 end
-for _, f in ipairs({"Leveling", "Group", "Inventory"}) do
+for _, f in ipairs({"Leveling", "Inventory"}) do
   local chunk = assert(loadfile(dir .. "/" .. f .. ".lua"))
   chunk("TreeAI", ns)
 end
@@ -84,14 +86,6 @@ fire("PLAYER_LOGIN"); fire("PLAYER_ENTERING_WORLD", true, false)
 fire("PLAYER_LEVEL_UP", 26); fire("SKILL_LINES_CHANGED"); fire("BAG_UPDATE", 0); fire("UPDATE_INVENTORY_DURABILITY")
 fire("CHAT_MSG_LOOT", "Vous recevez le butin : |Hitem:1|h[Os]|hx3.")
 fire("QUEST_LOG_UPDATE")
-if arg[2] then
-fire("CHAT_MSG_ADDON", "TREEAI", "1~FSTAT~1~1/1~t" .. TreeAI:Serialize({l=20,c="MAGE",m=1424,y=800,x=100,i=0,z="Contreforts"}), "PARTY", "Amie-Royaume")
-fire("CHAT_MSG_ADDON", "TREEAI", "1~FQUEST~2~1/1~r500=1/8;999=C", "PARTY", "Amie-Royaume")
-else
-fire("CHAT_MSG_ADDON", "TREEAI", "S1|20|MAGE|1424|800|100|0|Contreforts", "PARTY", "Amie-Royaume")
-fire("CHAT_MSG_ADDON", "TREEAI", "Q1|1|1|1|500=1/8;999=C", "PARTY", "Amie-Royaume")
-end
-fire("CHAT_MSG_ADDON", "TREEAI", "S1|bad", "PARTY", "Inconnu-Royaume")
 fire("MERCHANT_SHOW")
 assert(#used == 0, "sold without click!")
 for _, f in ipairs(frames) do if f.scripts.OnClick then f.scripts.OnClick(f) end end
@@ -100,10 +94,9 @@ inCombat = true; used = {}
 for _, f in ipairs(frames) do if f.scripts.OnClick then f.scripts.OnClick(f) end end
 assert(#used == 0, "sold in combat"); inCombat = false
 fire("PLAYER_LOGOUT")
-if SlashCmdList.TREEAIGROUP then SlashCmdList.TREEAIGROUP() else TreeAI:HandleSlash("groupe") end
 for _, s in ipairs(sugg) do print("SUGG", s) end
 for _, s in ipairs(sent) do print("SENT", s) end
 for _, s in ipairs(chat) do print("CHAT", s) end
 local function dump(t, ind) ind = ind or "" for k, v in pairs(t) do if type(v)=="table" then print(ind..tostring(k)..":") dump(v, ind.."  ") else print(ind..tostring(k).."="..tostring(v)) end end end
 dump(TreeAIDB)
-if TreeAI.mods then print("mods", TreeAI.mods.Leveling ~= nil, TreeAI.mods.Group ~= nil, TreeAI.mods.Inventory ~= nil) end
+if TreeAI.mods then print("mods", TreeAI.mods.Leveling ~= nil, TreeAI.mods.Inventory ~= nil) end

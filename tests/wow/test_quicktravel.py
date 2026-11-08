@@ -19,7 +19,7 @@ def _code():
 def test_toc_after_route_and_detect():
     toc = [ln.strip() for ln in (ADDON / "TreeAI.toc").read_text(encoding="utf-8").splitlines()]
     q = toc.index("Modules\\QuickTravel.lua")
-    for dep in ("Modules\\Route.lua", "Modules\\Detect.lua", "Modules\\Squad.lua", "Modules\\Missions.lua",
+    for dep in ("Modules\\Route.lua", "Modules\\Detect.lua", "Modules\\Group.lua",
                 "Modules\\Compass.lua", "Data\\Travel.lua", "Data\\Consumables.lua"):
         assert toc.index(dep) < q, dep
 

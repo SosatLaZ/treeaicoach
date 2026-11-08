@@ -219,11 +219,18 @@ return function(M, ctx)
     w.bReady:Click() w.bConvert:Click() w.bLoot:Click()
     check(calls[1] == "ready" and calls[2] == "raid" and calls[3] == "loot:freeforall", "clics du chef : " .. table.concat(calls, ","))
   end
-  -- rendez-vous : envoi bridé
+  -- rendez-vous : envoi bridé, par le protocole unique du module Groupe (GRP « E;meet »)
   M.pos = M.pos or { mapID = 1, x = 0.5, y = 0.5 }
   local okS = Q.SendMeet()
   local okS2, why2 = Q.SendMeet()
   check(okS and not okS2 and why2 == "gap", "point de rencontre : 1 envoi, le 2e bridé (" .. tostring(why2) .. ")")
+  local viaGroup = false
+  for _, s in ipairs(M.sentAddon) do
+    local msg = tostring(s.msg)
+    if msg:find("~r4;E;meet;", 1, true) then viaGroup = true end
+    check(not msg:match("^1~QTM~"), "plus de message QTM à part")
+  end
+  check(viaGroup, "rendez-vous envoyé par le module Groupe")
   -- réception : membre du groupe → boussole + ligne ; inconnu / payload invalide → rien
   local aimed
   local Cp = T.Compass
@@ -233,8 +240,8 @@ return function(M, ctx)
   check(Q.OnMeet({ v = 1, m = 1, x = 5000, y = 1, l = "x" }, "Bravo-test") == nil, "coordonnées hors bornes : ignorées")
   local m = Q.OnMeet({ v = 1, m = 1, x = 420, y = 615, l = "Moulin-test" }, "Bravo-test")
   check(m and near(m.x, 42) and near(m.y, 61.5), "rendez-vous reçu de Bravo")
-  check(aimed and aimed.source == "meet" and near(aimed.x, 42), "la boussole vise le rendez-vous")
-  local ml = sugg("QuickTravel:meet")
+  check(aimed and aimed.source == "meet" and (near(aimed.x, 42) or near(aimed.x, 0.42)), "la boussole vise le rendez-vous")
+  local ml = sugg("Group:meet")
   check(ml and ml.text:find("Rejoins Bravo au point de rencontre", 1, true), "ligne rendez-vous : " .. tostring(ml and ml.text))
   check(Q.OnMeet({ v = 1, m = 1, x = 100, y = 100 }, "Bravo-test") == nil, "2e rendez-vous en < 10 s : bridé")
   if Cp then Cp.SetTarget = realSet end

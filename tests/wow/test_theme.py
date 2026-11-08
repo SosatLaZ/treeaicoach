@@ -33,7 +33,7 @@ def test_never_touches_blizzard_frames():
 
 
 def test_modules_adopt_theme_guarded():
-    for mod in ("Compass", "Tracker", "Auction", "Macros", "Squad", "Highlight", "Hunter", "HunterPro", "Fight"):
+    for mod in ("Compass", "Tracker", "Auction", "Macros", "Highlight", "Hunter", "HunterPro", "Fight"):
         src = (ADDON / "Modules" / (mod + ".lua")).read_text(encoding="utf-8")
         assert re.search(r"if (?:T|_G\.TreeAI and _G\.TreeAI|TreeAI and TreeAI|TreeAI|Th)(?:\.Theme)? then", src), mod
         assert "Theme" in src and ":Skin(" in src, mod

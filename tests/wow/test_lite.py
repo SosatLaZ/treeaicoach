@@ -46,6 +46,6 @@ def test_every_module_listed_with_a_description():
 
 def test_essential_modules_have_no_permanent_onupdate():
     # the always-on modules must not run code every frame (Compass animates its arrow only while shown)
-    for name in ("Hunter", "Squad", "Missions", "Quests", "Tracker", "Todo", "Planner", "Macros", "Abandon"):
+    for name in ("Hunter", "Group", "Quests", "Tracker", "Todo", "Planner", "Macros", "Abandon"):
         src = (ADDON / "Modules" / (name + ".lua")).read_text(encoding="utf-8")
         assert 'SetScript("OnUpdate", onUpdate)' not in src, name
