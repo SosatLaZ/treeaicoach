@@ -1,4 +1,4 @@
--- Harness scenario (CLEAN 4.0) : module « Avantages » (Edge2.lua) — 8 avantages qui reposent sur un FAIT du jeu
+-- Harness scenario (CLEAN 4.0, ADVICE 4.0.1) : module « Avantages » (Edge2.lua) — 7 avantages qui reposent sur un FAIT du jeu
 -- (fusion des anciens « Coups d'avance » / « Avantages », sans les devinettes ni les doublons). Chaque avantage :
 -- déclencheur réel sur le mock, une ligne verbe d'abord, sans « ? », cachée quand elle ne sert à rien, coupable.
 -- Onglet « Avantages ». Noms factices. lua5.1 tests/wow/harness.lua --scenario tests/wow/edge2_scenario.lua wow_addon/TreeAI
@@ -6,7 +6,7 @@ return function(M, ctx)
   local T = TreeAI
   local check = ctx.check
   local X = T.Edge2
-  check(X and X.Engine and #X.FEATURES == 8, "module Avantages chargé, 8 avantages")
+  check(X and X.Engine and #X.FEATURES == 7, "module Avantages chargé, 7 avantages")
   if not (X and X.Engine) then return end
   local E = X.Engine
   local S = T._suggestions
@@ -29,7 +29,7 @@ return function(M, ctx)
   check(T.tabs and T.tabs.adv and T.tabs.adv.title == "Avantages", "onglet « Avantages » (menu Plus)")
   -- les devinettes et doublons ne reviennent pas
   for _, k in ipairs({ "bestMob", "patrolWarn", "nodeRoute", "drinkSmart", "buffExpire", "bigPull", "restPlan",
-      "trainerPick", "classQuest", "dropCheap", "questTimer" }) do
+      "trainerPick", "classQuest", "dropCheap", "questTimer", "turninLevel" }) do
     check(X.db[k] == nil, "retiré : " .. k)
   end
 
@@ -38,8 +38,7 @@ return function(M, ctx)
     { name = "Kobold-test" }, { name = "Autre", tapped = true } }, { ["Kobold-test"] = true })
   check(who == "Kobold-test" and tp == 2 and tot == 3, "camp disputé : 2 tapés sur 3")
   check(math.abs(E.Streak(5, 0.5) - 1 / 32) < 1e-9 and E.Streak(5, nil) == nil, "probabilité d'une série sans drop")
-  local tn, txp, enough = E.TurnIn({ { complete = true, xp = 900 }, { complete = true, xp = 700 }, { complete = false, xp = 5000 } }, 1500)
-  check(tn == 2 and txp == 1600 and enough, "quêtes finies couvrent le niveau")
+  check(E.TurnIn == nil and T.Coach and T.Coach.Engine.TurnIn, "quêtes finies = niveau : dans « Conseils pro »")
   check(E.IsEscort({ title = "Escorte-test", obj = {} }) and not E.IsEscort({ title = "Pattes", obj = {} }), "escorte reconnue")
   check(E.WorldBuff("Le seigneur Rend Main-noire est tombé !", "Thrall") == E.WORLD_BUFFS.rend, "cri : buff de Rend")
   check(E.WorldBuff("Bonjour", "Garde") == nil, "cri ordinaire : rien")
@@ -50,18 +49,36 @@ return function(M, ctx)
   local function setQuests(l) Q.lastList = l end
   local function kill(name) M.FireEvent("CHAT_MSG_COMBAT_XP_GAIN", name .. " meurt, vous gagnez 100 points d'expérience.") end
 
-  -- corps pas fouillés (solo) : kills publiés par Detect (un seul lecteur du message d'XP)
+  -- corps pas fouillés (solo) : seulement ceux où le jeu signale du butin (CanLootUnit), jamais chaque kill
   setQuests({})
+  local oldCan = rawget(_G, "CanLootUnit")
+  local loot = {}
+  rawset(_G, "CanLootUnit", function(guid) return loot[guid] and true or false, true end)
+  local function corpse(guid, hasLoot)
+    loot[guid] = hasLoot
+    M.target = { exists = true, dead = true, name = "Loup-test", guid = guid, hostile = true, level = 25 }
+    M.EnterCombat() M.LeaveCombat() M.Advance(1, 0.5)
+  end
   for _ = 1, 3 do kill("Loup-test") end
   X.CheckLoot()
-  ok("lootLeft", "Fouille tes corps")
+  none("lootLeft", "des kills sans butin signalé ne comptent pas")
+  corpse("Creature-0-0-0-0-99-1", true)
+  corpse("Creature-0-0-0-0-99-2", false)
+  X.CheckLoot()
+  none("lootLeft", "un seul corps avec du butin")
+  corpse("Creature-0-0-0-0-99-3", true)
+  X.CheckLoot()
+  ok("lootLeft", "Fouille tes corps : 2 avec du butin derrière toi")
   M.FireEvent("LOOT_OPENED")
   none("lootLeft", "un corps fouillé")
   M.group = { { name = "Amie", class = "MAGE", level = 26, online = true } }
-  for _ = 1, 4 do kill("Loup-test") end
+  corpse("Creature-0-0-0-0-99-4", true)
+  corpse("Creature-0-0-0-0-99-5", true)
   X.CheckLoot()
   none("lootLeft", "en groupe")
   M.group = {}
+  M.target = { exists = false }
+  rawset(_G, "CanLootUnit", oldCan)
 
   -- malchance sur un objet de quête (taux mesuré par Stats)
   local St = T.Stats or T.modules.Stats
@@ -90,14 +107,7 @@ return function(M, ctx)
   none("contestCamp", "plus personne ne tape")
   for i = 1, 4 do M.units["nameplate" .. i] = nil end
 
-  -- quêtes finies = niveau d'un coup
-  M.player.xp, M.player.xpMax = 25000, 26000
-  setQuests({ { id = 9104, title = "Finie", complete = true, xp = 1500, obj = {} } })
-  X.CheckTurnIn()
-  ok("turninLevel", "Rends ta quête finie : niveau 27 d'un coup (puis passe chez ton maître de classe)")
-  M.player.xp = 12000
-  X.CheckTurnIn()
-  none("turninLevel", "pas assez d'XP à rendre")
+  check(X.CheckTurnIn == nil, "quêtes finies = niveau : plus dans Avantages (Conseils pro)")
 
   -- (4.0 QA) quête chronométrée : un seul propriétaire, le module Quêtes (avant : deux lignes, deux chiffres)
   check(X.CheckTimers == nil, "chrono de quête : plus dans Avantages (module Quêtes seul)")
@@ -123,7 +133,6 @@ return function(M, ctx)
 
   -- off-switch par avantage + onglet + aucune action bloquée
   X.db.lootLeft = false
-  for _ = 1, 3 do kill("Loup-test") end
   X.CheckLoot()
   none("lootLeft", "option coupée")
   X.db.lootLeft = true

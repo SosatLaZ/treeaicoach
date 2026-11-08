@@ -4,15 +4,17 @@
 -- Prio 2 = peut monter dans « Maintenant » ; le détail (chiffres) va dans l'infobulle. Jamais dans le chat.
 --   Farm    : contestCamp (monstres de quête déjà tapés par d'autres : barres de nom grisées par le jeu)
 --             dropLuck (objet de quête qui ne tombe pas : taux mesuré par Stats sur tes kills)
---             lootLeft (corps pas fouillés, en solo : kills comptés par Detect, fouilles par le jeu)
+--             lootLeft (corps pas fouillés, en solo : le jeu dit qu'il reste du butin, CanLootUnit, rien de deviné)
 --             gatherTrack (récolteur sans suivi actif sur la mini-carte : un clic l'active)
---   Quêtes  : turninLevel (tes quêtes finies valent le niveau suivant : XP des récompenses lue dans le journal)
---             escortFail (escorte échouée : à reprendre) — le chrono d'une quête chronométrée : module Quêtes seul
+--   Quêtes  : escortFail (escorte échouée : à reprendre) — le chrono d'une quête chronométrée : module Quêtes seul
 --             breadcrumb (quête de liaison devenue inutile : QuestieDB + quêtes faites du jeu)
 --   Ville   : worldBuff (cri d'un buff mondial en ville : reste là quelques secondes)
 -- Retiré en 4.0 : repop / patrouilles / coin de farm appris sur trop peu d'observations, chuchotement pré-rempli à
 -- ta guilde, double spé / Legacy / camp (devinés), marchand ↔ HV (sans scan frais), doublons de Combat, Progression,
 -- Chasseur, Guichets, Inventaire (repos, maître de classe, quoi jeter, boire ou enchaîner, gros sorts prêts…).
+-- (ADVICE 4.0.1) « quêtes finies = niveau suivant » est passé dans « Conseils pro » (Coach.lua), avec les autres gestes
+-- d'expert ; « corps pas fouillés » ne compte plus que les corps où le jeu signale du butin (avant : chaque kill,
+-- même sans butin → conseil faux sur les bêtes sans rien sur elles).
 -- Coût : événements + AutoRefresh qui ne fait qu'UNE petite vérification par passage, rien en combat.
 -- Lua 5.1, aucune globale, API testées (pcall), valeurs secrètes (Forever, en combat) ignorées.
 local T = _G.TreeAI
@@ -25,7 +27,6 @@ local FEATURES = {
   { "dropLuck", "Objet de quête qui ne tombe pas : malchance ou mauvais monstre", "Farm" },
   { "lootLeft", "Corps pas fouillés (solo)", "Farm" },
   { "gatherTrack", "Récolte : active le suivi des plantes / filons", "Farm" },
-  { "turninLevel", "Quêtes finies = niveau suivant d'un coup", "Quêtes" },
   { "escortFail", "Escorte échouée : à reprendre", "Quêtes" },
   { "breadcrumb", "Quête de liaison devenue inutile", "Quêtes" },
   { "worldBuff", "Buff mondial annoncé en ville : reste là", "Ville" },
@@ -62,15 +63,12 @@ local function num(v) v = sv(v) return tonumber(v) end
 local function now() return try(g("GetTime")) or 0 end
 local function opt(k) return M.db and M.db[k] ~= false end
 local function mod(n) local m = T.modules and T.modules[n] return (m and (not m.IsEnabled or m:IsEnabled())) and m or nil end
-local function level() return num(try(g("UnitLevel"), "player")) or 1 end
 local function inCombat() return T.InCombat and T:InCombat() or false end
 local function inInstance() return try(g("IsInInstance")) and true or false end
 local function resting() return try(g("IsResting")) and true or false end
 local function groupSize() return num(try(g("GetNumGroupMembers"))) or 0 end
 local function low(s) return tostring(s or ""):lower() end
 local function zone() return sv(try(g("GetRealZoneText"))) or sv(try(g("GetZoneText"))) or "" end
-local Fmt = T.Fmt or {}
-local function thousands(n) return Fmt.Num and Fmt.Num(n) or tostring(floor(tonumber(n) or 0)) end
 
 local function nm(s, n)
   if s == nil or secret(s) then return nil end
@@ -171,15 +169,6 @@ function E.Streak(n, p)
   return (1 - p) ^ n
 end
 
---- quêtes finies : list (Quests.lastList), need -> n, xp, couvre le niveau ?
-function E.TurnIn(list, need)
-  local n, xp = 0, 0
-  for _, q in ipairs(list or {}) do
-    if q.complete and tonumber(q.xp) then n, xp = n + 1, xp + q.xp end
-  end
-  return n, xp, (need or 0) > 0 and xp >= need
-end
-
 --- escorte : titre / objectif qui parle d'escorter, protéger, accompagner
 local ESCORT = { "escort", "protég", "proteg", "accompagn", "protect" }
 function E.IsEscort(q)
@@ -208,7 +197,7 @@ function E.WorldBuff(msg, speaker)
 end
 
 -- ===================================================================================== état (session)
-local lastKillAt, pendingLoot = -1e9, 0
+local lootable, lootN = {}, 0    -- [GUID] = moment : corps où le jeu dit qu'il reste du butin (solo)
 local streak = {}      -- [item|mob] = kills sans drop
 local haveSeen = {}    -- [qid|i] = have
 
@@ -216,8 +205,6 @@ local haveSeen = {}    -- [qid|i] = have
 function M.OnKill(name)
   name = nm(name, 40)
   if not name then return end
-  lastKillAt = now()
-  if groupSize() <= 1 then pendingLoot = pendingLoot + 1 end
   local S = T.Stats or mod("Stats")
   if S and S.DropByName then
     for _, q in ipairs(quests()) do
@@ -276,13 +263,34 @@ function M.CheckLuck()
   end
 end
 
-function M.OnLoot() pendingLoot = max(0, pendingLoot - 1) drop("lootLeft") end   -- il fouille : on se tait
+--- fin de combat : ta cible morte a-t-elle encore du butin ? (le jeu le dit : CanLootUnit, hors combat)
+function M.NoteCorpse()
+  if inCombat() or groupSize() > 1 or not try(g("UnitIsDead"), "target") or try(g("UnitIsPlayer"), "target") then return end
+  local guid = sv(try(g("UnitGUID"), "target"))
+  local can = g("CanLootUnit")
+  if type(guid) ~= "string" or type(can) ~= "function" or lootable[guid] then return end
+  if sv(try(can, guid)) then
+    lootable[guid], lootN = now(), lootN + 1
+  end
+end
+function M.OnLoot()                                       -- il fouille : ce corps-là est fait
+  local guid = sv(try(g("UnitGUID"), "target"))
+  if guid and lootable[guid] then lootable[guid], lootN = nil, max(0, lootN - 1)
+  elseif lootN > 0 then                                   -- fouille d'un autre corps : on retire le plus ancien
+    local old, at = nil, nil
+    for k, t in pairs(lootable) do if not at or t < at then old, at = k, t end end
+    if old then lootable[old], lootN = nil, lootN - 1 end
+  end
+  drop("lootLeft")
+end
 function M.CheckLoot()
   if not opt("lootLeft") or inCombat() or groupSize() > 1 then return drop("lootLeft") end
-  if now() - lastKillAt > 60 then pendingLoot = 0 end
-  if pendingLoot < 3 then return drop("lootLeft") end
-  say("lootLeft", fmt("Fouille tes corps : %d monstres tués sans ramasser", pendingLoot), 2,
-    { ttl = 30, cooldown = 120, tooltip = "Butin, objets de quête et argent restent sur les corps (solo)." })
+  local t = now()
+  for k, at in pairs(lootable) do if t - at > 90 then lootable[k], lootN = nil, max(0, lootN - 1) end end
+  if lootN < 2 then return drop("lootLeft") end
+  say("lootLeft", fmt("Fouille tes corps : %d avec du butin derrière toi", lootN), 2,
+    { ttl = 30, cooldown = 120, tooltip = { "Le jeu signale encore du butin sur ces corps (solo) : argent, objets, quêtes.",
+      "Ramasse en passant : un corps disparaît au bout de quelques minutes." } })
 end
 
 -- ----------------------------------------------------------------------------- camp disputé
@@ -321,19 +329,6 @@ function M.CheckContest()
   say("contestCamp", fmt("Change de camp ou groupe-toi : %d %s sur %d tapés par d'autres", t, nm(name, 24), n), 2,
     { ttl = 40, cooldown = 180, tooltip = { "Camp disputé : un monstre tapé par un autre joueur ne te compte pas.",
       "En groupe, les kills de quête sont partagés : inviter l'autre joueur fait gagner les deux." } })
-end
-
--- ----------------------------------------------------------------------------- quêtes finies = niveau
-function M.CheckTurnIn()
-  if not opt("turninLevel") or level() >= 60 then return drop("turninLevel") end
-  local xp, xpMax = num(try(g("UnitXP"), "player")), num(try(g("UnitXPMax"), "player"))
-  if not (xp and xpMax) then return drop("turninLevel") end
-  local n, total, enough = E.TurnIn(quests(), xpMax - xp)
-  if not enough or n == 0 then return drop("turninLevel") end
-  local what = n > 1 and fmt("tes %d quêtes finies", n) or "ta quête finie"
-  say("turninLevel", fmt("Rends %s : niveau %d d'un coup (puis passe chez ton maître de classe)", what, level() + 1), 2,
-    { ttl = 600, cooldown = 900, window = 600, sig = level(),
-      tooltip = fmt("%s XP à rendre, il manque %s XP pour le niveau.", thousands(total), thousands(xpMax - xp)) })
 end
 
 -- ----------------------------------------------------------------------------- escorte échouée
@@ -444,7 +439,8 @@ function M.BuildTab(force)
   for _, f in ipairs(FEATURES) do if T._suggestions and T._suggestions["Edge2:" .. f[1]] then active = true break end end
   if not active then
     lines[1] = { text = "Rien pour l'instant : chaque avantage apparaît ici quand il sert", prio = 1,
-      tooltip = "Camp disputé, objet de quête qui ne tombe pas, quêtes finies = niveau, escorte échouée, suivi de récolte…" }
+      tooltip = "Camp disputé, objet de quête qui ne tombe pas, corps à fouiller, escorte échouée, suivi de récolte… "
+        .. "Les gestes d'expert (repos, familier, munitions, quêtes à rendre) : page « Conseils pro »." }
   end
   local parts = {}
   for _, l in ipairs(lines) do parts[#parts + 1] = l.text end
@@ -458,7 +454,7 @@ end
 local function run(fn, ...) return pcall(fn, ...) end
 local tick = 0
 --- une seule petite vérification par passage ; rien en combat (AutoRefresh n'y tourne pas)
-local ROT = { "CheckContest", "CheckTurnIn", "CheckLuck", "CheckLoot", "CheckEscort", "CheckTracking", "CheckBreadcrumb" }
+local ROT = { "CheckContest", "CheckLuck", "CheckLoot", "CheckEscort", "CheckTracking", "CheckBreadcrumb" }
 function M:AutoRefresh()
   tick = tick + 1
   if inCombat() then return end
@@ -472,6 +468,7 @@ function M:OnEnable()
   -- un seul lecteur du message d'XP : Detect publie chaque mort (« X meurt, vous gagnez… »)
   self:On("DETECT", function(_, _, kind, data) if kind == "kill" and type(data) == "table" then run(M.OnKill, data.name) end end)
   self:RegisterEvent("LOOT_OPENED", function() run(M.OnLoot) end)
+  self:RegisterEvent("PLAYER_REGEN_ENABLED", function() if T.After then T:After(0.5, function() run(M.NoteCorpse) end) end end)
   self:RegisterEvent("QUEST_LOG_UPDATE", function() run(M.QuestProgress) end)
   self:RegisterEvent("CHAT_MSG_MONSTER_YELL", function(_, _, msg, speaker) M.OnYell(msg, speaker) end)
   tabDirty = true
@@ -487,7 +484,7 @@ function M:OnOptionChanged(key, v)
   run(M.BuildTab, true)
 end
 function M.ResetSession()
-  lastKillAt, pendingLoot, streak, haveSeen = -1e9, 0, {}, {}
+  lootable, lootN, streak, haveSeen = {}, 0, {}, {}
   firstAt, firstN = {}, 0
   M.shown = {}
 end

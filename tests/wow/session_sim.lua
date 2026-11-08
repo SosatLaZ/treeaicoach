@@ -55,7 +55,9 @@ local BUDGET = {
     Talents = 40, Binds = 60, Classes = 60, PvP = 60,
     -- ITEMINFO (4.0.2) : lignes d'infobulle d'objet, calculées seulement quand une infobulle s'affiche (≈ 0 sinon) ; ici
     -- le joueur survole ses sacs chez le marchand et après le butin (une construction des index, puis le cache)
-    ItemInfo = 10 },   -- per-module caps (avg kinstr / minute); Group below
+    ItemInfo = 10,
+    -- ADVICE 4.0.1 : « Conseils pro » (mode sûr) : événements + une petite évaluation par passage, rien en combat
+    Coach = 30 },   -- per-module caps (avg kinstr / minute); Group below
   nowChangesPerMinMax = 12,      -- « Maintenant » changes (text skeleton, digits ignored) in any minute
   nowChangesPerMinAvg = 6,      -- a fight every ~35 s brings its own in-combat lines (aspect, pet HP…)
   alertsPer10Min = 8,            -- corner alert pops in any 10-minute window
@@ -71,6 +73,10 @@ local BUDGET = {
   edgeNowPct = 25,               -- CHEAT25 « Avantages » (Edge2 ; l'ancien Edge est retiré en 4.0) : % of sampled seconds with an
   edgeDistinctMax = 12,          -- « Avantages » line in « Maintenant » ; distinct lines (text skeleton) over the session
   edgeKinstrMin = 80,            -- = cap Edge2 (était 1500 pour l'ancien Edge)
+  -- ADVICE 4.0.1 « Conseils pro » : UNE ligne à la fois, chacune une fois puis son temps de repos
+  coachNowPct = 30,              -- % of sampled seconds with a « Conseils pro » line in « Maintenant »
+  coachShowsPer10Min = 6,        -- distinct Coach lines shown in any 10-minute window
+  coachTwoAtOnce = 0,            -- samples with two Coach lines at once
   -- SPIKE (3.9.7): per-frame peaks on the main client (one frame = timers + OnUpdate of a 0.2-s step)
   -- 3.9.6 (every C_Timer ticker in phase, all :AutoRefresh() in one frame): worst 129 / 297 (tout), p99 56 / 123,
   -- phase ratio 2.06 / 2.42 ; 3.9.7 scheduler: worst 97 / 171, p99 40 / 61, ratio ≤ 1.36
@@ -564,8 +570,20 @@ local function sampleMain(c)
   if not ok then addErr(R.errors, c.name, "GetTabLines", lines) return end
   local sk, topics = {}, {}
   local edge = false
+  local coachN = 0
   for _, e in ipairs(lines) do
     sk[#sk + 1] = skeleton(e.text)
+    if tostring(e.id or ""):find("^Coach:") then
+      coachN = coachN + 1
+      local ck = skeleton(e.text)
+      S.coachSeen = S.coachSeen or {}
+      S.coachSeen[ck] = (S.coachSeen[ck] or 0) + 1
+      if ck ~= S.coachLast then
+        S.coachShows = S.coachShows or {}
+        S.coachShows[#S.coachShows + 1] = c.M.now
+        S.coachLast = ck
+      end
+    end
     if tostring(e.id or ""):find("^Edge2:") then
       edge = true
       S.edgeSeen = S.edgeSeen or {}
@@ -595,6 +613,9 @@ local function sampleMain(c)
   end
   S.samples = S.samples + 1
   if edge then S.edgeSec = (S.edgeSec or 0) + 1 end
+  if coachN > 0 then S.coachSec = (S.coachSec or 0) + 1 end
+  if coachN > 1 then S.coachTwo = (S.coachTwo or 0) + 1 end
+  if coachN == 0 then S.coachLast = nil end
   local key = table.concat(sk, "\n")
   if S.lastNow ~= nil and key ~= S.lastNow then
     S.nowChanges[MINUTE] = (S.nowChanges[MINUTE] or 0) + 1
@@ -1357,6 +1378,24 @@ do  -- CHEAT25 : les avantages restent discrets (une ligne quand elle sert, rien
   if ek > BUDGET.edgeKinstrMin then fail(("cpu: Edge2 %.0f kinstr/min > %d"):format(ek, BUDGET.edgeKinstrMin)) end
   if pct > BUDGET.edgeNowPct then fail(("Edge2 lines in « Maintenant » %.1f%% of the time > %d%%"):format(pct, BUDGET.edgeNowPct)) end
   if (S.edgeDistinct or 0) > BUDGET.edgeDistinctMax then fail(("%d distinct Edge2 lines > %d"):format(S.edgeDistinct, BUDGET.edgeDistinctMax)) end
+end
+do  -- ADVICE 4.0.1 : « Conseils pro » discrets (une ligne à la fois, chacune une fois puis son temps de repos)
+  local ck = (perMod.Coach or 0) / nMin
+  local pct = 100 * (S.coachSec or 0) / math.max(1, S.samples)
+  local shows, worst = S.coachShows or {}, 0
+  for i = 1, #shows do
+    local k = 0
+    for j = i, #shows do if shows[j] - shows[i] < 600 then k = k + 1 end end
+    if k > worst then worst = k end
+  end
+  local nd = 0
+  for _ in pairs(S.coachSeen or {}) do nd = nd + 1 end
+  P(("coach: %.0f kinstr/min, in « Maintenant » %.1f%% of samples, %d shows (max %d / 10 min), %d distinct, %d samples with 2")
+    :format(ck, pct, #shows, worst, nd, S.coachTwo or 0))
+  if opts.verbose then for k, n in pairs(S.coachSeen or {}) do P(("  coach %5d s  %s"):format(n, k)) end end
+  if pct > BUDGET.coachNowPct then fail(("Coach lines in « Maintenant » %.1f%% of the time > %d%%"):format(pct, BUDGET.coachNowPct)) end
+  if worst > BUDGET.coachShowsPer10Min then fail(("%d Coach lines in 10 min > %d"):format(worst, BUDGET.coachShowsPer10Min)) end
+  if (S.coachTwo or 0) > BUDGET.coachTwoAtOnce then fail(("two Coach lines at once in %d samples"):format(S.coachTwo)) end
 end
 if opts.fine then
   local ks = {}

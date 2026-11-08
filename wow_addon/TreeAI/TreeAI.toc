@@ -80,4 +80,5 @@ Modules\Shortcuts.lua
 Modules\Window.lua
 Modules\WindowPages.lua
 Modules\JournalPage.lua
+Modules\Coach.lua
 Modules\Tour.lua
