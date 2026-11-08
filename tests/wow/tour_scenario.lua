@@ -138,7 +138,8 @@ return function(M, ctx)
   check(chatSince(out0) == 0, "visite : rien dans le chat (" .. chatSince(out0) .. ")")
   local seenIds = {}
   for _, id in ipairs(visited) do seenIds[id] = true end
-  check(seenIds.hub and seenIds.next and seenIds.beta and seenIds.bug, "étapes vues : " .. table.concat(visited, ", "))
+  -- (4.1 STRIP) the card is off by default: the tour shows the « boutons rapides » (quick) instead of it
+  check(seenIds.hub and (seenIds.next or seenIds.quick) and seenIds.beta and seenIds.bug, "étapes vues : " .. table.concat(visited, ", "))
 
   -- 4. persistance : pas de deuxième « première fois » ; /reload en pleine visite = reprise ------------------------
   te = hubEntry("tour")

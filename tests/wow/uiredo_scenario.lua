@@ -218,6 +218,11 @@ return function(M, ctx)
   local Sc = T.Shortcuts
   check(Sc and T.RegisterShortcutBar and T.SAFE_MODULES.Shortcuts, "barre « Raccourcis » : module + API d'amarrage")
   if Sc and Sc._active then
+    -- (4.1 STRIP) hidden by default (the « boutons rapides » strip replaces it): the player turns it back on
+    local dock0 = rawget(_G, "TreeAIShortcuts")
+    check(not (dock0 and dock0:IsShown()), "barre d'actions cachée par défaut (4.1)")
+    Sc.db.actionBar = true
+    Sc:OnOptionChanged("actionBar")
     local X = T.modules.Quick
     if X and X._active and X.Layout then X.Layout() M.Advance(0.5, 0.1) end
     local seg = CreateFrame("Frame", "TreeAITestSegment", UIParent)
@@ -263,7 +268,9 @@ return function(M, ctx)
     Sc:OnOptionChanged("dock")
     check(seg:GetParent() == dock, "et de nouveau réunies")
     seg:Hide()
+    Sc.db.actionBar = false
     Sc.Layout()
+    check(not dock:IsShown(), "barre d'actions de nouveau cachée")
   end
   check(#M.blocked == 0, "aucune action bloquée")
 end

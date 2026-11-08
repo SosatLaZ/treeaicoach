@@ -3,6 +3,29 @@
 	<Binding name="TREEAI_AH_NEXT" header="TREEAI" category="ADDONS">
 		if TreeAI and TreeAI.AuctionNext then TreeAI.AuctionNext() end
 	</Binding>
+	<!-- (4.1) Boutons rapides (Shortcuts.lua) : une touche par bouton + « mode suivant ». Sans touche par défaut ;
+	     « Raccourcis conseillés » (options des boutons rapides) pose Alt-1… sur les seules touches libres. -->
+	<Binding name="TREEAI_QB_TURNIN" header="TREEAI" category="ADDONS">
+		if TreeAI and TreeAI.StripAction then TreeAI.StripAction("rendre") end
+	</Binding>
+	<Binding name="TREEAI_QB_PICKUP" header="TREEAI" category="ADDONS">
+		if TreeAI and TreeAI.StripAction then TreeAI.StripAction("prendre") end
+	</Binding>
+	<Binding name="TREEAI_STRIP_SUIVANT" header="TREEAI" category="ADDONS">
+		if TreeAI and TreeAI.StripAction then TreeAI.StripAction("suivant") end
+	</Binding>
+	<Binding name="TREEAI_QB_ZONE" header="TREEAI" category="ADDONS">
+		if TreeAI and TreeAI.StripAction then TreeAI.StripAction("zone") end
+	</Binding>
+	<Binding name="TREEAI_QB_GROUP" header="TREEAI" category="ADDONS">
+		if TreeAI and TreeAI.StripAction then TreeAI.StripAction("groupe") end
+	</Binding>
+	<Binding name="TREEAI_STRIP_JOURNAL" header="TREEAI" category="ADDONS">
+		if TreeAI and TreeAI.StripAction then TreeAI.StripAction("journal") end
+	</Binding>
+	<Binding name="TREEAI_MODE_NEXT" header="TREEAI" category="ADDONS">
+		if TreeAI and TreeAI.StripAction then TreeAI.StripAction("mode") end
+	</Binding>
 	<!-- La fenêtre TreeAI (Maintenant, Quêtes, Trajet, Donjons, Options). Sans touche par défaut. -->
 	<Binding name="TREEAI_MAIN" header="TREEAI" category="ADDONS">
 		if TreeAI and TreeAI.ToggleMain then TreeAI.ToggleMain() end

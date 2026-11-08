@@ -15,6 +15,9 @@ return function(M, ctx)
     local t = { ... } for i = 1, #t do t[i] = tostring(t[i]) end out:write(table.concat(t, " "), "\n")
   end
   local W, H = T.Window, T.Hub
+  -- (4.1 STRIP) the « Prochaine étape » card is off by default (the « boutons rapides » strip replaced it); this player
+  -- turns it on: its content is what is checked here
+  if W and W.db and W.db.card == false then W.db.card = true W:OnOptionChanged("card") end
   local chat0 = #M.output
   local prof = T:ModuleProfile()
 

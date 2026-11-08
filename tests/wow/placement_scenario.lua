@@ -23,6 +23,10 @@ return function(M, ctx)
   if not check(geo ~= nil, "placement_scenario needs --geometry") then return end
   local mode = (os.getenv("TREEAI_PLACEBUG_MODE") or "fresh"):lower()
   local UIP = UIParent
+  -- (4.1 STRIP) the « Prochaine étape » card is off by default now (the « boutons rapides » strip took its place, see
+  -- strip_scenario.lua); this player keeps it on, so its placement is still checked through every session
+  local Wn = T.Window
+  if Wn and Wn.db and Wn.db.card == false then Wn.db.card = true Wn:OnOptionChanged("card") end
 
   local function r0(v) return math.floor((tonumber(v) or 0) + 0.5) end
   local function name(f) return f and f.GetName and f:GetName() or "?" end
@@ -152,6 +156,7 @@ return function(M, ctx)
     -- expectations for the next session
     local want = anchors()
     want.TreeAIAlert = nil   -- (hidden between alerts; its saved place is checked through settings.alert.pos)
+    want.TreeAIStrip = nil   -- (4.1: placed by its own rules once the game's frames are measurable — strip_scenario.lua)
     TreeAIDB.__placebug = { anchors = want, alert = rec and { rec.point, rec.x, rec.y },
       window = T.settings.windows and T.settings.windows.main and { T.settings.windows.main.point, r0(T.settings.windows.main.x), r0(T.settings.windows.main.y) } }
     check(alert ~= nil, "encadré d'alerte créé")
