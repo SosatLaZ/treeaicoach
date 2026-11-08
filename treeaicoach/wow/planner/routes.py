@@ -282,7 +282,7 @@ def zone_analysis(pb: DM.Problem, seconds: float = 1.0) -> tuple[bool, str]:
 def compute_plan(export: dict | None, learn: dict | None = None, char_learn: dict | None = None,
                  seconds: float = 16.0, seed: int = 0, now: float | None = None) -> dict | None:
     """TreeAIPlan dict (SCHEMA.md §3) with the 3–4 routes, or None when the export is unusable."""
-    pb = DM.load_problem(export, learn, char_learn)
+    pb = DM.load_problem(export, learn, char_learn, work=True)
     if pb is None:
         return None
     grouped = len(pb.squad_raw) > 0
@@ -297,7 +297,7 @@ def compute_plan(export: dict | None, learn: dict | None = None, char_learn: dic
         sec = (seconds - zone_s) * budget[rid] / tot
         try:
             if rid == "squad":
-                gp = DM.load_problem(export, learn, char_learn, group_mode=True)
+                gp = DM.load_problem(export, learn, char_learn, group_mode=True, work=True)
                 if gp is None:
                     continue
                 prob, mode, qs, p80 = gp, "rate", None, False

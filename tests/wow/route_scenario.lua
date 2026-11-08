@@ -87,6 +87,9 @@ return function(M, ctx)
     Active = function() return cur ~= nil end,
     Subscribe = function(fn) return function() end end,
   } }
+  -- (3.9.8) Suivi Forever = choix du joueur (« Guidage : Suivi Forever ») : on l'active pour cette partie
+  local oldGuide, oldGuideV = T.settings.guide, T.settings.guideV
+  T.settings.guideV, T.settings.guide = 1, "auto"
   rawset(_G, "ShortestPathForever", spf)
   if TreeAI.SetGuideMode then TreeAI:SetGuideMode("auto") end   -- (3.9.8) SPF is opt-in: this part tests the opt-in
   if T.Compass and T.Compass.ResetSPF then T.Compass.ResetSPF() end
@@ -166,6 +169,7 @@ return function(M, ctx)
   if TreeAI.SetGuideMode then TreeAI:SetGuideMode("treeai") end
   if T.Compass and T.Compass.ResetSPF then T.Compass.ResetSPF() end
   rawset(_G, "UnitFactionGroup", oldFaction)
+  T.settings.guide, T.settings.guideV = oldGuide, oldGuideV
   R.db.hearth, R.db.farMin, R.following = true, 10, nil
   P.route, P.steps, P.cursor = nil, nil, nil
 end

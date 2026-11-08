@@ -52,6 +52,7 @@ Modules\Planner.lua
 Modules\Speed.lua
 Modules\Route.lua
 Modules\PathDraw.lua
+Modules\ZonePlan.lua
 Modules\Inventory.lua
 Modules\Boost.lua
 Modules\Fight.lua

@@ -206,17 +206,46 @@ def _members(exp: dict, me: M.Member) -> list[M.Member]:
 
 
 def load_problem(export: dict | None, learn: dict | None = None, char_learn: dict | None = None,
-                 group_mode: bool = False, zones: set[int] | None = None) -> Problem | None:
+                 group_mode: bool = False, zones: set[int] | None = None, work: bool = False) -> Problem | None:
     """Problem for the solver from TreeAIDB.export. ``group_mode`` plans the squad as one unit (union of logs,
-    slowest member's speed). ``zones`` keeps only quests of these uiMapIDs (plus the ones in my log)."""
+    slowest member's speed). ``zones`` keeps only quests of these uiMapIDs (plus the ones in my log).
+    ``work`` applies the player's « zone de travail » (``export.work``, Modules/ZonePlan.lua): chosen zones or
+    continent — log quests outside it too, unless added as a detour — and the ignored quests."""
     try:
-        return _load(export, learn, char_learn, group_mode, zones)
+        return _load(export, learn, char_learn, group_mode, zones, work)
     except Exception:
         log.debug("planner: bad export", exc_info=True)
         return None
 
 
-def _load(exp, learn, char_learn, group_mode, zones) -> Problem | None:
+def work_filter(exp: dict, rects: dict) -> tuple[set[int] | None, int | None, set[int], set[int]]:
+    """(zones, continent, ignored quests, detour quests) from ``export.work``; all empty when absent."""
+    w = exp.get("work") if isinstance(exp.get("work"), dict) else {}
+    maps = {int(_n(m)) for m in _list(w.get("maps")) if _n(m) > 0}
+    cont = int(_n(w.get("cont"), -1)) if w.get("cont") is not None else None
+    ignore = {int(_n(q)) for q in _list(w.get("ignore"))}
+    extra = {int(_n(q)) for q in _list(w.get("extra"))}
+    return (maps or None), cont, ignore, extra
+
+
+def _in_work(qzone: int, zones: set[int] | None, cont: int | None, rects: dict) -> bool:
+    if zones is not None:
+        return qzone in zones
+    if cont is not None:
+        r = rects.get(qzone)
+        return r is not None and r.c == cont
+    return True
+
+
+def _quest_maps(raw: dict, in_log: bool, qzone: int) -> list[int]:
+    """Maps of the quest's remaining points (start when not taken, objectives, turn-in); [zone] when unknown."""
+    pts = [] if in_log else [raw.get("s")]
+    pts += [o for o in _list(raw.get("o")) if isinstance(o, dict)] + [raw.get("f")]
+    out = [int(_n(p.get("map"))) for p in pts if isinstance(p, dict) and _n(p.get("map")) > 0]
+    return out or ([qzone] if qzone else [])
+
+
+def _load(exp, learn, char_learn, group_mode, zones, work=False) -> Problem | None:
     if not isinstance(exp, dict) or int(_n(exp.get("v"))) != 1:
         return None
     pl = exp.get("player") if isinstance(exp.get("player"), dict) else {}
@@ -254,6 +283,7 @@ def _load(exp, learn, char_learn, group_mode, zones) -> Problem | None:
         pb.hearth = make_point(rects, h)
         pb.hearth_cd = max(0.0, _n(h.get("cd")))
     seen: set[int] = set()
+    wz, wc, w_ignore, w_extra = work_filter(exp, rects) if work else (None, None, set(), set())
     for raw in _list(exp.get("quests")):
         if not isinstance(raw, dict) or raw.get("id") is None:
             continue
@@ -269,6 +299,9 @@ def _load(exp, learn, char_learn, group_mode, zones) -> Problem | None:
         qzone = int(_n(raw.get("zone"))) or int(_n((raw.get("f") or {}).get("map") if isinstance(raw.get("f"), dict) else 0))
         if zones is not None and not in_log and qzone not in zones:
             continue
+        if qid in w_ignore or (work and qid not in w_extra
+                               and not all(_in_work(m, wz, wc, rects) for m in _quest_maps(raw, in_log, qzone))):
+            continue                                   # « zone de travail » / quêtes ignorées (choix du joueur)
         if int(_n(raw.get("dg"))) and not group_mode:
             continue                                   # dungeon quests: squad route only
         lv = int(_n(raw.get("lv"), level)) or level

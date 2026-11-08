@@ -17,7 +17,7 @@ local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 
 local P = T:RegisterModule("Planner", {
-  title = "Trajet",
+  title = "Plan et synchro",
   defaults = { enabled = true, toasts = true, sync = true, auto = true, repair = true },
   charDefaults = { route = nil, turned = {}, skip = {}, repaired = nil },
   options = {
@@ -532,6 +532,9 @@ function P:Evaluate()
       s._absent = nil
     end
   end
+  -- (ZONEPLAN) quêtes ignorées et arrêts hors de la zone de travail : masqués (plan de l'appli compris)
+  local Zp = T.ZonePlan
+  if Zp and Zp.MaskSteps then pcall(Zp.MaskSteps, Zp, steps) end
   self.stale = absent > 0 or nil
   if self.stale and T.Fire and not self._staleSent then
     self._staleSent = true
@@ -570,6 +573,7 @@ function P:OnStepChanged(old, new)
   self._legT, self._legPos = t, (map and x) and { map = map, x = x, y = y } or nil
   self._syncDirty = true
   if T.Route and T.Route.OnPlanStep then pcall(T.Route.OnPlanStep, T.Route) end
+  if T.ZonePlan and T.ZonePlan.OnStep then pcall(T.ZonePlan.OnStep, T.ZonePlan) end
   if new > old and self.steps and self.steps[new] then self:Toast(fmt("Étape suivante : %s", self:StepLabel(self.steps[new]))) end
 end
 
@@ -715,6 +719,16 @@ function P:QuestSteps(q, rec, lq, ctx)
   return out
 end
 function P:BuildAuto(yieldFn)
+  -- (ZONEPLAN) zone de travail + ordre glouton / 2-opt avec hystérésis (Modules/ZonePlan.lua)
+  local Zp = T.ZonePlan
+  if Zp and Zp.BuildRoute and Zp:IsEnabled() then
+    local route, exp = Zp:BuildRoute(self, yieldFn)
+    if route then
+      self.auto = route
+      self.steps, self.key = nil, nil
+      return route, exp
+    end
+  end
   local ctx = costCtx()
   local recs, exp = questRecords()
   local log = logSnap()
@@ -771,23 +785,29 @@ local function budgetYield()
   P._ops = (P._ops or 0) + 1
   if clock() - (P._frameStart or 0) > 2 or P._ops >= 300 then P._ops = 0; coroutine.yield() end
 end
+-- (ZONEPLAN) tranches cadencées par l'ordonnanceur du cœur (T:NewTicker) ; repli : cadre OnUpdate
+local function stopDriver()
+  if not driver then return end
+  if driver.Cancel then driver:Cancel(); driver = nil else driver:Hide() end
+end
 local function resume()
-  if not co then if driver then driver:Hide() end return end
+  if not co then stopDriver() return end
   if inCombat() then return end                       -- paused in combat, resumed after
   P._frameStart = clock()
   local ok, err = coroutine.resume(co)
   if not ok then T:Debug("Planner: " .. tostring(err)); co = nil
   elseif coroutine.status(co) == "dead" then co = nil end
-  if not co and driver then driver:Hide() end
+  if not co then stopDriver() end
 end
 function P:StartJob(fn)
   co = coroutine.create(fn)
+  if not driver and T.NewTicker then driver = T:NewTicker(0.01, resume, P) end
   if not driver then
     local CF = G("CreateFrame")
     driver = CF and try(CF, "Frame")
     if driver then driver:SetScript("OnUpdate", resume) end
   end
-  if driver then driver:Show() else while co do resume() end end
+  if driver then if driver.Show then driver:Show() end else while co do resume() end end
 end
 function P:Busy() return co ~= nil end
 
@@ -815,7 +835,10 @@ function P:Repair(force)
   local recs = questRecords()
   local ctx = costCtx()
   local newQ = {}
-  for q, lq in pairs(log) do if not inPlan[q] then newQ[#newQ + 1] = { q = q, lq = lq } end end
+  -- (ZONEPLAN) plan auto en zone de travail : il est refait à chaque quête prise (rien à insérer ici)
+  local Zp = T.ZonePlan
+  local zAuto = self.src == "auto" and Zp and Zp.BuildRoute and Zp:IsEnabled()
+  for q, lq in pairs(log) do if not inPlan[q] and not zAuto then newQ[#newQ + 1] = { q = q, lq = lq } end end
   tsort(newQ, function(a, b) return a.q < b.q end)
   local cursor = self:Evaluate() or 1
   if not cfg("repair") and not force then return false end
@@ -1197,7 +1220,8 @@ local function logSig(log)
     ids[#ids + 1] = q .. ":" .. (lq.done or 0) .. ":" .. f
   end
   tsort(ids)
-  return tconcat(ids, ",") .. "|" .. myLevel()
+  local Zp = T.ZonePlan                              -- (ZONEPLAN) zone de travail / réglages changés → nouveau plan
+  return tconcat(ids, ",") .. "|" .. myLevel() .. "|" .. (Zp and Zp.Sig and Zp:Sig() or "")
 end
 function P:Refresh(force)
   if inCombat() then self._dirty = true return end
@@ -1286,7 +1310,7 @@ function P:OnEnable()
 end
 function P:OnDisable()
   co = nil
-  if driver then driver:Hide() end
+  stopDriver()
   if self.ticker then self.ticker:Cancel() end
   if type(T.SetTabLines) == "function" then pcall(T.SetTabLines, T, "quests", {}, "plan") end
 end

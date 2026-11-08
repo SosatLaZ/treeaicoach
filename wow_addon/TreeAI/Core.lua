@@ -1247,6 +1247,7 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Route = { lite = true, desc = "Itinéraire le plus rapide entre les étapes" },
   PathDraw = { lite = true, desc = "Chemin de l'itinéraire dessiné sur la carte et la minimap" },
   Finder = { lite = true, desc = "Chercher : meilleur familier, rares, équipement, maîtres, vols, trésors" },
+  ZonePlan = { lite = true, desc = "Zone de travail et trajet préparé (ordre des arrêts)" },
   Speed = { lite = true, desc = "Aller plus vite : mort, monture, foyer" },
   QuickTravel = { lite = true, desc = "Raccourcis : vols, auberge, courses, outils du groupe" },
   Plain = { lite = true, desc = "Conseils de quête en mots simples" },
@@ -2242,6 +2243,7 @@ local function normLine(l, source)
   local text, tip = shortText(safeText(tostring(l.text)), l.tooltip)
   return { text = text, prio = prio, icon = l.icon, kind = l.kind, death = l.death,
     onClick = type(l.onClick) == "function" and l.onClick or nil,
+    onRightClick = type(l.onRightClick) == "function" and l.onRightClick or nil,   -- (ZONEPLAN) clic droit : menu de la ligne
     tooltip = tip, pin = l.pin and true or nil, id = l.id, source = source, data = l.data,
     -- control = true : bouton dans la barre de l'onglet (pas une ligne) ; label = texte court du bouton
     control = (l.control and type(l.onClick) == "function") and true or nil,
@@ -2290,6 +2292,7 @@ local function sameLines(old, lines)
       j = j + 1
       if j > 100 then break end
       old[j].onClick = type(l.onClick) == "function" and l.onClick or nil
+      old[j].onRightClick = type(l.onRightClick) == "function" and l.onRightClick or nil
       old[j].data = l.data
     end
   end

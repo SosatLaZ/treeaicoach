@@ -352,7 +352,8 @@ local function entryTooltip(owner, e)
     table.sort(names)
     if #names > 0 then extra[#extra + 1] = { L["Aussi signalé par"] .. " : " .. table.concat(names, ", "), 0.6, 0.6, 0.6 } end
   end
-  if isSuggestion(e) then extra[#extra + 1] = { L["Clic droit: masquer"], 0.5, 0.5, 0.5 } end
+  if e.onRightClick then extra[#extra + 1] = { L["Clic droit : options"], 0.5, 0.5, 0.5 }
+  elseif isSuggestion(e) then extra[#extra + 1] = { L["Clic droit: masquer"], 0.5, 0.5, 0.5 } end
   if first then
     local tt = _G.GameTooltip
     if tt then
@@ -380,7 +381,8 @@ end
 local function runEntry(e, button)
   if not e then return end
   if button == "RightButton" then
-    if isSuggestion(e) then if TreeAI.DismissSuggestion then TreeAI:DismissSuggestion(e.id) else TreeAI:ClearSuggestion(e.id) end end
+    if e.onRightClick then TreeAI:UserAction(e.onRightClick, e)   -- (ZONEPLAN) menu de la ligne (ex. « Ignorer cette quête »)
+    elseif isSuggestion(e) then if TreeAI.DismissSuggestion then TreeAI:DismissSuggestion(e.id) else TreeAI:ClearSuggestion(e.id) end end
   elseif e.onClick then
     TreeAI:UserAction(e.onClick, e)
   end

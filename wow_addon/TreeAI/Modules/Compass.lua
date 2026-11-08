@@ -595,9 +595,13 @@ function M.BuildTargets(list, me)
       out[#out + 1] = t
     end
   end
+  -- (ZONEPLAN) l'arrêt en cours du trajet passe devant (après un point perso)
+  local Zp = T.ZonePlan
+  local pt = Zp and Zp.CompassTarget and try(Zp.CompassTarget, me)
+  if type(pt) == "table" then out[#out + 1] = pt end
   table.sort(out, function(a, b)
-    local ra = a.kind == "custom" and 0 or (a.super and 1) or (a.kind == "zone" and 3) or 2
-    local rb = b.kind == "custom" and 0 or (b.super and 1) or (b.kind == "zone" and 3) or 2
+    local ra = a.kind == "custom" and 0 or (a.plan and 0.5) or (a.super and 1) or (a.kind == "zone" and 3) or 2
+    local rb = b.kind == "custom" and 0 or (b.plan and 0.5) or (b.super and 1) or (b.kind == "zone" and 3) or 2
     if ra ~= rb then return ra < rb end
     if (a.dist or 1e12) ~= (b.dist or 1e12) then return (a.dist or 1e12) < (b.dist or 1e12) end
     return tostring(a.key) < tostring(b.key)

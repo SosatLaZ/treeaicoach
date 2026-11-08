@@ -59,6 +59,19 @@ en mouvement, 2 Hz immobile, réserve de 48 textures, aucune table par passe. Ri
 option « Guidage » d'un module `Guide` respectée si présent ; SPF qui guide → carte gardée, traînée minimap
 seulement avec « Garder la traînée minimap quand Shortest Path guide ». Options : carte, minimap, couleur,
 épaisseur. Budget `session_sim` : ≤ 60 kinstr/min. `/tai chemin` (statut).
+`Modules/ZonePlan.lua` (agent ZONEPLAN, `T.ZonePlan`, page d'options « Trajet ») : zone de travail + trajet toujours
+prêt. `char.mode` = `auto` (zone + voisines, rectangles `T.Geo.Rect` qui se touchent) | `zones` (`char.zones[uiMapID]`)
+| `continent` ; `Z:Allowed()` → `{ mode, maps|nil, cont, label, cross }`, `Z:InZone(map)`. `Planner:BuildAuto` →
+`Z:BuildRoute(P, yield)` (même tâche découpée ≤ 2 ms, cadencée par `T:NewTicker`) : journal + export QuestieDB (sinon
+points du client), filtres (`Z:Accept` : ignorées, donjons, élites — gardées à 3 joueurs et plus —, groupe, écart de
+niveau, distance max), objectifs à < 120 m = un arrêt (`step.area`, affiché « A + B »), glouton valeur/temps puis 2-opt
++ Or-opt (précédences prendre → objectifs → rendre), hystérésis `N.Choose` (≥ 10 % et ≥ 60 s de trajet gagnés, sinon
+l'ordre en place reste). Hors zone : jamais planifié ; un rendu très rentable est PROPOSÉ (« Détour rentable … ·
+clic ») → `char.extra`. Plan de l'appli : `Z:MaskSteps` (hors zone / ignorées → `_other`, `_zone`) ; export
+`TreeAIDB.export.work = { mode, maps|cont, ignore, extra }` → `load_problem(work=True)` côté solveur. Lignes : « Zone :
+… ▾ » (menu à nous), clic droit sur un arrêt (`onRightClick`, cœur + UI) → « Ignorer cette quête » / guider /
+recalculer ; boussole : `Z.CompassTarget` = arrêt en cours (rang juste après un point perso). `Route:Stops(n)` inchangé.
+`/tai zone [auto|region|recalc]`.
 
 `Modules/Quests.lua` (agent Q): aide aux quêtes PvE — à rendre par zone, « finis ici avant de partir »,
 toasts de progression, quêtes grises (clic = ouvrir, l'abandon reste manuel), « à faire à 4 » (+ Group),

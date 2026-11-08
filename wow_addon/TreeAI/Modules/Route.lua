@@ -708,6 +708,12 @@ function R:PlanLines(P)
   if verdict ~= "ok" and P.VerdictText then
     lines[#lines + 1] = { text = P.VerdictText(verdict, route.reasons), prio = (E and E.PRIO and E.PRIO[verdict]) or 2 }
   end
+  -- (ZONEPLAN) zone de travail (menu) + détour proposé
+  local Zp = T.ZonePlan
+  if Zp and Zp.HeadLines then
+    local ok, zl = pcall(Zp.HeadLines, Zp)
+    if ok and type(zl) == "table" then for _, l in ipairs(zl) do lines[#lines + 1] = l end end
+  end
   -- guidage : Suivi Forever (SPF) ou boussole
   local following = self:Following()
   if spf() then
@@ -731,24 +737,39 @@ function R:PlanLines(P)
     lines[#lines + 1] = { text = fmt("%d quête%s laissée%s de côté · clic : tout reprendre", sel.dropped,
       sel.dropped > 1 and "s" or "", sel.dropped > 1 and "s" or ""), prio = 1, onClick = function() R:ResetDrops() end }
   end
-  -- arrêts
+  -- arrêts (ZONEPLAN : objectifs du même coin = un seul arrêt numéroté « A + B »)
+  local groups = {}
+  for _, e in ipairs(st) do
+    local last = groups[#groups]
+    local a = e.step and e.step.area
+    if a and last and last.area == a then last.more[#last.more + 1] = e
+    else groups[#groups + 1] = { e = e, area = a, more = {} } end
+  end
+  count = #groups
   local shown = 0
-  for k, e in ipairs(st) do
+  for k, gr in ipairs(groups) do
+    local e = gr.e
     if shown >= 6 then
       lines[#lines + 1] = { text = fmt("… %d autre%s arrêt%s", count - k + 1, count - k + 1 > 1 and "s" or "", count - k + 1 > 1 and "s" or ""), prio = 1 }
       break
     end
-    local txt, click
+    local txt, click, rclick
     if e.kind == "quest" or e.step then
       local s = e.step
       txt = (s and P:StepLabel(s) or "?") .. (s and progressTxt(P, s) or "")
+      for _, o in ipairs(gr.more) do
+        local s2 = o.step
+        txt = txt .. " + " .. (s2 and P:StepLabel(s2) or "?") .. (s2 and progressTxt(P, s2) or "")
+      end
+      if s and s.out then txt = txt .. " (hors zone)" end
       click = function() P:Navigate(s) end
+      if s and Zp and Zp.StopMenu and Zp:IsEnabled() then rclick = function() Zp:StopMenu(s) end end
     else
       txt = e.text .. " · " .. minutes(e.sec)
       local p = e.place
       click = p and p.map and function() P:Navigate({ k = "fly", map = p.map, x = p.x, y = p.y, label = e.text }) end or nil
     end
-    local line = { text = fmt("Arrêt %d/%d : %s", k, count, txt), prio = k == 1 and 2 or 1, onClick = click }
+    local line = { text = fmt("Arrêt %d/%d : %s", k, count, txt), prio = k == 1 and 2 or 1, onClick = click, onRightClick = rclick }
     if k == 1 then
       line.id, line.pin = "plan:step", true
       local Pl = T.Plain                             -- mots simples (agent SIMPLE) : « tout près, au sud (≈ 3 min) »
@@ -760,7 +781,7 @@ function R:PlanLines(P)
       end
       local tm = Pl and Pl.Minutes and Pl.Minutes(e.sec) or nil
       if tm then line.text = line.text .. " (" .. tm .. ")" end
-      line.tooltip = "Clic : guider vers cet arrêt\n/tai plan passer : étape suivante"
+      line.tooltip = "Clic : guider vers cet arrêt" .. (rclick and "\nClic droit : ignorer cette quête…" or "\n/tai plan passer : étape suivante")
         .. ((e.sec or 0) >= 30 and ("\nDurée estimée : ~" .. max(1, floor(e.sec / 60 + 0.5)) .. " min") or "")
     end
     lines[#lines + 1] = line
