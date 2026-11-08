@@ -36,6 +36,8 @@ __all__ = [
     "median", "low_median", "market_value", "volatility", "daily_volume", "confidence", "p_sell",
     "sell_through_days", "evaluate_flip", "evaluate_vendor_flip", "rank_deals", "thin_market",
     "suggest_post", "realized_profit", "money_text", "auction_summary", "auction_context", "answer_lines",
+    "LIQ", "demand_class", "sold_between", "liquidity", "max_quantity", "stop_loss", "item_cap", "safe_flip",
+    "why_none",
 ]
 
 CUT_PCT = {False: 5, True: 15}          # neutral? -> % of the sale price
@@ -135,7 +137,7 @@ def low_median(unit_prices: Iterable[Any], n: int = LOW_N) -> int | None:
 def _days(points: Iterable[Any]) -> list[dict]:
     """Daily points as dicts {day, min, med, qty, n, gone, hrs} (lists accepted in that order)."""
     out = []
-    keys = ("day", "min", "med", "qty", "n", "gone", "hrs")
+    keys = ("day", "min", "med", "qty", "n", "gone", "hrs", "sel")
     for pt in points or []:
         if isinstance(pt, dict):
             d = {k: _i(pt.get(k)) for k in keys}
@@ -278,6 +280,212 @@ def thin_market(unit_prices: Iterable[Any]) -> bool:
     return len(xs) <= 6 and xs[1] * 2 >= xs[0] * 3
 
 
+# ------------------------------------------------------------------------- liquidity (« ça se vend ? »)
+# An item is only recommended for a flip when there is EVIDENCE it sells (see research/ah2.md):
+# listings vanishing between scans (= sales, reposts at a lower price removed), several days and scans of
+# data, a stable price (median + MAD over days, never one low outlier), several sellers, Auctionator in
+# agreement when present, and a stack we can resell within a few days. Demand classes get a small prior.
+LIQ = {
+    "min_days": 3, "min_days_demand": 2, "min_scans": 4, "min_hours": 12, "min_sold": 1.0,
+    "min_sold_single": 0.5, "min_sellers": 3, "max_vol": 0.30, "atr_gap": 0.35, "stale_days": 3,
+    "min_conf": 0.70, "max_tts": 3.0, "min_roi": 0.15, "qty_days": 3, "stop_pct": 15, "cap_pct": 20,
+}
+NONE_TEXT = "Aucun achat-revente sûr pour l'instant"
+REASON_LABEL = {
+    "nohist": "jamais vu en scan", "rare": "objet rare, presque jamais vendu", "short": "historique trop court",
+    "scans": "trop peu de scans", "unmeasured": "ventes pas encore mesurées", "slow": "se vend trop peu",
+    "unstable": "prix instable", "falling": "prix en chute", "sellers": "trop peu de vendeurs",
+    "atr": "Auctionator pas d'accord", "stale": "données trop vieilles", "conf": "confiance trop basse",
+    "notcheap": "pas assez sous le marché", "stack": "pile plus grosse que ce qui se vend",
+    "tts": "trop long à revendre", "margin": "marge trop faible après commission et dépôt",
+}
+
+
+def _dec(x: float | None) -> str:
+    return "0" if x is None else f"{x:.1f}".replace(".", ",")
+
+
+def demand_class(class_id: Any, quality: Any = 1, stack: Any = 1, ilvl: Any = 0, min_level: Any = 0,
+                 level: Any = 0) -> tuple[str, float]:
+    """(label, prior) from GetItemInfo's classID: things players always need get a small bonus."""
+    c, q, lvl = _i(class_id, -1), _i(quality, 1), _i(level)
+    if c == 0:
+        return "consommable", 0.10
+    if c == 1:
+        return "sac", 0.10
+    if c == 6:
+        return "munitions", 0.10
+    if c == 7:
+        return "artisanat", 0.10 if lvl <= 0 or _i(ilvl) <= lvl + 20 else 0.03
+    if c == 5:
+        return "composant", 0.05
+    if c in (2, 4):
+        if q == 2 and lvl > 0 and lvl - 5 <= _i(min_level) <= lvl + 10:
+            return "équipement de leveling", 0.05
+        return "équipement", 0.0
+    return "autre", 0.0
+
+
+def _sig_key(k: Any) -> tuple[int, int]:
+    a, _, b = str(k).partition(":")
+    return _i(a), _i(b)
+
+
+def sold_between(prev: dict, cur: dict) -> int:
+    """Units SOLD between two scans: vanished units (signature « unit:count » → qty) minus reposts
+    (a new listing with the same stack size at a lower price than a vanished one = cancel + undercut)."""
+    gone, dis = 0, []
+    for k, q in (prev or {}).items():
+        still = _i((cur or {}).get(k))
+        if still < _i(q):
+            u, c = _sig_key(k)
+            dis.append([u, c, _i(q) - still])
+            gone += _i(q) - still
+    new = []
+    for k, q in (cur or {}).items():
+        inc = _i(q) - _i((prev or {}).get(k))
+        if inc > 0:
+            u, c = _sig_key(k)
+            new.append([u, c, inc])
+    dis.sort(key=lambda e: (e[1], -e[0]))
+    new.sort(key=lambda e: (e[0], e[1]))
+    matched = 0
+    for n in new:
+        for e in dis:
+            if n[2] <= 0:
+                break
+            if e[1] == n[1] and e[0] > n[0] and e[2] > 0:
+                m = min(e[2], n[2])
+                e[2] -= m
+                n[2] -= m
+                matched += m
+    return gone - matched
+
+
+def liquidity(points: Iterable[Any], stack: Any = 1, quality: Any = 1, prior: float = 0.0,
+              atr: Any = None, age_days: float = 0.0) -> dict:
+    """Does this item really sell? → {ok, conf, reasons:[{code,text}], market, vol, sold, days, scans,
+    hours, sellers, gone}. ``ok`` only when every gate passes and confidence ≥ LIQ["min_conf"]."""
+    L = LIQ
+    ds = _days(points)
+    res: dict[str, Any] = {"ok": False, "conf": 0.0, "reasons": [], "market": 0, "vol": 0.5, "sold": None,
+                           "days": len(ds), "scans": 0, "hours": 0, "sellers": 0, "gone": 0}
+    reasons = res["reasons"]
+
+    def why(code: str, text: str) -> None:
+        reasons.append({"code": code, "text": text})
+
+    if not ds:
+        why("nohist", "jamais vu dans un scan TreeAI")
+        return res
+    nd = len(ds)
+    scans = sum(max(1, d["n"]) for d in ds)
+    hours = sum(d["hrs"] for d in ds)
+    gone = sum(d["gone"] for d in ds)
+    sold = daily_volume(ds)
+    sellers = max(d["sel"] for d in ds)
+    mv = market_value(ds) or 0
+    vol = volatility(ds)
+    single = _i(stack, 1) <= 1
+    p = _f(prior, 0.0) or 0.0
+    res.update(market=mv, vol=vol, sold=sold, scans=scans, hours=hours, sellers=sellers, gone=gone)
+    if single and _i(quality, 1) >= 2 and (gone < 2 or nd <= 1):
+        why("rare", "objet rare : moins de 2 ventes vues")
+    need = L["min_days_demand"] if p >= 0.10 else L["min_days"]
+    if nd < need:
+        why("short", f"historique trop court ({nd} j sur {need})")
+    if scans < L["min_scans"]:
+        why("scans", f"trop peu de scans ({scans} sur {L['min_scans']})")
+    min_sold = L["min_sold_single"] if single else L["min_sold"]
+    if hours < L["min_hours"]:
+        why("unmeasured", "ventes pas encore mesurées (il faut des scans espacés de quelques heures)")
+    elif sold is None or sold < min_sold:
+        why("slow", f"se vend peu ({_dec(sold)} par jour)")
+    if vol > L["max_vol"]:
+        why("unstable", f"prix instable (±{_round(vol * 100)} %)")
+    if mv > 0 and ds[-1]["med"] < mv * (1 - L["max_vol"]):
+        why("falling", "prix en chute")
+    if 0 < sellers < L["min_sellers"]:
+        why("sellers", f"trop peu de vendeurs ({sellers})")
+    atr_v, atr_ok = _i(atr), False
+    if atr_v > 0 and mv > 0:
+        atr_ok = abs(atr_v - mv) / mv <= L["atr_gap"]
+        if not atr_ok:
+            why("atr", f"Auctionator pas d'accord ({money_text(atr_v)} contre {money_text(mv)})")
+    c = (0.25 * min(1.0, nd / 5) + 0.15 * min(1.0, scans / 8) + 0.25 * min(1.0, (sold or 0) / (3 * min_sold))
+         + 0.20 * (1 - min(1.0, vol / 0.4)) + (0.15 * min(1.0, sellers / 5) if sellers > 0 else 0.075)
+         + p + (0.05 if atr_ok else 0.0))
+    age = _f(age_days, 0.0) or 0.0
+    if age > L["stale_days"]:
+        c *= 0.5
+        why("stale", f"données vieilles de {int(age)} j")
+    c = _round(_clamp(c, 0.0, 1.0) * 100) / 100
+    res["conf"] = c
+    if not reasons and c < L["min_conf"]:
+        why("conf", f"confiance trop basse ({_round(c * 100)} %)")
+    res["ok"] = not reasons
+    return res
+
+
+def max_quantity(sold_per_day: Any, days: int | None = None, held: Any = 0) -> int:
+    """Never hold more than what the market absorbed in the last K days (minus what we already hold)."""
+    v = _f(sold_per_day)
+    if not v or v <= 0:
+        return 0
+    k = LIQ["qty_days"] if days is None else _i(days)
+    return max(0, int(math.floor(v * k)) - max(0, _i(held)))
+
+
+def stop_loss(buy_unit: Any, vendor_unit: Any = 0, neutral: bool = False) -> dict:
+    """Stop-loss: if the market falls under ``unit`` (buy − 15 %, never under the vendor price) or the item
+    is still unsold after 2 listings, sell at that price; ``loss`` = max loss per unit after the cut."""
+    b = max(0, _i(buy_unit))
+    stop = max(max(0, _i(vendor_unit)), b * (100 - LIQ["stop_pct"]) // 100)
+    return {"unit": stop, "loss": max(0, b - net_sale(stop, neutral))}
+
+
+def item_cap(total_gold: Any, pct: Any = None, budget: Any = None) -> int:
+    """Most gold allowed in ONE item: pct % of all our gold (and never more than the budget)."""
+    cap = max(0, _i(total_gold)) * _i(LIQ["cap_pct"] if pct is None else pct) // 100
+    return cap if budget is None else min(cap, max(0, _i(budget)))
+
+
+def safe_flip(buyout: Any, count: Any, liq: dict, vendor_unit: Any = 0, qty_ahead: Any = 0, held: Any = 0,
+              neutral: bool = False, hours: int = 24, min_margin: float = 0.20,
+              min_profit: int = 5000) -> tuple[dict | None, dict | None]:
+    """(deal, None) when buying this listing is a SAFE flip, else (None, {code, text})."""
+    L = LIQ
+    if not liq or not liq.get("ok"):
+        r = (liq or {}).get("reasons") or [{"code": "nohist", "text": REASON_LABEL["nohist"]}]
+        return None, r[0]
+    count, buyout = max(1, _i(count, 1)), _i(buyout)
+    mv = _i(liq.get("market"))
+    unit = buyout // count
+    if mv <= 0 or round(1 - unit / mv, 4) < min_margin:
+        return None, {"code": "notcheap", "text": f"pas assez sous le marché ({money_text(mv)}/u)"}
+    maxq = max_quantity(liq.get("sold"), None, held)
+    if count > maxq:
+        return None, {"code": "stack", "text": f"pile de {count} : il s'en vend ~{maxq} en {L['qty_days']} j"}
+    d = evaluate_flip(buyout, count, mv, _f(liq.get("vol"), 0.0) or 0.0, liq.get("sold"),
+                      _f(liq.get("conf"), 0.0) or 0.0, vendor_unit, qty_ahead, neutral, hours)
+    if d["days"] is None or d["days"] > L["max_tts"]:
+        return None, {"code": "tts", "text": f"trop long à revendre (~{_dec(d['days'])} j)"}
+    if d["profit"] < _i(min_profit) or (d["roi"] or 0) < L["min_roi"]:
+        return None, {"code": "margin", "text": f"marge trop faible ({money_text(d['profit'])} net)"}
+    d.update(safe=True, maxQty=maxq, sold=liq.get("sold"), stop=stop_loss(unit, vendor_unit, neutral))
+    return d, None
+
+
+def why_none(rejects: dict, candidates: int) -> list[str]:
+    """The « why » under « Aucun achat-revente sûr pour l'instant »: {code: count} of apparent deals refused."""
+    if _i(candidates) <= 0:
+        return ["Aucune annonce assez sous le prix du marché parmi les objets suivis."]
+    top = sorted(((k, _i(v)) for k, v in (rejects or {}).items() if _i(v) > 0), key=lambda kv: (-kv[1], kv[0]))
+    out = [f"{_i(candidates)} affaire(s) apparente(s) écartée(s) :"]
+    out += [f"{REASON_LABEL.get(k, k)} ({n})" for k, n in top[:3]]
+    return out
+
+
 # ---------------------------------------------------------------------------------------- selling
 def suggest_post(count: int, vendor_unit: int, market: int | None, vol: float, volume: float | None,
                  competitors: Iterable[Any] = (), neutral: bool = False, hours: int = 24) -> dict:
@@ -415,8 +623,12 @@ def _deal_text(d: dict) -> str:
     roi_t = f", ROI {round(r * 100)} %" if r is not None else ""
     conf = _f(d.get("conf"))
     conf_t = f", confiance {round(conf * 100)} %" if conf is not None else ""
+    sold = _f(d.get("sold"))
+    sold_t = f", se vend ~{_dec(sold)}/jour" if sold is not None else ""
+    stop = _i(d.get("stop"))
+    stop_t = f", stop-loss {money_text(stop)}/u" if stop > 0 else ""
     return (f"{label} : acheter {money_text(d.get('buy'))}, revendre {money_text(d.get('sell'))} → "
-            f"+{money_text(d.get('profit'))}{roi_t}{conf_t}")
+            f"+{money_text(d.get('profit'))}{roi_t}{conf_t}{sold_t}{stop_t}")
 
 
 def auction_context(db_or_char: Any) -> dict:
@@ -429,6 +641,8 @@ def auction_context(db_or_char: Any) -> dict:
         deals = [_deal_text(d) for d in _list(a.get("deals")) if isinstance(d, dict)][:5]
         if deals:
             out["affaires"] = deals
+        elif isinstance(a.get("none"), dict):
+            out["aucun_achat_sur"] = [NONE_TEXT] + [str(x) for x in _list(a["none"].get("why"))][:4]
         sells = []
         for s in _list(a.get("sell"))[:5]:
             if not isinstance(s, dict):
@@ -464,7 +678,7 @@ def answer_lines(db_or_char: Any) -> list[str]:
     ctx = auction_context(db_or_char)
     if not ctx:
         return ["Pas encore de données d'hôtel des ventes : ouvre l'HV, clique « Scanner », puis /reload."]
-    lines = []
+    lines = list(ctx.get("aucun_achat_sur", []))[:2]
     for k, title in (("affaires", "À acheter"), ("a_vendre", "À vendre")):
         for t in ctx.get(k, [])[:3]:
             lines.append(f"{title} — {t}")

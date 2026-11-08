@@ -80,15 +80,25 @@ d'attente. Scan ciblé (`M.ScanTargets`): `SendSearchQuery` objet par objet dès
 seule + `RegisterForDBUpdate("TreeAI", cb)` ; utilisé quand nos données manquent/sont peu sûres/vieilles.
 Historique par royaume-faction(-neutre) dans `TreeAIDB.modules.Auction.realms[clé].items[itemID] =
 { v = prix marchand, last = time, h = { jour, min, médiane des 5 moins chères, qté, nScans, unités
-disparues, heures, … } }` (≤ 14 jours, plafond `maxItems`). Or (`M.Gold()`): total, réserve (`keepGold`,
+disparues (remises en vente moins cher déduites, `F.soldBetween`), heures, … }, sl = { jour, vendeurs
+distincts (ou niveaux de prix si inconnus), … } }` (≤ 14 jours, plafond `maxItems`). **Liquidité**
+(`F.liquidity`, miroir de `auction.liquidity`, seuils dans `research/ah2.md`) : un achat-revente n'est
+proposé que s'il y a la preuve que l'objet se vend (≥ 3 j de scans — 2 pour consommables/artisanat/sacs/
+munitions —, ≥ 4 scans, ≥ 12 h mesurées, ≥ 1 vente/j (0,5 pour un objet unique), prix stable ±30 %, pas en
+chute, ≥ 3 vendeurs, Auctionator d'accord à ±35 %, confiance ≥ 70 %) ; objets verts rares vus 0–1 fois exclus ;
+quantité ≤ ventes de `qtyDays` jours ; revente en ≤ 3 j ; ROI ≥ 15 % ; stop-loss −15 % (`chars[k].modules.
+Auction.flips[id]`). Sinon `M.none = { text = « Aucun achat-revente sûr pour l'instant », why = {…} }`. Or (`M.Gold()`): total, réserve (`keepGold`,
 entraînement/réparations = niveau² × 1,5 pa si `autoReserve`, `mountGold`), budget = total − réserve
-(∩ plafond/jour `budget`), immobilisé ; `F.allocate` = glouton profit ajusté / prix, plafond `capShare` %
-par objet (reventes marchand hors plafond) → `M.plan` → file `M.queue` (achats, annulations, poses).
+(∩ plafond/jour `budget`), immobilisé ; `F.allocate` = glouton profit ajusté / prix, plafond `capGold` %
+de TOUT l'or par objet (reventes marchand hors plafond) → `M.plan` → file `M.queue` (achats, annulations,
+poses) + boutons rapides de la fenêtre HV « Acheter la meilleure offre » / « Remettre en vente » /
+« Annuler les battues » (`M.BuyBest`, `M.RepostNext`, `M.CancelNext` : une action protégée par clic).
 Chaque affaire porte `deposit` et `relist` (= dépôt × (1 − p) / p, dépôt perdu attendu en reposant jusqu'à
 la vente). Journal par perso `chars[k].modules.Auction.ledger` (courrier HV FR/EN), `spent[date]`,
 `deposits[date]`. Résumé `summary.auction = { deals, sell, thin, realized = {today, week, total, top},
 budget, budgetLeft, spentToday, scanAge, neutral, flavor, gold = {total, reserve, invested, plan,
-planGain}, lastScan }`, lu par `treeaicoach/wow/auction.py` (mêmes formules: commission 5 % / 15 %
+planGain}, lastScan, none = {why}, rules = {capGold, qtyDays, minDays, minConf} }` (deals : + sold, maxQty,
+stop, class), lu par `treeaicoach/wow/auction.py` (mêmes formules: commission 5 % / 15 %
 neutre, dépôt = floor(prix marchand × qté × 5 % (25 %) × h / 2), profit = vente × (1 − commission) −
 achat − dépôt × P(invendu)). Prix marchand: `GetItemInfo` (11e valeur, mis en cache), sinon Auctionator,
 sinon historique. `/tai hv [vendre|bilan|journal|fenetre|cible|debug|neutre|faction|auto|reserve N|

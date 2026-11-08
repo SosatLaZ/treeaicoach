@@ -171,3 +171,126 @@ def test_ai_context_includes_auction():
                                                                       "buy": 3, "profit": 4}]}}}}}
     ctx = ai_context.character_context(db)
     assert ctx["hotel_des_ventes"]["affaires"][0].startswith("Lin : acheter 3 pc")
+
+
+# ------------------------------------------------------------------ liquidity model (« does it really sell? »)
+def _hist(meds, gone=0, hrs=0, n=2, sel=6, qty=60):
+    """Fake daily history: [day, min, med, qty, scans, vanished units, hours between scans, sellers]."""
+    return [[100 + i, m - 2, m, qty, n, gone, hrs, sel] for i, m in enumerate(meds)]
+
+
+LIQUID = _hist([100, 102, 98, 101, 100], gone=40, hrs=12)
+
+
+def test_liquid_trade_good_is_kept():
+    q = A.liquidity(LIQUID, stack=20, quality=1, prior=0.10, atr=104)
+    assert q["ok"] and q["conf"] == 1.0 and q["sold"] == 48.0 and q["market"] == 100 and q["reasons"] == []
+    assert q["sellers"] == 6 and q["days"] == 5 and q["scans"] == 10 and q["hours"] == 60
+    d, why = A.safe_flip(1200, 20, q, vendor_unit=3, min_profit=100)
+    assert why is None and d["safe"] and d["maxQty"] == 144 and d["stop"] == {"unit": 51, "loss": 11}
+    assert d["profit"] == 679 and d["days"] == 0.42
+
+
+@pytest.mark.parametrize("hist,kw,code", [
+    (_hist([5000], n=1, sel=1), {"stack": 1, "quality": 2}, "rare"),            # BoE green seen once
+    (_hist([5000, 5100, 4900, 5000], gone=0, hrs=12, sel=2), {"stack": 1, "quality": 2}, "rare"),
+    (_hist([100, 180, 60, 150, 90], gone=40, hrs=12), {}, "unstable"),          # price jumps around
+    (_hist([100, 100, 100, 100, 100], gone=0, hrs=12), {}, "slow"),             # nothing ever sells
+    (_hist([100, 100, 100, 100, 100], gone=40, hrs=1), {}, "unmeasured"),       # scans too close together
+    (_hist([100, 100]), {}, "short"),                                           # 2 days only
+    (_hist([100, 100, 100], n=1, gone=40, hrs=12), {"prior": 0.10}, "scans"),
+    (_hist([100, 100, 100, 100, 60], gone=40, hrs=12), {}, "falling"),
+    (_hist([100, 100, 100, 100, 100], gone=40, hrs=12, sel=1), {}, "sellers"),  # one seller resets the price
+    (LIQUID, {"atr": 300}, "atr"),                                              # Auctionator disagrees
+    (LIQUID, {"age_days": 5}, "stale"),
+])
+def test_illiquid_items_are_rejected(hist, kw, code):
+    q = A.liquidity(hist, **kw)
+    assert not q["ok"] and q["reasons"][0]["code"] == code, q["reasons"]
+    d, why = A.safe_flip(10, 1, q)
+    assert d is None and why["code"] == code
+
+
+def test_slow_reason_text_and_rare_needs_two_sales():
+    q = A.liquidity(_hist([100] * 5, gone=0, hrs=12))
+    assert q["reasons"][0]["text"] == "se vend peu (0,0 par jour)"
+    ok = A.liquidity(_hist([5000, 5100, 4900, 5000, 5000], gone=2, hrs=48, sel=4), stack=1, quality=2)
+    assert ok["ok"], ok["reasons"]                       # a green that DOES sell (≥ 2 sales seen) can pass
+
+
+def test_demand_prior_and_classes():
+    assert A.demand_class(7, ilvl=20, level=28) == ("artisanat", 0.10)
+    assert A.demand_class(7, ilvl=55, level=28) == ("artisanat", 0.03)
+    assert A.demand_class(0) == ("consommable", 0.10) and A.demand_class(6) == ("munitions", 0.10)
+    assert A.demand_class(1)[0] == "sac" and A.demand_class(5) == ("composant", 0.05)
+    assert A.demand_class(4, quality=2, min_level=30, level=28) == ("équipement de leveling", 0.05)
+    assert A.demand_class(2, quality=2, min_level=50, level=28) == ("équipement", 0.0)
+    two = _hist([100, 100], gone=40, hrs=12)
+    assert A.liquidity(two)["reasons"][0]["code"] == "short"
+    assert A.liquidity(two, prior=0.10)["ok"]            # consumables / trade goods: 2 days are enough
+
+
+def test_hard_rules_quantity_stop_cap():
+    assert A.max_quantity(48, 3, held=20) == 124 and A.max_quantity(None) == 0 and A.max_quantity(0.2) == 0
+    assert A.stop_loss(1000) == {"unit": 850, "loss": 192}
+    assert A.stop_loss(100, vendor_unit=95)["unit"] == 95          # never below the vendor price
+    assert A.item_cap(1_000_000) == 200_000 and A.item_cap(1_000_000, 20, 150_000) == 150_000
+    q = A.liquidity(LIQUID)
+    d, why = A.safe_flip(60 * 200, 200, q)
+    assert d is None and why["code"] == "stack" and "144" in why["text"]
+    d, why = A.safe_flip(60 * 20, 20, q, held=130)                 # we already hold 130 → only 14 more
+    assert why["code"] == "stack"
+    d, why = A.safe_flip(95 * 20, 20, q)
+    assert why["code"] == "notcheap"
+    d, why = A.safe_flip(60 * 20, 20, q, qty_ahead=200)            # 200 cheaper units ahead of us
+    assert why["code"] == "tts"
+    d, why = A.safe_flip(78 * 20, 20, q, vendor_unit=3, min_profit=5000)
+    assert why["code"] == "margin"
+
+
+def test_sold_between_ignores_reposts():
+    assert A.sold_between({"100:20": 60, "90:5": 5}, {"100:20": 20, "95:20": 20}) == 25
+    assert A.sold_between({"100:20": 40}, {"100:20": 40}) == 0
+    assert A.sold_between({"100:20": 40}, {}) == 40
+    assert A.sold_between({}, {"80:20": 20}) == 0
+
+
+def test_why_none_and_reader():
+    assert A.why_none({}, 0) == ["Aucune annonce assez sous le prix du marché parmi les objets suivis."]
+    w = A.why_none({"slow": 2, "rare": 1, "unstable": 2, "atr": 1}, 6)
+    assert w == ["6 affaire(s) apparente(s) écartée(s) :", "se vend trop peu (2)", "prix instable (2)",
+                 "Auctionator pas d'accord (1)"]
+    db = {"summary": {"auction": {"deals": [], "none": {"why": w}}}}
+    ctx = A.auction_context(db)
+    assert ctx["aucun_achat_sur"][0] == "Aucun achat-revente sûr pour l'instant"
+    assert A.answer_lines(db)[0] == "Aucun achat-revente sûr pour l'instant"
+    d = A.auction_context({"summary": {"auction": {"deals": [{"name": "Lin", "count": 20, "buy": 1200, "sell": 1980,
+                                                               "profit": 679, "sold": 48, "stop": 51}]}}})
+    assert d["affaires"][0].endswith("se vend ~48,0/jour, stop-loss 51 pc/u")
+
+
+@needs_lua
+@pytest.mark.parametrize("flavor", ["modern", "legacy"])
+def test_lua_liquidity_scenario(flavor):
+    """Same model in Lua: illiquid bargains refused, liquid kept, quick buttons one action per click."""
+    r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--flavor", flavor, "--scenario",
+                        "tests/wow/auction_liquidity_scenario.lua", str(ADDON)],
+                       cwd=ROOT, capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "RESULT ok" in r.stdout
+
+
+def test_app_hv_tab_shows_no_safe_flip_with_why():
+    from treeaicoach import ui_page_wow as pw
+    from treeaicoach.wow import live
+    snap = {"summary": {"auction": {"deals": [], "none": {"why": ["3 affaire(s) apparente(s) écartée(s) :",
+                                                                    "se vend trop peu (3)"]},
+                                    "rules": {"capGold": 20, "qtyDays": 3}}}}
+    v = live.ah_view(snap)
+    assert v["none"][0] == "Aucun achat-revente sûr pour l'instant" and "20 %" in v["rules"]
+    hv = pw.tab_blocks("hv", snap)
+    assert hv[0]["title"] == "Achat-revente" and hv[0]["rows"][0]["title"].startswith("Aucun achat-revente sûr")
+    snap["summary"]["auction"] = {"deals": [{"name": "Lin", "id": 2589, "count": 20, "kind": "flip", "buy": 1200,
+                                             "sell": 1980, "profit": 679, "deposit": 36, "sold": 47.8, "stop": 51}]}
+    row = pw.tab_blocks("hv", snap)[0]["rows"][0]
+    assert "se vend ~47,8/jour" in row["desc"] and "stop-loss 51 pc/u" in row["desc"]
