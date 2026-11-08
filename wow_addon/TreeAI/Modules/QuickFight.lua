@@ -433,7 +433,8 @@ end
 ---------------------------------------------------------------------------
 -- Barre : cadres (créés / placés hors combat uniquement)
 ---------------------------------------------------------------------------
-local SIZE, GAP, GRIP = 30, 3, 10
+local SC = (T.Theme and T.Theme.SHORTCUT) or {}       -- (UIREDO) mêmes tailles que la barre « Raccourcis »
+local SIZE, GAP, GRIP = SC.size or 30, SC.gap or 3, 10
 local bar, grip, bg, dot, label
 local buttons = {}
 local ammoBtn
@@ -457,6 +458,7 @@ end
 
 local function placeBar()
   if not bar or inCombat() then return end
+  if T.ShortcutDocked and T:ShortcutDocked(bar) then return end   -- (UIREDO) amarrée : la barre « Raccourcis » la place
   local p = db().pos
   bar:ClearAllPoints()
   if type(p) == "table" and p[1] then bar:SetPoint(p[1], G.UIParent, p[2] or p[1], p[3] or 0, p[4] or 0)
@@ -467,7 +469,8 @@ end
 
 local function createBar()
   if bar or inCombat() or type(G.CreateFrame) ~= "function" then return bar end
-  local ok, f = pcall(G.CreateFrame, "Frame", "TreeAIQuickBar", G.UIParent)
+  -- (UIREDO) nom propre (« TreeAIQuickBar » est la barre de Quick : deux cadres ne partagent plus un nom global)
+  local ok, f = pcall(G.CreateFrame, "Frame", "TreeAIQuickFightBar", G.UIParent)
   if not ok or not f then return nil end
   bar = f
   f:SetSize(GRIP + 4, SIZE + 6)
@@ -509,6 +512,20 @@ local function createBar()
       onReset = function() db().pos = nil placeBar() end,
     })
   end
+  -- (UIREDO) amarrée dans la barre « Raccourcis » (Shortcuts.lua) : poignée et fond propres cachés
+  if T.RegisterShortcutBar then
+    pcall(T.RegisterShortcutBar, T, f, { id = "fight", label = "Combat · familier", order = 2, inset = GRIP + 6,
+      chrome = { bg, grip }, movable = "quickfight",
+      onUndock = function()
+        placeBar()
+        if T.RegisterMovable then
+          T:RegisterMovable(f, "quickfight", "Barre de combat", {
+            onMoved = function(point, x, y) db().pos = { point, point, floor(x or 0), floor(y or 0) } end,
+            onReset = function() db().pos = nil placeBar() end,
+          })
+        end
+      end })
+  end
   return bar
 end
 
@@ -546,10 +563,13 @@ local function createButton(key)
     local w = self.want or {}
     local lines = {}
     for _, l in ipairs(w.tip or {}) do lines[#lines + 1] = l end
-    lines[#lines + 1] = "|cff999999Touche : macro « /click TreeAIQuick_" .. key .. " ».|r"
+    -- (UIREDO) la touche liée (ou où la choisir), plus de « /click » à écrire soi-même
+    local Th = T.Theme
+    lines[#lines + 1] = "|cff66ccff" .. ((Th and Th.KeyHint) and Th:KeyHint(self) or ("Touche : /click TreeAIQuick_" .. key)) .. "|r"
     tooltip(self, w.title or key, lines)
   end)
   b:SetScript("OnLeave", hideTip)
+  if T.Theme and T.Theme.ShortcutStyle then T.Theme:ShortcutStyle(b) end   -- (UIREDO) même bouton partout + touche liée
   -- après le clic (code non sécurisé, sans effet sur l'action) : mémorise le repas pour le minuteur
   b:SetScript("PostClick", function(self) M:OnUsed(self.key, self.want) end)
   b:Hide()
@@ -569,6 +589,7 @@ local function createAmmoButton()
   b.count = b:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
   b.count:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -1, 1)
   b:SetScript("OnClick", function() M:BuyAmmo() end)
+  if T.Theme and T.Theme.ShortcutStyle then T.Theme:ShortcutStyle(b) end   -- (UIREDO) même bouton partout
   b:SetScript("OnEnter", function(self)
     local o = M._ammoOffer
     local n = M:AmmoToBuy()
@@ -731,6 +752,7 @@ local function applyLayout(P, combatPrep)
   shownKeys = {}
   for _, k in ipairs(order) do shownKeys[k] = true end
   M._shown = order
+  if T.Shortcuts and T.Shortcuts.Changed then T.Shortcuts.Changed() end   -- (UIREDO) la barre « Raccourcis » suit
 end
 
 local DOT = { ready = { 0.3, 0.9, 0.3 }, rest = { 0.35, 0.65, 1 }, todo = { 1, 0.6, 0.1 } }

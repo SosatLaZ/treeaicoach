@@ -148,7 +148,11 @@ return function(M, ctx)
   local bar = X.bar
   check(bar and bar:IsShown(), "barre affichée")
   local movers = T.GetMovables and T:GetMovables()
-  check(movers and movers.quick and movers.quick.frame == bar, "barre déplaçable (RegisterMovable)")
+  -- (UIREDO) amarrée dans la barre « Raccourcis » : c'est elle qui se déplace (un seul cadre en mode édition)
+  local Sc = T.Shortcuts
+  local docked = Sc and Sc.Docked and Sc.Docked(bar)
+  check(movers and ((movers.quick and movers.quick.frame == bar) or (docked and movers.shortcuts and not movers.quick
+    and bar:GetParent() == movers.shortcuts.frame)), "barre déplaçable (seule ou dans « Raccourcis »)")
   local function shown(k) for _, s in ipairs(X.shown or {}) do if s == k then return true end end return false end
   check(shown("toggle"), "interrupteur de quêtes toujours là")
   check(not shown("sell") and not shown("mail"), "vente / courrier cachés hors marchand / boîte")

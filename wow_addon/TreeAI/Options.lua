@@ -22,6 +22,13 @@ local R = { pad = 12, header = 24, check = 26, slider = 50, button = 28, gap = 1
   navW = 158, navRow = 18, navHead = 22 }
 TreeAI.OPTIONS_RHYTHM = R
 
+-- (UIREDO) une seule couleur d'accent partout : l'or du thème (Theme.lua), vert d'origine en repli
+local function accent() local th = TreeAI.Theme return (th and th.Hex) and ("|c" .. th:Hex("gold")) or "|cff33cc66" end
+local function accentRGB(a)
+  local th = TreeAI.Theme
+  if th and th.Color then local r, g, b = th:Color("gold") return r, g, b, a end
+  return 0.2, 0.8, 0.4, a
+end
 local function plain(s) return (tostring(s or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
 local function ulen(s) local _, n = plain(s):gsub("[^\128-\191]", "") return n end
 local AVG = { GameFontHighlightSmall = 5.4, GameFontDisableSmall = 5.4, GameFontNormalSmall = 5.4,
@@ -96,10 +103,10 @@ local function layout(content, width)
   function P.header(str)
     if P.sections > 0 or #P.rects > 0 then P.y = P.y + R.gap end
     P.sections = P.sections + 1
-    local fs = wrapFS(content, "GameFontNormal", col, "|cff33cc66" .. str .. "|r")
+    local fs = wrapFS(content, "GameFontNormal", col, accent() .. str .. "|r")
     at(fs, R.pad, P.y)
     local rule = content:CreateTexture(nil, "ARTWORK")
-    if rule.SetColorTexture then rule:SetColorTexture(0.2, 0.8, 0.4, 0.35) end
+    if rule.SetColorTexture then rule:SetColorTexture(accentRGB(0.35)) end
     rule:SetSize(col, 1)
     rule:SetPoint("TOPLEFT", content, "TOPLEFT", R.pad, -(P.y + R.header - 4))
     rec(fs, R.pad, P.y, col, R.header, "header", str)
@@ -239,6 +246,7 @@ local scroll, navChild, navButtons, selected
 local function newPage(name, build, key)
   local f = _G.CreateFrame("Frame", nil, scroll or _G.UIParent)
   f.name, f.key = name, key
+  f.builder = build   -- (UIREDO) la même page, reconstruite dans la fenêtre TreeAI (page « Options »)
   f:SetSize(440, 100)
   f:Hide()
   local built = false
@@ -630,7 +638,7 @@ local function selectPage(page)
   for _, b in ipairs(navButtons or {}) do
     if b.page then
       local on = b.page == page
-      b.fs:SetText((on and "|cff33ff66" or "|cffffffff") .. b.label .. "|r")
+      b.fs:SetText((on and accent() or "|cffffffff") .. b.label .. "|r")
       if b.sel then if on then b.sel:Show() else b.sel:Hide() end end
     end
   end
@@ -658,7 +666,7 @@ local function buildNav()
   for _, e in ipairs(navEntries()) do
     if e.head then
       if y > 2 then y = y + 6 end
-      local fs = wrapFS(parent, "GameFontNormalSmall", iw, "|cff33cc66" .. e.head .. "|r")
+      local fs = wrapFS(parent, "GameFontNormalSmall", iw, accent() .. e.head .. "|r")
       if fs.SetWordWrap then fs:SetWordWrap(false) end
       fs:SetPoint("TOPLEFT", parent, "TOPLEFT", 2, -(y + 6))
       rects[#rects + 1] = { x = 2, y = y, w = iw, h = R.navHead, label = e.head }
@@ -679,7 +687,7 @@ local function buildNav()
       if hl.SetColorTexture then hl:SetColorTexture(1, 1, 1, 0.08) end
       local sel = b:CreateTexture(nil, "BACKGROUND")
       sel:SetAllPoints(b)
-      if sel.SetColorTexture then sel:SetColorTexture(0.2, 0.8, 0.4, 0.18) end
+      if sel.SetColorTexture then sel:SetColorTexture(accentRGB(0.18)) end
       sel:Hide()
       b.sel = sel
       fs:SetText(e.label)
@@ -693,7 +701,7 @@ local function buildNav()
   canvas.__nav = { W = R.navW - 22, rects = rects, height = y }
   -- séparateur vertical entre l'arbre et la page
   local sep = canvas:CreateTexture(nil, "ARTWORK")
-  if sep.SetColorTexture then sep:SetColorTexture(0.2, 0.8, 0.4, 0.3) end
+  if sep.SetColorTexture then sep:SetColorTexture(accentRGB(0.3)) end
   sep:SetWidth(1)
   sep:SetPoint("TOPLEFT", canvas, "TOPLEFT", R.navW, -8)
   sep:SetPoint("BOTTOMLEFT", canvas, "BOTTOMLEFT", R.navW, 8)
@@ -739,6 +747,22 @@ function TreeAI:InitOptions()
   end
   if not modern and _G.InterfaceOptions_AddCategory then pcall(_G.InterfaceOptions_AddCategory, canvas) end
 end
+
+-- (UIREDO) la fenêtre TreeAI montre les mêmes pages (même moteur) : { {head} | {key, label, module, builder} }
+function TreeAI:OptionEntries()
+  if not canvas then self:InitOptions() end
+  local out = {}
+  local modOf = {}
+  for _, p in ipairs(pages) do modOf[p.frame] = p.module end
+  for _, e in ipairs(navEntries()) do
+    if e.head then out[#out + 1] = { head = e.head }
+    elseif e.page then
+      out[#out + 1] = { key = e.page.key or e.label, label = e.label, module = modOf[e.page], builder = e.page.builder }
+    end
+  end
+  return out
+end
+function TreeAI:RefreshOptionWidgets() refreshAll() end
 
 -- canvas (racine), pages de modules, Apparence, Sons, Accueil
 function TreeAI:GetOptionPages() return canvas, pages, appearance, soundsPage, homePage end

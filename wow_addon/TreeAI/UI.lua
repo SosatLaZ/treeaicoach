@@ -1224,6 +1224,8 @@ local CHEV_W, RIGHT_MAX = 10, 110
 function TreeAI:RefreshPanel()
   if not panel then return end
   if TreeAI._PanelRendered then TreeAI:_PanelRendered() end
+  -- (UIREDO) panneau caché (la carte « Prochaine étape » le remplace) : rien à dessiner ; ShowPanel le redessine
+  if not panel:IsShown() then return end
   local s = acc()
   local width = panelWidth()
   panel:SetWidth(width)
@@ -1643,7 +1645,7 @@ local function makeAlert()
   alert:SetScript("OnEnter", function(self)
     self.hold = true
     self:SetAlpha((alertSettings() or {}).alpha or 0.95)
-    showTooltip(self, L["Important"], { { L["Clic : ouvrir le panneau · clic droit : fermer"], 0.6, 0.6, 0.6 } })
+    showTooltip(self, L["Important"], { { L["Clic : ouvrir la page · clic droit : fermer"], 0.6, 0.6, 0.6 } })
   end)
   alert:SetScript("OnLeave", function(self) self.hold = false; hideTooltip() end)
   alert:SetScript("OnHide", function() for i = #alertItems, 1, -1 do alertItems[i] = nil end end)
@@ -2094,7 +2096,8 @@ end
 --- Renvoie la table des placements { role = { point, x, y, l, b, w, h } } (aussi gardée pour /tai placer).
 function TreeAI:AutoLayout(force)
   if self:InCombat() then
-    self:RunOutOfCombat("autolayout", function() self:AutoLayout(force) end)
+    -- (UIREDO) placé après le combat = version du placement notée aussi (sinon refait à chaque contrôle)
+    self:RunOutOfCombat("autolayout", function() if self:AutoLayout(force) then layoutState().v = LAYOUT_V end end)
     return nil, "combat"
   end
   local st = layoutState()
@@ -2483,6 +2486,15 @@ function TreeAI:FramesLocked()
 end
 
 local overlays = {}
+--- (UIREDO) retire un cadre des déplaçables (ex. barre amarrée dans la barre « Raccourcis » : elle bouge avec elle)
+function TreeAI:UnregisterMovable(id)
+  if not movables[id] then return false end
+  movables[id] = nil
+  for i = #moverOrder, 1, -1 do if moverOrder[i] == id then table.remove(moverOrder, i) end end
+  local o = overlays[id]
+  if o then o:Hide() end
+  return true
+end
 local function refreshOverlay(o)
   local m = o.mover
   local locked = TreeAI:FramesLocked()
@@ -2906,9 +2918,19 @@ do
 
   local owner = {}
   TreeAI:On("READY", owner, function()
-    TreeAI:NewTicker(5, function()   -- (LITE) 5 s : la place des cadres change rarement
+    -- (LITE) 5 s : la place des cadres change rarement ; (UIREDO) écran stable 3 passages de suite → un passage
+    -- sur deux (10 s), retour à 5 s dès que quelque chose bouge
+    local quiet, skip = 0, false
+    TreeAI:NewTicker(5, function()
       local S = TreeAI.settings
-      if S and S.reflow ~= false and not TreeAI:InCombat() then TreeAI.safecall(TreeAI.Reflow, TreeAI) end
+      if not (S and S.reflow ~= false) or TreeAI:InCombat() then return end
+      if quiet >= 3 then
+        skip = not skip
+        if skip then return end
+      end
+      local before = lastSig
+      TreeAI.safecall(TreeAI.Reflow, TreeAI)
+      if lastSig == before then quiet = quiet + 1 else quiet, skip = 0, false end
     end)
   end)
 end

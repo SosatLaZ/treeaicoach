@@ -65,6 +65,7 @@ Modules\Highlight.lua
 Modules\PvP.lua
 Modules\PvPMark.lua
 Modules\Dungeon.lua
+Modules\DungeonPrep.lua
 Modules\Radar.lua
 Modules\MinimapPins.lua
 Modules\Gear.lua
@@ -78,4 +79,7 @@ Modules\Finder.lua
 Modules\Quick.lua
 Modules\QuickFight.lua
 Modules\QuickTravel.lua
+Modules\Shortcuts.lua
+Modules\Window.lua
+Modules\WindowPages.lua
 Modules\Tour.lua

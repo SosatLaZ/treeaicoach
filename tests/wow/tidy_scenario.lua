@@ -128,6 +128,7 @@ return function(M, ctx)
   T:Suggest("tidy:low", "Petit conseil", 2, { sound = false, onClick = function() end })
   T:Suggest("tidy:danger", "Danger : élite en approche", 3, { sound = false, alert = false })
   T:SetTabLines("quests", { { text = "Étape : parler au garde", prio = 1, pin = true } }, "Quests")
+  T:ShowPanel()   -- (UIREDO) la carte « Prochaine étape » remplace le panneau : on l'ouvre à la main pour le lire
   T:SelectTab("now")
   T:RefreshPanel()
   local vis = T:GetVisibleLines()

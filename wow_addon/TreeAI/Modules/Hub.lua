@@ -112,7 +112,9 @@ local function showTip(owner)
   tt:SetOwner(owner, "ANCHOR_LEFT")
   tt:AddLine("TreeAI Coach", 0.2, 0.8, 0.4)
   for _, l in ipairs(H.Summary()) do tt:AddLine(l[1], l[2], l[3], l[4], true) end
-  tt:AddLine("Clic : menu · Clic droit : options · Glisser : déplacer", 0.5, 0.5, 0.5, true)
+  local Wn = T.Window
+  if Wn and Wn._active then tt:AddLine("Clic : fenêtre TreeAI · Clic droit : menu rapide · Glisser : déplacer", 0.4, 0.8, 1, true)
+  else tt:AddLine("Clic : menu · Clic droit : options · Glisser : déplacer", 0.5, 0.5, 0.5, true) end
   tt:Show()
 end
 local function hideTip() local tt = G("GameTooltip") if tt then tt:Hide() end end
@@ -121,7 +123,13 @@ local function hideTip() local tt = G("GameTooltip") if tt then tt:Hide() end en
 local function act(fn, ...) local a = { ... } return function() T:UserAction(function() fn(unpack(a)) end) end end
 local function slashCmd(cmd) return act(function(c) T:HandleSlash(c) end, cmd) end
 local function hasSlash(c) return T.HasSlash and T:HasSlash(c:match("^(%S+)")) or false end
-local function tab(id) return act(function() T:ShowPanel() T:SelectTab(id) end) end
+-- (UIREDO) un onglet = sa page dans la fenêtre TreeAI (le panneau texte seulement si la fenêtre est coupée)
+local function tab(id)
+  return act(function()
+    local Wn = T.Window
+    if Wn and Wn.OpenTab and Wn._active then Wn.OpenTab(id) else T:ShowPanel() T:SelectTab(id) end
+  end)
+end
 H.GROUPS = {
   { id = "jeu", title = "Jeu", icon = ICON .. "INV_Misc_Map_01" },
   { id = "outils", title = "Outils", icon = ICON .. "INV_Misc_Wrench_01" },
@@ -177,16 +185,22 @@ ENTRY_DESC = {
   panel = "Le panneau de TreeAI", edit = "Glisser les cadres, molette = taille", reset = "Tout remettre à sa place",
   profil = "Testées hors du jeu : un clic chacune",
 }
+H.TAB_ICON, H.TAB_DESC = TAB_ICON, TAB_DESC   -- (UIREDO) mêmes icônes / descriptions dans la fenêtre TreeAI
 function H.Entries()
   if H.mode == "beta" then return H.BetaEntries() end
   local out = {}
   for _, t in ipairs(T.GetTabs and T:GetTabs() or {}) do
     out[#out + 1] = { group = "jeu", id = "tab:" .. t.id, title = L[t.title or t.id], icon = TAB_ICON[t.id] or ICON .. "INV_Misc_Note_01",
-      desc = TAB_DESC[t.id], tip = "Clic : ouvrir l'onglet « " .. L[t.title or t.id] .. " » du panneau", fn = tab(t.id) }
+      desc = TAB_DESC[t.id], tip = "Clic : ouvrir la page « " .. L[t.title or t.id] .. " »", fn = tab(t.id) }
   end
   local function add(g, id, title, icon, tip, fn, ok)
     if ok == false then return end
     out[#out + 1] = { group = g, id = id, title = title, icon = icon, tip = tip, fn = fn, desc = ENTRY_DESC[id] }
+  end
+  for _, e in ipairs(type(T.HUB_EXTRA) == "table" and T.HUB_EXTRA or {}) do   -- (UIREDO) entrées « Jeu » des modules d'abord
+    if type(e) == "table" and e.group == "jeu" and type(e.fn) == "function" and e.title then
+      add("jeu", e.id or e.title, e.title, e.icon or ICON .. "INV_Misc_Note_01", e.tip, act(e.fn))
+    end
   end
   local F, Mc, Td = T.Finder, T.modules and T.modules.Macros, T.Todo
   add("outils", "cherche", "Recherche", ICON .. "INV_Misc_Spyglass_02", "Clic : chercher un truc qui change tout près de toi",
@@ -199,8 +213,16 @@ function H.Entries()
     act(function() Td.Toggle() end), (Td and Td.Toggle) and true or false)
   add("outils", "boussole", "Boussole", ICON .. "INV_Misc_Spyglass_02", "Clic : afficher / cacher la flèche", slashCmd("boussole"), hasSlash("boussole"))
   add("outils", "radar", "Radar", ICON .. "INV_Misc_Map_01", "Clic : afficher / cacher le radar", slashCmd("radar"), hasSlash("radar"))
+  for _, e in ipairs(type(T.HUB_EXTRA) == "table" and T.HUB_EXTRA or {}) do   -- entrées des modules (Dungeon…)
+    if type(e) == "table" and type(e.fn) == "function" and e.title and e.group ~= "jeu" then
+      add(e.group or "outils", e.id or e.title, e.title, e.icon or ICON .. "INV_Misc_Note_01", e.tip, act(e.fn))
+    end
+  end
   add("reglages", "options", "Options", ICON .. "INV_Misc_Gear_01", "Clic : toutes les options (taille, transparence, modules)",
-    act(function() if T.OpenOptions then T:OpenOptions() end end))
+    act(function()
+      local Wn = T.Window
+      if Wn and Wn._active and Wn.Open then Wn.Open("options") elseif T.OpenOptions then T:OpenOptions() end
+    end))
   local nBeta, nOn = 0, 0
   for _, n in ipairs(T.moduleOrder or {}) do
     local m = T.modules[n]
@@ -447,9 +469,17 @@ function H.CreateButton()
   if button.SetHighlightTexture then pcall(button.SetHighlightTexture, button, "Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight") end
   button:SetScript("OnClick", function(self, btn)
     hideTip()
+    -- (UIREDO) clic gauche : la fenêtre TreeAI ; clic droit : le menu rapide (sans fenêtre : menu / options)
+    local Wn = T.Window
+    local hasWin = Wn and Wn.Toggle and Wn._active
     if btn == "RightButton" then
+      if hasWin then H.Toggle() else
+        closeMenu()
+        T:UserAction(function() if T.OpenOptions then T:OpenOptions() end end)
+      end
+    elseif hasWin then
       closeMenu()
-      T:UserAction(function() if T.OpenOptions then T:OpenOptions() end end)
+      T:UserAction(function() Wn.Toggle() end)
     else
       H.Toggle()
     end

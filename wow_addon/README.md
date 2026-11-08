@@ -267,6 +267,25 @@ rétrogradé quand la frise Blizzard (`C_EncounterTimeline`) est active. Après 
 après wipe, run (pulls, morts, wipes, XP, or), mini-compteur lu dans `C_DamageMeter` hors combat. Pull /
 patrouille = ligne de Fight reprise. Marque conseillée : un clic = un `SetRaidTarget` hors combat.
 `summary.dungeon = {key, name, why, boss, run, meter, runs}`.
+**DUNGEON2** (même module + `Modules/DungeonPrep.lua`) : onglet rangé en blocs (`SetTabLines(tab, lines, <bloc>)`,
+ordre `Dungeon.BLOCKS` : en-tête + boutons « Prêt ? » / « Marquer » / « Partager », Prochain boss, Boss, Butin du groupe,
+Quêtes du donjon, Préparation, Chasseur, Bilan). Fenêtre « Prêt pour <donjon> ? » (◀ ▶ = choisir le donjon prévu ;
+Groupe / Quêtes du donjon / Préparation, ✓ ! ✗ par point, « Partager » par quête) : `Dungeon:ToggleChecklist(on)`,
+`Dungeon.PrepRows(d)`, `Dungeon.Checklist(d)` (niveaux, rôles, réparation, sacs, nourriture, munitions, familier ;
+Squad pour les potes), aussi par la pastille de la minimap (`TreeAI.HUB_EXTRA`, lu par Hub) et `/tai donjon pret`.
+Quêtes du donjon : index Questie `zoneOrSort → ids` construit une fois par tranches de 1 500 hors combat, mémorisé
+(`TreeAIDB…Dungeon.qidx`, refait si le nombre de quêtes Questie change) ; donneur (`startedBy` → PNJ + zone), qui ne
+l'a pas (`C_QuestLog.IsUnitOnQuest` / `IsUnitOnQuest`), qui l'a (Squad), objet d'objectif → boss (`npcDrops`) ;
+partage = `QuestLogPushQuest(index)` au clic, hors combat. Qui fait quoi : codes `jobs` par boss (`Data/Dungeons.lua`
+`extra` + `jobs` : int, cc, magic, curse, poison, disease, fear, adds) attribués aux classes du groupe (`Dungeon.Jobs`,
+`JobsText`). Pulls connus (`extra[key].pulls`, avant le boss `b`), boss optionnels (`opt`), cibles à contrôler (`cc`).
+Butin : `Dungeon.LootPlan(d, members)` → par objet `need` (gain : `Boost.UpgradePct` pour toi, `Boost.ScoreLink` × poids
+de classe contre l'équipement inspecté par Team — `Team.GearOf(guid).links`), `later` (mailles au 40…), `verdict`
+Besoin / Cupidité par membre ; `Dungeon.ItemSource(id)` (contrat Gear). Bilan : `char.last` (durée, boss, morts toi +
+groupe, wipes, butin reçu ≥ vert, quêtes finies, XP, or) à la sortie, suggestion + bloc 30 min ; `summary.dungeon.last`.
+Coût : minuterie 1 s seulement en instance / boss / fenêtre ouverte, reconstruction sur drapeau sale (15 s onglet
+visible, 60 s caché, 2 s pendant un boss à minuteurs) ; `session_sim` plafonne Dungeon à 80 kinstr/min. Tables de
+butin, pulls, qui-fait-quoi = Classic (≈) ; donjons de Forever : boss et ordre du client seulement.
 
 `Modules/Prof.lua` (agent PROF, onglet « Métiers » créé seulement si tu as un métier, bloc `Prof`, `/tai metiers
 [cible N [métier]|debug]`) : montée de métier la moins chère (glouton, coût attendu par point ; formule Classic :
@@ -750,12 +769,61 @@ manuel prioritaire. Déjà inscrits : panneau, encadré d'alerte, boussole, suiv
   Questie / Shortest Path : rien ne leur est envoyé.
 * **Pastille de la minimap** (`Modules/Hub.lua`, `TreeAI.Hub`) : bouton rond enfant de `Minimap` (glisser autour
   du bord, angle sauvé, minimaps carrées via `GetMinimapShape`), aussi dans `AddonCompartmentFrame` s'il existe.
-  Clic = menu hub (Jeu : tous les onglets ; Outils : Recherche, Meilleur familier, Macros, À faire, Boussole, Radar ;
-  Réglages : Options, Profil, Erreurs, Blocages, panneau, Déplacer, Réinitialiser) ; clic droit = Options ;
+  Clic = fenêtre TreeAI (UIREDO ; sans le module Window : menu hub) ; clic droit = menu hub (Jeu : tous les onglets ;
+  Outils : Recherche, Meilleur familier, Macros, À faire, Boussole, Radar ; Réglages : Options, Profil, Erreurs,
+  Blocages, panneau, Déplacer, Réinitialiser) ;
   infobulle = prochaine étape, XP/h, niveau dans… `/tai menu` ouvre le même menu. `TreeAI:HasSlash(cmd)` (Core)
   sert à n'afficher que ce qui existe.
 * **Donjons** : fiche « joueur confirmé » (`T.Data.Dungeons.cards[key]` : `danger`, `tank`, `heal`, `dps`) →
   « Ce qui tue le groupe : … » + « <rôle> (toi) : … » (les 3 rôles en infobulle) ; textes de boss réécrits.
+
+## Fenêtre TreeAI et carte « Prochaine étape » (agent UIREDO, 4.0)
+
+`Modules/Window.lua` + `Modules/WindowPages.lua` (`TreeAI.Window`, module `Window`, mode sûr). Rendu seulement : les
+données viennent des contrats existants (`GetTabLines`, `Route:Stops(64)`, `Planner:StepLabel/Navigate`,
+`Quests.last`, `ZonePlan:HeadLines/StopMenu`, `Dungeon.Index/ForLevel/Quests/LootPlan/SetPlanned`, `Hub.Entries`,
+`TreeAI:OptionEntries()` (Options.lua : mêmes pages, même moteur TIDY)).
+* **Fenêtre** `TreeAIMainWindow` (façon Leatrix Plus) : « TreeAI » + version en haut à gauche, navigation à gauche
+  (Maintenant · Quêtes · Trajet · Groupe · Donjons · HV · Outils · Fonctions · Options ; ligne choisie surlignée),
+  grand titre de page + sous-titre, recherche en haut à droite (filtre la page : lignes, arrêts, donjons, pages
+  d'options), UN bouton d'action en bas à droite (Arrêter / Reprendre, Prévoir ce donjon, Ouvrir la fenêtre HV, Recharger…).
+  Redimensionnable (taille + position gardées, `settings.windows.main`), Échap ferme. Ouverte par la pastille
+  (clic gauche ; clic droit = menu rapide), la touche `TREEAI_MAIN` (« TreeAI : ouvrir / fermer la fenêtre », sans
+  touche par défaut, `TreeAI.ToggleMain()`), `/tai fenetre [page]`. Un clic qui ouvrait un onglet du panneau
+  (encadré d'alerte, pastille, « Prêt ? ») ouvre la page de la fenêtre (`Window.OpenTab(id)`).
+* **Quêtes** (façon Adventure Guide) : carte d'en-tête « Histoire : <zone> · n en cours · m proches · durée »,
+  étapes numérotées (pastille ronde + ! / ?, sous-titre gris : à prendre / objectif 3/8 · « quête » / à rendre ·
+  distance, direction, temps), quêtes à venir aux couleurs de niveau, sections repliables (À rendre, En cours ici,
+  Nettoyer mon journal, Direction <zone>, Autres conseils), état gardé par perso (`chars[k].modules.Window`).
+* **Trajet** : tous les arrêts numérotés, zone de travail / suivi / tri du producteur ; **Donjons** (façon Journal des
+  donjons) : cartes en dégradé de couleur par tranche de niveau + icône du jeu (aucune illustration copiée), badge
+  « Niv. a-b », « x/y quêtes » + coche, « prévu / tu y es » ; clic = détail (quêtes du donjon, boss numérotés,
+  butin pour le groupe, conseils, « Partager les quêtes ») ; **Options** : liste des pages + la page construite
+  par le moteur TIDY (`TreeAI:OptionEntries()`, `TreeAI:RefreshOptionWidgets()`), recherche dans les titres,
+  descriptions et libellés.
+* **Carte « Prochaine étape »** `TreeAICard` : remplace le panneau texte (option ; le panneau reste dans Outils et
+  s'ouvre à la main) ; posée à la place que le placement automatique a trouvée pour le panneau (`PanelChar()`),
+  descend sous un suivi de quêtes qu'elle toucherait ; déplaçable (mode édition, id `card`). En-tête (icône,
+  « Histoire : zone », résumé) + danger en rouge + 1–5 étapes numérotées. Aucune minuterie : suit les rendus du
+  panneau (≤ 1 / 2 s, clé `TreeAI:DataGen()` + étapes + position), signature comparée.
+* Jetons communs (`Theme.TYPE`, `Theme.BLOCK`, `Theme.STEP_ICON`, `Theme.GRID` = 4 px, `Theme.SHORTCUT`) ; genre de
+  skin `card` (fond plat, liseré 1 px) + `Theme:Shadow(frame)` pour la fenêtre et la carte ; survol = liseré 1 px
+  (couche HIGHLIGHT) ; titres sur une ligne (« … » + texte entier en infobulle) ; états vides = une phrase + le
+  bouton qui agit (« Calculer le trajet », « Reprendre le trajet », « Voir tous les donjons », « Effacer la
+  recherche »…). La couleur d'accent des options = l'or du thème.
+* **Barre « Raccourcis »** (`Modules/Shortcuts.lua`, module `Shortcuts`, mode sûr, rendu seulement) : UNE barre
+  `TreeAIShortcuts` au lieu des barres séparées. Un module y amarre sa barre :
+  `T:RegisterShortcutBar(frame, { id, label, order, inset, chrome = {régions cachées une fois amarrée}, movable = id
+  du déplaçable retiré, onUndock = fn })` ; `T:ShortcutDocked(frame)` (le module ne la place plus) ;
+  `T.Shortcuts.Changed()` après un changement de boutons. Quick = « Quêtes · voyage », QuickFight = « Combat ·
+  familier » (logique inchangée dans les modules). Un fond, une poignée (glisser, clic droit = réglages), un titre
+  par groupe, un filet entre groupes ; groupe vide retiré, barre cachée quand rien ne sert ; un seul cadre en mode
+  édition (`TreeAI:UnregisterMovable(id)` dans UI.lua) ; tout changement hors combat. Bouton commun
+  `Theme:ShortcutStyle(b)` (fond, liseré, enfoncé, touche liée `Theme:HotKey`, `Theme:KeyHint` en infobulle) ;
+  Bindings.xml : « Raccourci quête / voyage / combat : … » (`CLICK TreeAIQuick…:LeftButton`, sans touche par défaut).
+  Options : une seule barre, verrou, titres, taille.
+* Infobulles des points de la minimap (`MinimapPins.TipLines`) et de la boussole : ce que c'est, distance + temps,
+  pourquoi maintenant, ce que fait le clic.
 
 ## Sons, fenêtres, placement vivant (agent UI2)
 

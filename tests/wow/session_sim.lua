@@ -43,7 +43,7 @@ local BUDGET = {
   -- 3.9.9: +50 for 10 new light modules (Quick, QuickFight, QuickTravel, PathDraw, Finder, NavTime, Horizon, ZonePlan,
   -- PvPMark, Macros review ≈ 190 kinstr/min, each under its own cap) after cutting integration waste (2477 → 2418 measured)
   kinstrStatsMin = 60,           -- Stats hub (Modules/Stats.lua): event-driven, nearly free
-  kinstrModuleMin = { Team = 80, PathDraw = 60, Edge2 = 80, Finder = 60, Quick = 80, QuickFight = 80, Macros = 80, QuickTravel = 80, Auction = 80, Compass = 90, NavTime = 80, Horizon = 80, ZonePlan = 80, PvPMark = 40,
+  kinstrModuleMin = { Team = 80, Dungeon = 80, PathDraw = 60, Edge2 = 80, Finder = 60, Quick = 80, QuickFight = 80, Macros = 80, QuickTravel = 80, Auction = 80, Compass = 90, NavTime = 80, Horizon = 80, ZonePlan = 80, PvPMark = 40,
     -- QUESTQA: the quest-tracking chain, each under the round-7 module budget
     Route = 80, Planner = 80, Quests = 80, Tracker = 80, Todo = 80, Export = 80, Detect = 80, Speed = 80, Tour = 10 },   -- per-module caps (avg kinstr / minute)
   nowChangesPerMinMax = 12,      -- « Maintenant » changes (text skeleton, digits ignored) in any minute

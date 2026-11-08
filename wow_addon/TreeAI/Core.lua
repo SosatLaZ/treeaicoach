@@ -1212,6 +1212,8 @@ TreeAI.SAFE_MODULES = TreeAI.SAFE_MODULES or {
   Compass = true, NavTime = true, Route = true, Planner = true, Export = true,   -- boussole, trajet, données du plan
   Speed = true,                                                  -- course au corps (mort / fantôme)
   Hub = true, Macros = true,                                     -- pastille de la minimap, macros (diagnostic compris)
+  Window = true,                                                 -- (UIREDO) fenêtre TreeAI + carte « Prochaine étape »
+  Shortcuts = true,                                              -- (UIREDO) une seule barre « Raccourcis » (rendu)
 }
 --- module « bêta » (pas dans le mode sûr) ?
 function TreeAI:IsBeta(name) return not self.SAFE_MODULES[name] end
@@ -1271,6 +1273,8 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Plain = { lite = true, desc = "Conseils de quête en mots simples" },
   Region = { lite = true, desc = "Quêtes rangées par région (ici, à côté, loin)" },
   Hub = { lite = true, desc = "Pastille de la minimap : tout TreeAI en un clic" },
+  Window = { lite = true, desc = "Fenêtre TreeAI (pages, recherche) + carte « Prochaine étape »" },
+  Shortcuts = { lite = true, desc = "Une seule barre « Raccourcis » : quêtes, voyage, combat, familier" },
   Quick = { lite = true, desc = "Raccourcis : barre d'actions rapides, quêtes acceptées et rendues" },
   Detect = { lite = true, desc = "Détection : rares, trésors, monstres de quête, services proches" },
   MinimapPins = { lite = true, desc = "Points sur la minimap (ce que Questie ne montre pas)" },
@@ -1381,10 +1385,14 @@ function TreeAI:_SafeNotice()
   self._safeNotice = nil
   self:Suggest("core:safe", "Mode sûr : les fonctions bêta sont à activer dans le menu", 2, {
     ttl = 900, tab = "now", sound = false, kind = "always",
-    tooltip = "Clic : Plus → Modules (un clic par fonction). Aussi : pastille de la minimap → Fonctions bêta.",
+    tooltip = "Clic : la liste des fonctions (un clic par fonction). Aussi : pastille de la minimap → Fonctions bêta.",
     onClick = function()
-      if TreeAI.ShowPanel then TreeAI:ShowPanel() end
-      if TreeAI.SelectTab then TreeAI:SelectTab("modules") end
+      local Wn = TreeAI.Window   -- (UIREDO) la page « Fonctions » de la fenêtre TreeAI, sinon le panneau
+      if Wn and Wn._active and Wn.Open then Wn.Open("modules")
+      else
+        if TreeAI.ShowPanel then TreeAI:ShowPanel() end
+        if TreeAI.SelectTab then TreeAI:SelectTab("modules") end
+      end
       TreeAI:ClearSuggestion("core:safe")
     end })
 end
@@ -2212,7 +2220,9 @@ end
 --- LITE : le panneau a-t-il quelque chose de neuf à montrer ? (génération changée ou conseil expiré)
 local panelGen, renderedGen = 1, 0
 local contentGen = 0   -- (LITE) tout changement de contenu (même d'un onglet caché) : invalide le cache GetTabLines
-function TreeAI:MarkDirty() panelGen = panelGen + 1; contentGen = contentGen + 1 end
+local dataGen = 0      -- (UIREDO) contenu changé (lignes, conseils) — pas les simples redessins : pastilles, carte
+function TreeAI:MarkDirty() panelGen = panelGen + 1; contentGen = contentGen + 1; dataGen = dataGen + 1 end
+function TreeAI:DataGen() return dataGen end
 function TreeAI:_PanelRendered() renderedGen = panelGen; contentGen = contentGen + 1 end   -- nouveau passage : cache neuf
 function TreeAI:PanelDirty()
   if panelGen ~= renderedGen then return true end
@@ -2378,6 +2388,7 @@ function TreeAI:SetTabLines(id, lines, source)
   local old = ts.lines[source]
   ts.lines[source] = out
   contentGen = contentGen + 1
+  dataGen = dataGen + 1
   -- LITE : un onglet qu'on ne voit pas ne redessine pas le panneau (le clic sur l'onglet le reconstruit) ;
   -- une ligne épinglée (offerte à « Maintenant ») compte toujours
   if isNewSource or self:TabShown(id) or hasPin(out) or hasPin(old) then self:RequestRefresh() end

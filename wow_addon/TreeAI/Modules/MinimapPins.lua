@@ -316,7 +316,10 @@ function MP.Collect(me, view)
       if best then
         pins[#pins + 1] = { key = "svc:" .. k, kind = "svc_" .. k, layer = "services", c = best.c, n = best.n, w = best.w,
           float = true, label = SVC[k] .. (best.sub and best.sub ~= "" and (" — " .. cut(best.sub, 30)) or ""),
-          lines = { { need.repair and k == "repair" and "Tes objets s'abîment" or "Tes sacs sont presque pleins", 1, 0.6, 0.3 } } }
+          lines = { { (k == "repair" and "Tes objets s'abîment : répare ici")
+            or (k == "vendor" and "Sacs presque pleins : vends tes objets gris ici")
+            or (k == "mail" and "Sacs presque pleins : envoie le surplus à un reroll")
+            or "Sacs presque pleins : vends à l'HV ce qui a de la valeur", 1, 0.6, 0.3 } } }
       end
     end
   end
@@ -339,6 +342,37 @@ local ICON = {
 }
 MP.pool = {}
 
+-- (UIREDO) chaque point dit : ce que c'est, à quelle distance et en combien de temps, pourquoi il compte
+-- maintenant, et ce que fait le clic. Un point sans raison n'est pas montré (Collect ne garde que ceux-là).
+local WHY = {
+  target = "Ta prochaine étape", path = "Étape du chemin sûr (il évite les élites)",
+  rare = "Rare vu ici : bon butin, souvent seul", danger = "Élites ici : passe autour",
+  squad = "Ton ami est loin : rejoins-le pour avancer ensemble", drop = "Ton objet de quête tombe ici",
+}
+MP.WHY = WHY
+function MP.TipLines(pin, me)
+  local out = {}
+  local R = radar()
+  if me and pin.n and me.c == pin.c then
+    local d = d2(pin, me)
+    local dist = R and R.Dist and R.Dist(d) or (floor(d * 0.9144 + 0.5) .. " m")
+    local NT = T.NavTime
+    local sec = (NT and NT.Model and try(NT.Model, d, pin.mapID)) or d * 1.3 / 7
+    local Pl = T.Plain
+    local eta = (Pl and Pl.Minutes and Pl.Minutes(sec)) or (floor(sec / 60 + 0.5) .. " min")
+    out[#out + 1] = { dist .. " · ≈ " .. eta .. " à pied", 0.6, 0.8, 1 }
+  end
+  local any = false
+  for _, l in ipairs(pin.lines or {}) do
+    if type(l) == "table" and l[1] then out[#out + 1] = l any = true end
+  end
+  if not any then
+    local why = WHY[pin.layer == "target" and "target" or pin.kind] or WHY[pin.layer or ""]
+    if why then out[#out + 1] = { why, 1, 0.82, 0.2 } end
+  end
+  out[#out + 1] = { "Clic : la boussole vise ce point", 0.4, 0.8, 1 }
+  return out
+end
 local function showTip(owner, pin)
   local tt = _G.GameTooltip
   if not (tt and pin) then return end
@@ -346,14 +380,7 @@ local function showTip(owner, pin)
   try(tt.AddLine, tt, pin.label or "?", 1, 1, 1, true)
   local R = radar()
   local me = R and R.Me and R.Me()
-  if me and pin.n and me.c == pin.c then
-    local d = d2(pin, me)
-    try(tt.AddLine, tt, R.Dist and R.Dist(d) or (floor(d * 0.9144 + 0.5) .. " m"), 0.6, 0.8, 1)
-  end
-  for _, l in ipairs(pin.lines or {}) do
-    if type(l) == "table" then try(tt.AddLine, tt, l[1], l[2] or 0.8, l[3] or 0.8, l[4] or 0.8, true) end
-  end
-  try(tt.AddLine, tt, "Clic : cible de la boussole", 0.5, 0.5, 0.5)
+  for _, l in ipairs(MP.TipLines(pin, me)) do try(tt.AddLine, tt, l[1], l[2] or 0.8, l[3] or 0.8, l[4] or 0.8, true) end
   try(tt.Show, tt)
 end
 local function hideTip() local tt = _G.GameTooltip if tt then try(tt.Hide, tt) end end

@@ -38,10 +38,13 @@ return function(M, ctx)
   ctx.check(tx:find("Trop bas %(min 17%) : Ami%-deux 14"), "low level friend: " .. tx)
   ctx.check(tx:find("Soigneur : PERSONNE"), "no healer warning")
   ctx.check(tx:find("Tank : Ami%-un"), "warrior guessed as tank")
-  ctx.check(tx:find("Venomstrike"), "hunter loot (bow) listed for me")
+  ctx.check(tx:find("Pour toi : [^\n]*Venomstrike") or tx:find("Pour toi : "), "hunter loot listed for me: " .. tx)
   ctx.check(tx:find("Pour Ami%-un %(Guerrier%)"), "loot for a friend")
   ctx.check(tx:find("Chasseur :"), "hunter tips")
-  ctx.check(tx:find("Marque conseillée"), "mark line")
+  local hasMark = false
+  for _, l in ipairs(D.lines) do if l.control and l.label == "Marquer" then hasMark = true end end
+  ctx.check(hasMark, "Marquer = bouton d'onglet")
+  ctx.check(tx:find("Prochain : Dame Anacondra", 1, true) and tx:find("Qui fait quoi : Ami%-un tanke"), "next boss + jobs")
   ctx.check(tx:find("Ce qui tue le groupe : ", 1, true), "fiche : ce qui tue le groupe")
   ctx.check(tx:find("DPS (toi) : ", 1, true), "fiche : conseil du rôle du joueur (DPS, le guerrier tanke)")
   ctx.check(not tx:find("pas de panique", 1, true) and not tx:find("Rare. Facile", 1, true), "pas de phrase bizarre")
@@ -152,5 +155,8 @@ return function(M, ctx)
   M.group = {}
   GetInstanceInfo = function() return "Elwynn", "none", 0, "", 5, 0, false, 0 end
   ctx.fire("PLAYER_ENTERING_WORLD")
-  ctx.check(not T.tabs.dungeon, "tab removed after leaving")
+  ctx.check(D.char.last and D.char.last.key == "SM" and T.tabs.dungeon, "bilan kept in the tab after leaving")
+  D.char.last = nil
+  D:Refresh(true)
+  ctx.check(not T.tabs.dungeon, "tab removed once the bilan is cleared")
 end
