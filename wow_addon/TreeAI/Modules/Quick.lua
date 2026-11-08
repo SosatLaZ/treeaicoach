@@ -620,7 +620,7 @@ local function ensureBar()
   status:SetPoint("TOP", f, "BOTTOM", 0, -2)
   status:SetText("")
   M.bar = f
-  if T.RegisterMovable then pcall(T.RegisterMovable, T, f, "quick", "Raccourcis") end
+  if T.RegisterMovable then pcall(T.RegisterMovable, T, f, "quick", "Barre de quête") end
 
   makeButton("toggle", false, "Interface\\GossipFrame\\ActiveQuestIcon", function()
     local on = opt("autoQuest")

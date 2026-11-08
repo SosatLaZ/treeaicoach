@@ -75,7 +75,7 @@ return function(M, ctx)
   local how = C.Pin(C.Current())
   M.hardware = false
   check(how ~= "spf", "« Aller là » does not hand over to SPF without opt-in: " .. tostring(how))
-  T.settings.guide = "spf"                   -- player picked « Guidage : Suivi Forever »
+  T.settings.guide, T.settings.guideV = "auto", 1                   -- player picked « Guidage : Suivi Forever »
   C.travelT = nil
   st = C.Refresh()
   check(st.dup == "spf" and not fr:IsShown(), "opt-in + SPF guiding → compass hidden (one arrow)")

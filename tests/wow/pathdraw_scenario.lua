@@ -173,6 +173,8 @@ return function(M, ctx)
 
   -- SPF guides: world map kept, minimap trail off unless the option says so
   local oldSPF = R.SPF
+  local oldExt = T.ExternalGuide
+  T.ExternalGuide = function() return "spf" end   -- (3.9.8) SPF guides only when the player picked it
   R.SPF, R.following = function() return { NavigateRoute = function() end } end, true
   M.Advance(1.2, 0.2)
   check(PD.dotsShown == 0 and PD.segments == 3, "SPF guiding: minimap trail off, world map still drawn")
@@ -182,6 +184,7 @@ return function(M, ctx)
   check(PD.dotsShown > 0, "option « garder la traînée » → trail back with SPF")
   PD.db.minimapSPF = false
   R.SPF, R.following = oldSPF, nil
+  T.ExternalGuide = oldExt
 
   -- route cleared → everything hidden, pool kept
   P.steps, P.cursor = nil, nil

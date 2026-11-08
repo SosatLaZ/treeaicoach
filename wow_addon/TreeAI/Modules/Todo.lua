@@ -439,8 +439,11 @@ M.CardTask = cardTask
 
 -- La meilleure action : courses urgentes > carte épinglée > étape du plan > meilleure carte.
 function M.NowAction(model)
+  local sug = T._suggestions
   for _, e in ipairs(model.errands or {}) do
-    if e.prio >= 3 and not model.hiddenSet[e.key] then
+    -- (REVIEW) la réparation appartient à Inventory (« Répare au prochain marchand ») : pas de 2e ligne
+    local owned = e.id == "repair" and type(sug) == "table" and sug["Inventory:inv_repair"] ~= nil
+    if e.prio >= 3 and not model.hiddenSet[e.key] and not owned then
       return { kind = "errand", key = e.key, title = ERRAND_TASK[e.id] or e.text, why = "À régler avant de continuer : " .. e.text,
         icon = e.icon, prio = 3 }
     end
@@ -577,7 +580,8 @@ end
 
 function M.CardTooltip(c)
   local Pl = T.Plain
-  local tip = { hex(LEVEL_RGB[c.color] or PRIO_RGB[1]) .. c.title .. "|r" .. " — " .. c.zone }
+  local zn = (type(c.zone) == "string" and c.zone ~= "" and c.zone ~= "?") and (" — " .. c.zone) or ""   -- jamais « — ? »
+  local tip = { hex(LEVEL_RGB[c.color] or PRIO_RGB[1]) .. c.title .. "|r" .. zn }
   if Pl then
     local word, why = Pl.Tag(plainInfo(c))
     tip[#tip + 1] = "|cffffd100" .. word .. "|r : " .. why
@@ -657,8 +661,9 @@ function M.TabLines(model)
   if model.session and (model.session.eta or 0) > 0 then
     lines[#lines + 1] = { text = "|cff888888" .. M.SessionText(model.session) .. "|r", prio = 1, icon = ICON.session }
   end
-  lines[#lines + 1] = { text = "|cff66ccff" .. (M.frame and M.frame:IsShown() and "Fermer" or "Ouvrir") .. " la fenêtre « À faire »|r (épingler, trier, filtrer)",
-    prio = 1, icon = ICON.quests, onClick = function() M.Toggle() end }
+  -- (REVIEW) une action sans contexte = un bouton d'onglet, pas une ligne
+  lines[#lines + 1] = { text = (M.frame and M.frame:IsShown() and "Fermer" or "Ouvrir") .. " la fenêtre « À faire » (épingler, trier, filtrer)",
+    label = "À faire", control = true, prio = 1, icon = ICON.quests, onClick = function() M.Toggle() end }
   M.tabLines = lines
   return lines
 end

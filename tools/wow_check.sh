@@ -47,6 +47,8 @@ if command -v lua5.1 >/dev/null 2>&1; then
     # COMBAT_LOG_EVENT_UNFILTERED forbidden, macro writes only inside a click / command (+ /tai test)
     # LITE: what a new player gets (profile « essentiel »: most modules asleep, events / tickers unregistered)
     run_h "TreeAI/forever/essentiel/HUNTER" --flavor forever --class HUNTER --profile essentiel "$ADDON" || fail=1
+    # REVIEW: « mode sûr » = what every player gets by default since 3.9.9 (bêta modules off)
+    run_h "TreeAI/forever/sur/HUNTER" --flavor forever --class HUNTER --profile sur "$ADDON" || fail=1
     for cls in HUNTER WARRIOR; do
       run_h "TreeAI/forever/selftest/$cls" --flavor forever --class "$cls" \
         --scenario tests/wow/selftest_scenario.lua "$ADDON" || fail=1

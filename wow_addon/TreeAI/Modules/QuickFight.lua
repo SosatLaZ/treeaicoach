@@ -487,7 +487,7 @@ local function createBar()
   label:SetJustifyH("LEFT")
   placeBar()
   if T.RegisterMovable then
-    T:RegisterMovable(f, "quick", "Raccourcis", {
+    T:RegisterMovable(f, "quickfight", "Barre de combat", {   -- (REVIEW) id propre : « quick » = la barre de Quick
       onMoved = function(point, x, y) db().pos = { point, point, floor(x or 0), floor(y or 0) } end,
       onReset = function() db().pos = nil placeBar() end,
     })

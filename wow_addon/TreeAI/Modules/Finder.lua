@@ -889,6 +889,8 @@ function F.CreateFrame()
   f.empty:SetPoint("TOP", f, "TOP", 0, -130)
   local list = G("UISpecialFrames")
   if type(list) == "table" then list[#list + 1] = "TreeAIFinderFrame" end
+  -- (REVIEW) même chrome que les autres fenêtres TreeAI (verre, Échap, fondu) : HV, Macros, À faire
+  if T.Theme and T.Theme.Window then pcall(T.Theme.Window, T.Theme, f, { id = "finder", header = false }) end
   f:Hide()
   return f
 end

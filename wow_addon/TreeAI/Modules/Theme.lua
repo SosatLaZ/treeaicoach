@@ -65,6 +65,12 @@ Th.KINDS = KINDS
 local skins = setmetatable({}, { __mode = "k" })   -- frame -> { kind, opts, tex }
 local fonts = setmetatable({}, { __mode = "k" })   -- fontstring -> size letter
 local SIZES = { S = { "GameFontHighlightSmall", 10 }, M = { "GameFontHighlight", 12 }, L = { "GameFontNormalLarge", 16 } }
+-- (REVIEW) un seul rythme d'espacement et de hauteurs pour tous les cadres TreeAI (menus, fenêtres, lignes)
+Th.SIZES = SIZES
+Th.SPACE = { xs = 2, s = 4, m = 8, l = 12, xl = 16 }
+Th.ROW = { h = 20, h2 = 32, head = 18, icon = 14, iconL = 18 }
+--- étiquette « bêta » (même couleur partout : Plus → Modules, pastille, options)
+function Th:BetaTag() return "|cffb48cffbêta|r" end
 
 local function try(fn, ...) if type(fn) == "function" then return pcall(fn, ...) end return false end
 local function meth(o, name, ...)
