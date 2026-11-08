@@ -996,3 +996,16 @@ Uniquement des événements + une minuterie de 60 s (aucun OnUpdate, ≤ 60 kins
 * **Onglet « Stats »** (sous-menu « Plus », `/tai stats`) : 5-8 lignes (fiche, attaque, combat, repos / morts,
   XP/h + or/h, trajets, conso / h) + « Exporter pour TreeAI » → `summary.stats` (aussi au /reload, à la
   déconnexion et à `SUMMARY`), lu par `treeaicoach/wow/stats.py` → bloc « Mes stats mesurées » de l'onglet Session.
+
+## Fichier d'erreurs : module `Bugs` (agent EXPORT, `Modules/Bugs.lua`, dernier du TOC)
+
+- `/tai erreurs` (alias `/tai export`, `/tai bug`, bouton « Erreurs » de l'onglet Infos) → `TreeAIDB.diag.export =
+  { at, version, toc, build, interface, errors, blocked, lines = {…} }` (≤ 200 lignes, ≤ 40 Ko) : erreurs Lua
+  (`diag.errors`, récentes d'abord), actions bloquées regroupées par fonction avec nombre et contexte
+  (`diag.blocked`), autotest (relancé en silence hors combat), `diag.macros`, `/tai perf`, modules actifs/éteints,
+  réglages, autres addons chargés (nom + version), note libre (`/tai erreurs <texte>`). `/tai export` lance aussi
+  l'export du planificateur (module Export).
+- Chaîne `seterrorhandler` (le gestionnaire précédent est TOUJOURS rappelé) et ne garde que les erreurs dont le
+  message ou la pile cite `AddOns/TreeAI/` (→ `T:RecordError`, module = fichier fautif).
+- Côté appli : `treeaicoach/wow/errlog.py` écrit `TreeAI-erreurs.txt` (UTF-8, français) dans
+  `%APPDATA%\TreeAICoach` (+ copie dans `exports\` s'il existe) dès que la sauvegarde contient `diag` et a changé.

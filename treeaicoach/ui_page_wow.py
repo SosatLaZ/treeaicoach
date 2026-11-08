@@ -11,11 +11,13 @@ only its process name and its own files (Blizzard rules: no memory, no screen, n
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 log = logging.getLogger(__name__)
 
 POLL_MS = 3000
+ERR_EMPTY = "Pas encore de fichier : en jeu, tape /tai erreurs puis /reload."
 RULES_TEXT = ("TreeAI ne lit ni la mémoire ni l'écran de WoW et n'appuie sur aucune touche. Il lit seulement "
               "les fichiers du jeu : le journal de combat (/combatlog) et les sauvegardes de l'addon "
               "(écrites à /reload ou à la déconnexion). Les macros respectent les règles de Blizzard : "
@@ -181,7 +183,23 @@ def read_state(cfg: Any, hub: Any = None) -> dict:
                 out["sv_age"] = install.file_status(files[0]).get("age_s")
     except Exception:
         log.debug("wow page state failed", exc_info=True)
+    out["errfile"] = _errfile_info()
     return out
+
+
+def _errfile_info() -> dict | None:
+    """Where TreeAI-erreurs.txt is and how old (worker thread). Never raises."""
+    try:
+        from treeaicoach.wow import optional  # noqa: PLC0415
+
+        errlog = optional("errlog")
+        p = errlog.report_path() if errlog is not None else None
+        if p is None or not p.is_file():
+            return None
+        return {"path": str(p), "age": max(0.0, time.time() - p.stat().st_mtime)}
+    except Exception:
+        log.debug("errfile info failed", exc_info=True)
+        return None
 
 
 def _age_text(age: Any) -> str:
@@ -603,6 +621,20 @@ class WowPage:
         self.report_row = fight.add(W.Row("Rapport", "Pas encore de combat lu."))
         self.report_row.desc.setTextInteractionFlags(Qt.TextSelectableByMouse)
         direct.addWidget(fight)
+        errs = W.Section("Erreurs WoW", "En jeu : /tai erreurs puis /reload. TreeAI écrit TreeAI-erreurs.txt.")
+        self.err_row = errs.add(W.Row("Fichier d'erreurs", ERR_EMPTY))
+        eact = QtWidgets.QWidget()
+        el = QtWidgets.QHBoxLayout(eact)
+        el.setContentsMargins(16, 12, 16, 14)
+        el.setSpacing(12)
+        self.err_open_btn = W.button("Erreurs WoW : ouvrir le fichier", self._open_errors,
+                                     tip="Ouvre TreeAI-erreurs.txt (à envoyer pour une correction).")
+        el.addWidget(self.err_open_btn, 0)
+        self.err_copy_btn = W.button("Copier", self._copy_errors, tip="Copie le contenu du fichier.")
+        el.addWidget(self.err_copy_btn, 0)
+        el.addStretch(1)
+        errs.add(eact)
+        direct.addWidget(errs)
         for lay in self.tab_layouts.values():
             lay.addStretch(1)
         self._show_tab("direct")
@@ -844,6 +876,7 @@ class WowPage:
         report = str(mode.get("report") or "").strip() or str((snap.get("fights") or {}).get("last_text") or "")
         self.report_row.set_desc(report[:1200] if report else "Pas encore de combat lu.")
         self._render_char(st.get("rows") or [], st.get("sv_age"))
+        self._render_errors(st.get("errfile"))
         self._render_plan(st.get("plan") or self._plan_last)
         from treeaicoach.wow import optional  # noqa: PLC0415
 
@@ -856,6 +889,48 @@ class WowPage:
             self._render_tab("direct", snap)
         # the live card already shows the character: the SavedVariables card only when it is alone
         self.char_section.setVisible(not self._tab_sig.get("direct", "[]").startswith("[{"))
+
+    # ------------------------------------------------------------------ erreurs WoW
+    def _errors_text(self) -> tuple[Any, str]:
+        """(path, text) of TreeAI-erreurs.txt, written now from the last addon save when missing."""
+        from treeaicoach.wow import optional  # noqa: PLC0415
+
+        errlog = optional("errlog")
+        if errlog is None:
+            return None, ""
+        path = errlog.report_path()
+        text = errlog.read_report()
+        if not text:
+            db = (self._snap or {}).get("db") or {}
+            if errlog.write_report(db, force=True) is not None:
+                text = errlog.read_report()
+        return (path if text else None), text
+
+    def _open_errors(self) -> None:
+        from treeaicoach.wow import optional  # noqa: PLC0415
+
+        path, _text = self._errors_text()
+        errlog = optional("errlog")
+        if path is None or errlog is None:
+            self.app.show_toast(ERR_EMPTY, "info")
+        elif not errlog.open_file(path):
+            self.app.copy_text(str(path))
+            self.app.show_toast(f"Fichier : {path} (chemin copié)", "info")
+
+    def _copy_errors(self) -> None:
+        _path, text = self._errors_text()
+        if not text:
+            self.app.show_toast(ERR_EMPTY, "info")
+            return
+        self.app.copy_text(text)
+        self.app.show_toast("Erreurs WoW copiées.", "info")
+
+    def _render_errors(self, info: Any) -> None:
+        if not isinstance(info, dict) or not info.get("path"):
+            self.err_row.set_desc(ERR_EMPTY)
+            return
+        when = _age_text(info.get("age")) or "à l'instant"
+        self.err_row.set_desc(f"{info['path']} · mis à jour {when}")
 
     def _render_char(self, rows: list, age: Any) -> None:
         # ANNOY: the age (« il y a 3 min ») changes every minute; only that label is updated then, the card

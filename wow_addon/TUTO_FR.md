@@ -171,3 +171,9 @@ combat, sauvegardes de l'addon). Tout ce qui agit (acheter, partager, poser une 
 
 `/tai statut` (état des modules), `/tai debug` (messages détaillés). Si l'addon n'apparaît pas : vérifie le
 chemin `Interface\AddOns\TreeAI\TreeAI.toc`, relance WoW, coche « Charger les add-ons périmés ».
+
+## En cas de bug
+
+1. En jeu, tape `/tai erreurs` (ou le bouton « Erreurs » de l'onglet Infos).
+2. Fais `/reload` : le jeu sauvegarde, TreeAI Coach écrit le fichier tout seul.
+3. Ouvre `%APPDATA%\TreeAICoach\TreeAI-erreurs.txt` (page WoW → « Erreurs WoW : ouvrir le fichier ») et envoie-le.
