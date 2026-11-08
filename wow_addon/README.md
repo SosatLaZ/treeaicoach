@@ -860,7 +860,9 @@ Comprendre TreeAI en 60 secondes, à la souris. Module **sûr** (`Tour.lua` s'in
   même endroit après. Rejouable : entrée « Visite guidée » du menu Hub (tag « nouveau » tant qu'elle n'est pas vue),
   bouton de la page d'accueil des options (attend la fermeture des options), page du module, `/tai visite`.
 * **Cibles par contrat**, jamais par position : `T.Tour.Target(id, cadre | function() return cadre end)` passe
-  avant les repères intégrés (ids : `hub`, `next`, `zone`, `compass`, `quick`, `beta`, `bug`) ; sinon ids
+  avant les repères intégrés (ids : `hub`, `next`, `zone`, `compass`, `quick`, `beta`, `bug` ; 4.0 : la fenêtre TreeAI
+  enregistre `next` = carte « Prochaine étape » et `zone` = ligne « Zone » de la page Trajet, la barre « Raccourcis »
+  enregistre `quick` quand les barres y sont amarrées) ; sinon ids
   `RegisterMovable` (`card`, `panel`, `compass`, `quick`, `quickfight`, `quicktravel`), cadres `TreeAIMinimapButton`,
   `TreeAICard`, `TreeAICompassFrame`, lignes `H.layout` du Hub (`profil`, `erreurs`) et lignes à id dans le panneau,
   `TreeAIMainWindow`, `TreeAICard` (champ `entry` / `e` / `line` / `data` avec `.id`, `T.Tour.FindRow(id)`).
@@ -1004,11 +1006,11 @@ facing, rotate, zoom, radius)`, `R.WorldToMap`, `R.Cluster`. `RegisterMovable(fr
 ## Points sur la minimap : module `MinimapPins` (`Modules/MinimapPins.lua`, après Radar)
 
 Nos points sur la **vraie** minimap de Blizzard, seulement ce que Questie ne montre pas : cible boussole /
-étape 1 du plan (sauf si `Compass.OtherGuide` dit que Blizzard / TomTom / SPF l'affiche), chemin sûr, rares,
+étape 1 du plan (sauf si `Compass.OtherGuide` dit que Blizzard / TomTom / SPF l'affiche), rares,
 élites près de moi / du chemin (anneau doux ± 40 yd, sans souris), butin de quête (relevé au `LOOT_OPENED`,
 **couche coupée si Questie est chargé**), amis au-delà du rayon de la minimap (flèche au bord + nom), maîtres de
 vol non découverts ≤ 800 yd, marchand / courrier / HV / réparation les plus proches (relevés à l'interaction)
-quand Prévisions dit sacs pleins / réparation. Moteur : `HereBeDragons-Pins-2.0` via `LibStub` si un addon
+quand Inventaire dit sacs pleins / réparation (`T.Predict.list`). Moteur : `HereBeDragons-Pins-2.0` via `LibStub` si un addon
 l'embarque (`AddMinimapIconMap(MP, pin, uiMapID, x, y, false, floatOnEdge)` / `RemoveMinimapIcon`), sinon le nôtre :
 boutons enfants de `Minimap`, `MP.Offset(dn, dw, facing, rotate, yardsRadius, pxRadius, shape, inset)` avec
 `Minimap:GetZoom()`, `IsIndoors()`, table yards HBD, CVar `rotateMinimap`, `GetMinimapShape` ; ≤ 10 i/s via un cadre

@@ -57,3 +57,11 @@ def test_no_reader_of_removed_modules():
     # T.Predict stays as Stats' facade of MEASURED rates (DropRate, BestSource, Rates, list)
     stats = (ADDON / "Modules" / "Stats.lua").read_text(encoding="utf-8")
     assert "T.Predict = T.Predict or {" in stats
+
+
+def test_saved_data_of_removed_modules_dropped_once():
+    core = (ADDON / "Core.lua").read_text(encoding="utf-8")
+    block = core.split("if not db.gone40 then", 1)[1].split("db.gone40 = true", 1)[0]
+    for n in ("SafePath", "Edge", "HunterPro", "Comfort", "Economy", "Predict"):
+        assert f'"{n}"' in block, n
+    assert "sm.predict, sm.economy, sm.comfort, sm.hunterPro = nil, nil, nil, nil" in block

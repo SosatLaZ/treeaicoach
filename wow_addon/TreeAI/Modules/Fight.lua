@@ -75,16 +75,20 @@ function M.ReadFoe(u)
     cls = sv(try(G.UnitClassification, u)) or "normal", at = now() }
 end
 
+-- (FIDELITY) Forever : ta propre vie est secrète EN combat : on garde la dernière lecture hors combat (rafraîchie
+-- au ciblage et à chaque AutoRefresh hors combat) pour « vie au départ » ; jamais une valeur devinée
+local hpOOC
 function M.OnTarget()
   local f = M.ReadFoe("target")
   if f and not inCombat() then foe = f end
+  if not inCombat() then hpOOC = pct("player") end
   M.CheckPrePull()
 end
 
 function M.OnCombatStart()
   local f = M.ReadFoe("target")   -- souvent encore lisible à l'instant du pull ; sinon la cible d'avant
   if f then foe = f end
-  fight = { start = now(), startHP = pct("player"), group = groupSize(),
+  fight = { start = now(), startHP = pct("player") or hpOOC, group = groupSize(),
     foe = (foe and now() - (foe.at or 0) < 120) and foe or nil }
   M:Clear("prepull")
 end
@@ -202,7 +206,7 @@ end
 ---------------------------------------------------------------------------------------------------
 -- cycle de vie
 ---------------------------------------------------------------------------------------------------
-function M:AutoRefresh() if not inCombat() then M.CheckPrePull() end end
+function M:AutoRefresh() if not inCombat() then hpOOC = pct("player") M.CheckPrePull() end end
 
 function M:OnEnable()
   self:RegisterEvent("PLAYER_TARGET_CHANGED", function() M.OnTarget() end)

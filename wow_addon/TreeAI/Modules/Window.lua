@@ -42,6 +42,8 @@ local function inCombat() return T.InCombat and T:InCombat() or false end
 local function Th() local t = T.Theme if type(t) == "table" and t.Color then return t end end
 local function plain(s) return T.PlainText and T.PlainText(s) or tostring(s or "") end
 local function strip(s) return (tostring(s or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|T.-|t", "")) end
+-- glyphes absents des polices du jeu (« ▾ », « → »…) : la même table que le panneau (Core.SafeText)
+local function safe(s) s = tostring(s or "") return (type(T.SafeText) == "function" and T.SafeText(s)) or s end
 local function ulen(s) local _, n = strip(s):gsub("[^\128-\191]", "") return n end
 local function low(s) return strip(s):lower() end
 local WHITE = "Interface\\Buttons\\WHITE8X8"
@@ -794,10 +796,10 @@ local function newLay(width)
     meth(b.t, "ClearAllPoints")
     meth(b.t, "SetPoint", "TOPLEFT", b, "TOPLEFT", 28, -6)
     meth(b.t, "SetWidth", tw)
-    meth(b.t, "SetText", e.text or "")
+    meth(b.t, "SetText", safe(e.text))
     meth(b.t, "SetTextColor", r, g, bl)
     meth(b.r, "SetText", e.right or "")
-    local h = max(24, measure(b.t, e.text, tw, "S") + 12)
+    local h = max(24, measure(b.t, safe(e.text), tw, "S") + 12)
     meth(b, "SetSize", Ly.col, h)
     color(b.bg, tok("button", 0.14, 0.15, 0.19, (e.onClick and 0.55) or 0.25))
     meth(b, "EnableMouse", true)
@@ -869,7 +871,7 @@ local function newLay(width)
     b.badge:Set(s.n, s.mark, hot)
     meth(b.t, "SetWidth", Ly.col - 52)
     meth(b.s, "SetWidth", Ly.col - 52)
-    meth(b.t, "SetText", s.title or "")
+    meth(b.t, "SetText", safe(s.title))
     if s.danger then meth(b.t, "SetTextColor", tok("prio3", 1, 0.3, 0.25))
     elseif hot then meth(b.t, "SetTextColor", tok("gold", 1, 0.82, 0.2))
     else meth(b.t, "SetTextColor", tok("text", 0.92, 0.92, 0.92)) end

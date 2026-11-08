@@ -32,7 +32,7 @@ import forever_known  # noqa: E402
 
 needs_lua = pytest.mark.skipif(LUA is None, reason="lua5.1 not installed")
 
-RUNS = {   # every TreeAI harness run of the suite (TREEAI_WOW_RUNLOG), replayed here on « forever »
+RUNS = {   # every TreeAI harness run of the suite (TREEAI_WOW_RUNLOG, regenerated for 4.0), replayed here on « forever »
     'abandon-hunter': '--class HUNTER --scenario tests/wow/abandon_scenario.lua',
     'annoy-hunter-nostorm': '--no-storm --class HUNTER --scenario tests/wow/annoy_scenario.lua',
     'annoy-warrior-nostorm': '--no-storm --class WARRIOR --scenario tests/wow/annoy_scenario.lua',
@@ -43,43 +43,41 @@ RUNS = {   # every TreeAI harness run of the suite (TREEAI_WOW_RUNLOG), replayed
     'auction_rafale': '--scenario tests/wow/auction_rafale_scenario.lua',
     'binds-hunter': '--class HUNTER --scenario tests/wow/binds_scenario.lua',
     'boost-hunter': '--class HUNTER --scenario tests/wow/boost_scenario.lua',
+    'bugs-hunter': '--class HUNTER --scenario tests/wow/bugs_scenario.lua',
+    'bugs-mage': '--class MAGE --scenario tests/wow/bugs_scenario.lua',
+    'bugs-warrior': '--class WARRIOR --scenario tests/wow/bugs_scenario.lua',
+    'clean-hunter': '--class HUNTER --scenario tests/wow/clean_scenario.lua',
+    'clean-mage': '--class MAGE --scenario tests/wow/clean_scenario.lua',
     'cohere-hunter': '--class HUNTER --allow ShortestPathForever --allow QuestieLoader --scenario tests/wow/cohere_scenario.lua',
     'comms': '--scenario tests/wow/comms_scenario.lua',
     'content-hunter': '--class HUNTER --scenario tests/wow/content_scenario.lua',
     'content-warrior': '--class WARRIOR --scenario tests/wow/content_scenario.lua',
-    'robustness-hunter': '--class HUNTER --scenario tests/wow/robustness_scenario.lua',
-    'robustness-mage': '--class MAGE --scenario tests/wow/robustness_scenario.lua',
-    'robustness-warrior': '--class WARRIOR --scenario tests/wow/robustness_scenario.lua',
-    'robustness-priest': '--class PRIEST --scenario tests/wow/robustness_scenario.lua',
-    'robustness-rogue': '--class ROGUE --scenario tests/wow/robustness_scenario.lua',
     'data-hunter': '--class HUNTER --allow C_DeathInfo --allow C_TooltipInfo --scenario tests/wow/data_scenario.lua',
     'detect-hunter': '--class HUNTER --scenario tests/wow/detect_scenario.lua',
     'dungeon-hunter': '--class HUNTER --scenario tests/wow/dungeon_scenario.lua',
-    'edge-hunter': '--class HUNTER --scenario tests/wow/edge_scenario.lua',
-    'edge-warrior': '--class WARRIOR --scenario tests/wow/edge_scenario.lua',
-    'edge-mage': '--class MAGE --scenario tests/wow/edge_scenario.lua',
+    'dungeon2-hunter': '--class HUNTER --allow LibQuestieDB --allow QuestDB --allow NpcDB --allow ObjectDB --allow ItemDB --allow QuestLogPushQuest --allow LOOT_ITEM_SELF --scenario tests/wow/dungeon2_scenario.lua',
     'edge2-hunter': '--class HUNTER --scenario tests/wow/edge2_scenario.lua',
-    'edge2-warrior': '--class WARRIOR --scenario tests/wow/edge2_scenario.lua',
     'edge2-mage': '--class MAGE --scenario tests/wow/edge2_scenario.lua',
-    'bugs-hunter': '--class HUNTER --scenario tests/wow/bugs_scenario.lua',
-    'bugs-mage': '--class MAGE --scenario tests/wow/bugs_scenario.lua',
-    'bugs-warrior': '--class WARRIOR --scenario tests/wow/bugs_scenario.lua',
+    'edge2-warrior': '--class WARRIOR --scenario tests/wow/edge2_scenario.lua',
     'finder-hunter': '--class HUNTER --allow ShortestPathForever --scenario tests/wow/finder_scenario.lua',
     'gear-hunter': '--class HUNTER --allow LibQuestieDB --allow QuestDB --allow NpcDB --allow ObjectDB --allow ItemDB --scenario tests/wow/gear_scenario.lua',
+    'group-druid': '--class DRUID --scenario tests/wow/group_scenario.lua',
+    'group-hunter': '--class HUNTER --scenario tests/wow/group_scenario.lua',
+    'group-mage': '--class MAGE --scenario tests/wow/group_scenario.lua',
+    'group-priest': '--class PRIEST --scenario tests/wow/group_scenario.lua',
+    'group-warrior': '--class WARRIOR --scenario tests/wow/group_scenario.lua',
     'highlight-hunter': '--class HUNTER --scenario tests/wow/highlight_scenario.lua',
     'lite-hunter-essentiel-nostorm': '--no-storm --profile essentiel --class HUNTER --scenario tests/wow/lite_scenario.lua',
     'lite-mage-essentiel-nostorm': '--no-storm --profile essentiel --class MAGE --scenario tests/wow/lite_scenario.lua',
-    'storm-hunter-essentiel': '--profile essentiel --class HUNTER',
     'macro2-hunter': '--class HUNTER --scenario tests/wow/macro2_scenario.lua',
-    'macro2-warrior': '--class WARRIOR --scenario tests/wow/macro2_scenario.lua',
-    'macro2-priest': '--class PRIEST --scenario tests/wow/macro2_scenario.lua',
     'macro2-mage': '--class MAGE --scenario tests/wow/macro2_scenario.lua',
+    'macro2-priest': '--class PRIEST --scenario tests/wow/macro2_scenario.lua',
+    'macro2-warrior': '--class WARRIOR --scenario tests/wow/macro2_scenario.lua',
     'macrofix-hunter': '--class HUNTER --scenario tests/wow/macrofix_scenario.lua',
     'macrofix-warrior': '--class WARRIOR --scenario tests/wow/macrofix_scenario.lua',
     'menu-hunter': '--class HUNTER --scenario tests/wow/menu_scenario.lua',
     'menu-warrior': '--class WARRIOR --scenario tests/wow/menu_scenario.lua',
     'minipins-hunter': '--class HUNTER --scenario tests/wow/minipins_scenario.lua',
-    'missions': '--scenario tests/wow/missions_scenario.lua',
     'nav-hunter': '--class HUNTER --scenario tests/wow/nav_scenario.lua',
     'next10-hunter': '--class HUNTER --scenario tests/wow/next10_scenario.lua',
     'next10-mage': '--class MAGE --scenario tests/wow/next10_scenario.lua',
@@ -95,6 +93,7 @@ RUNS = {   # every TreeAI harness run of the suite (TREEAI_WOW_RUNLOG), replayed
     'pvp-hunter': '--class HUNTER --scenario tests/wow/pvp_scenario.lua',
     'pvpmark-hunter': '--class HUNTER --scenario tests/wow/pvpmark_scenario.lua',
     'questpro-hunter': '--class HUNTER --scenario tests/wow/questpro_scenario.lua',
+    'questqa-hunter': '--class HUNTER --allow LibQuestieDB --allow QuestDB --allow NpcDB --allow ObjectDB --allow ItemDB --allow TreeAIPlan --allow IsQuestFlaggedCompleted --scenario tests/wow/questqa_scenario.lua',
     'quests': '--scenario tests/wow/quests_scenario.lua',
     'quick-hunter': '--class HUNTER --scenario tests/wow/quick_scenario.lua',
     'quick-warrior': '--class WARRIOR --scenario tests/wow/quick_scenario.lua',
@@ -105,36 +104,44 @@ RUNS = {   # every TreeAI harness run of the suite (TREEAI_WOW_RUNLOG), replayed
     'quicktravel-mage': '--class MAGE --scenario tests/wow/quicktravel_scenario.lua',
     'quicktravel-warrior': '--class WARRIOR --scenario tests/wow/quicktravel_scenario.lua',
     'radar-hunter': '--class HUNTER --scenario tests/wow/radar_scenario.lua',
+    'robustness-hunter': '--class HUNTER --scenario tests/wow/robustness_scenario.lua',
+    'robustness-mage': '--class MAGE --scenario tests/wow/robustness_scenario.lua',
+    'robustness-priest': '--class PRIEST --scenario tests/wow/robustness_scenario.lua',
+    'robustness-rogue': '--class ROGUE --scenario tests/wow/robustness_scenario.lua',
+    'robustness-warrior': '--class WARRIOR --scenario tests/wow/robustness_scenario.lua',
     'route-hunter': '--class HUNTER --allow ShortestPathForever --scenario tests/wow/route_scenario.lua',
     'safe-hunter-sur-nostorm': '--no-storm --profile sur --class HUNTER --scenario tests/wow/safe_scenario.lua',
     'safe-warrior-sur-nostorm': '--no-storm --profile sur --class WARRIOR --scenario tests/wow/safe_scenario.lua',
-    'storm-hunter-sur': '--profile sur --class HUNTER',
-    'safepath-hunter': '--class HUNTER --allow LibQuestieDB --allow QuestieLoader --allow ShortestPathForever --scenario tests/wow/safepath_scenario.lua',
+    'selftest-hunter': '--class HUNTER --scenario tests/wow/selftest_scenario.lua',
+    'selftest-mage': '--class MAGE --scenario tests/wow/selftest_scenario.lua',
+    'selftest-warrior': '--class WARRIOR --scenario tests/wow/selftest_scenario.lua',
     'speed': '--allow C_DeathInfo --scenario tests/wow/speed_scenario.lua',
-    'squad': '--scenario tests/wow/squad_scenario.lua',
     'stats-hunter': '--class HUNTER --scenario tests/wow/stats_scenario.lua',
     'stats-mage': '--class MAGE --scenario tests/wow/stats_scenario.lua',
     'stats-warrior': '--class WARRIOR --scenario tests/wow/stats_scenario.lua',
+    'storm-hunter': '--class HUNTER --allow TreeAI_Locale',
+    'storm-hunter-2': '--class HUNTER',
+    'storm-hunter-essentiel': '--profile essentiel --class HUNTER',
+    'storm-hunter-sur': '--profile sur --class HUNTER',
+    'storm-mage': '--class MAGE --allow TreeAI_Locale',
+    'storm-warrior': '--class WARRIOR',
+    'taint-hunter': '--class HUNTER --scenario tests/wow/taint_scenario.lua',
     'talents-hunter': '--class HUNTER --scenario tests/wow/talents_scenario.lua',
-    'team-hunter': '--class HUNTER --scenario tests/wow/team_scenario.lua',
-    'team-priest': '--class PRIEST --scenario tests/wow/team_scenario.lua',
-    'team-druid': '--class DRUID --scenario tests/wow/team_scenario.lua',
     'theme-hunter': '--class HUNTER --scenario tests/wow/theme_scenario.lua',
     'theme-mage': '--class MAGE --scenario tests/wow/theme_scenario.lua',
     'tidy-hunter': '--class HUNTER --allow ShortestPathForever --scenario tests/wow/tidy_scenario.lua',
     'tidy-mage': '--class MAGE --allow ShortestPathForever --scenario tests/wow/tidy_scenario.lua',
     'todo-hunter': '--class HUNTER --scenario tests/wow/todo_scenario.lua',
+    'tour-hunter-nostorm': '--no-storm --class HUNTER --scenario tests/wow/tour_scenario.lua',
+    'tour-warrior-nostorm': '--no-storm --class WARRIOR --scenario tests/wow/tour_scenario.lua',
     'trackpro-hunter': '--class HUNTER --scenario tests/wow/trackpro_scenario.lua',
     'ui2-hunter': '--class HUNTER --scenario tests/wow/ui2_scenario.lua',
     'ui2-mage': '--class MAGE --scenario tests/wow/ui2_scenario.lua',
     'uifix-hunter': '--class HUNTER --scenario tests/wow/uifix_scenario.lua',
     'uifix-mage': '--class MAGE --scenario tests/wow/uifix_scenario.lua',
-    'selftest-hunter': '--class HUNTER --scenario tests/wow/selftest_scenario.lua',
-    'selftest-mage': '--class MAGE --scenario tests/wow/selftest_scenario.lua',
-    'selftest-warrior': '--class WARRIOR --scenario tests/wow/selftest_scenario.lua',
-    'storm-hunter': '--class HUNTER',
-    'storm-warrior': '--class WARRIOR',
-    'x2-hunter': '--class HUNTER --scenario tests/wow/x2_scenario.lua',
+    'uiredo-hunter': '--class HUNTER --scenario tests/wow/uiredo_scenario.lua',
+    'uiredo-sur': '--profile sur --scenario tests/wow/uiredo_scenario.lua',
+    'uiredo-warrior': '--class WARRIOR --scenario tests/wow/uiredo_scenario.lua',
     'zoneplan-hunter': '--class HUNTER --allow LibQuestieDB --allow QuestDB --allow NpcDB --allow ObjectDB --allow ItemDB --allow TreeAIPlan --allow IsQuestFlaggedCompleted --scenario tests/wow/zoneplan_scenario.lua',
 }
 
@@ -151,8 +158,9 @@ def _run(rid: str) -> tuple[int, str]:
 
 @pytest.fixture(scope="module")
 def forever_runs():
-    """All runs at once, 4 in parallel (each is a separate lua5.1 process)."""
-    if not _cache:
+    """All runs at once, 4 in parallel (each is a separate lua5.1 process) — except under pytest-xdist, where this
+    module fixture exists once per worker: each test then runs only its own replay (no run done 8 times)."""
+    if not _cache and not os.environ.get("PYTEST_XDIST_WORKER"):
         with cf.ThreadPoolExecutor(4) as ex:
             for rid, res in zip(RUNS, ex.map(_run, RUNS)):
                 _cache[rid] = res
@@ -165,8 +173,8 @@ def _verdict(rc: int, out: str, what: str, session: bool = False):
                       "mock-only behaviour (see research/fidelity.md):\n  " % what) + "\n  ".join(p[:400] for p in rest[:25])
     if ids:
         pytest.xfail("FIDELITY: known real bugs %s (research/fidelity.md)" % ",".join(ids))
-    if session:   # instruction / GC budgets: judged on modern by test_session_sim.py (forever_known._PERF)
-        assert re.search(r"RESULT \w+ session .* errors=0 swallowed=0 violations=0 ", out), out[-3000:]
+    if session:   # 4.0: every budget judged on forever too (the real client), as on modern
+        assert re.search(r"RESULT ok session .* errors=0 swallowed=0 violations=0 fails=0", out), out[-3000:]
     else:
         assert rc == 0 and "RESULT ok" in out, out[-3000:]
 
@@ -199,13 +207,16 @@ def test_mock_forever_semantics():
 @needs_lua
 @pytest.mark.parametrize("rid", list(RUNS))
 def test_scenario_on_forever(forever_runs, rid):
+    if rid not in forever_runs:
+        forever_runs[rid] = _run(rid)
     rc, out = forever_runs[rid]
     _verdict(rc, out, rid)
 
 
 @needs_lua
 def test_session_sim_on_forever():
-    """60 simulated minutes, 4 clients, hunter, every module on, on the faithful Forever mock."""
-    r = subprocess.run([LUA, str(HERE / "session_sim.lua"), "--class", "HUNTER", "--flavor", "forever", "--profile", "tout",
+    """60 simulated minutes, 4 clients, every module on, on the faithful Forever mock — a warrior (the hunter runs in
+    test_session_sim.py on forever, essentiel and tout): errors, swallowed errors, violations AND budgets judged."""
+    r = subprocess.run([LUA, str(HERE / "session_sim.lua"), "--class", "WARRIOR", "--flavor", "forever", "--profile", "tout",
                         "--addon", str(ADDON)], cwd=ROOT, capture_output=True, text=True, timeout=1800)
-    _verdict(r.returncode, r.stdout + r.stderr, "session_sim forever HUNTER tout", session=True)
+    _verdict(r.returncode, r.stdout + r.stderr, "session_sim forever WARRIOR tout", session=True)

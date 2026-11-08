@@ -1058,7 +1058,7 @@ function M.Paint(b, r, w, fs)
     local col = hex(LEVEL_RGB[c.color] or PRIO_RGB[1])
     b.text:SetText(col .. c.title .. "|r")
     r.tip = M.CardTooltip(c)
-    table.insert(r.tip, #r.tip, "|cff888888Glisser : changer l'ordre · ▲▼ : monter / descendre|r")
+    table.insert(r.tip, #r.tip, "|cff888888Glisser : changer l'ordre · flèches haut / bas : monter / descendre|r")
     r.onClick = function(_, btn)
       if btn == "RightButton" then M.ToggleFold(c.key, r.folded) else M.Go({ questID = c.id, title = c.title }, shift()) end
     end

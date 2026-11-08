@@ -63,6 +63,8 @@ return function(M, ctx)
   local sf = T:Summary().fight
   check(sf and sf.lastDeath and sf.lastDeath.killer == "Brute-test" and sf.lastDeath.attackers == nil,
     "summary.fight : faits seulement (pas d'attaquants / dégâts inventés)")
+  -- (FIDELITY) vie au départ lue AVANT le pull (secrète en combat sur Forever) : 40 % au ciblage
+  check(sf and sf.lastDeath and sf.lastDeath.startHP == 40, "vie au départ lue hors combat : " .. tostring(sf and sf.lastDeath and sf.lastDeath.startHP))
   if QF and QF.db then QF.db.ready = oldReady end
   M.target = { exists = false }
   M.FireEvent("PLAYER_TARGET_CHANGED")

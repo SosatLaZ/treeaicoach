@@ -184,8 +184,12 @@ end
 ---------------------------------------------------------------------------------------------------
 -- Macros TAI (module Macros, lecture gardée)
 ---------------------------------------------------------------------------------------------------
+-- (FIDELITY F9) GetMacroIndexByName n'existe pas sur Forever : l'index partagé (et mis en cache) du module Macros
 local function macroIndex(name)
-  local i = try(G.GetMacroIndexByName, name)
+  local Mc = T.modules and T.modules.Macros
+  local i
+  if type(Mc) == "table" and type(Mc.MacroIndex) == "function" then i = try(Mc.MacroIndex, name)
+  else i = try(G.GetMacroIndexByName, name) end
   if type(i) == "number" and i > 0 then return i end
 end
 local function macroBody(name)

@@ -4,7 +4,7 @@
 --     relue sur UNIT_STATS / PLAYER_EQUIPMENT_CHANGED / UNIT_AURA(player) avec 1 s d'anti-rebond, jamais en combat
 --     (valeurs « secrètes » de Forever : ignorées).
 --  b) stats de jeu apprises par personnage : temps de kill (écart de niveau × type de monstre, solo / groupe),
---     dégâts subis par combat (% PV, seulement si mesurables), temps de repos (manger / boire) par combat, morts / h
+--     vie perdue par combat (% PV : lue hors combat sur Forever, où elle est secrète en combat), temps de repos (manger / boire) par combat, morts / h
 --     et causes, XP/h par activité (quêtes / farm / donjon / trajet), or/h, durée des quêtes (prise → finie →
 --     rendue), vitesse de déplacement (à pied / monté), trajets bateau / zeppelin, taux de drop par objet et par
 --     monstre (compte), HV (taux de vente, temps pour vendre), réparations / h, munitions / nourriture / boisson / h.
@@ -225,9 +225,19 @@ local tick = { xp = 0, kills = 0 }
 local questMark, turnInAt, lastTick = -1e9, -1e9, nil
 local lastMoney, lastXP, lastXPMax, lastAmmo
 
+-- (FIDELITY F4) Forever : la vie du joueur est SECRÈTE en combat. On la suit HORS combat (UNIT_HEALTH /
+-- UNIT_MAXHEALTH : elle ne change jamais sans eux) ; au pull on part de la dernière lecture, et à la fin du combat
+-- (lisible à nouveau) : vie perdue = départ − fin (net : un soin pendant le combat la réduit). Rien de deviné.
+local ooc = { hp = nil, mx = nil }
+function M.SnapHealth()
+  if inCombat() then return end
+  local hp, mx = num(try(g("UnitHealth"), "player")), num(try(g("UnitHealthMax"), "player"))
+  if hp and mx and mx > 0 then ooc.hp, ooc.mx = hp, mx else ooc.hp, ooc.mx = nil, nil end
+end
 local function onHealth()
   local f = fight
-  if not f then return end
+  if not f then M.SnapHealth() return end
+  if f.snap then return end
   local v = num(try(g("UnitHealth"), "player"))
   if not v then f.secret = true return end
   if f.hp and v < f.hp then f.lost = f.lost + (f.hp - v) end
@@ -240,14 +250,16 @@ function M.FightStart()
   local f = { t0 = now(), k = 0, lost = 0, grp = (num(try(g("GetNumGroupMembers"))) or 0) > 1 }
   f.hp = num(try(g("UnitHealth"), "player"))
   f.mx = num(try(g("UnitHealthMax"), "player"))
-  if not (f.hp and f.mx and f.mx > 0) then f.secret = true end
+  if not (f.hp and f.mx and f.mx > 0) then
+    if ooc.hp then f.snap, f.hp, f.mx = true, ooc.hp, ooc.mx   -- secrète en combat : la lecture d'avant le pull
+    else f.secret = true end
+  end
   if try(g("UnitCanAttack"), "player", "target") then
     if lvl and my and lvl > 0 then f.delta = max(-5, min(5, lvl - my)) elseif lvl == -1 then f.delta = 5 end
     f.cls = CLS[str(try(g("UnitClassification"), "target")) or "normal"] or "n"
     f.name = str(try(g("UnitName"), "target")) or M.lastFoe
   end
   fight = f
-  M:RegisterUnitEvent("UNIT_HEALTH", "player", onHealth)
 end
 
 --- clé de temps de kill : écart (-5..5) .. type (n/e/r/b) .. "g" en groupe
@@ -258,7 +270,6 @@ end
 function M.FightEnd()
   local f = fight
   fight = nil
-  M:UnregisterEvent("UNIT_HEALTH")
   if not f then return end
   local c = C()
   if not (c and learning()) then return end
@@ -270,8 +281,13 @@ function M.FightEnd()
   if k == 0 and f.delta and try(g("UnitIsDead"), "target") then k = 1 end
   c.fight.n, c.fight.s = (c.fight.n or 0) + 1, r1((c.fight.s or 0) + dur)
   if k >= 1 and f.delta and dur / k <= 180 then acc(c.kill, M.KillKey(f.delta, f.cls, f.grp), dur / k, 200) end
+  if f.snap then   -- départ lu avant le combat : la fin se lit maintenant (hors combat)
+    local hp = num(try(g("UnitHealth"), "player"))
+    if hp and f.hp then f.lost = max(0, f.hp - hp) else f.secret = true end
+  end
   if not f.secret and f.mx and f.mx > 0 then acc(c.fight, "dm", min(300, f.lost * 100 / f.mx), 200) end
   M.lastFightEnd = t
+  M.SnapHealth()
 end
 
 function M.OnXPMsg()
@@ -342,7 +358,6 @@ function M.OnDeath()
   while #d.t > 20 do tremove(d.t, 1) end
   local f = fight
   fight = nil
-  M:UnregisterEvent("UNIT_HEALTH")
   T:After(0.5, function()
     local F = T.modules and T.modules.Fight
     local r = F and F.lastRecap
@@ -806,7 +821,10 @@ function M.Tick()
   local xp, kills = tick.xp, tick.kills
   local kind = activity()
   tick.xp, tick.kills = 0, 0
-  if not (c and learning()) or dt <= 0 or dt > 180 or try(g("UnitIsAFK"), "player") then return end
+  -- (FIDELITY F10) UnitIsAFK est secret pendant un verrou du chat (combat de boss) : un test booléen dessus = erreur
+  local afk = try(g("UnitIsAFK"), "player")
+  if secret(afk) then afk = nil end
+  if not (c and learning()) or dt <= 0 or dt > 180 or afk then return end
   local a = c.act[kind]
   a.x, a.s = a.x + xp, r1(a.s + dt)
   c.played = r1(c.played + dt)
@@ -1131,7 +1149,7 @@ function M.Lines(s, lvl)
   if k["0"] then p[#p + 1] = "kill ~" .. floor(k["0"] + 0.5) .. " s (même niveau)" end
   if k["2"] then p[#p + 1] = "~" .. floor(k["2"] + 0.5) .. " s (+2)" end
   if s.killElite then p[#p + 1] = "élite ~" .. floor(s.killElite + 0.5) .. " s" end
-  if s.dmgPct then p[#p + 1] = "dégâts subis " .. s.dmgPct .. " % PV / combat" end
+  if s.dmgPct then p[#p + 1] = "vie perdue " .. s.dmgPct .. " % / combat" end
   if #p > 0 then add("Combat : " .. tconcat(p, " · ")) end
   p = {}
   if s.downSec then p[#p + 1] = "repos " .. floor(s.downSec + 0.5) .. " s / combat" end
@@ -1218,6 +1236,9 @@ function M:OnEnable()
   M:RegisterEvent("PLAYER_TARGET_CHANGED", function()
     if not inCombat() then M.lastFoe = str(try(g("UnitName"), "target")) or M.lastFoe end
   end)
+  M:RegisterUnitEvent("UNIT_HEALTH", "player", onHealth)
+  M:RegisterUnitEvent("UNIT_MAXHEALTH", "player", onHealth)
+  M.SnapHealth()
   -- un seul lecteur du message d'XP : Detect (« X meurt, vous gagnez… ») publie chaque mort
   M:On("DETECT", function(_, _, kind) if kind == "kill" then M.OnXPMsg() end end)
   M:RegisterEvent("PLAYER_XP_UPDATE", function() M.OnXP() end)

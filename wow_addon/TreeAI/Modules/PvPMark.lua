@@ -92,7 +92,10 @@ end
 -- lecture d'une unité (toutes les valeurs passent par _ns : secrètes en combat → nil)
 ---------------------------------------------------------------------------------------------------
 local function zoneBlocked()
-  local kind = _ns(call("GetZonePVPInfo"))
+  -- (FIDELITY F5) Forever : C_PvP.GetZonePVPInfo() (le global GetZonePVPInfo n'existe plus) ; repli Era
+  local CP = rawget(G, "C_PvP")
+  local kind = (type(CP) == "table" and type(CP.GetZonePVPInfo) == "function") and _ns(try(CP.GetZonePVPInfo))
+    or _ns(call("GetZonePVPInfo"))
   return kind == "sanctuary"
 end
 local function inPvPInstance()
@@ -107,7 +110,9 @@ function PM.Read(unit)
   if not _ns(call("UnitIsPlayer", unit)) then return nil end            -- PNJ, familiers : non
   if not _ns(call("UnitCanAttack", "player", unit)) then return nil end  -- amis, non attaquables : non
   -- marqué JcJ (ou JcJ libre) ; valeur secrète / API absente = inconnue → on se fie à UnitCanAttack
-  if api("UnitIsPVP") and call("UnitIsPVP", unit) == false and not _ns(call("UnitIsPVPFreeForAll", unit)) then
+  -- (FIDELITY F6) en JcJ sauvage EN COMBAT, UnitIsPVP d'un ennemi est secret : le comparer est une erreur Lua ;
+  -- _ns() le rend nil (inconnu) et seul un « non » lisible écarte le joueur
+  if api("UnitIsPVP") and _ns(call("UnitIsPVP", unit)) == false and not _ns(call("UnitIsPVPFreeForAll", unit)) then
     return nil
   end
   if _ns(call("UnitIsDeadOrGhost", unit)) then return nil end

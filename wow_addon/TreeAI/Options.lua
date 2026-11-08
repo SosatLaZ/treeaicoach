@@ -594,8 +594,8 @@ local FAMILY = {
   { title = "Combat et classe", mods = { "Hunter", "Classes", "Fight", "Boost", "Talents", "Macros", "Binds", "Detect",
     "QuickFight", "PvPMark" } },
   { title = "Groupe", mods = { "Group", "Dungeon", "QuickTravel", "PvP" } },
-  { title = "Sacs, or, métiers", mods = { "Inventory", "Auction", "Gear", "Prof", "Stats" } },
-  { title = "Outils", mods = { "Window", "Shortcuts", "Hub", "Session", "Pro", "Theme", "Export", "SelfTest", "Bugs" } },
+  { title = "Sacs, or, métiers", mods = { "Inventory", "Auction", "Gear", "Prof" } },
+  { title = "Outils", mods = { "Window", "Shortcuts", "Hub", "Session", "Stats", "Pro", "Theme", "Export", "SelfTest", "Bugs" } },
 }
 TreeAI.OPTIONS_FAMILY = FAMILY
 

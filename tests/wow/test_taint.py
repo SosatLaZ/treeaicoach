@@ -7,6 +7,7 @@ modern / forever with a budget of 0 blocked actions. Fake names only.
 """
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -39,20 +40,26 @@ def test_taint_scenario(flavor):
     assert r.returncode == 0 and "RESULT ok" in r.stdout, r.stdout[-4000:] + r.stderr[-2000:]
 
 
+def _sim(combo):
+    return subprocess.Popen(["lua5.1", str(HERE / "session_sim.lua"), "--class", combo[0], "--flavor", combo[1],
+                             "--profile", "tout", "--addon", str(ADDON)], cwd=ROOT, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True)
+
+
 @pytest.fixture(scope="module")
 def sims():
-    procs = {
-        combo: subprocess.Popen(["lua5.1", str(HERE / "session_sim.lua"), "--class", combo[0], "--flavor", combo[1],
-                                 "--profile", "tout", "--addon", str(ADDON)], cwd=ROOT, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True)
-        for combo in SIMS
-    }
+    # under pytest-xdist this module fixture exists once per worker: each test runs only its own session
+    if os.environ.get("PYTEST_XDIST_WORKER"):
+        return {}
+    procs = {combo: _sim(combo) for combo in SIMS}
     return {combo: p.communicate(timeout=900)[0] for combo, p in procs.items()}
 
 
 @lua
 @pytest.mark.parametrize("cls,flavor", SIMS)
 def test_session_zero_blocked(sims, cls, flavor):
+    if (cls, flavor) not in sims:
+        sims[(cls, flavor)] = _sim((cls, flavor)).communicate(timeout=900)[0]
     out = sims[(cls, flavor)]
     m = re.search(r"blocked actions: (\d+) \(budget 0\)", out)
     assert m and int(m.group(1)) == 0, out[-4000:]

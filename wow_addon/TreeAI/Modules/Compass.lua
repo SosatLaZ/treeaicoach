@@ -245,6 +245,7 @@ function M.Pin(t)
     local pt = try(UMP.CreateFromCoordinates, t.mapID, t.x, t.y)
     if pt and pcall(CM.SetUserWaypoint, pt) then
       if ST and ST.SetSuperTrackedUserWaypoint then pcall(ST.SetSuperTrackedUserWaypoint, true) end
+      M.ownWP = { mapID = t.mapID, x = t.x, y = t.y }   -- NOTRE repère (retiré si le joueur passe à Suivi Forever)
       return "blizzard"
     end
   end
@@ -253,6 +254,34 @@ end
 -- Une seule flèche à l'écran : un autre guide (repère / quête suivie de Blizzard, Shortest Path, TomTom)
 -- vise-t-il déjà la même cible ? Lecture seule. Renvoie "blizzard" / "spf" / "tomtom" ou nil.
 local function near(a, b) return a and b and math.abs(a - b) < 0.012 end
+-- repère utilisateur de Blizzard : carte, x, y (nil sans repère)
+local function userWaypoint()
+  local CM = _G.C_Map
+  if not (CM and CM.HasUserWaypoint and try(CM.HasUserWaypoint) and CM.GetUserWaypoint) then return nil end
+  local wp = try(CM.GetUserWaypoint)
+  local pos = type(wp) == "table" and wp.position
+  local px, py
+  if type(pos) == "table" then
+    if type(pos.GetXY) == "function" then local ok, a, b = pcall(pos.GetXY, pos) if ok then px, py = a, b end end
+    px, py = px or pos.x, py or pos.y
+  end
+  if not wp then return nil end
+  return wp.uiMapID, px, py
+end
+--- (FIDELITY F11) le joueur confie le guidage à Suivi Forever : NOTRE repère Blizzard (posé par « Aller là ») est
+--- retiré, sinon deux flèches à l'écran (le repère + celle de SPF). Seulement le nôtre : même carte, même point.
+function M.DropOwnWaypoint()
+  local w = M.ownWP
+  if not w then return false end
+  M.ownWP = nil
+  if M.guide and M.guide.how == "blizzard" then M.guide = nil end
+  local CM = _G.C_Map
+  local m, px, py = userWaypoint()
+  if m and m == w.mapID and near(px, w.x) and near(py, w.y) and CM and CM.ClearUserWaypoint then
+    return pcall(CM.ClearUserWaypoint) and true or false
+  end
+  return false
+end
 function M.OtherGuide(t)
   if not t then return nil end
   local ST, CM = _G.C_SuperTrack, _G.C_Map
@@ -260,15 +289,10 @@ function M.OtherGuide(t)
     local q = try(ST.GetSuperTrackedQuestID)
     if q and q ~= 0 and q == t.questID then return "blizzard" end
   end
-  if t.mapID and t.x and CM and CM.HasUserWaypoint and try(CM.HasUserWaypoint) and CM.GetUserWaypoint then
-    local wp = try(CM.GetUserWaypoint)
-    local pos = type(wp) == "table" and wp.position
-    local px, py
-    if type(pos) == "table" then
-      if type(pos.GetXY) == "function" then local ok, a, b = pcall(pos.GetXY, pos) if ok then px, py = a, b end end
-      px, py = px or pos.x, py or pos.y
-    end
-    local onTarget = wp and wp.uiMapID == t.mapID and near(px, t.x) and near(py, t.y)
+  local wm, px, py
+  if t.mapID and t.x then wm, px, py = userWaypoint() end
+  if wm then
+    local onTarget = wm == t.mapID and near(px, t.x) and near(py, t.y)
     local superUser = not (ST and ST.IsSuperTrackingUserWaypoint) or try(ST.IsSuperTrackingUserWaypoint)
     if onTarget and superUser then return "blizzard" end
   end
@@ -1006,6 +1030,7 @@ local function refresh()
     st.hiddenDead = (dg and not (ghost and st.corpse)) or nil
     if dg then M.ClearRouteOnDeath() end
     st.dup = nil
+    if M.ownWP and M.SPFOptIn() and M.SPFGuiding() then M.DropOwnWaypoint() end   -- une seule flèche : celle de SPF
     if not (st.hiddenDead or st.none or st.corpse) then
       st.dup = (M.db.hideDup ~= false) and M.OtherGuide(st.target) or nil
       if not st.dup and M.SPFGuiding() then st.dup = "spf" end

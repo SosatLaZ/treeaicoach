@@ -265,12 +265,15 @@ return function(M, ctx)
     -- 5b. a full log never gets a « Prendre » before a turn-in frees a slot
     local nlog = 0
     for _ in pairs(log) do nlog = nlog + 1 end
-    if nlog >= 20 then
+    -- (FIDELITY) the game's own cap (Forever / Camelot: 40, Classic Era: 20), as the addon reads it
+    local QLc = rawget(_G, "C_QuestLog")
+    local cap = tonumber(QLc and QLc.GetMaxNumQuestsCanAccept and QLc.GetMaxNumQuestsCanAccept()) or 20
+    if nlog >= cap then
       for i = P.cursor or 1, #steps do
         local s = steps[i]
         if not s._done and not s._other then
           if s.k == "turn" then break end
-          no(s.k == "pick", "pick-up with a full log (" .. nlog .. "/20): " .. tostring(s.q))
+          no(s.k == "pick", "pick-up with a full log (" .. nlog .. "/" .. cap .. "): " .. tostring(s.q))
         end
       end
     end

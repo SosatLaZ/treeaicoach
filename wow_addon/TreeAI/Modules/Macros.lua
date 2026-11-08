@@ -689,8 +689,20 @@ local function macroName(idx)
   return nil
 end
 
--- Index d'une macro par son nom. GetMacroIndexByName n'est référencé nulle part dans l'UI Forever : s'il
--- manque, on parcourt GetMacroInfo (onglet compte puis personnage).
+-- Index d'une macro par son nom. GetMacroIndexByName n'existe pas sur Forever (FIDELITY F9) : UN parcours de
+-- GetMacroInfo (onglet compte puis personnage) remplit une table nom -> index, gardée jusqu'au prochain
+-- UPDATE_MACROS ou à notre propre écriture (créer / modifier / supprimer décale les index : le jeu trie par nom).
+local idxByName, idxDirty = {}, true
+local function invalidateIndex() idxDirty = true end
+M.InvalidateMacroIndex = invalidateIndex
+local function rebuildIndex()
+  for k in pairs(idxByName) do idxByName[k] = nil end
+  local maxG = macroLimits()
+  local g, c = macroCounts()
+  for idx = 1, g do local n = macroName(idx) if n and not idxByName[n] then idxByName[n] = idx end end
+  for idx = maxG + 1, maxG + c do local n = macroName(idx) if n and not idxByName[n] then idxByName[n] = idx end end
+  idxDirty = false
+end
 local function macroIndex(name)
   if type(name) ~= "string" then return nil end
   if type(_G.GetMacroIndexByName) == "function" then
@@ -698,11 +710,11 @@ local function macroIndex(name)
     if i and i > 0 then return i end
     if i then return nil end
   end
-  local maxG = macroLimits()
-  local g, c = macroCounts()
-  for idx = 1, g do if macroName(idx) == name then return idx end end
-  for idx = maxG + 1, maxG + c do if macroName(idx) == name then return idx end end
-  return nil
+  if idxDirty then rebuildIndex() end
+  local idx = idxByName[name]
+  -- garde-fou : l'index gardé porte-t-il encore ce nom ? (une macro bougée sans événement) -> on relit tout
+  if idx and macroName(idx) ~= name then rebuildIndex() idx = idxByName[name] end
+  return idx
 end
 M.MacroIndex = macroIndex
 
@@ -799,6 +811,7 @@ function M:Write(def, body, force)
     end
     if same(cur, body) then ch.bodies[def.n] = cur; ch.installed[def.n] = true; return "same" end
     local ok, err = pcall(_G.EditMacro, idx, def.n, nil, body)
+    invalidateIndex()
     if not ok then self.lastError = tostring(err); return "fail" end
     local _, _, after2 = try(_G.GetMacroInfo, idx)
     if not same(after2, body) or blockedCount() > before then self:SetBlocked("EditMacro"); return "blocked" end
@@ -809,6 +822,7 @@ function M:Write(def, body, force)
   local okSlot, perChar = freeSlot(db().perCharacter ~= false)
   if not okSlot then return "full" end
   local ok, ret = pcall(_G.CreateMacro, def.n, def.i or "INV_MISC_QUESTIONMARK", body, perChar)
+  invalidateIndex()   -- une macro de plus : les index suivants bougent
   if not ok then
     if isLimitError(ret) then return "full" end
     -- icône refusée : une seule autre tentative avec l'ID de fichier du « ? » (rien n'a été créé)
@@ -1145,9 +1159,9 @@ local function usesItems(def)
 end
 
 -- Met à jour les macros déjà installées (kind = "consumable" ou toutes).
-function M:Refresh(onlyConsumables)
+function M:Refresh(onlyConsumables, ctx0)
   runOOC(onlyConsumables and "Macros:consumables" or "Macros:refresh", function()
-    local ctx = newContext()
+    local ctx = (ctx0 and not inCombat()) and ctx0 or newContext()
     for _, def in ipairs(self:Defs()) do
       if char().installed[def.n] and (not onlyConsumables or usesItems(def)) and macroIndex(def.n) then
         local body = self:Render(def, ctx)
@@ -1182,7 +1196,7 @@ function M:Remove()
         local _, _, cur = try(_G.GetMacroInfo, idx)
         local stored = char().bodies[name]
         -- jamais supprimer une macro modifiée par le joueur
-        if stored and same(cur, stored) and pcall(_G.DeleteMacro, idx) then n = n + 1 end
+        if stored and same(cur, stored) and pcall(_G.DeleteMacro, idx) then n = n + 1 invalidateIndex() end
       end
     end
     char().installed, char().bodies, char().setup = {}, {}, false
@@ -1657,18 +1671,23 @@ local function scheduleSpells()
   pendingSpells = true
   after(2, function()
     pendingSpells = false
-    M:Refresh(false)
-    -- nouvelles macros par défaut devenues possibles (sort appris)
-    local ctx, fresh = newContext(), {}
-    for _, def in ipairs(M:Defs()) do
-      if M:IsDefault(def) and def.c ~= "consumable" and not char().installed[def.n]
-        and not macroIndex(def.n) and M:Render(def, ctx) then
-        fresh[#fresh + 1] = def.n
+    -- (4.0, perf) UN relevé des sacs pour les deux passes, et la 2e passe dans une autre image (niveau gagné :
+    -- beaucoup de modules travaillent dans la même seconde)
+    local ctx = newContext()
+    M:Refresh(false, ctx)
+    after(0.5, function()
+      -- nouvelles macros par défaut devenues possibles (sort appris)
+      local fresh = {}
+      for _, def in ipairs(M:Defs()) do
+        if M:IsDefault(def) and def.c ~= "consumable" and not char().installed[def.n]
+          and not macroIndex(def.n) and M:Render(def, ctx) then
+          fresh[#fresh + 1] = def.n
+        end
       end
-    end
-    if #fresh > 0 then
-      suggestReady(READY_TEXT, fresh)
-    end
+      if #fresh > 0 then
+        suggestReady(READY_TEXT, fresh)
+      end
+    end)
   end)
 end
 
@@ -1680,7 +1699,10 @@ function M:OnEnable()
     self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", scheduleConsumables)
     self:RegisterEvent("UNIT_PET", function(_, _, unit) if unit == nil or unit == "player" then scheduleConsumables() end end)
   end
-  self:RegisterEvent("PLAYER_LEVEL_UP", function() scheduleConsumables(); scheduleSpells() end)
+  -- niveau gagné : la passe complète (sorts) couvre aussi les consommables ; sans elle, les consommables seuls
+  self:RegisterEvent("PLAYER_LEVEL_UP", function()
+    if db().autoUpgrade == false then scheduleConsumables() else scheduleSpells() end
+  end)
   self:RegisterEvent("SKILL_LINES_CHANGED", scheduleConsumables)
   self:RegisterEvent("SPELLS_CHANGED", scheduleSpells)
   self:RegisterEvent("LEARNED_SPELL_IN_TAB", scheduleSpells)
@@ -1688,6 +1710,7 @@ function M:OnEnable()
   self:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED", scheduleSpells)
   self:RegisterEvent("CHARACTER_POINTS_CHANGED", scheduleSpells)
   self:RegisterEvent("ADDON_ACTION_FORBIDDEN", M._OnForbidden)   -- le jeu a refusé CreateMacro / EditMacro
+  self:RegisterEvent("UPDATE_MACROS", invalidateIndex)           -- (FIDELITY) table nom -> index à relire
   if not data() then return end
   if self:IsBlocked() and not char().setup then
     suggestReady("Macros prêtes à copier-coller : clique pour les voir")

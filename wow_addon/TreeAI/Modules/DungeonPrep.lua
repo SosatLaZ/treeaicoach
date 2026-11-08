@@ -50,7 +50,7 @@ end
 function M.PrepRows(d)
   local out = {}
   if not d then
-    out[1] = { state = "info", text = "Aucun donjon à ton niveau dans la liste : choisis-en un avec ◀ ▶." }
+    out[1] = { state = "info", text = "Aucun donjon à ton niveau dans la liste : choisis-en un avec les flèches < >." }
     return out
   end
   local members = M.Members()
@@ -154,10 +154,10 @@ function M:CreateChecklist()
     local close = button(f, "×", 20, 18, function() M:ToggleChecklist(false) end, "Fermer")
     close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -6, -6)
   end
-  -- choix du donjon : ◀ nom ▶
-  W.prev = button(f, "◀", 24, 20, function() cycle(-1) end, "Donjon précédent à ton niveau")
+  -- choix du donjon : < nom > (les polices du jeu n'ont ni ◀ ni ▶ : carrés vides)
+  W.prev = button(f, "<", 24, 20, function() cycle(-1) end, "Donjon précédent à ton niveau")
   W.prev:SetPoint("TOPLEFT", f, "TOPLEFT", 10, -32)
-  W.next = button(f, "▶", 24, 20, function() cycle(1) end, "Donjon suivant à ton niveau")
+  W.next = button(f, ">", 24, 20, function() cycle(1) end, "Donjon suivant à ton niveau")
   W.next:SetPoint("TOPRIGHT", f, "TOPRIGHT", -10, -32)
   W.name = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
   W.name:SetPoint("TOP", f, "TOP", 0, -36)
@@ -240,7 +240,7 @@ function M:RenderChecklist()
   if W.title then W.title:SetText(title) end
   if W.name then
     W.name:SetText(d and fmt("%s · niv %d–%d%s%s", d.n, d.min or 1, d.max or 60, d.new and " · Forever" or "",
-      why == "instance" and " · en cours" or (why == "suggéré" and " · clique ◀ ▶ pour choisir" or " · prévu")) or "—")
+      why == "instance" and " · en cours" or (why == "suggéré" and " · clique < > pour choisir" or " · prévu")) or "—")
   end
   local inst = why == "instance"
   if W.prev then if inst then W.prev:Hide() else W.prev:Show() end end

@@ -79,6 +79,10 @@ return function(M, ctx)
   C.travelT = nil
   st = C.Refresh()
   check(st.dup == "spf" and not fr:IsShown(), "opt-in + SPF guiding → compass hidden (one arrow)")
+  if how == "blizzard" then   -- (FIDELITY F11) TreeAI's own Blizzard waypoint is removed: SPF's arrow only
+    local CMw = rawget(_G, "C_Map")
+    check(not (CMw and CMw.HasUserWaypoint and CMw.HasUserWaypoint()), "our « Aller là » waypoint removed when SPF guides")
+  end
   check(not TreeAIHorizonFrame:IsShown(), "horizon hidden too")
   active = false
   C.travelT = nil

@@ -162,6 +162,7 @@ return function(M, ctx)
   local dm = S.Data().fight.dm
   dm.s, dm.n = 0, 0
   M.player.health = UnitHealthMax("player")
+  M.FireEvent("UNIT_HEALTH", "player")
   for _ = 1, 3 do
     M.EnterCombat()
     M.Advance(1, 0.5)
@@ -171,6 +172,7 @@ return function(M, ctx)
     M.FireEvent("CHAT_MSG_COMBAT_XP_GAIN", "Ours-test meurt, vous gagnez 80 points d'expérience.")
     M.LeaveCombat()
     M.player.health = UnitHealthMax("player")
+    M.FireEvent("UNIT_HEALTH", "player")   -- (FIDELITY) the game says when the player's health changes
     M.Advance(5, 1)
   end
   local kt, kn = S:KillTime(2)

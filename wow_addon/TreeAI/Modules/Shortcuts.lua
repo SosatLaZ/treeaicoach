@@ -289,6 +289,11 @@ end
 
 function S:OnEnable()
   T:After(0.5, S.Layout)
+  -- (ONBOARD) la visite guidée montre LA barre « Raccourcis » quand les barres y sont amarrées
+  local Tr = T.Tour
+  if type(Tr) == "table" and type(Tr.Target) == "function" then
+    Tr.Target("quick", function() return (dock and meth(dock, "IsVisible")) and dock or nil end)
+  end
 end
 function S:OnDisable()
   T:RunOutOfCombat("Shortcuts:layout", function()

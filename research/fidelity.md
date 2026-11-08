@@ -82,6 +82,23 @@ Perf on Forever (session_sim hunter « tout », 60 min): `Macros.lua:694-705` `m
 definition: Macros 35 → 54 kinstr/min, peak 139 → 237 (a name → index map per refresh brings it back to 37). Frame
 p99 86-89 kinstr against the budget 86 (86 at base, modern 85): at the edge, not judged on forever (§ 5).
 
+### Status after the 4.0 integration (INTEG2, branch m400): no known finding left, no xfail
+
+| id | 4.0 status |
+|---|---|
+| F1 | gone: Missions.lua merged into `Modules/Group.lua` (GROUPMERGE) — names / states through `pub()` + `clean()`, no target read in combat |
+| F2 | gone: `Modules/Edge.lua` removed (CLEAN) |
+| F3 | gone: Edge2 « boire ou enchaîner » removed (CLEAN: duplicate of the Combat / Inventory owners) |
+| F4 | fixed: `Stats.lua` follows the player's health OUT of combat (`UNIT_HEALTH` / `UNIT_MAXHEALTH`, `M.SnapHealth`); at the pull it starts from that reading, at the end (readable again) vie perdue = start − end; shown as « vie perdue N % / combat » |
+| F5 | fixed: `PvPMark.lua` reads `C_PvP.GetZonePVPInfo()` (Era global as fallback) |
+| F6 | fixed: `PvPMark.lua` passes `UnitIsPVP` through `_ns()` before comparing |
+| F7 | gone: Combat (Fight) pet-aggro alert removed (CLEAN: threat is secret) |
+| F8 | fixed by CLEAN: the killer is read on the target before / at the pull (`Fight.ReadFoe`), never at PLAYER_DEAD; « vie au départ » kept from the last out-of-combat reading (`clean_scenario` checks both on forever) |
+| F9 | fixed: `Macros.MacroIndex` = one `GetMacroInfo` scan into a name → index map, kept until `UPDATE_MACROS` or our own create / edit / delete (+ a name check on each hit); `Binds.lua` and `PvP.lua` use it (PvP created a new macro each time on Forever) |
+| F10 | fixed: `Stats.lua` guards `UnitIsAFK` (secret in chat lockdown); Group / Detect / QuickTravel already went through `pub()` |
+| F11 | fixed: `Compass.Pin` remembers OUR Blizzard waypoint; when the player hands guidance to Suivi Forever and SPF guides, `Compass.DropOwnWaypoint` clears it (only ours: same map, same point) → one arrow (`nav_scenario` checks it) |
+| perf | `Macros.lua` lookups no longer scan every slot per definition; session_sim on forever (hunter, 60 min): essentiel 1 867 kinstr/min, frame p99 40 (budget 48); tout 2 501, p99 50 (budget 86) — budgets now JUDGED on forever (`test_session_sim.py` HUNTER × forever × essentiel / tout, `test_forever_fidelity.py` WARRIOR × forever × tout) |
+
 ## 4. Scenarios that relied on mock-only behaviour (fixed, assertions unchanged)
 
 * `dungeon`, `pvp`, `questpro`: replaced `issecretvalue` by a fake and then **removed it** (`rawset(_G, "issecretvalue",
@@ -141,7 +158,7 @@ lisibles »).
 
 Reference: `Gethe/wow-ui-source` branch `forever` commit `9dc84f0` « 1.60.1 (70862) » — 5144 documented functions, 1816 events; FrameXML for game type `camelot` ([Family] = Mainline): 1638 Lua + 904 XML files.
 
-Counts (APIs the addon references): MISSING 98, c-global 92, documented 214, framexml 37, shim-only 8. Mismatches mock ↔ real: **6** (bold rows below).
+Counts (APIs the addon references): MISSING 93, c-global 89, documented 205, framexml 36, shim-only 5. Mismatches mock ↔ real: **5** (bold rows below).
 
 Legend — real: `documented` (Blizzard API docs), `framexml` (defined by Blizzard's camelot UI code), `c-global` (undocumented C function Blizzard's camelot UI calls), `shim-only` (only in Blizzard_Deprecated*, CVar loadDeprecationFallbacks: do not rely on it), `MISSING` (nowhere in the Forever client). mock = what tests/wow/wowmock.lua does in the « forever » flavour.
 
@@ -150,450 +167,429 @@ Legend — real: `documented` (Blizzard API docs), `framexml` (defined by Blizza
 | **`C_AreaPoiInfo.GetAreaPOIForMap`** | documented (uiMapID) → areaPoiIDs:table<number> |  | absent | **real API not mocked**: the addon path is never exercised | PvP.lua:190 |
 | **`C_AreaPoiInfo.GetAreaPOIInfo`** | documented (uiMapID?, areaPoiID) → poiInfo:AreaPOIInfo |  | absent | **real API not mocked**: the addon path is never exercised | PvP.lua:193 |
 | **`C_AreaPoiInfo.GetAreaPOISecondsLeft`** | documented (areaPoiID) → secondsLeft:number |  | absent | **real API not mocked**: the addon path is never exercised | PvP.lua:201 |
-| **`C_QuestLog.GetQuestsOnMap`** | documented (uiMapID) → quests:table<QuestPOIMapInfo> |  | absent | **real API not mocked**: the addon path is never exercised | Missions.lua:755,756 |
-| **`C_TaxiMap.GetAllTaxiNodes`** | documented (uiMapID) → taxiNodes:table<TaxiNodeInfo> |  | absent | **real API not mocked**: the addon path is never exercised | Errands.lua:196 |
-| **`C_TaxiMap.GetTaxiNodesForMap`** | documented (uiMapID) → mapTaxiNodes:table<MapTaxiNodeInfo> |  | absent | **real API not mocked**: the addon path is never exercised | Radar.lua:451,461; SafePath.lua:535 |
-| `C_AddOns.GetAddOnCPUUsage` | MISSING |  | absent |  | Comfort.lua:276; SelfTest.lua:309 |
-| `C_AddOns.GetAddOnMemoryUsage` | MISSING |  | absent |  | Core.lua:1445; Comfort.lua:283; SelfTest.lua:306 |
-| `C_AddOns.UpdateAddOnMemoryUsage` | MISSING |  | absent |  | Core.lua:1444; Comfort.lua:282; SelfTest.lua:305 |
-| `C_QuestLog.GetQuestInfo` | MISSING |  | absent |  | Group.lua:354,355 |
+| **`C_TaxiMap.GetAllTaxiNodes`** | documented (uiMapID) → taxiNodes:table<TaxiNodeInfo> |  | absent | **real API not mocked**: the addon path is never exercised | Errands.lua:256 |
+| **`C_TaxiMap.GetTaxiNodesForMap`** | documented (uiMapID) → mapTaxiNodes:table<MapTaxiNodeInfo> |  | absent | **real API not mocked**: the addon path is never exercised | Radar.lua:430,440 |
+| `C_AddOns.GetAddOnCPUUsage` | MISSING |  | absent |  | SelfTest.lua:307 |
+| `C_AddOns.GetAddOnMemoryUsage` | MISSING |  | absent |  | Core.lua:1464; SelfTest.lua:304 |
+| `C_AddOns.UpdateAddOnMemoryUsage` | MISSING |  | absent |  | Core.lua:1463; SelfTest.lua:303 |
 | `C_Spell.IsSpellKnown` | MISSING |  | absent |  | Core.lua:133,133 |
-| `C_TradeSkillUI.GetAllRecipeIDs` | MISSING |  | absent |  | Economy.lua:496,497; Prof.lua:271,278 |
-| `C_TradeSkillUI.GetTradeSkillLine` | MISSING |  | absent |  | Prof.lua:275 |
-| `C_Trainer.GetNumTrainerServices` | MISSING |  | absent |  | Edge2.lua:738 |
+| `C_TradeSkillUI.GetAllRecipeIDs` | MISSING |  | absent |  | Prof.lua:278,285 |
+| `C_TradeSkillUI.GetTradeSkillLine` | MISSING |  | absent |  | Prof.lua:282 |
 | `CalculateAuctionDeposit` | MISSING |  | absent |  | Auction.lua:2086 |
 | `CanSendAuctionQuery` | MISSING |  | absent |  | Auction.lua:1299,1384,2163,2164 |
-| `Cancel` | MISSING |  | absent |  | Route.lua:568,575,876 |
+| `Cancel` | MISSING |  | absent |  | Route.lua:568,575,911 |
 | `CancelAuction` | MISSING |  | absent |  | Auction.lua:1562 |
-| `CastingInfo` | MISSING |  | absent |  | Core.lua:445,446; Hunter.lua:763 |
+| `CastingInfo` | MISSING |  | absent |  | Core.lua:448,449; Hunter.lua:836 |
 | `ClickAuctionSellItemButton` | MISSING |  | absent |  | Auction.lua:1675 |
-| `GetActiveTalentGroup` | MISSING |  | absent |  | Core.lua:2649,2650; Macros.lua:604; Talents.lua:163 |
-| `GetAddOnInfo` | MISSING |  | absent |  | Quests.lua:96 |
+| `GetActiveTalentGroup` | MISSING |  | absent |  | Core.lua:2668,2669; Macros.lua:604; Talents.lua:163 |
+| `GetAddOnInfo` | MISSING |  | absent |  | Quests.lua:97 |
 | `GetAddOnMetadata` | MISSING |  | absent |  | Core.lua:296 |
 | `GetAuctionItemInfo` | MISSING |  | absent |  | Auction.lua:601,776,1502,1557 |
 | `GetAuctionSellItemInfo` | MISSING |  | absent |  | Auction.lua:1676,2079 |
 | `GetBattlefieldFlagPosition` | MISSING |  | absent |  | PvP.lua:389 |
-| `GetBattlefieldPortExpiration` | MISSING |  | absent |  | PvP.lua:707 |
-| `GetContainerItemID` | MISSING |  | absent |  | Hunter.lua:236; Macros.lua:67 |
-| `GetContainerItemInfo` | MISSING |  | absent |  | Core.lua:191; Inventory.lua:143; Macros.lua:68 |
-| `GetContainerItemLink` | MISSING |  | absent |  | Hunter.lua:238 |
-| `GetContainerItemQuestInfo` | MISSING |  | absent |  | Quests.lua:922 |
-| `GetContainerNumFreeSlots` | MISSING |  | absent |  | Core.lua:176; Inventory.lua:119 |
-| `GetContainerNumSlots` | MISSING |  | absent |  | Core.lua:171; Hunter.lua:231; Inventory.lua:111; Macros.lua:66 |
-| `GetDetailedItemLevelInfo` | MISSING |  | absent |  | Team.lua:336 |
-| `GetGuildRosterInfo` | MISSING |  | absent |  | Edge.lua:448 |
-| `GetItemCooldown` | MISSING |  | absent |  | Economy.lua:182; Errands.lua:176; Export.lua:517; Predict.lua:173; Quests.lua:799; Quick.lua:604 (+2 files) |
-| `GetItemCount` | MISSING |  | absent |  | Core.lua:161; Auction.lua:984; Classes.lua:208; Finder.lua:429; Hunter.lua:226; Prof.lua:304 (+3 files) |
-| `GetItemIcon` | MISSING |  | absent |  | Macros.lua:1269 |
-| `GetItemInfo` | MISSING |  | absent |  | Core.lua:148; Abandon.lua:472; Economy.lua:59; Gear.lua:44; Hunter.lua:392; Inventory.lua:127 (+5 files) |
-| `GetItemInfoInstant` | MISSING |  | absent |  | Classes.lua:154; Hunter.lua:210 |
+| `GetBattlefieldPortExpiration` | MISSING |  | absent |  | PvP.lua:709 |
+| `GetContainerItemID` | MISSING |  | absent |  | Hunter.lua:266; Macros.lua:67 |
+| `GetContainerItemInfo` | MISSING |  | absent |  | Core.lua:191; Inventory.lua:148; Macros.lua:68 |
+| `GetContainerItemLink` | MISSING |  | absent |  | Hunter.lua:268 |
+| `GetContainerItemQuestInfo` | MISSING |  | absent |  | Quests.lua:990 |
+| `GetContainerNumFreeSlots` | MISSING |  | absent |  | Core.lua:176; Inventory.lua:124 |
+| `GetContainerNumSlots` | MISSING |  | absent |  | Core.lua:171; Hunter.lua:261; Inventory.lua:116; Macros.lua:66 |
+| `GetDetailedItemLevelInfo` | MISSING |  | absent |  | Group.lua:1883 |
+| `GetItemCooldown` | MISSING |  | absent |  | Errands.lua:236; Export.lua:550; Quests.lua:867; Quick.lua:608; Route.lua:319; Speed.lua:146 |
+| `GetItemCount` | MISSING |  | absent |  | Core.lua:161; Auction.lua:984; Classes.lua:208; Finder.lua:430; Hunter.lua:256; Prof.lua:311 (+3 files) |
+| `GetItemIcon` | MISSING |  | absent |  | Macros.lua:1283 |
+| `GetItemInfo` | MISSING |  | absent |  | Core.lua:148; Abandon.lua:477; Gear.lua:45; Hunter.lua:435; Inventory.lua:132; Macros.lua:49 (+3 files) |
+| `GetItemInfoInstant` | MISSING |  | absent |  | Classes.lua:154; Hunter.lua:240 |
 | `GetItemSpell` | MISSING |  | absent |  | Macros.lua:54 |
-| `GetLootMethod` | MISSING |  | absent |  | QuickTravel.lua:965 |
-| `GetLootSourceInfo` | MISSING |  | absent |  | Export.lua:267; Predict.lua:272; Stats.lua:729 |
-| `GetMacroIndexByName` | MISSING |  | absent |  | Hunter.lua:417; Macros.lua:696,697,994; PvP.lua:609 |
-| `GetMerchantItemInfo` | MISSING |  | absent |  | Economy.lua:334; Edge.lua:809 |
-| `GetMinimapShape` | MISSING |  | absent |  | Hub.lua:71; MinimapPins.lua:155; PathDraw.lua:239 |
-| `GetNumAddOns` | MISSING |  | absent |  | Quests.lua:94 |
+| `GetLootMethod` | MISSING |  | absent |  | QuickTravel.lua:962 |
+| `GetLootSourceInfo` | MISSING |  | absent |  | Export.lua:267; Stats.lua:741 |
+| `GetMacroIndexByName` | MISSING |  | absent |  | Macros.lua:708,709,1008; PvP.lua:611 |
+| `GetMinimapShape` | MISSING |  | absent |  | Hub.lua:71; MinimapPins.lua:154; PathDraw.lua:239 |
+| `GetNumAddOns` | MISSING |  | absent |  | Quests.lua:95 |
 | `GetNumAuctionItems` | MISSING |  | absent |  | Auction.lua:1094,1431,1501 |
-| `GetNumPartyMembers` | MISSING |  | absent |  | Core.lua:1295,2641,2642,2859; Group.lua:108; Hunter.lua:603; Macros.lua:634; Quests.lua:380; Quick.lua:416 (+2 files) |
-| `GetNumQuestLogEntries` | MISSING |  | absent |  | Core.lua:428,429; Export.lua:471; Leveling.lua:162; Pro.lua:236; Quests.lua:265,266; Quick.lua:171 (+1 files) |
-| `GetNumRaidMembers` | MISSING |  | absent |  | Core.lua:1296,2858 |
-| `GetNumSkillLines` | MISSING |  | absent |  | Core.lua:361,362; Finder.lua:468; Gear.lua:311; Prof.lua:251 |
-| `GetNumSpellTabs` | MISSING |  | absent |  | Core.lua:400,401 |
-| `GetNumTalentGroups` | MISSING |  | absent |  | Edge.lua:1041; Talents.lua:184 |
+| `GetNumPartyMembers` | MISSING |  | absent |  | Core.lua:1310,2660,2661,2878; Macros.lua:634; Quests.lua:390; Quick.lua:416; Region.lua:48; Tracker.lua:310 |
+| `GetNumQuestLogEntries` | MISSING |  | absent |  | Core.lua:431,432; Export.lua:501; Leveling.lua:166; Pro.lua:238; Quests.lua:267,268; Quick.lua:171 |
+| `GetNumRaidMembers` | MISSING |  | absent |  | Core.lua:1311,2877 |
+| `GetNumSkillLines` | MISSING |  | absent |  | Core.lua:364,365; Finder.lua:469; Gear.lua:484; Prof.lua:258 |
+| `GetNumSpellTabs` | MISSING |  | absent |  | Core.lua:403,404 |
+| `GetNumTalentGroups` | MISSING |  | absent |  | Talents.lua:184 |
 | `GetNumTalentTabs` | MISSING |  | absent |  | Talents.lua:162 |
 | `GetNumTalents` | MISSING |  | absent |  | Talents.lua:165 |
-| `GetNumTradeSkills` | MISSING |  | absent |  | Economy.lua:474; Prof.lua:288 |
-| `GetPetFoodTypes` | MISSING |  | absent |  | Hunter.lua:97; Macros.lua:274 |
-| `GetPetHappiness` | MISSING |  | absent |  | Hunter.lua:94 |
-| `GetPetLoyalty` | MISSING |  | absent |  | Hunter.lua:95 |
-| `GetPetTrainingPoints` | MISSING |  | absent |  | Finder.lua:631; Hunter.lua:96 |
-| `GetQuestGreenRange` | MISSING |  | absent |  | Quests.lua:110 |
-| `GetQuestLogTitle` | MISSING |  | absent |  | Core.lua:428,430; Export.lua:473; Leveling.lua:164; Pro.lua:257; Quests.lua:265,269; Stats.lua:366 (+1 files) |
-| `GetQuestTagInfo` | MISSING |  | absent |  | Quests.lua:175,176 |
-| `GetSkillLineInfo` | MISSING |  | absent |  | Core.lua:361,363; Finder.lua:474; Gear.lua:311; Prof.lua:253 |
-| `GetSpecialization` | MISSING |  | absent |  | Core.lua:2643,2644 |
-| `GetSpecializationInfo` | MISSING |  | absent |  | Core.lua:2645,2646 |
-| `GetSpellBookItemName` | MISSING |  | absent |  | Core.lua:407; Finder.lua:185 |
-| `GetSpellCooldown` | MISSING |  | absent |  | Core.lua:142; Hunter.lua:659 |
-| `GetSpellInfo` | MISSING |  | absent |  | Core.lua:114,123; Classes.lua:82,100; Hunter.lua:122,145; Macros.lua:36,208,209; PvPMark.lua:130 |
-| `GetSpellName` | MISSING |  | absent |  | Finder.lua:186 |
-| `GetSpellTabInfo` | MISSING |  | absent |  | Core.lua:400,402 |
-| `GetSpellTexture` | MISSING |  | absent |  | Macros.lua:1262 |
+| `GetNumTradeSkills` | MISSING |  | absent |  | Prof.lua:295 |
+| `GetPetFoodTypes` | MISSING |  | absent |  | Hunter.lua:108; Macros.lua:274 |
+| `GetPetHappiness` | MISSING |  | absent |  | Hunter.lua:105 |
+| `GetPetLoyalty` | MISSING |  | absent |  | Hunter.lua:106 |
+| `GetPetTrainingPoints` | MISSING |  | absent |  | Finder.lua:611; Hunter.lua:107 |
+| `GetQuestGreenRange` | MISSING |  | absent |  | Quests.lua:111 |
+| `GetQuestIndexForTimer` | MISSING |  | absent |  | Quests.lua:713,716 |
+| `GetQuestLogTitle` | MISSING |  | absent |  | Core.lua:431,433; Export.lua:503; Leveling.lua:168; Pro.lua:260; Quests.lua:267,271; Stats.lua:381 |
+| `GetQuestTagInfo` | MISSING |  | absent |  | Export.lua:508,659; Quests.lua:176,177; ZonePlan.lua:516 |
+| `GetQuestTimers` | MISSING |  | absent |  | Quests.lua:713,714 |
+| `GetSkillLineInfo` | MISSING |  | absent |  | Core.lua:364,366; Finder.lua:475; Gear.lua:484; Prof.lua:260 |
+| `GetSpecialization` | MISSING |  | absent |  | Core.lua:2662,2663 |
+| `GetSpecializationInfo` | MISSING |  | absent |  | Core.lua:2664,2665 |
+| `GetSpellBookItemName` | MISSING |  | absent |  | Core.lua:410; Finder.lua:186 |
+| `GetSpellCooldown` | MISSING |  | absent |  | Core.lua:142 |
+| `GetSpellInfo` | MISSING |  | absent |  | Core.lua:114,123; Classes.lua:82,100; Hunter.lua:133,166; Macros.lua:36,208,209; PvPMark.lua:135 |
+| `GetSpellName` | MISSING |  | absent |  | Finder.lua:187 |
+| `GetSpellTabInfo` | MISSING |  | absent |  | Core.lua:403,405 |
+| `GetSpellTexture` | MISSING |  | absent |  | Macros.lua:1276 |
 | `GetTalentInfo` | MISSING |  | absent |  | Talents.lua:145 |
 | `GetTalentTabInfo` | MISSING |  | absent |  | Macros.lua:607; Talents.lua:155 |
-| `GetTrackingTexture` | MISSING |  | absent |  | Edge.lua:971 |
-| `GetTradeSkillInfo` | MISSING |  | absent |  | Economy.lua:477; Prof.lua:289 |
-| `GetTradeSkillLine` | MISSING |  | absent |  | Economy.lua:536; Prof.lua:283 |
-| `GetTradeSkillNumReagents` | MISSING |  | absent |  | Economy.lua:481 |
-| `GetTradeSkillReagentInfo` | MISSING |  | absent |  | Economy.lua:482 |
-| `GetTradeSkillReagentItemLink` | MISSING |  | absent |  | Economy.lua:483 |
-| `GetTrainerServiceLevelReq` | MISSING |  | absent |  | Errands.lua:286 |
-| `GetUnspentTalentPoints` | MISSING |  | absent |  | Leveling.lua:249; Pro.lua:526; Talents.lua:180 |
-| `GetZonePVPInfo` | MISSING |  | absent |  | PvPMark.lua:95 |
-| `HasPetSpells` | MISSING |  | absent |  | Core.lua:399; Finder.lua:181 |
-| `InterfaceOptionsFrame_OpenToCategory` | MISSING |  | absent |  | Options.lua:765,767,768 |
-| `InterfaceOptions_AddCategory` | MISSING |  | absent |  | Options.lua:739,739 |
-| `IsAddOnLoaded` | MISSING |  | absent |  | MinimapPins.lua:84; Quests.lua:89 |
-| `IsPassiveSpell` | MISSING |  | absent |  | Core.lua:408 |
-| `IsQuestFlaggedCompleted` | MISSING |  | absent |  | Edge.lua:410; Export.lua:489; Gear.lua:286; Planner.lua:417; Quests.lua:432,545 |
-| `IsQuestWatched` | MISSING |  | absent |  | Quests.lua:197 |
-| `IsSpellInRange` | MISSING |  | absent |  | Hunter.lua:620; PvPMark.lua:133 |
-| `IsUnitOnQuest` | MISSING |  | absent |  | Quick.lua:434; Team.lua:264,265 |
+| `GetTrackingTexture` | MISSING |  | absent |  | Edge2.lua:422 |
+| `GetTradeSkillInfo` | MISSING |  | absent |  | Prof.lua:296 |
+| `GetTradeSkillLine` | MISSING |  | absent |  | Prof.lua:290 |
+| `GetTrainerServiceLevelReq` | MISSING |  | absent |  | Errands.lua:346 |
+| `GetUnspentTalentPoints` | MISSING |  | absent |  | Leveling.lua:290; Pro.lua:526; Talents.lua:180 |
+| `GetZonePVPInfo` | MISSING |  | absent |  | PvPMark.lua:98 |
+| `HasPetSpells` | MISSING |  | absent |  | Core.lua:402; Finder.lua:182 |
+| `InterfaceOptionsFrame_OpenToCategory` | MISSING |  | absent |  | Options.lua:790,792,793 |
+| `InterfaceOptions_AddCategory` | MISSING |  | absent |  | Options.lua:748,748 |
+| `IsAddOnLoaded` | MISSING |  | absent |  | MinimapPins.lua:83; Quests.lua:90 |
+| `IsPassiveSpell` | MISSING |  | absent |  | Core.lua:411 |
+| `IsQuestFlaggedCompleted` | MISSING |  | absent |  | Edge2.lua:140; Export.lua:522; Gear.lua:459; Planner.lua:486; Quests.lua:442,566 |
+| `IsQuestWatched` | MISSING |  | absent |  | Quests.lua:200 |
+| `IsSpellInRange` | MISSING |  | absent |  | PvPMark.lua:138 |
+| `IsUnitOnQuest` | MISSING |  | absent |  | Quick.lua:434 |
 | `PickupContainerItem` | MISSING |  | absent |  | Auction.lua:1673 |
 | `PlaceAuctionBid` | MISSING |  | absent |  | Auction.lua:1106 |
 | `PostAuction` | MISSING |  | absent |  | Auction.lua:1679 |
 | `QueryAuctionItems` | MISSING |  | absent |  | Auction.lua:601,1306,1407 |
-| `RegisterAddonMessagePrefix` | MISSING |  | absent |  | Core.lua:3166,3167 |
-| `SendAddonMessage` | MISSING |  | absent |  | Core.lua:2756,2757 |
-| `SetLootMethod` | MISSING |  | absent |  | QuickTravel.lua:969,977 |
-| `UnitAura` | MISSING |  | absent |  | Core.lua:270,271; Classes.lua:114; Hunter.lua:159; Team.lua:199,200 |
-| `UnitBuff` | MISSING |  | absent |  | PvP.lua:788 |
-| `UnitCharacterPoints` | MISSING |  | absent |  | Leveling.lua:248; Pro.lua:525; Talents.lua:179 |
-| `UseContainerItem` | MISSING |  | absent |  | Core.lua:250; Economy.lua:409; Inventory.lua:157; Quick.lua:332 |
-| `ChatFrame_OpenChat` | shim-only |  | absent |  | Edge.lua:466 |
-| `CombatLogGetCurrentEventInfo` | shim-only |  | absent |  | Hunter.lua:667; Predict.lua:248 |
+| `RegisterAddonMessagePrefix` | MISSING |  | absent |  | Core.lua:3185,3186 |
+| `SendAddonMessage` | MISSING |  | absent |  | Core.lua:2775,2776 |
+| `SetLootMethod` | MISSING |  | absent |  | QuickTravel.lua:966,974 |
+| `UnitAura` | MISSING |  | absent |  | Core.lua:270,271; Classes.lua:114; Hunter.lua:180 |
+| `UnitBuff` | MISSING |  | absent |  | PvP.lua:790 |
+| `UnitCharacterPoints` | MISSING |  | absent |  | Leveling.lua:289; Pro.lua:525; Talents.lua:179 |
+| `UseContainerItem` | MISSING |  | absent |  | Core.lua:250; Errands.lua:196; Inventory.lua:162; Quick.lua:332 |
 | `GetBattlefieldScore` | shim-only |  | absent |  | PvP.lua:413 |
 | `GetWeaponEnchantInfo` | shim-only |  | absent |  | Classes.lua:147 |
-| `HasAction` | shim-only |  | absent |  | Core.lua:454 |
+| `HasAction` | shim-only |  | absent |  | Core.lua:457 |
 | `IsPlayerSpell` | shim-only |  | absent |  | Core.lua:131,131; Macros.lua:42 |
 | `IsSpellKnown` | shim-only |  | absent |  | Core.lua:132,132; Macros.lua:42 |
-| `SendChatMessage` | shim-only |  | absent |  | Missions.lua:1054 |
-| `Ambiguate` | documented (fullName, context) → result:string |  | mocked |  | Group.lua:124 |
-| `C_ActionBar.HasAction` | documented (actionID) → hasAction:bool |  | mocked |  | Core.lua:453,453 |
-| `C_AddOns.GetAddOnInfo` | documented (name) → name:cstring, title:cstring, notes:cstring, loadable:bool, reason:cstring, security:cstring |  | mocked |  | Quests.lua:96 |
+| `C_ActionBar.HasAction` | documented (actionID) → hasAction:bool |  | mocked |  | Core.lua:456,456 |
+| `C_AddOns.GetAddOnInfo` | documented (name) → name:cstring, title:cstring, notes:cstring, loadable:bool, reason:cstring, security:cstring |  | mocked |  | Quests.lua:97 |
 | `C_AddOns.GetAddOnMetadata` | documented (name, variable) → value:cstring |  | mocked |  | Core.lua:296; Bugs.lua:115 |
-| `C_AddOns.GetNumAddOns` | documented () → numAddOns:number |  | mocked |  | Quests.lua:94 |
-| `C_AddOns.IsAddOnLoaded` | documented (name) → loadedOrLoading:bool, loaded:bool |  | mocked |  | Binds.lua:249,249; MinimapPins.lua:83,83; Quests.lua:85,86 |
+| `C_AddOns.GetNumAddOns` | documented () → numAddOns:number |  | mocked |  | Quests.lua:95 |
+| `C_AddOns.IsAddOnLoaded` | documented (name) → loadedOrLoading:bool, loaded:bool |  | mocked |  | Binds.lua:254,254; MinimapPins.lua:82,82; Quests.lua:86,87 |
 | `C_AuctionHouse.GetReplicateItemInfo` | documented (index) → name:string, texture:fileID, count:number, qualityID:number, usable:bool, level:number, levelType:string, minBid:BigUInteger, minIncrement:BigUInteger, buyoutPrice:BigUInteger, bidAmount:BigUInteger, highBidder:string, bidderFullName:string, owner:string, ownerFullName:string, saleStatus:number, itemID:number, hasAllInfo:bool |  | mocked |  | Auction.lua:597 |
 | `C_AuctionHouse.ReplicateItems` | documented () → - |  | mocked |  | Auction.lua:597 |
-| `C_ChatInfo.RegisterAddonMessagePrefix` | documented (prefix) → result:RegisterAddonMessagePrefixResult |  | mocked |  | Core.lua:3164,3164,3165,3165; Group.lua:508,509 |
-| `C_ChatInfo.SendAddonMessage` | documented (prefix, message, chatType?, target?) → result:SendAddonMessageResult |  | mocked |  | Core.lua:2754,2754,2755,2755; Group.lua:156,157 |
-| `C_ChatInfo.SendChatMessage` | documented (message, chatType?, languageID?, target?) → - | hardware/restricted | mocked | protected/hardware: gated by forever_ref.lua | Missions.lua:1054,1054 |
-| `C_ClassTalents.HasUnspentTalentPoints` | documented () → hasUnspentPoints:bool, numClassPoints:number, numSpecPoints:number |  | mocked |  | Leveling.lua:244,245 |
-| `C_CombatLog.IsCombatLogRestricted` | documented () → restricted:bool |  | mocked |  | Core.lua:694,695 |
-| `C_Container.ContainerIDToInventoryID` | documented (containerID) → inventoryID:luaIndex |  | mocked |  | Hunter.lua:533 |
-| `C_Container.GetContainerItemID` | documented (containerIndex, slotIndex) → containerID:number |  | mocked |  | Hunter.lua:235,235,249; Macros.lua:67 |
-| `C_Container.GetContainerItemInfo` | documented (containerIndex, slotIndex) → containerInfo:ContainerItemInfo |  | mocked |  | Core.lua:182,183; Inventory.lua:138,139; Macros.lua:68 |
-| `C_Container.GetContainerItemQuestInfo` | documented (containerIndex, slotIndex) → questInfo:ItemQuestInfo |  | mocked |  | Quests.lua:917,918 |
-| `C_Container.GetContainerNumFreeSlots` | documented (bagIndex) → numFreeSlots:number, bagFamily:number |  | mocked |  | Core.lua:176; Inventory.lua:118,118 |
-| `C_Container.GetContainerNumSlots` | documented (containerIndex) → numSlots:number |  | mocked |  | Core.lua:171; Hunter.lua:230,230; Inventory.lua:110,110; Macros.lua:66 |
-| `C_Container.GetItemCooldown` | documented (itemID) → startTime:number, duration:number, enable:number |  | mocked |  | Boost.lua:876,876; Economy.lua:181,181; Errands.lua:174; Predict.lua:172,172; Quests.lua:798,798; Squad.lua:809,809 |
+| `C_ChatInfo.RegisterAddonMessagePrefix` | documented (prefix) → result:RegisterAddonMessagePrefixResult |  | mocked |  | Core.lua:3183,3183,3184,3184 |
+| `C_ChatInfo.SendAddonMessage` | documented (prefix, message, chatType?, target?) → result:SendAddonMessageResult |  | mocked |  | Core.lua:2773,2773,2774,2774 |
+| `C_ClassTalents.HasUnspentTalentPoints` | documented () → hasUnspentPoints:bool, numClassPoints:number, numSpecPoints:number |  | mocked |  | Leveling.lua:285,286 |
+| `C_CombatLog.IsCombatLogRestricted` | documented () → restricted:bool |  | mocked |  | Core.lua:697,698 |
+| `C_Container.ContainerIDToInventoryID` | documented (containerID) → inventoryID:luaIndex |  | mocked |  | Hunter.lua:576 |
+| `C_Container.GetContainerItemID` | documented (containerIndex, slotIndex) → containerID:number |  | mocked |  | Hunter.lua:265,265,279; Macros.lua:67 |
+| `C_Container.GetContainerItemInfo` | documented (containerIndex, slotIndex) → containerInfo:ContainerItemInfo |  | mocked |  | Core.lua:182,183; Inventory.lua:143,144; Macros.lua:68 |
+| `C_Container.GetContainerItemQuestInfo` | documented (containerIndex, slotIndex) → questInfo:ItemQuestInfo |  | mocked |  | Quests.lua:985,986 |
+| `C_Container.GetContainerNumFreeSlots` | documented (bagIndex) → numFreeSlots:number, bagFamily:number |  | mocked |  | Core.lua:176; Inventory.lua:123,123 |
+| `C_Container.GetContainerNumSlots` | documented (containerIndex) → numSlots:number |  | mocked |  | Core.lua:171; Hunter.lua:260,260; Inventory.lua:115,115; Macros.lua:66 |
+| `C_Container.GetItemCooldown` | documented (itemID) → startTime:number, duration:number, enable:number |  | mocked |  | Errands.lua:234; Group.lua:1123,1123; Quests.lua:866,866 |
 | `C_Container.PickupContainerItem` | documented (containerIndex, slotIndex) → - |  | mocked |  | Auction.lua:1673 |
-| `C_Container.UseContainerItem` | documented (containerIndex, slotIndex, unitToken?, bankType?, reagentBankOpen) → - |  | mocked |  | Core.lua:250; Economy.lua:408,408; Inventory.lua:156,156 |
+| `C_Container.UseContainerItem` | documented (containerIndex, slotIndex, unitToken?, bankType?, reagentBankOpen) → - |  | mocked |  | Core.lua:250; Errands.lua:196; Inventory.lua:161,161 |
 | `C_GossipInfo.GetActiveQuests` | documented () → info:table<GossipQuestUIInfo> |  | mocked |  | Quick.lua:242,242 |
 | `C_GossipInfo.GetAvailableQuests` | documented () → info:table<GossipQuestUIInfo> |  | mocked |  | Quick.lua:242,242 |
 | `C_GossipInfo.GetOptions` | documented () → info:table<GossipOptionUIInfo> |  | mocked |  | Quick.lua:266,266 |
 | `C_GossipInfo.SelectActiveQuest` | documented (optionID) → - |  | mocked |  | Quick.lua:251,252 |
 | `C_GossipInfo.SelectAvailableQuest` | documented (optionID) → - |  | mocked |  | Quick.lua:257,259 |
-| `C_GossipInfo.SelectOption` | documented (optionID, text?, confirmed?) → - |  | mocked |  | Quick.lua:276,276; QuickTravel.lua:533,533 |
-| `C_GuildInfo.GuildRoster` | documented () → - |  | mocked |  | Edge.lua:441,441 |
-| `C_Item.GetDetailedItemLevelInfo` | documented (itemInfo) → actualItemLevel:number, previewLevel:bool, sparseItemLevel:number |  | mocked |  | Stats.lua:126,126; Team.lua:336 |
-| `C_Item.GetItemCooldown` | documented (itemInfo) → startTimeSeconds:number, durationSeconds:number, enableCooldownTimer:bool |  | mocked |  | Errands.lua:175 |
-| `C_Item.GetItemCount` | documented (itemInfo, includeBank, includeUses, includeReagentBank, includeAccountBank) → count:number |  | mocked |  | Core.lua:161; Classes.lua:207,207; Hunter.lua:222,223 |
-| `C_Item.GetItemIconByID` | documented (itemInfo) → icon:fileID |  | mocked |  | Macros.lua:1269,1269 |
-| `C_Item.GetItemInfo` | documented (itemInfo) → itemName:cstring, itemLink:cstring, itemQuality:ItemQuality, itemLevel:number, itemMinLevel:number, itemType:cstring, itemSubType:cstring, itemStackCount:number, itemEquipLoc:cstring, itemTexture:fileID, sellPrice:number, classID:number, subclassID:number, bindType:number, expansionID:number, setID:number, isCraftingReagent:bool, itemDescription:cstring |  | mocked |  | Core.lua:148; Dungeon.lua:377,377; Inventory.lua:126,126; Macros.lua:49 |
-| `C_Item.GetItemInfoInstant` | documented (itemInfo) → itemID:number, itemType:cstring, itemSubType:cstring, itemEquipLoc:cstring, icon:fileID, classID:number, subClassID:number |  | mocked |  | Highlight.lua:113; Hunter.lua:205,206 |
-| `C_Item.GetItemLinkByGUID` | documented (itemGUID) → itemLink:string |  | mocked |  | Boost.lua:552,553 |
-| `C_Item.GetItemNameByID` | documented (itemInfo) → itemName:string |  | mocked |  | Core.lua:153,154; Hunter.lua:391,391 |
+| `C_GossipInfo.SelectOption` | documented (optionID, text?, confirmed?) → - |  | mocked |  | Quick.lua:276,276; QuickTravel.lua:530,530 |
+| `C_Item.GetDetailedItemLevelInfo` | documented (itemInfo) → actualItemLevel:number, previewLevel:bool, sparseItemLevel:number |  | mocked |  | Group.lua:1883; Stats.lua:126,126 |
+| `C_Item.GetItemCooldown` | documented (itemInfo) → startTimeSeconds:number, durationSeconds:number, enableCooldownTimer:bool |  | mocked |  | Errands.lua:235 |
+| `C_Item.GetItemCount` | documented (itemInfo, includeBank, includeUses, includeReagentBank, includeAccountBank) → count:number |  | mocked |  | Core.lua:161; Classes.lua:207,207; Hunter.lua:252,253 |
+| `C_Item.GetItemIconByID` | documented (itemInfo) → icon:fileID |  | mocked |  | Macros.lua:1283,1283 |
+| `C_Item.GetItemInfo` | documented (itemInfo) → itemName:cstring, itemLink:cstring, itemQuality:ItemQuality, itemLevel:number, itemMinLevel:number, itemType:cstring, itemSubType:cstring, itemStackCount:number, itemEquipLoc:cstring, itemTexture:fileID, sellPrice:number, classID:number, subclassID:number, bindType:number, expansionID:number, setID:number, isCraftingReagent:bool, itemDescription:cstring |  | mocked |  | Core.lua:148; Inventory.lua:131,131; Macros.lua:49 |
+| `C_Item.GetItemInfoInstant` | documented (itemInfo) → itemID:number, itemType:cstring, itemSubType:cstring, itemEquipLoc:cstring, icon:fileID, classID:number, subClassID:number |  | mocked |  | Highlight.lua:113; Hunter.lua:235,236 |
+| `C_Item.GetItemLinkByGUID` | documented (itemGUID) → itemLink:string |  | mocked |  | Gear.lua:1174,1175 |
+| `C_Item.GetItemNameByID` | documented (itemInfo) → itemName:string |  | mocked |  | Core.lua:153,154; Hunter.lua:434,434 |
 | `C_Item.GetItemSpell` | documented (itemInfo) → spellName:cstring, spellID:number |  | mocked |  | Macros.lua:54 |
-| `C_Item.GetItemStats` | documented (itemLink) → statTable:LuaValueVariant |  | mocked |  | Boost.lua:273,273 |
+| `C_Item.GetItemStats` | documented (itemLink) → statTable:LuaValueVariant |  | mocked |  | Gear.lua:170,170 |
 | `C_Item.RequestLoadItemDataByID` | documented (itemInfo) → - |  | mocked |  | Auction.lua:633 |
 | `C_Map.CanSetUserWaypointOnMap` | documented (uiMapID) → canSet:bool |  | mocked |  | Compass.lua:244,244 |
-| `C_Map.GetAreaInfo` | documented (areaID) → name:cstring |  | mocked |  | Compass.lua:388,389; Gear.lua:281,281; Pro.lua:187,187; Quests.lua:400,400 |
-| `C_Map.GetBestMapForUnit` | documented (unitToken) → uiMapID:number |  | mocked |  | Abandon.lua:512,513; Compass.lua:167,168; Economy.lua:551,552; Errands.lua:195; Group.lua:255,255; Leveling.lua:148,148 (+6 files) |
-| `C_Map.GetMapInfo` | documented (uiMapID) → info:UiMapDetails |  | mocked |  | Compass.lua:177,177; Missions.lua:1673,1674; Quests.lua:78,79; Radar.lua:456,456; Team.lua:179 |
+| `C_Map.ClearUserWaypoint` | documented () → - |  | mocked |  | Compass.lua:280,281 |
+| `C_Map.GetAreaInfo` | documented (areaID) → name:cstring |  | mocked |  | Compass.lua:412,413; Dungeon.lua:502,502; Gear.lua:454,454; Pro.lua:189,189; Quests.lua:410,410 |
+| `C_Map.GetBestMapForUnit` | documented (unitToken) → uiMapID:number |  | mocked |  | Abandon.lua:517,518; Compass.lua:167,168; Errands.lua:255; Group.lua:1046,1086,1202,1788…; Leveling.lua:152,152; PathDraw.lua:211,212,377 (+4 files) |
+| `C_Map.GetMapInfo` | documented (uiMapID) → info:UiMapDetails |  | mocked |  | Compass.lua:177,177; Group.lua:1007; Quests.lua:79,80; Radar.lua:435,435 |
 | `C_Map.GetMapWorldSize` | documented (uiMapID) → width:number, height:number |  | mocked |  | Compass.lua:91,92 |
-| `C_Map.GetPlayerMapPosition` | documented (uiMapID, unitToken) → position:vector2 |  | mocked |  | Compass.lua:167,170; Economy.lua:553,553; PathDraw.lua:211,214; Radar.lua:186,187,336,337 |
-| `C_Map.GetUserWaypoint` | documented () → point:UiMapPoint |  | mocked |  | Compass.lua:263,264 |
-| `C_Map.GetWorldPosFromMapPos` | documented (uiMapID, mapPosition) → continentID:number, worldPosition:vector2 |  | mocked |  | Compass.lua:77,78; Radar.lua:100,101 |
-| `C_Map.HasUserWaypoint` | documented () → hasUserWaypoint:bool |  | mocked |  | Compass.lua:263,263,285,285 |
+| `C_Map.GetPlayerMapPosition` | documented (uiMapID, unitToken) → position:vector2 |  | mocked |  | Compass.lua:167,170; Group.lua:1789,1789; PathDraw.lua:211,214; Prof.lua:491,491; Radar.lua:185,186,315,316 |
+| `C_Map.GetUserWaypoint` | documented () → point:UiMapPoint |  | mocked |  | Compass.lua:260,261 |
+| `C_Map.GetWorldPosFromMapPos` | documented (uiMapID, mapPosition) → continentID:number, worldPosition:vector2 |  | mocked |  | Compass.lua:77,78; Radar.lua:99,100 |
+| `C_Map.HasUserWaypoint` | documented () → hasUserWaypoint:bool |  | mocked |  | Compass.lua:260,260,309,309 |
 | `C_Map.SetUserWaypoint` | documented (point) → wasSet:bool |  | mocked |  | Compass.lua:243,246 |
-| `C_MerchantFrame.GetItemInfo` | documented (index) → info:MerchantItemInfo |  | mocked |  | Economy.lua:335 |
-| `C_Minimap.GetNumTrackingTypes` | documented () → numTrackingTypes:number |  | mocked |  | Edge.lua:960,962 |
-| `C_Minimap.GetTrackingInfo` | documented (spellIndex) → trackingInfo:MinimapScriptTrackingInfo |  | mocked |  | Edge.lua:960,963 |
-| `C_Minimap.SetTracking` | documented (index, on) → - |  | mocked |  | Edge.lua:990,991 |
+| `C_Minimap.GetNumTrackingTypes` | documented () → numTrackingTypes:number |  | mocked |  | Edge2.lua:411,413 |
+| `C_Minimap.GetTrackingInfo` | documented (spellIndex) → trackingInfo:MinimapScriptTrackingInfo |  | mocked |  | Edge2.lua:411,414 |
+| `C_Minimap.SetTracking` | documented (index, on) → - |  | mocked |  | Edge2.lua:441,442 |
 | `C_MountJournal.GetMountIDs` | documented () → mountIDs:table<number> |  | mocked |  | Quick.lua:480,482 |
 | `C_MountJournal.GetMountInfoByID` | documented (mountID) → name:cstring, spellID:number, icon:fileID, isActive:bool, isUsable:bool, sourceType:number, isFavorite:bool, isFactionSpecific:bool, faction:PvPFaction, shouldHideOnChar:bool, isCollected:bool, mountID:number, isSteadyFlight:bool |  | mocked |  | Quick.lua:480,483 |
-| `C_NamePlate.GetNamePlateForUnit` | documented (unitToken, includeForbidden) → nameplate:NamePlateFrame |  | mocked |  | PvPMark.lua:327,327 |
-| `C_NamePlate.GetNamePlates` | documented () → nameplates:table<NamePlateFrame> |  | mocked |  | PvPMark.lua:357,358; SafePath.lua:479; SelfTest.lua:237; Speed.lua:190,191 |
-| `C_PetInfo.GetPetFoodTypes` | documented () → foodTypes:table<string> |  | mocked |  | Hunter.lua:97 |
-| `C_PetInfo.GetPetHappiness` | documented () → happiness:number, damagePercentage:number, loyaltyRate:number |  | mocked |  | Hunter.lua:94 |
-| `C_PetInfo.GetPetLoyalty` | documented () → loyaltyName:string |  | mocked |  | Hunter.lua:95 |
-| `C_PetInfo.GetPetTrainingPoints` | documented () → totalPoints:number, usedPoints:number |  | mocked |  | Hunter.lua:96 |
+| `C_NamePlate.GetNamePlateForUnit` | documented (unitToken, includeForbidden) → nameplate:NamePlateFrame |  | mocked |  | PvPMark.lua:332,332 |
+| `C_NamePlate.GetNamePlates` | documented () → nameplates:table<NamePlateFrame> |  | mocked |  | PvPMark.lua:362,363; SelfTest.lua:237; Speed.lua:190,191 |
+| `C_PetInfo.GetPetFoodTypes` | documented () → foodTypes:table<string> |  | mocked |  | Hunter.lua:108 |
+| `C_PetInfo.GetPetHappiness` | documented () → happiness:number, damagePercentage:number, loyaltyRate:number |  | mocked |  | Hunter.lua:105 |
+| `C_PetInfo.GetPetLoyalty` | documented () → loyaltyName:string |  | mocked |  | Hunter.lua:106 |
+| `C_PetInfo.GetPetTrainingPoints` | documented () → totalPoints:number, usedPoints:number |  | mocked |  | Hunter.lua:107 |
 | `C_PvP.GetBattlefieldFlagPosition` | documented (flagIndex, uiMapId) → uiPosx:number, uiPosy:number, flagTexture:number |  | mocked |  | PvP.lua:381,382 |
 | `C_PvP.GetScoreInfo` | documented (offsetIndex) → info:PVPScoreInfo | secret in PvP match | mocked | secret: modelled by flags (forever_ref.lua) | PvP.lua:405,406 |
 | `C_QuestLog.AddQuestWatch` | documented (questID) → wasWatched:bool |  | mocked |  | Region.lua:254 |
-| `C_QuestLog.GetDistanceSqToQuest` | documented (questID) → distanceSq:number, onContinent:bool |  | mocked |  | Missions.lua:776,777; Quests.lua:202,203; Region.lua:116 |
-| `C_QuestLog.GetInfo` | documented (questLogIndex) → info:QuestInfo |  | mocked |  | Core.lua:417,419; Abandon.lua:461; Export.lua:452,455; Leveling.lua:177,180; Pro.lua:240,241; Quests.lua:243,247,632 (+4 files) |
-| `C_QuestLog.GetMaxNumQuestsCanAccept` | documented () → maxNumQuestsCanAccept:number |  | mocked |  | Abandon.lua:404,404; Quick.lua:172,172; Squad.lua:817,818 |
-| `C_QuestLog.GetNextWaypoint` | documented (questID) → mapID:number, x:number, y:number |  | mocked |  | Compass.lua:505,506; Quests.lua:230,231 |
-| `C_QuestLog.GetNumQuestLogEntries` | documented () → numShownEntries:number, numQuests:number |  | mocked |  | Core.lua:417,418; Export.lua:452,453; Gear.lua:341,342; Leveling.lua:177,178; Pro.lua:236,236; Quests.lua:243,244 (+3 files) |
-| `C_QuestLog.GetQuestIDForLogIndex` | documented (questLogIndex) → questID:number |  | mocked |  | Gear.lua:341,343 |
-| `C_QuestLog.GetQuestObjectives` | documented (questID) → objectives:table<QuestObjectiveInfo> |  | mocked |  | Export.lua:460; Leveling.lua:184,184; Missions.lua:764,765; Pro.lua:247,247; Quests.lua:256; Squad.lua:846,846 |
-| `C_QuestLog.GetQuestTagInfo` | documented (questID) → info:QuestTagInfo |  | mocked |  | Export.lua:464,464; Pro.lua:252,252; Quests.lua:172,173; Squad.lua:843,843 |
-| `C_QuestLog.GetQuestWatchType` | documented (questID) → watchType:QuestWatchType |  | mocked |  | Quests.lua:196,196 |
-| `C_QuestLog.GetTimeAllowed` | documented (questID) → totalTime:number, elapsedTime:number |  | mocked |  | Edge2.lua:779 |
-| `C_QuestLog.GetTitleForQuestID` | documented (questID) → title:cstring |  | mocked |  | Gear.lua:329,329; Session.lua:200 |
-| `C_QuestLog.IsComplete` | documented (questID) → isComplete:bool |  | mocked |  | Core.lua:421,421; Export.lua:459; Leveling.lua:183,183; Pro.lua:246,246; Quests.lua:254; Squad.lua:841 (+2 files) |
-| `C_QuestLog.IsFailed` | documented (questID) → isFailed:bool |  | mocked |  | Quests.lua:255 |
-| `C_QuestLog.IsPushableQuest` | documented (questID) → isPushable:bool |  | mocked |  | Quick.lua:424,424; Team.lua:287,288 |
-| `C_QuestLog.IsQuestFlaggedCompleted` | documented (questID) → isCompleted:bool |  | mocked |  | Edge.lua:410; Gear.lua:286; Quests.lua:432,545,932,932 |
-| `C_QuestLog.IsUnitOnQuest` | documented (unit, questID) → isOnQuest:bool |  | mocked |  | Edge.lua:894,894,894; Quick.lua:430,431; Team.lua:255; Tracker.lua:342,347 |
-| `C_QuestLog.ReadyForTurnIn` | documented (questID) → readyForTurnIn:bool |  | mocked |  | Quests.lua:254 |
-| `C_SkillInfo.GetNumSkillLines` | documented () → numSkillLines:number |  | mocked |  | Core.lua:352,353 |
-| `C_SkillInfo.GetSkillLineInfo` | documented (index) → skillLineAttributes:SkillLineAttributes |  | mocked |  | Core.lua:352,354 |
-| `C_Spell.GetSpellCooldown` | documented (spellIdentifier) → spellCooldownInfo:SpellCooldownInfo | secret: cooldowns (combat) | mocked | secret: modelled by flags (forever_ref.lua) | Core.lua:138,139; Hunter.lua:650,651 |
-| `C_Spell.GetSpellInfo` | documented (spellIdentifier) → spellInfo:SpellInfo |  | mocked |  | Core.lua:106,107,119,120; Binds.lua:167,168; Classes.lua:78,79; Hunter.lua:117,118; Macros.lua:32,33,202,203… |
-| `C_Spell.GetSpellName` | documented (spellIdentifier) → name:cstring |  | mocked |  | Core.lua:109,110; PvPMark.lua:129,129 |
-| `C_Spell.GetSpellTexture` | documented (spellIdentifier) → iconID:fileID, originalIconID:fileID, conditionalIconID:fileID |  | mocked |  | Macros.lua:1262,1262 |
-| `C_Spell.IsSpellInRange` | documented (spellIdentifier, targetUnit?) → inRange:bool |  | mocked |  | Hunter.lua:615,616; PvPMark.lua:132,132 |
-| `C_SpellBook.FindSpellBookSlotForSpell` | documented (spellIdentifier, includeHidden, includeFlyouts, includeFutureSpells, includeOffSpec) → spellBookItemSlotIndex:luaIndex, spellBookItemSpellBank:SpellBookSpellBank |  | mocked |  | Macros.lua:196,198,995 |
-| `C_SpellBook.GetNumSpellBookSkillLines` | documented () → numSpellBookSkillLines:number |  | mocked |  | Core.lua:379,380 |
-| `C_SpellBook.GetSpellBookItemName` | documented (spellBookItemSlotIndex, spellBookItemSpellBank) → name:string, subName:string |  | mocked |  | Core.lua:375,389; Finder.lua:184,184 |
-| `C_SpellBook.GetSpellBookSkillLineInfo` | documented (skillLineIndex) → skillLineInfo:SpellBookSkillLineInfo |  | mocked |  | Core.lua:379,381 |
-| `C_SpellBook.HasPetSpells` | documented () → numPetSpells:number, petNameToken:string |  | mocked |  | Core.lua:378 |
-| `C_SpellBook.IsSpellBookItemPassive` | documented (spellBookItemSlotIndex, spellBookItemSpellBank) → isPassive:bool |  | mocked |  | Core.lua:392,392 |
+| `C_QuestLog.GetDistanceSqToQuest` | documented (questID) → distanceSq:number, onContinent:bool |  | mocked |  | Quests.lua:205,206; Region.lua:116 |
+| `C_QuestLog.GetInfo` | documented (questLogIndex) → info:QuestInfo |  | mocked |  | Core.lua:420,422; Abandon.lua:466; Export.lua:481,484; Group.lua:1263,1265; Leveling.lua:181,184; Pro.lua:242,243 (+3 files) |
+| `C_QuestLog.GetMaxNumQuestsCanAccept` | documented () → maxNumQuestsCanAccept:number |  | mocked |  | Abandon.lua:409,409; Group.lua:1154,1154; Quick.lua:172,172; WindowPages.lua:141 |
+| `C_QuestLog.GetNextWaypoint` | documented (questID) → mapID:number, x:number, y:number |  | mocked |  | Compass.lua:529,530; Quests.lua:232,233 |
+| `C_QuestLog.GetNumQuestLogEntries` | documented () → numShownEntries:number, numQuests:number |  | mocked |  | Core.lua:420,421; Export.lua:481,482; Gear.lua:514,515; Group.lua:1263,1264; Leveling.lua:181,182; Pro.lua:238,238 (+2 files) |
+| `C_QuestLog.GetQuestIDForLogIndex` | documented (questLogIndex) → questID:number |  | mocked |  | Gear.lua:514,516 |
+| `C_QuestLog.GetQuestObjectives` | documented (questID) → objectives:table<QuestObjectiveInfo> |  | mocked |  | Export.lua:489; Group.lua:1273; Leveling.lua:188,188; Pro.lua:249,249; Quests.lua:258 |
+| `C_QuestLog.GetQuestTagInfo` | documented (questID) → info:QuestTagInfo |  | mocked |  | Export.lua:493,493; Pro.lua:254,254; Quests.lua:173,174 |
+| `C_QuestLog.GetQuestWatchType` | documented (questID) → watchType:QuestWatchType |  | mocked |  | Quests.lua:199,199 |
+| `C_QuestLog.GetTimeAllowed` | documented (questID) → totalTime:number, elapsedTime:number |  | mocked |  | Edge2.lua:346; Quests.lua:705,707 |
+| `C_QuestLog.GetTitleForQuestID` | documented (questID) → title:cstring |  | mocked |  | Gear.lua:502,502; Session.lua:204 |
+| `C_QuestLog.IsComplete` | documented (questID) → isComplete:bool |  | mocked |  | Core.lua:424,424; Export.lua:488; Group.lua:1271; Leveling.lua:187,187; Pro.lua:248,248; Quests.lua:256 (+1 files) |
+| `C_QuestLog.IsFailed` | documented (questID) → isFailed:bool |  | mocked |  | Export.lua:495,495; Pro.lua:256,256; Quests.lua:257 |
+| `C_QuestLog.IsPushableQuest` | documented (questID) → isPushable:bool |  | mocked |  | Group.lua:1325,1325; Quick.lua:424,424 |
+| `C_QuestLog.IsQuestFlaggedCompleted` | documented (questID) → isCompleted:bool |  | mocked |  | Edge2.lua:140; Gear.lua:459; Quests.lua:442,566,1000,1000 |
+| `C_QuestLog.IsUnitOnQuest` | documented (unit, questID) → isOnQuest:bool |  | mocked |  | Group.lua:1334; Quick.lua:430,431; Tracker.lua:342,347 |
+| `C_QuestLog.ReadyForTurnIn` | documented (questID) → readyForTurnIn:bool |  | mocked |  | Quests.lua:256 |
+| `C_SkillInfo.GetNumSkillLines` | documented () → numSkillLines:number |  | mocked |  | Core.lua:355,356 |
+| `C_SkillInfo.GetSkillLineInfo` | documented (index) → skillLineAttributes:SkillLineAttributes |  | mocked |  | Core.lua:355,357 |
+| `C_Spell.GetSpellCooldown` | documented (spellIdentifier) → spellCooldownInfo:SpellCooldownInfo | secret: cooldowns (combat) | mocked | secret: modelled by flags (forever_ref.lua) | Core.lua:138,139 |
+| `C_Spell.GetSpellInfo` | documented (spellIdentifier) → spellInfo:SpellInfo |  | mocked |  | Core.lua:106,107,119,120; Binds.lua:168,169; Classes.lua:78,79; Hunter.lua:128,129; Macros.lua:32,33,202,203… |
+| `C_Spell.GetSpellName` | documented (spellIdentifier) → name:cstring |  | mocked |  | Core.lua:109,110; PvPMark.lua:134,134 |
+| `C_Spell.GetSpellTexture` | documented (spellIdentifier) → iconID:fileID, originalIconID:fileID, conditionalIconID:fileID |  | mocked |  | Macros.lua:1276,1276 |
+| `C_Spell.IsSpellInRange` | documented (spellIdentifier, targetUnit?) → inRange:bool |  | mocked |  | PvPMark.lua:137,137 |
+| `C_SpellBook.FindSpellBookSlotForSpell` | documented (spellIdentifier, includeHidden, includeFlyouts, includeFutureSpells, includeOffSpec) → spellBookItemSlotIndex:luaIndex, spellBookItemSpellBank:SpellBookSpellBank |  | mocked |  | Macros.lua:196,198,1009 |
+| `C_SpellBook.GetNumSpellBookSkillLines` | documented () → numSpellBookSkillLines:number |  | mocked |  | Core.lua:382,383 |
+| `C_SpellBook.GetSpellBookItemName` | documented (spellBookItemSlotIndex, spellBookItemSpellBank) → name:string, subName:string |  | mocked |  | Core.lua:378,392; Finder.lua:185,185 |
+| `C_SpellBook.GetSpellBookSkillLineInfo` | documented (skillLineIndex) → skillLineInfo:SpellBookSkillLineInfo |  | mocked |  | Core.lua:382,384 |
+| `C_SpellBook.HasPetSpells` | documented () → numPetSpells:number, petNameToken:string |  | mocked |  | Core.lua:381 |
+| `C_SpellBook.IsSpellBookItemPassive` | documented (spellBookItemSlotIndex, spellBookItemSpellBank) → isPassive:bool |  | mocked |  | Core.lua:395,395 |
 | `C_SpellBook.IsSpellKnown` | documented (spellID, spellBank) → isKnown:bool |  | mocked |  | Core.lua:130,130 |
-| `C_SuperTrack.GetSuperTrackedQuestID` | documented () → questID:number |  | mocked |  | Compass.lua:259,260,580,580 |
-| `C_SuperTrack.IsSuperTrackingUserWaypoint` | documented () → isSuperTracking:bool |  | mocked |  | Compass.lua:272,272 |
+| `C_SuperTrack.GetSuperTrackedQuestID` | documented () → questID:number |  | mocked |  | Compass.lua:288,289,604,604 |
+| `C_SuperTrack.IsSuperTrackingUserWaypoint` | documented () → isSuperTracking:bool |  | mocked |  | Compass.lua:296,296 |
 | `C_SuperTrack.SetSuperTrackedUserWaypoint` | documented (superTracked) → - |  | mocked |  | Compass.lua:247,247 |
-| `C_Timer.After` | documented (seconds, callback) → - |  | mocked |  | Core.lua:517,517; Binds.lua:40,40; Group.lua:100,100; Inventory.lua:84,84; Leveling.lua:78,78; Macros.lua:93,93 |
-| `C_Timer.NewTicker` | documented (seconds, callback, iterations?) → cbObject:TickerCallback |  | mocked |  | Core.lua:621,622; Group.lua:501,502 |
-| `C_TradeSkillUI.GetBaseProfessionInfo` | documented () → info:ProfessionInfo |  | mocked |  | Prof.lua:272,272 |
-| `C_TradeSkillUI.GetRecipeInfo` | documented (recipeSpellID, recipeLevel?) → recipeInfo:TradeSkillRecipeInfo |  | mocked |  | Economy.lua:496,501; Prof.lua:271,279 |
-| `C_TradeSkillUI.GetRecipeSchematic` | documented (recipeSpellID, isRecraft, recipeLevel?) → schematic:CraftingRecipeSchematic |  | mocked |  | Economy.lua:505,505 |
+| `C_Timer.After` | documented (seconds, callback) → - |  | mocked |  | Core.lua:520,520; Binds.lua:41,41; Macros.lua:93,93 |
+| `C_Timer.NewTicker` | documented (seconds, callback, iterations?) → cbObject:TickerCallback |  | mocked |  | Core.lua:624,625 |
+| `C_TradeSkillUI.GetBaseProfessionInfo` | documented () → info:ProfessionInfo |  | mocked |  | Prof.lua:279,279 |
+| `C_TradeSkillUI.GetRecipeInfo` | documented (recipeSpellID, recipeLevel?) → recipeInfo:TradeSkillRecipeInfo |  | mocked |  | Prof.lua:278,286 |
 | `C_UIWidgetManager.GetAllWidgetsBySetID` | documented (setID) → widgets:table<UIWidgetInfo> |  | mocked |  | PvP.lua:315,317 |
 | `C_UIWidgetManager.GetIconAndTextWidgetVisualizationInfo` | documented (widgetID) → widgetInfo:IconAndTextWidgetVisualizationInfo |  | mocked |  | PvP.lua:301,303 |
 | `C_UIWidgetManager.GetTopCenterWidgetSetID` | documented () → setID:number |  | mocked |  | PvP.lua:315,316 |
-| `C_UnitAuras.GetAuraDataByIndex` | documented (unit, index, filter?) → aura:AuraData | secret: auras (combat) | mocked | secret: modelled by flags (forever_ref.lua) | Core.lua:268,269; Classes.lua:106,107; Hunter.lua:153,154; PvP.lua:783,784; Team.lua:195,196 |
-| `CanInspect` | documented (targetGUID) → result:bool |  | mocked |  | Team.lua:312,312 |
-| `CheckInteractDistance` | documented (unitGUID, distIndex) → result:bool |  | mocked |  | Core.lua:319,320,321; Edge.lua:1059; Team.lua:171,171,313,313 |
+| `C_UnitAuras.GetAuraDataByIndex` | documented (unit, index, filter?) → aura:AuraData | secret: auras (combat) | mocked | secret: modelled by flags (forever_ref.lua) | Core.lua:268,269; Classes.lua:106,107; Group.lua:1935,1940,1941; Hunter.lua:174,175; PvP.lua:785,786 |
+| `CheckInteractDistance` | documented (unitGUID, distIndex) → result:bool |  | mocked |  | Core.lua:321,323,324 |
 | `ClearCursor` | documented () → - |  | mocked |  | Auction.lua:1677 |
-| `GetAddOnMemoryUsage` | documented (name) → result:number |  | mocked |  | Core.lua:1445 |
-| `GetBindLocation` | documented () → result:cstring |  | mocked |  | Errands.lua:231; Export.lua:526; Pro.lua:559,578; Quick.lua:660; QuickTravel.lua:494; Route.lua:325,853 (+2 files) |
+| `GetAddOnMemoryUsage` | documented (name) → result:number |  | mocked |  | Core.lua:1464 |
+| `GetBindLocation` | documented () → result:cstring |  | mocked |  | Errands.lua:291; Export.lua:559; Pro.lua:557,576; Quick.lua:673; QuickTravel.lua:491; Route.lua:325,888 (+2 files) |
 | `GetBlockChance` | documented () → result:number | secret in combat (ALL units, player too) | mocked | secret: modelled by flags (forever_ref.lua) | Stats.lua:160 |
 | `GetBuildInfo` | documented () → buildVersion:cstring, buildNumber:cstring, buildDate:cstring, interfaceVersion:number, localizedVersion:cstring, buildInfo:string |  | mocked |  | Auction.lua:2155 |
 | `GetCombatRating` | documented (ratingIndex) → result:number | secret in combat (ALL units, player too) | mocked | secret: modelled by flags (forever_ref.lua) | Stats.lua:153 |
 | `GetCritChance` | documented () → result:number | secret in combat (ALL units, player too) | mocked | secret: modelled by flags (forever_ref.lua) | Stats.lua:145 |
-| `GetCursorPosition` | documented () → posX:number, posY:number |  | mocked |  | Hub.lua:413; Todo.lua:1299; ZonePlan.lua:948 |
+| `GetCursorPosition` | documented () → posX:number, posY:number |  | mocked |  | Hub.lua:436; Todo.lua:1309; ZonePlan.lua:1119 |
 | `GetDodgeChance` | documented () → result:number | secret in combat (ALL units, player too) | mocked | secret: modelled by flags (forever_ref.lua) | Stats.lua:160 |
+| `GetFramerate` | documented () → framerate:number |  | mocked |  | Core.lua:859 |
 | `GetHaste` | documented () → result:number | secret in combat (ALL units, player too) | mocked | secret: modelled by flags (forever_ref.lua) | Stats.lua:152 |
 | `GetHitModifier` | documented () → result:number | secret in combat (ALL units, player too) | mocked | secret: modelled by flags (forever_ref.lua) | Stats.lua:150 |
-| `GetInstanceInfo` | documented () → name:cstring, instanceType:cstring, difficultyID:number, difficultyName:cstring, maxPlayers:number, dynamicDifficulty:number, isDynamic:bool, instanceID:number, instanceGroupSize:number, lfgDungeonID:number, hasWorldTier:bool |  | mocked |  | Errands.lua:395 |
+| `GetInstanceInfo` | documented () → name:cstring, instanceType:cstring, difficultyID:number, difficultyName:cstring, maxPlayers:number, dynamicDifficulty:number, isDynamic:bool, instanceID:number, instanceGroupSize:number, lfgDungeonID:number, hasWorldTier:bool |  | mocked |  | Errands.lua:499 |
 | `GetManaRegen` | documented () → baseManaRegen:number, castingManaRegen:number | secret in combat (ALL units, player too) | mocked | secret: modelled by flags (forever_ref.lua) | Stats.lua:176 |
 | `GetMeleeHaste` | documented () → result:number | secret in combat (ALL units, player too) | mocked | secret: modelled by flags (forever_ref.lua) | Stats.lua:152 |
 | `GetMinimapZoneText` | documented () → text:cstring |  | mocked |  | Auction.lua:648 |
-| `GetMoney` | documented () → result:number |  | mocked |  | Core.lua:306; Auction.lua:1064; Economy.lua:92,371,638; Edge.lua:80; Edge2.lua:73; Errands.lua:298 (+7 files) |
-| `GetPVPSessionStats` | documented () → honorableKills:number, dishonorableKills:number |  | mocked |  | PvP.lua:645 |
+| `GetMoney` | documented () → result:number |  | mocked |  | Core.lua:306; Auction.lua:1064; Errands.lua:368,397; Gear.lua:365; Inventory.lua:515; Leveling.lua:355 (+3 files) |
+| `GetPVPSessionStats` | documented () → honorableKills:number, dishonorableKills:number |  | mocked |  | PvP.lua:647 |
 | `GetParryChance` | documented () → result:number | secret in combat (ALL units, player too) | mocked | secret: modelled by flags (forever_ref.lua) | Stats.lua:160 |
-| `GetPlayerFacing` | documented () → result:number |  | mocked |  | Compass.lua:742,821; Horizon.lua:161,193; MinimapPins.lua:153; PathDraw.lua:235,328; Radar.lua:1021; SafePath.lua:515 |
+| `GetPlayerFacing` | documented () → result:number |  | mocked |  | Compass.lua:766,845; Horizon.lua:161,193; MinimapPins.lua:152; PathDraw.lua:235,328; Radar.lua:998 |
 | `GetPowerRegen` | documented () → basePowerRegen:number, castingPowerRegen:number | secret in combat (ALL units, player too) | mocked | secret: modelled by flags (forever_ref.lua) | Stats.lua:177 |
 | `GetRangedCritChance` | documented () → result:number | secret in combat (ALL units, player too) | mocked | secret: modelled by flags (forever_ref.lua) | Stats.lua:146 |
-| `GetRealZoneText` | documented (mapID?) → text:cstring |  | mocked |  | Core.lua:2636; Abandon.lua:502; Economy.lua:54; Edge.lua:76; Group.lua:266; Leveling.lua:347 (+8 files) |
-| `GetRealmName` | documented () → realmName:cstring |  | mocked |  | Core.lua:936,936; Auction.lua:671; Group.lua:68; Hunter.lua:811; Inventory.lua:53; Leveling.lua:47,337 |
-| `GetScreenHeight` | documented () → height:number |  | mocked |  | UI.lua:1798,1798 |
-| `GetScreenWidth` | documented () → width:number |  | mocked |  | UI.lua:1797,1797 |
-| `GetServerTime` | documented () → time:number |  | mocked |  | Auction.lua:68; Edge.lua:490; Stats.lua:50 |
+| `GetRealZoneText` | documented (mapID?) → text:cstring |  | mocked |  | Core.lua:2655; Abandon.lua:507; Edge2.lua:72; Leveling.lua:352; Pro.lua:61; Prof.lua:459,501,524 (+6 files) |
+| `GetRealmName` | documented () → realmName:cstring |  | mocked |  | Core.lua:958,958; Auction.lua:671; Hunter.lua:965; Inventory.lua:57; Leveling.lua:51,342 |
+| `GetScreenHeight` | documented () → height:number |  | mocked |  | UI.lua:1797,1797 |
+| `GetScreenWidth` | documented () → width:number |  | mocked |  | UI.lua:1796,1796 |
+| `GetServerTime` | documented () → time:number |  | mocked |  | Auction.lua:68; Stats.lua:50 |
 | `GetSpellCritChance` | documented () → result:number | secret in combat (ALL units, player too) | mocked | secret: modelled by flags (forever_ref.lua) | Stats.lua:148 |
 | `GetSpellHitModifier` | documented () → result:number | secret in combat (ALL units, player too) | mocked | secret: modelled by flags (forever_ref.lua) | Stats.lua:151 |
-| `GetSubZoneText` | documented () → text:cstring |  | mocked |  | Core.lua:2637; Auction.lua:648; Leveling.lua:348; MinimapPins.lua:190; Pro.lua:502; QuickTravel.lua:1004 |
-| `GetTime` | documented () → time:number |  | mocked |  | Core.lua:33,33; Abandon.lua:389; Auction.lua:581,667; Classes.lua:69; Compass.lua:48; Economy.lua:47 (+33 files) |
-| `GetUnitSpeed` | documented (unit) → currentSpeed:number, runSpeed:number, flightSpeed:number, swimSpeed:number | secret in combat (ALL units, player too) | mocked | secret: modelled by flags (forever_ref.lua) | Compass.lua:185; Export.lua:512; Hunter.lua:736; NavTime.lua:78; PathDraw.lua:328; Planner.lua:391 (+2 files) |
-| `GetXPExhaustion` | documented () → result:number |  | mocked |  | Core.lua:2635; Edge.lua:696; Edge2.lua:710; Export.lua:522; Leveling.lua:228,345; Pro.lua:569 (+2 files) |
-| `GetZoneText` | documented () → text:cstring |  | mocked |  | Core.lua:2636; Abandon.lua:502; Auction.lua:648; Economy.lua:54; Edge.lua:76; Pro.lua:59 (+8 files) |
+| `GetSubZoneText` | documented () → text:cstring |  | mocked |  | Core.lua:2656; Auction.lua:648; Edge2.lua:146; Leveling.lua:353; MinimapPins.lua:189; Pro.lua:502 |
+| `GetTime` | documented () → time:number |  | mocked |  | Core.lua:33,33; Abandon.lua:394; Auction.lua:581,667; Classes.lua:69; Compass.lua:48; Edge2.lua:63 (+27 files) |
+| `GetUnitSpeed` | documented (unit) → currentSpeed:number, runSpeed:number, flightSpeed:number, swimSpeed:number | secret in combat (ALL units, player too) | mocked | secret: modelled by flags (forever_ref.lua) | Compass.lua:185; Export.lua:545; Hunter.lua:809; NavTime.lua:78; PathDraw.lua:328; Planner.lua:455 (+2 files) |
+| `GetXPExhaustion` | documented () → result:number |  | mocked |  | Core.lua:2654; Export.lua:555; Leveling.lua:265,350; Pro.lua:567; Quests.lua:365; Todo.lua:361 |
+| `GetZoneText` | documented () → text:cstring |  | mocked |  | Core.lua:2655; Abandon.lua:507; Auction.lua:648; Edge2.lua:72; Pro.lua:61; Prof.lua:459 (+6 files) |
 | `IsAltKeyDown` | documented () → down:bool |  | mocked |  | Tracker.lua:83,83 |
 | `IsControlKeyDown` | documented () → down:bool |  | mocked |  | Tracker.lua:82,82 |
-| `IsInGuild` | documented () → result:bool |  | mocked |  | Edge.lua:454 |
-| `IsInInstance` | documented () → isInInstance:bool, instanceType:cstring |  | mocked |  | Core.lua:1298,1732,1909,2763; Compass.lua:164; Economy.lua:278; Edge.lua:78; Edge2.lua:71; Errands.lua:393 (+6 files) |
-| `IsIndoors` | documented () → result:bool |  | mocked |  | MinimapPins.lua:151; PathDraw.lua:231 |
-| `IsLoggedIn` | documented () → result:bool |  | mocked |  | Hunter.lua:917 |
-| `IsMounted` | documented () → result:bool |  | mocked |  | Core.lua:1913; Hunter.lua:438; NavTime.lua:63; Planner.lua:389; Stats.lua:55 |
-| `IsResting` | documented () → result:bool |  | mocked |  | Core.lua:1914; Edge.lua:79; Edge2.lua:72; Leveling.lua:230,275,346,376…; Pro.lua:501,571; Quick.lua:689 (+2 files) |
-| `IsShiftKeyDown` | documented () → down:bool |  | mocked |  | Compass.lua:863,863; Finder.lua:760,767; Hunter.lua:721; Macros.lua:141,141,1453,1453; Prof.lua:579,579; Quests.lua:768,768 (+3 files) |
+| `IsInInstance` | documented () → isInInstance:bool, instanceType:cstring |  | mocked |  | Core.lua:1313,1751,1925,2782; Compass.lua:164; Edge2.lua:68; Errands.lua:497; PvP.lua:86; PvPMark.lua:102 (+3 files) |
+| `IsIndoors` | documented () → result:bool |  | mocked |  | MinimapPins.lua:150; PathDraw.lua:231 |
+| `IsLoggedIn` | documented () → result:bool |  | mocked |  | Hunter.lua:1071 |
+| `IsMounted` | documented () → result:bool |  | mocked |  | Core.lua:1929; Hunter.lua:453; NavTime.lua:63; Planner.lua:453; Stats.lua:55 |
+| `IsResting` | documented () → result:bool |  | mocked |  | Core.lua:1930; Edge2.lua:69; Errands.lua:386; Leveling.lua:267,351,391; Pro.lua:501,569; Quick.lua:703 (+2 files) |
+| `IsShiftKeyDown` | documented () → down:bool |  | mocked |  | Compass.lua:887,887; Finder.lua:752,759; Hunter.lua:794; Macros.lua:141,141,1467,1467; Prof.lua:731,731; Quests.lua:836,836 (+3 files) |
 | `IsSwimming` | documented (unit?) → result:bool |  | mocked |  | NavTime.lua:64 |
-| `NotifyInspect` | documented (targetGUID) → - |  | mocked |  | Team.lua:307,316 |
-| `ResetCursor` | documented () → - |  | mocked |  | UI.lua:375 |
-| `SetCursor` | documented (name?) → result:bool |  | mocked |  | UI.lua:375 |
-| `UnitAffectingCombat` | documented (unit) → result:bool |  | mocked |  | Classes.lua:167; Group.lua:63; Hunter.lua:292; Inventory.lua:48; Leveling.lua:42 |
+| `ResetCursor` | documented () → - |  | mocked |  | UI.lua:372 |
+| `SetCursor` | documented (name?) → result:bool |  | mocked |  | UI.lua:372 |
+| `UnitAffectingCombat` | documented (unit) → result:bool |  | mocked |  | Classes.lua:167; Hunter.lua:322,649,660; Inventory.lua:52; Leveling.lua:46 |
 | `UnitArmor` | documented (unit) → base:number, effective:number, real:number, bonus:number | secret in combat (ALL units, player too) | mocked | secret: modelled by flags (forever_ref.lua) | Stats.lua:158 |
 | `UnitAttackPower` | documented (unit) → attackPower:number, posBuff:number, negBuff:number | secret in combat (ALL units, player too) | mocked | secret: modelled by flags (forever_ref.lua) | Stats.lua:143 |
 | `UnitAttackSpeed` | documented (unit) → attackSpeed:number, offhandAttackSpeed:number, rangedAttackSpeed:number | secret in combat (ALL units, player too) | mocked | secret: modelled by flags (forever_ref.lua) | Stats.lua:172 |
-| `UnitCanAttack` | documented (unit, target) → result:bool |  | mocked |  | Core.lua:1736; Edge.lua:480,574,583; Edge2.lua:600,623,647,671; Export.lua:197,245; Hunter.lua:598,628; Pro.lua:387 (+8 files) |
-| `UnitCastingInfo` | documented (unit) → name:cstring, displayName:string, textureID:fileID, startTimeMs:number, endTimeMs:number, isTradeskill:bool, castID:WOWGUID, notInterruptible:bool, castingSpellID:number, castBarID:UnitCastBarID, delayTimeMs:number | secret: casts of others (combat) | mocked | secret: modelled by flags (forever_ref.lua) | Core.lua:441,442; Hunter.lua:761 |
-| `UnitClass` | documented (unit) → className:cstring, classFilename:cstring, classID:number | secret: identity of non-group units (combat / instance) | mocked | secret: modelled by flags (forever_ref.lua) | Core.lua:943,944,2630; Classes.lua:247; Export.lua:602; Finder.lua:65; Group.lua:265; Hunter.lua:891 (+12 files) |
-| `UnitClassification` | documented (unit) → result:cstring |  | mocked |  | Edge.lua:586; Edge2.lua:621,698; Hunter.lua:601; Pro.lua:412; Radar.lua:394; SafePath.lua:499 (+1 files) |
-| `UnitCreatureFamily` | documented (unit) → name:cstring, id:number | secret: identity of non-group units (combat / instance) | mocked | secret: modelled by flags (forever_ref.lua) | Finder.lua:206,244; Hunter.lua:782 |
+| `UnitCanAttack` | documented (unit, target) → result:bool |  | mocked |  | Core.lua:1755; Edge2.lua:311; Export.lua:197,245; Hunter.lua:630; Pro.lua:390; PvP.lua:498 (+5 files) |
+| `UnitCastingInfo` | documented (unit) → name:cstring, displayName:string, textureID:fileID, startTimeMs:number, endTimeMs:number, isTradeskill:bool, castID:WOWGUID, notInterruptible:bool, castingSpellID:number, castBarID:UnitCastBarID, delayTimeMs:number | secret: casts of others (combat) | mocked | secret: modelled by flags (forever_ref.lua) | Core.lua:444,445; Hunter.lua:834 |
+| `UnitClass` | documented (unit) → className:cstring, classFilename:cstring, classID:number | secret: identity of non-group units (combat / instance) | mocked | secret: modelled by flags (forever_ref.lua) | Core.lua:965,966,2649; Classes.lua:247; Export.lua:635; Finder.lua:66; Hunter.lua:1044; Inventory.lua:352 (+10 files) |
+| `UnitClassification` | documented (unit) → result:cstring |  | mocked |  | Hunter.lua:662; Pro.lua:415; Radar.lua:373; Stats.lua:259 |
+| `UnitCreatureFamily` | documented (unit) → name:cstring, id:number | secret: identity of non-group units (combat / instance) | mocked | secret: modelled by flags (forever_ref.lua) | Finder.lua:207,245; Hunter.lua:526,856,938 |
+| `UnitCreatureType` | documented (unit) → name:cstring, id:number | secret: identity of non-group units (combat / instance) | mocked | secret: modelled by flags (forever_ref.lua) | Prof.lua:585 |
 | `UnitDamage` | documented (unit) → minDamage:number, maxDamage:number, offhandMinDamage:number, offhandMaxDamage:number, posBuff:number, negBuff:number, percent:number | secret in combat (ALL units, player too) | mocked | secret: modelled by flags (forever_ref.lua) | Stats.lua:171 |
-| `UnitExists` | documented (unit?) → result:bool |  | mocked |  | Core.lua:1735; Edge.lua:479,573,582,1057; Edge2.lua:599,646,670; Errands.lua:335; Finder.lua:177; Group.lua:137 (+10 files) |
-| `UnitFactionGroup` | documented (unitName, checkDisplayRace) → factionGroupTag:cstring, localized:cstring |  | mocked |  | Auction.lua:671; Export.lua:523; Finder.lua:67,606; Leveling.lua:216; PvP.lua:76; Quests.lua:674 (+4 files) |
-| `UnitGUID` | documented (unit) → result:WOWGUID | secret: identity of non-group units (combat / instance) | mocked | secret: modelled by flags (forever_ref.lua) | Edge.lua:575,584,1202; Edge2.lua:624,648; Export.lua:224,243; Finder.lua:249; Hunter.lua:599,670; Predict.lua:251,251 (+5 files) |
-| `UnitGroupRolesAssigned` | documented (unit?) → result:cstring | secret: identity of non-group units (combat / instance) | mocked | secret: modelled by flags (forever_ref.lua) | Team.lua:143 |
-| `UnitHealth` | documented (unit, usePredicted) → result:number | secret ALWAYS | mocked | secret: modelled by flags (forever_ref.lua) | Edge.lua:1058,1085; Errands.lua:319; Hunter.lua:449; Pro.lua:610; PvP.lua:347; QuickTravel.lua:844 (+2 files) |
-| `UnitHealthMax` | documented (unit) → result:number | secret: NPC max health (combat) | mocked | secret: modelled by flags (forever_ref.lua) | Edge.lua:1058,1085; Errands.lua:319; Hunter.lua:449; Pro.lua:610; PvP.lua:347; QuickTravel.lua:844 (+2 files) |
-| `UnitInParty` | documented (unit?, partyIndex?) → result:bool |  | mocked |  | QuickTravel.lua:1017 |
-| `UnitInRaid` | documented (unit?, partyIndex?) → result:luaIndex | secret: identity of non-group units (combat / instance) | mocked | secret: modelled by flags (forever_ref.lua) | QuickTravel.lua:1017 |
-| `UnitInRange` | documented (unit) → inRange:bool, checkedRange:bool | secret ALWAYS | mocked | secret: modelled by flags (forever_ref.lua) | Edge.lua:1060; Team.lua:168 |
-| `UnitIsAFK` | documented (unit) → result:bool | secret in chat lockdown | mocked | secret: modelled by flags (forever_ref.lua) | Core.lua:1917; QuickTravel.lua:842; Stats.lua:812; Team.lua:163 |
-| `UnitIsConnected` | documented (unit) → isConnected:bool |  | mocked |  | Edge.lua:1057; QuickTravel.lua:840; Team.lua:160 |
-| `UnitIsDead` | documented (unit) → result:bool |  | mocked |  | Edge.lua:479,573,582; Edge2.lua:599,646,670; Export.lua:225,245; Hunter.lua:444,598,628,783; Predict.lua:275; Pro.lua:391 (+5 files) |
-| `UnitIsDeadOrGhost` | documented (unit) → result:bool |  | mocked |  | Core.lua:1908; Classes.lua:224; Compass.lua:997; Edge.lua:1057; Hunter.lua:439; PvPMark.lua:113,400 (+5 files) |
-| `UnitIsEnemy` | documented (unit, target) → result:bool |  | mocked |  | Pro.lua:387 |
-| `UnitIsGhost` | documented (unit) → result:bool |  | mocked |  | Core.lua:1907; Compass.lua:998; Radar.lua:1168; Team.lua:161 |
-| `UnitIsGroupAssistant` | documented (unit) → isAssistant:bool | secret: identity of non-group units (combat / instance) | mocked | secret: modelled by flags (forever_ref.lua) | QuickTravel.lua:924 |
-| `UnitIsGroupLeader` | documented (unit, partyCategory?) → isLeader:bool | secret: identity of non-group units (combat / instance) | mocked | secret: modelled by flags (forever_ref.lua) | QuickTravel.lua:915 |
-| `UnitIsPVP` | documented (unit) → result:bool | secret: identity of non-group units (combat / instance) | mocked | secret: modelled by flags (forever_ref.lua) | PvPMark.lua:110,110 |
-| `UnitIsPVPFreeForAll` | documented (unit) → result:bool |  | mocked |  | PvPMark.lua:110 |
-| `UnitIsPlayer` | documented (unit?, partyIndex?) → result:bool |  | mocked |  | Core.lua:1735; Edge.lua:479,573,582; Edge2.lua:599,623,646,670; Pro.lua:388; PvP.lua:497; PvPMark.lua:107 (+3 files) |
-| `UnitIsTapDenied` | documented (unit) → result:bool |  | mocked |  | Edge.lua:480; Edge2.lua:602; Export.lua:248; Pro.lua:406 |
-| `UnitIsUnit` | documented (unit1, unit2) → result:bool | secret: compound-token comparison (instances) | mocked | secret: modelled by flags (forever_ref.lua) | PvPMark.lua:119; Radar.lua:332 |
-| `UnitIsVisible` | documented (unit?) → result:bool |  | mocked |  | Team.lua:173,311 |
-| `UnitLevel` | documented (name) → result:number |  | mocked |  | Core.lua:2633; Abandon.lua:483; Auction.lua:974,1055; Classes.lua:226; Economy.lua:52; Edge.lua:75 (+29 files) |
-| `UnitName` | documented (unit) → unitName:cstring, unitServer:cstring | secret: name of NPCs (combat / instance) | mocked | secret: modelled by flags (forever_ref.lua) | Core.lua:935,935,2912,2912; Auction.lua:101; Economy.lua:327,387; Edge.lua:456,575,584,898…; Edge2.lua:601,624; Export.lua:765 (+19 files) |
-| `UnitOnTaxi` | documented (unit) → result:bool |  | mocked |  | Core.lua:1912; Classes.lua:225; Export.lua:301; Hunter.lua:439; NavTime.lua:207; Stats.lua:54 |
-| `UnitPlayerControlled` | documented (unit?) → result:bool |  | mocked |  | Export.lua:246; Finder.lua:245 |
-| `UnitPosition` | documented (unit) → positionX:number, positionY:number, positionZ:number, mapID:number |  | mocked |  | Core.lua:310,311,312; Compass.lua:825; Group.lua:249; NavTime.lua:50; Planner.lua:954; Radar.lua:194,342 (+1 files) |
-| `UnitPower` | documented (unitToken, powerType?, unmodified) → power:number | secret: power of others (combat) | mocked | secret: modelled by flags (forever_ref.lua) | Errands.lua:323; Pro.lua:614; QuickTravel.lua:847; Stats.lua:214; Team.lua:167 |
-| `UnitPowerMax` | documented (unitToken, powerType?, unmodified) → maxPower:number | secret: max power of others (combat) | mocked | secret: modelled by flags (forever_ref.lua) | Errands.lua:323; Pro.lua:613; QuickTravel.lua:847; Stats.lua:180,214; Team.lua:167 |
-| `UnitPowerType` | documented (unit, index) → powerType:PowerType, powerTypeToken:string, rgbX:number, rgbY:number, rgbZ:number |  | mocked |  | Edge2.lua:469; Errands.lua:321; QuickTravel.lua:775,846; Team.lua:165 |
-| `UnitQuestTrivialLevelRange` | documented (unit) → levelRange:number |  | mocked |  | Quests.lua:110 |
-| `UnitRace` | documented (unit) → localizedRaceName:cstring, englishRaceName:cstring, raceID:number | secret: identity of non-group units (combat / instance) | mocked | secret: modelled by flags (forever_ref.lua) | Core.lua:2632; Export.lua:593; Leveling.lua:340; Quests.lua:438,479 |
+| `UnitExists` | documented (unit?) → result:bool |  | mocked |  | Core.lua:1754; Edge2.lua:310; Errands.lua:439; Finder.lua:178; Hunter.lua:413,452,499,523…; Planner.lua:1019 (+7 files) |
+| `UnitFactionGroup` | documented (unitName, checkDisplayRace) → factionGroupTag:cstring, localized:cstring |  | mocked |  | Auction.lua:671; Export.lua:556; Finder.lua:68,586; Leveling.lua:245; PvP.lua:76; Quests.lua:695 (+3 files) |
+| `UnitGUID` | documented (unit) → result:WOWGUID | secret: identity of non-group units (combat / instance) | mocked | secret: modelled by flags (forever_ref.lua) | Export.lua:224,243; Finder.lua:250; Hunter.lua:661; Pro.lua:388; PvP.lua:514; PvPMark.lua:125 (+1 files) |
+| `UnitHealth` | documented (unit, usePredicted) → result:number | secret ALWAYS | mocked | secret: modelled by flags (forever_ref.lua) | Errands.lua:423; Pro.lua:608; PvP.lua:347; QuickTravel.lua:841; Stats.lua:213,234,241,251… |
+| `UnitHealthMax` | documented (unit) → result:number | secret: NPC max health (combat) | mocked | secret: modelled by flags (forever_ref.lua) | Errands.lua:423; Pro.lua:608; PvP.lua:347; QuickTravel.lua:841; Stats.lua:179,213,234,252 |
+| `UnitInParty` | documented (unit?, partyIndex?) → result:bool |  | mocked |  | Core.lua:322 |
+| `UnitInRaid` | documented (unit?, partyIndex?) → result:luaIndex | secret: identity of non-group units (combat / instance) | mocked | secret: modelled by flags (forever_ref.lua) | Core.lua:322 |
+| `UnitIsAFK` | documented (unit) → result:bool | secret in chat lockdown | mocked | secret: modelled by flags (forever_ref.lua) | Core.lua:1933; QuickTravel.lua:839; Stats.lua:825 |
+| `UnitIsConnected` | documented (unit) → isConnected:bool |  | mocked |  | QuickTravel.lua:837 |
+| `UnitIsDead` | documented (unit) → result:bool |  | mocked |  | Edge2.lua:310; Export.lua:225,245; Hunter.lua:460,631,863,939; Pro.lua:394; Prof.lua:582; Radar.lua:378 (+2 files) |
+| `UnitIsDeadOrGhost` | documented (unit) → result:bool |  | mocked |  | Core.lua:1924; Classes.lua:224; Compass.lua:1028; Hunter.lua:454; PvPMark.lua:118,405; QuickTravel.lua:838 (+3 files) |
+| `UnitIsEnemy` | documented (unit, target) → result:bool |  | mocked |  | Pro.lua:390 |
+| `UnitIsGhost` | documented (unit) → result:bool |  | mocked |  | Core.lua:1923; Compass.lua:1029; Radar.lua:1145 |
+| `UnitIsGroupAssistant` | documented (unit) → isAssistant:bool | secret: identity of non-group units (combat / instance) | mocked | secret: modelled by flags (forever_ref.lua) | QuickTravel.lua:921 |
+| `UnitIsGroupLeader` | documented (unit, partyCategory?) → isLeader:bool | secret: identity of non-group units (combat / instance) | mocked | secret: modelled by flags (forever_ref.lua) | QuickTravel.lua:912 |
+| `UnitIsPVP` | documented (unit) → result:bool | secret: identity of non-group units (combat / instance) | mocked | secret: modelled by flags (forever_ref.lua) | PvPMark.lua:115,115 |
+| `UnitIsPVPFreeForAll` | documented (unit) → result:bool |  | mocked |  | PvPMark.lua:115 |
+| `UnitIsPlayer` | documented (unit?, partyIndex?) → result:bool |  | mocked |  | Core.lua:1754; Edge2.lua:310; Hunter.lua:631; Pro.lua:391; Prof.lua:582; PvP.lua:497 (+3 files) |
+| `UnitIsTapDenied` | documented (unit) → result:bool |  | mocked |  | Edge2.lua:313; Export.lua:248; Pro.lua:409 |
+| `UnitIsUnit` | documented (unit1, unit2) → result:bool | secret: compound-token comparison (instances) | mocked | secret: modelled by flags (forever_ref.lua) | PvPMark.lua:124; Radar.lua:311 |
+| `UnitLevel` | documented (name) → result:number |  | mocked |  | Core.lua:2652; Abandon.lua:488; Auction.lua:974,1055; Classes.lua:226; Edge2.lua:66; Errands.lua:339,368,378,403… (+25 files) |
+| `UnitName` | documented (unit) → unitName:cstring, unitServer:cstring | secret: name of NPCs (combat / instance) | mocked | secret: modelled by flags (forever_ref.lua) | Core.lua:957,957,2931,2931; Auction.lua:101; Edge2.lua:312; Export.lua:823; Finder.lua:264; Hunter.lua:857,965 (+14 files) |
+| `UnitOnTaxi` | documented (unit) → result:bool |  | mocked |  | Core.lua:1928; Classes.lua:225; Export.lua:301; Hunter.lua:454; NavTime.lua:207; Stats.lua:54 |
+| `UnitPlayerControlled` | documented (unit?) → result:bool |  | mocked |  | Export.lua:246; Finder.lua:246 |
+| `UnitPosition` | documented (unit) → positionX:number, positionY:number, positionZ:number, mapID:number |  | mocked |  | Core.lua:310,311,312; Compass.lua:849; NavTime.lua:50; Planner.lua:1075; Radar.lua:193,321; Stats.lua:441,481 |
+| `UnitPower` | documented (unitToken, powerType?, unmodified) → power:number | secret: power of others (combat) | mocked | secret: modelled by flags (forever_ref.lua) | Errands.lua:427; Pro.lua:612; QuickTravel.lua:844; Stats.lua:214 |
+| `UnitPowerMax` | documented (unitToken, powerType?, unmodified) → maxPower:number | secret: max power of others (combat) | mocked | secret: modelled by flags (forever_ref.lua) | Errands.lua:427; Pro.lua:611; QuickTravel.lua:844; Stats.lua:180,214 |
+| `UnitPowerType` | documented (unit, index) → powerType:PowerType, powerTypeToken:string, rgbX:number, rgbY:number, rgbZ:number |  | mocked |  | Errands.lua:425; Inventory.lua:353; QuickTravel.lua:772,843 |
+| `UnitQuestTrivialLevelRange` | documented (unit) → levelRange:number |  | mocked |  | Quests.lua:111 |
+| `UnitRace` | documented (unit) → localizedRaceName:cstring, englishRaceName:cstring, raceID:number | secret: identity of non-group units (combat / instance) | mocked | secret: modelled by flags (forever_ref.lua) | Core.lua:2651; Export.lua:626; Leveling.lua:345; Quests.lua:448,499 |
 | `UnitRangedAttackPower` | documented (unit) → attackPower:number, posBuff:number, negBuff:number | secret in combat (ALL units, player too) | mocked | secret: modelled by flags (forever_ref.lua) | Stats.lua:144 |
-| `UnitRangedDamage` | documented (unit) → speed:number, minDamage:number, maxDamage:number, posBuff:number, negBuff:number, percent:number | secret in combat (ALL units, player too) | mocked | secret: modelled by flags (forever_ref.lua) | Hunter.lua:693; Stats.lua:174 |
+| `UnitRangedDamage` | documented (unit) → speed:number, minDamage:number, maxDamage:number, posBuff:number, negBuff:number, percent:number | secret in combat (ALL units, player too) | mocked | secret: modelled by flags (forever_ref.lua) | Hunter.lua:766; Stats.lua:174 |
 | `UnitResistance` | documented (unit, damageClass) → baseResistance:number, realResistance:number, effectiveResistance:number, bonusResistance:number | secret: identity of non-group units (combat / instance) | mocked | secret: modelled by flags (forever_ref.lua) | Stats.lua:163 |
 | `UnitStat` | documented (unit, index) → currentStat:number, effectiveStat:number, statPositiveBuff:number, statNegativeBuff:number | secret in combat (ALL units, player too) | mocked | secret: modelled by flags (forever_ref.lua) | Stats.lua:142 |
-| `UnitXP` | documented (unit) → result:number |  | mocked |  | Core.lua:2634; Abandon.lua:495; Edge.lua:695; Edge2.lua:724; Export.lua:330; Leveling.lua:343 (+5 files) |
-| `UnitXPMax` | documented (unit) → result:number |  | mocked |  | Core.lua:2634; Abandon.lua:495; Edge.lua:695; Edge2.lua:709,724; Export.lua:330; Leveling.lua:229,344 (+6 files) |
-| `UpdateAddOnMemoryUsage` | documented () → - |  | mocked |  | Core.lua:1444 |
-| `debugprofilestop` | documented () → elapsedMilliseconds:number |  | mocked |  | Core.lua:462; Auction.lua:582; Export.lua:46; Planner.lua:46; Radar.lua:1012,1092; SafePath.lua:64 (+1 files) |
-| `issecretvalue` | documented (value) → isSecret:bool |  | mocked |  | Core.lua:93,692,1898,1899; Abandon.lua:390; Boost.lua:15; Compass.lua:12; Economy.lua:49; Edge.lua:69 (+27 files) |
+| `UnitXP` | documented (unit) → result:number |  | mocked |  | Core.lua:2653; Abandon.lua:500; Edge2.lua:332; Export.lua:330; Leveling.lua:348; Quests.lua:356 (+3 files) |
+| `UnitXPMax` | documented (unit) → result:number |  | mocked |  | Core.lua:2653; Abandon.lua:500; Edge2.lua:332; Export.lua:330; Leveling.lua:266,349; Pro.lua:566 (+4 files) |
+| `UpdateAddOnMemoryUsage` | documented () → - |  | mocked |  | Core.lua:1463 |
+| `debugprofilestop` | documented () → elapsedMilliseconds:number |  | mocked |  | Core.lua:465; Auction.lua:582; Export.lua:46; Planner.lua:46; Radar.lua:989,1069; ZonePlan.lua:994,1008 |
+| `issecretvalue` | documented (value) → isSecret:bool |  | mocked |  | Core.lua:93,695,1914,1915; Abandon.lua:395; Compass.lua:12; Edge2.lua:60; Errands.lua:51; Export.lua:13,42 (+25 files) |
 | `AcceptQuest` | c-global |  | absent | not mocked (FrameXML/C global) | Quick.lua:182 |
 | `AutoLootMailItem` | c-global |  | absent | not mocked (FrameXML/C global) | Quick.lua:401,401 |
-| `CanMerchantRepair` | c-global |  | mocked |  | Inventory.lua:338; MinimapPins.lua:559,569; Quick.lua:327 |
-| `ClearInspectPlayer` | c-global |  | mocked |  | Team.lua:358,358 |
+| `CanMerchantRepair` | c-global |  | mocked |  | Inventory.lua:468; MinimapPins.lua:576,586; Quick.lua:327 |
 | `CompleteQuest` | c-global |  | absent | not mocked (FrameXML/C global) | Quick.lua:190 |
-| `CreateFrame` | c-global |  | mocked |  | Core.lua:494,496,588,589…; Auction.lua:2266,2273,2275,2294…; Classes.lua:251,289; Compass.lua:850,851; Economy.lua:440; Export.lua:936 (+24 files) |
-| `CreateMacro` | c-global |  | mocked |  | Macros.lua:779,811,815,994; PvP.lua:614 |
-| `DeleteMacro` | c-global |  | mocked |  | Macros.lua:1185 |
-| `EditMacro` | c-global |  | mocked |  | Macros.lua:779,801; PvP.lua:612 |
-| `GetActionInfo` | c-global |  | mocked |  | Macros.lua:1280,1282 |
+| `CreateFrame` | c-global |  | mocked |  | Core.lua:497,499,591,592…; Auction.lua:2266,2273,2275,2294…; Classes.lua:251,289; Compass.lua:874,875; Errands.lua:206; Export.lua:1003 (+21 files) |
+| `CreateMacro` | c-global |  | mocked |  | Macros.lua:791,824,829,1008; PvP.lua:616 |
+| `DeleteMacro` | c-global |  | mocked |  | Macros.lua:1199 |
+| `EditMacro` | c-global |  | mocked |  | Macros.lua:791,813; PvP.lua:614 |
+| `GetActionInfo` | c-global |  | mocked |  | Macros.lua:1294,1296 |
 | `GetActiveTitle` | c-global |  | absent | not mocked (FrameXML/C global) | Quick.lua:282 |
 | `GetAvailableQuestInfo` | c-global |  | absent | not mocked (FrameXML/C global) | Quick.lua:287 |
-| `GetBattlefieldEstimatedWaitTime` | c-global |  | absent | not mocked (FrameXML/C global) | PvP.lua:712 |
-| `GetBattlefieldStatus` | c-global |  | absent | not mocked (FrameXML/C global) | PvP.lua:704 |
-| `GetBattlefieldTimeWaited` | c-global |  | absent | not mocked (FrameXML/C global) | PvP.lua:711 |
-| `GetBattlefieldWinner` | c-global |  | absent | not mocked (FrameXML/C global) | PvP.lua:724 |
+| `GetBattlefieldEstimatedWaitTime` | c-global |  | absent | not mocked (FrameXML/C global) | PvP.lua:714 |
+| `GetBattlefieldStatus` | c-global |  | absent | not mocked (FrameXML/C global) | PvP.lua:706 |
+| `GetBattlefieldTimeWaited` | c-global |  | absent | not mocked (FrameXML/C global) | PvP.lua:713 |
+| `GetBattlefieldWinner` | c-global |  | absent | not mocked (FrameXML/C global) | PvP.lua:726 |
 | `GetBindingAction` | c-global |  | mocked |  | Auction.lua:1893,1894 |
 | `GetBindingKey` | c-global |  | mocked |  | Auction.lua:1885 |
-| `GetGuildInfo` | c-global |  | mocked |  | Core.lua:2640; PvP.lua:511 |
-| `GetInboxHeaderInfo` | c-global |  | mocked |  | Auction.lua:2015; Errands.lua:116; Quick.lua:374 |
+| `GetGuildInfo` | c-global |  | mocked |  | Core.lua:2659; PvP.lua:511 |
+| `GetInboxHeaderInfo` | c-global |  | mocked |  | Auction.lua:2015; Errands.lua:121; Quick.lua:374 |
 | `GetInboxInvoiceInfo` | c-global |  | mocked |  | Auction.lua:2023 |
 | `GetInboxItem` | c-global |  | mocked |  | Auction.lua:2024 |
-| `GetInboxNumItems` | c-global |  | mocked |  | Auction.lua:2013; Errands.lua:112; Quick.lua:371 |
-| `GetInventoryItemCount` | c-global |  | mocked |  | Errands.lua:331; Hunter.lua:520; Predict.lua:130; QuickTravel.lua:770,852; Stats.lua:817 |
-| `GetInventoryItemDurability` | c-global |  | mocked |  | Economy.lua:237; Errands.lua:338; Inventory.lua:216; Predict.lua:153,156; QuickTravel.lua:748 |
-| `GetInventoryItemID` | c-global |  | mocked |  | Classes.lua:149; Finder.lua:428; Gear.lua:225,628; Hunter.lua:513,518,536; Macros.lua:262,444 |
-| `GetInventoryItemLink` | c-global |  | mocked |  | Gear.lua:223; Pro.lua:142; Stats.lua:122; Team.lua:332 |
-| `GetLootSlotInfo` | c-global |  | mocked |  | MinimapPins.lua:176; Predict.lua:344; Pro.lua:457; Quests.lua:899; Stats.lua:734 |
-| `GetLootSlotLink` | c-global |  | absent | not mocked (FrameXML/C global) | Export.lua:265; Stats.lua:735 |
-| `GetMacroInfo` | c-global |  | mocked |  | Macros.lua:687,763,792,803… |
-| `GetMaxBattlefieldID` | c-global |  | absent | not mocked (FrameXML/C global) | PvP.lua:700 |
-| `GetMerchantItemID` | c-global |  | absent | not mocked (FrameXML/C global) | Edge.lua:810; QuickTravel.lua:573 |
-| `GetMerchantItemLink` | c-global |  | absent | not mocked (FrameXML/C global) | Economy.lua:330; Edge.lua:810; QuickTravel.lua:575 |
-| `GetMerchantNumItems` | c-global |  | mocked |  | Economy.lua:324; Edge.lua:807; QuickTravel.lua:571 |
+| `GetInboxNumItems` | c-global |  | mocked |  | Auction.lua:2013; Errands.lua:117; Quick.lua:371 |
+| `GetInventoryItemCount` | c-global |  | mocked |  | Errands.lua:435; Hunter.lua:563; QuickTravel.lua:767,849; Stats.lua:832 |
+| `GetInventoryItemDurability` | c-global |  | mocked |  | Errands.lua:442; Inventory.lua:221; QuickTravel.lua:745 |
+| `GetInventoryItemID` | c-global |  | mocked |  | Classes.lua:149; Finder.lua:429; Gear.lua:398,800; Hunter.lua:556,561,579; Leveling.lua:214; Macros.lua:262,444 |
+| `GetInventoryItemLink` | c-global |  | mocked |  | Gear.lua:188,396; Pro.lua:144; Stats.lua:122 |
+| `GetLootSlotInfo` | c-global |  | mocked |  | MinimapPins.lua:175; Pro.lua:457; Quests.lua:967; Stats.lua:746 |
+| `GetLootSlotLink` | c-global |  | absent | not mocked (FrameXML/C global) | Export.lua:265; Stats.lua:747 |
+| `GetMacroInfo` | c-global |  | mocked |  | Macros.lua:687,775,804,816… |
+| `GetMaxBattlefieldID` | c-global |  | absent | not mocked (FrameXML/C global) | PvP.lua:702 |
+| `GetMerchantItemID` | c-global |  | absent | not mocked (FrameXML/C global) | Inventory.lua:393; QuickTravel.lua:570 |
+| `GetMerchantItemLink` | c-global |  | absent | not mocked (FrameXML/C global) | Inventory.lua:393; QuickTravel.lua:572 |
+| `GetMerchantNumItems` | c-global |  | mocked |  | Inventory.lua:385; QuickTravel.lua:568 |
 | `GetNumActiveQuests` | c-global |  | absent | not mocked (FrameXML/C global) | Quick.lua:281 |
 | `GetNumAvailableQuests` | c-global |  | absent | not mocked (FrameXML/C global) | Quick.lua:286 |
 | `GetNumBattlefieldScores` | c-global |  | absent | not mocked (FrameXML/C global) | PvP.lua:421 |
-| `GetNumGroupMembers` | c-global |  | mocked |  | Core.lua:1295,2642; Abandon.lua:501; Economy.lua:298; Edge.lua:81; Edge2.lua:74; Export.lua:519 (+11 files) |
-| `GetNumGuildMembers` | c-global |  | absent | not mocked (FrameXML/C global) | Edge.lua:446 |
-| `GetNumLootItems` | c-global |  | mocked |  | Export.lua:259; MinimapPins.lua:174; Predict.lua:341; Pro.lua:456; Quests.lua:896; Stats.lua:730 |
-| `GetNumMacros` | c-global |  | mocked |  | Core.lua:301; Hunter.lua:423; Macros.lua:682 |
+| `GetNumGroupMembers` | c-global |  | mocked |  | Core.lua:1310,2661; Abandon.lua:506; Edge2.lua:70; Export.lua:552; Finder.lua:208,610; Macros.lua:634 (+9 files) |
+| `GetNumLootItems` | c-global |  | mocked |  | Export.lua:259; MinimapPins.lua:173; Pro.lua:456; Quests.lua:964; Stats.lua:742 |
+| `GetNumMacros` | c-global |  | mocked |  | Core.lua:301; Macros.lua:682 |
 | `GetNumQuestChoices` | c-global |  | mocked |  | Pro.lua:482; Quick.lua:195,222 |
-| `GetNumQuestLeaderBoards` | c-global |  | mocked |  | Export.lua:477; Leveling.lua:167; Pro.lua:262; Quests.lua:277 |
-| `GetNumQuestLogChoices` | c-global |  | absent | not mocked (FrameXML/C global) | Abandon.lua:461,462; Gear.lua:340; ZonePlan.lua:500 |
-| `GetNumQuestLogRewards` | c-global |  | absent | not mocked (FrameXML/C global) | ZonePlan.lua:501 |
+| `GetNumQuestLeaderBoards` | c-global |  | mocked |  | Export.lua:510; Leveling.lua:171; Pro.lua:265; Quests.lua:279 |
+| `GetNumQuestLogChoices` | c-global |  | absent | not mocked (FrameXML/C global) | Abandon.lua:466,467; Gear.lua:513; ZonePlan.lua:563 |
+| `GetNumQuestLogRewards` | c-global |  | absent | not mocked (FrameXML/C global) | ZonePlan.lua:564 |
 | `GetNumShapeshiftForms` | c-global |  | mocked |  | Macros.lua:493 |
 | `GetNumSubgroupMembers` | c-global |  | mocked |  | Todo.lua:128; Tracker.lua:343 |
-| `GetNumTrainerServices` | c-global |  | absent | not mocked (FrameXML/C global) | Edge2.lua:738; Errands.lua:277 |
+| `GetNumTrainerServices` | c-global |  | absent | not mocked (FrameXML/C global) | Errands.lua:337 |
 | `GetObjectiveText` | c-global |  | absent | not mocked (FrameXML/C global) | Pro.lua:474 |
-| `GetProfessionInfo` | c-global |  | mocked |  | Gear.lua:300; Prof.lua:240 |
-| `GetProfessions` | c-global |  | mocked |  | Gear.lua:300; Prof.lua:240 |
+| `GetProfessionInfo` | c-global |  | mocked |  | Gear.lua:473; Prof.lua:242 |
+| `GetProfessions` | c-global |  | mocked |  | Gear.lua:473; Prof.lua:242 |
 | `GetQuestID` | c-global |  | absent | not mocked (FrameXML/C global) | Pro.lua:472,478 |
 | `GetQuestItemInfo` | c-global |  | mocked |  | Quick.lua:201 |
 | `GetQuestItemLink` | c-global |  | mocked |  | Pro.lua:485; Quick.lua:200 |
-| `GetQuestLogItemLink` | c-global |  | absent | not mocked (FrameXML/C global) | Abandon.lua:461,464; Gear.lua:340 |
-| `GetQuestLogLeaderBoard` | c-global |  | mocked |  | Export.lua:478; Leveling.lua:169; Pro.lua:263; Quests.lua:279 |
-| `GetQuestLogQuestText` | c-global |  | absent | not mocked (FrameXML/C global) | Quests.lua:632,633 |
-| `GetQuestLogRewardXP` | c-global |  | mocked |  | Pro.lua:292; Quests.lua:158,159,162 |
-| `GetQuestLogSpecialItemInfo` | c-global |  | mocked |  | Quests.lua:186,187 |
+| `GetQuestLogItemLink` | c-global |  | absent | not mocked (FrameXML/C global) | Abandon.lua:466,469; Gear.lua:513 |
+| `GetQuestLogLeaderBoard` | c-global |  | mocked |  | Export.lua:511; Leveling.lua:173; Pro.lua:266; Quests.lua:281 |
+| `GetQuestLogQuestText` | c-global |  | absent | not mocked (FrameXML/C global) | Quests.lua:653,654 |
+| `GetQuestLogRewardXP` | c-global |  | mocked |  | Pro.lua:295; Quests.lua:159,160,163 |
+| `GetQuestLogSpecialItemInfo` | c-global |  | mocked |  | Quests.lua:189,190 |
 | `GetQuestMoneyToGet` | c-global |  | absent | not mocked (FrameXML/C global) | Quick.lua:189 |
 | `GetQuestReward` | c-global |  | absent | not mocked (FrameXML/C global) | Quick.lua:232 |
 | `GetQuestText` | c-global |  | absent | not mocked (FrameXML/C global) | Pro.lua:474 |
-| `GetQuestUiMapID` | c-global |  | absent | not mocked (FrameXML/C global) | Quests.lua:225 |
-| `GetRepairAllCost` | c-global |  | mocked |  | Economy.lua:311; Inventory.lua:339; Quick.lua:328; Stats.lua:490,494 |
+| `GetQuestUiMapID` | c-global |  | mocked |  | Quests.lua:227 |
+| `GetRepairAllCost` | c-global |  | mocked |  | Inventory.lua:469; Quick.lua:328; Stats.lua:505,509 |
 | `GetShapeshiftFormInfo` | c-global |  | mocked |  | Macros.lua:497 |
-| `GetTaxiMapID` | c-global |  | absent | not mocked (FrameXML/C global) | QuickTravel.lua:194 |
-| `GetTitleText` | c-global |  | absent | not mocked (FrameXML/C global) | Session.lua:404 |
-| `GetTrainerServiceCost` | c-global |  | absent | not mocked (FrameXML/C global) | Edge2.lua:744; Errands.lua:284 |
-| `GetTrainerServiceInfo` | c-global |  | absent | not mocked (FrameXML/C global) | Edge2.lua:742; Errands.lua:281 |
-| `HasNewMail` | c-global |  | absent | not mocked (FrameXML/C global) | QuickTravel.lua:780 |
-| `HasPetUI` | c-global |  | mocked |  | Edge.lua:924 |
-| `InCombatLockdown` | c-global |  | mocked |  | Core.lua:859,1487,1488,3273…; Classes.lua:166; Group.lua:63; Hunter.lua:291,959; Inventory.lua:48; Leveling.lua:42 (+5 files) |
-| `IsFishingLoot` | c-global |  | absent | not mocked (FrameXML/C global) | Stats.lua:648 |
-| `IsInGroup` | c-global |  | mocked |  | Core.lua:1294,2641,2859; Group.lua:108; Hunter.lua:603; Macros.lua:633; Planner.lua:430; Talents.lua:301 |
-| `IsInRaid` | c-global |  | mocked |  | Core.lua:2858; Edge.lua:1053; Export.lua:527; Group.lua:117,133; Planner.lua:355,881; Quick.lua:411 (+3 files) |
+| `GetTaxiMapID` | c-global |  | absent | not mocked (FrameXML/C global) | QuickTravel.lua:191 |
+| `GetTitleText` | c-global |  | absent | not mocked (FrameXML/C global) | Session.lua:429 |
+| `GetTrainerServiceCost` | c-global |  | absent | not mocked (FrameXML/C global) | Errands.lua:344,349 |
+| `GetTrainerServiceInfo` | c-global |  | absent | not mocked (FrameXML/C global) | Errands.lua:341 |
+| `HasNewMail` | c-global |  | absent | not mocked (FrameXML/C global) | QuickTravel.lua:777 |
+| `InCombatLockdown` | c-global |  | mocked |  | Core.lua:321,880,1506,1507…; Classes.lua:166; Errands.lua:192,202,380; Hunter.lua:321,1118; Inventory.lua:52; Leveling.lua:46 (+4 files) |
+| `IsFishingLoot` | c-global |  | absent | not mocked (FrameXML/C global) | Stats.lua:660 |
+| `IsInGroup` | c-global |  | mocked |  | Core.lua:1309,2660,2878; Macros.lua:633; Planner.lua:511; Talents.lua:302 |
+| `IsInRaid` | c-global |  | mocked |  | Core.lua:2877; Export.lua:560; Planner.lua:419,1002; Quick.lua:411; QuickTravel.lua:876,930,952,1125…; Radar.lua:306 |
 | `IsQuestCompletable` | c-global |  | absent | not mocked (FrameXML/C global) | Quick.lua:188 |
-| `IsTradeskillTrainer` | c-global |  | absent | not mocked (FrameXML/C global) | Errands.lua:276 |
-| `NumTaxiNodes` | c-global |  | absent | not mocked (FrameXML/C global) | Errands.lua:185; QuickTravel.lua:207 |
-| `PickupMacro` | c-global |  | mocked |  | Macros.lua:947,947,1311 |
+| `IsTradeskillTrainer` | c-global |  | absent | not mocked (FrameXML/C global) | Errands.lua:336 |
+| `NumTaxiNodes` | c-global |  | absent | not mocked (FrameXML/C global) | Errands.lua:245; QuickTravel.lua:204 |
+| `PickupMacro` | c-global |  | mocked |  | Macros.lua:961,961,1325 |
 | `QuestGetAutoAccept` | c-global |  | absent | not mocked (FrameXML/C global) | Quick.lua:181 |
 | `QuestLogPushQuest` | c-global |  | absent | not mocked (FrameXML/C global) | Quick.lua:457 |
 | `RepairAllItems` | c-global |  | mocked |  | Quick.lua:343 |
-| `RequestBattlefieldScoreData` | c-global |  | absent | not mocked (FrameXML/C global) | PvP.lua:1000 |
+| `RequestBattlefieldScoreData` | c-global |  | absent | not mocked (FrameXML/C global) | PvP.lua:1002 |
 | `SelectActiveQuest` | c-global |  | absent | not mocked (FrameXML/C global) | Quick.lua:283 |
 | `SelectAvailableQuest` | c-global |  | absent | not mocked (FrameXML/C global) | Quick.lua:289 |
-| `ShowMacroFrame` | c-global |  | absent | not mocked (FrameXML/C global) | Macros.lua:1026,1026 |
+| `ShowMacroFrame` | c-global |  | absent | not mocked (FrameXML/C global) | Macros.lua:1040,1040 |
 | `TakeInboxItem` | c-global |  | absent | not mocked (FrameXML/C global) | Quick.lua:401 |
 | `TakeInboxMoney` | c-global |  | absent | not mocked (FrameXML/C global) | Quick.lua:399 |
-| `TakeTaxiNode` | c-global |  | absent | not mocked (FrameXML/C global) | QuickTravel.lua:413 |
-| `TaxiNodeCost` | c-global |  | absent | not mocked (FrameXML/C global) | Errands.lua:185; QuickTravel.lua:219 |
-| `TaxiNodeGetType` | c-global |  | absent | not mocked (FrameXML/C global) | Errands.lua:185; QuickTravel.lua:209 |
-| `TaxiNodeName` | c-global |  | absent | not mocked (FrameXML/C global) | Errands.lua:185; QuickTravel.lua:209 |
+| `TakeTaxiNode` | c-global |  | absent | not mocked (FrameXML/C global) | QuickTravel.lua:410 |
+| `TaxiNodeCost` | c-global |  | absent | not mocked (FrameXML/C global) | Errands.lua:245; QuickTravel.lua:216 |
+| `TaxiNodeGetType` | c-global |  | absent | not mocked (FrameXML/C global) | Errands.lua:245; QuickTravel.lua:206 |
+| `TaxiNodeName` | c-global |  | absent | not mocked (FrameXML/C global) | Errands.lua:245; QuickTravel.lua:206 |
 | `AuctionHouseFrame` | framexml |  | absent | not mocked (FrameXML/C global) | Auction.lua:610,2160,2409 |
-| `BackdropTemplateMixin` | framexml |  | absent | not mocked (FrameXML/C global) | Auction.lua:2275; Hub.lua:238; Macros.lua:1047,1078,1348,1377…; ZonePlan.lua:873; Options.lua:777; UI.lua:707,909,1041,1610… |
-| `CLASS_ICON_TCOORDS` | framexml |  | absent | not mocked (FrameXML/C global) | Todo.lua:920 |
+| `BackdropTemplateMixin` | framexml |  | absent | not mocked (FrameXML/C global) | Auction.lua:2275; Hub.lua:261; Macros.lua:1061,1092,1362,1391…; ZonePlan.lua:1044; Options.lua:802; UI.lua:704,906,1038,1609… |
+| `CLASS_ICON_TCOORDS` | framexml |  | absent | not mocked (FrameXML/C global) | Todo.lua:930 |
 | `CR_HASTE_MELEE` | framexml |  | absent | not mocked (FrameXML/C global) | Stats.lua:155 |
-| `ChatFontNormal` | framexml |  | absent | not mocked (FrameXML/C global) | Macros.lua:1087 |
-| `CreateVector2D` | framexml |  | mocked |  | Compass.lua:58; Export.lua:54; Radar.lua:89 |
+| `ChatFontNormal` | framexml |  | absent | not mocked (FrameXML/C global) | Macros.lua:1101 |
+| `CreateVector2D` | framexml |  | mocked |  | Compass.lua:58; Export.lua:54; Radar.lua:88 |
 | `DEFAULT_CHAT_FRAME` | framexml |  | absent | not mocked (FrameXML/C global) | Core.lua:53 |
-| `FlightMapFrame` | framexml |  | absent | not mocked (FrameXML/C global) | QuickTravel.lua:369,380 |
-| `GameFontHighlight` | framexml |  | absent | not mocked (FrameXML/C global) | Todo.lua:781 |
-| `GameFontHighlightSmall` | framexml |  | absent | not mocked (FrameXML/C global) | Todo.lua:1210,1210; Tracker.lua:992 |
-| `GameTooltip` | framexml |  | absent | not mocked (FrameXML/C global) | Auction.lua:2361,2363,2368; Compass.lua:875,892,892,892; Finder.lua:823,830; Hub.lua:110,118,301; Macros.lua:1227,1234,1234; MinimapPins.lua:343,359 (+8 files) |
-| `GetCVar` | framexml |  | mocked |  | MinimapPins.lua:154; PathDraw.lua:236; Quick.lua:798 |
-| `GetUnitName` | framexml |  | absent | not mocked (FrameXML/C global) | Group.lua:138 |
-| `InspectFrame` | framexml |  | absent | not mocked (FrameXML/C global) | Team.lua:296 |
+| `FlightMapFrame` | framexml |  | absent | not mocked (FrameXML/C global) | QuickTravel.lua:366,377 |
+| `GameFontHighlight` | framexml |  | absent | not mocked (FrameXML/C global) | Todo.lua:791 |
+| `GameFontHighlightSmall` | framexml |  | absent | not mocked (FrameXML/C global) | Todo.lua:1220,1220; Tracker.lua:1005 |
+| `GameTooltip` | framexml |  | absent | not mocked (FrameXML/C global) | Auction.lua:2361,2363,2368; Compass.lua:899,923,923,923; Errands.lua:214,222; Finder.lua:818,825; Hub.lua:110,120,324; Macros.lua:1241,1248,1248 (+10 files) |
+| `GetCVar` | framexml |  | mocked |  | MinimapPins.lua:153; PathDraw.lua:236; Quick.lua:813 |
+| `InspectFrame` | framexml |  | absent | not mocked (FrameXML/C global) | Group.lua:1849 |
 | `ItemLocation` | framexml |  | absent | not mocked (FrameXML/C global) | Auction.lua:1662 |
-| `LOCALIZED_CLASS_NAMES_MALE` | framexml |  | absent | not mocked (FrameXML/C global) | PvP.lua:63; PvPMark.lua:249 |
-| `MAX_QUESTLOG_QUESTS` | framexml |  | absent | not mocked (FrameXML/C global) | Abandon.lua:405; Export.lua:514; Quick.lua:172 |
-| `MailFrame` | framexml |  | absent | not mocked (FrameXML/C global) | Economy.lua:437,444 |
+| `LOCALIZED_CLASS_NAMES_MALE` | framexml |  | absent | not mocked (FrameXML/C global) | PvP.lua:63; PvPMark.lua:254 |
+| `MAX_QUESTLOG_QUESTS` | framexml |  | absent | not mocked (FrameXML/C global) | Abandon.lua:410; Export.lua:547; Planner.lua:607; Quick.lua:172 |
+| `MailFrame` | framexml |  | absent | not mocked (FrameXML/C global) | Errands.lua:203 |
 | `MapCanvasDataProviderMixin` | framexml |  | absent | not mocked (FrameXML/C global) | PathDraw.lua:612 |
-| `MerchantFrame` | framexml |  | absent | not mocked (FrameXML/C global) | Quick.lua:844 |
-| `Minimap` | framexml |  | absent | not mocked (FrameXML/C global) | Hub.lua:69; MinimapPins.lua:78; PathDraw.lua:79 |
-| `NUM_BAG_SLOTS` | framexml |  | absent | not mocked (FrameXML/C global) | Core.lua:166; Inventory.lua:100; Macros.lua:69 |
-| `OpenAllMail` | framexml |  | absent | not mocked (FrameXML/C global) | Errands.lua:138 |
-| `PlaySound` | framexml |  | mocked |  | Core.lua:1680,1680; Tracker.lua:577 |
-| `RAID_CLASS_COLORS` | framexml |  | absent | not mocked (FrameXML/C global) | Radar.lua:209; Todo.lua:926 |
-| `SOUNDKIT` | framexml |  | absent | not mocked (FrameXML/C global) | Core.lua:1665; Tracker.lua:575 |
-| `SelectGossipOption` | framexml |  | absent | not mocked (FrameXML/C global) | Quick.lua:276; QuickTravel.lua:534,534 |
-| `SendMailFrame` | framexml |  | absent | not mocked (FrameXML/C global) | Economy.lua:403,437,444 |
-| `SetCVar` | framexml |  | mocked |  | Quick.lua:809 |
-| `Settings` | framexml |  | absent | not mocked (FrameXML/C global) | Options.lua:728,760 |
-| `TaxiFrame` | framexml |  | absent | not mocked (FrameXML/C global) | QuickTravel.lua:382 |
-| `TooltipDataProcessor` | framexml |  | absent | not mocked (FrameXML/C global) | Quests.lua:884; Tracker.lua:740 |
-| `UIErrorsFrame` | framexml |  | absent | not mocked (FrameXML/C global) | Core.lua:2188,2188,2189,2189 |
-| `UISpecialFrames` | framexml |  | absent | not mocked (FrameXML/C global) | Finder.lua:890; Hub.lua:258; ZonePlan.lua:891; Options.lua:809; UI.lua:729,2598,2598 |
-| `UiMapPoint` | framexml |  | absent | not mocked (FrameXML/C global) | Compass.lua:242; Planner.lua:1029 |
+| `MerchantFrame` | framexml |  | absent | not mocked (FrameXML/C global) | Quick.lua:859 |
+| `Minimap` | framexml |  | absent | not mocked (FrameXML/C global) | Hub.lua:69; MinimapPins.lua:77; PathDraw.lua:79 |
+| `NUM_BAG_SLOTS` | framexml |  | absent | not mocked (FrameXML/C global) | Core.lua:166; Inventory.lua:105; Macros.lua:69 |
+| `OpenAllMail` | framexml |  | absent | not mocked (FrameXML/C global) | Errands.lua:143 |
+| `PlaySound` | framexml |  | mocked |  | Core.lua:1699,1699; Tracker.lua:586 |
+| `RAID_CLASS_COLORS` | framexml |  | absent | not mocked (FrameXML/C global) | Radar.lua:208; Todo.lua:936 |
+| `SOUNDKIT` | framexml |  | absent | not mocked (FrameXML/C global) | Core.lua:1684; Tracker.lua:584 |
+| `SelectGossipOption` | framexml |  | absent | not mocked (FrameXML/C global) | Quick.lua:276; QuickTravel.lua:531,531 |
+| `SendMailFrame` | framexml |  | absent | not mocked (FrameXML/C global) | Errands.lua:177 |
+| `SetCVar` | framexml |  | mocked |  | Quick.lua:824 |
+| `Settings` | framexml |  | absent | not mocked (FrameXML/C global) | Options.lua:737,785 |
+| `TaxiFrame` | framexml |  | absent | not mocked (FrameXML/C global) | QuickTravel.lua:379 |
+| `TooltipDataProcessor` | framexml |  | absent | not mocked (FrameXML/C global) | Prof.lua:608; Quests.lua:952; Tracker.lua:749 |
+| `UIErrorsFrame` | framexml |  | absent | not mocked (FrameXML/C global) | Core.lua:2204,2204,2205,2205 |
+| `UISpecialFrames` | framexml |  | absent | not mocked (FrameXML/C global) | Finder.lua:885; Hub.lua:281; ZonePlan.lua:1062; Options.lua:834; UI.lua:726,2607,2607 |
+| `UiMapPoint` | framexml |  | absent | not mocked (FrameXML/C global) | Compass.lua:242; Planner.lua:1150 |
 | `WOW_PROJECT_ID` | framexml |  | absent | not mocked (FrameXML/C global) | Auction.lua:2157 |
 | `WorldMapFrame` | framexml |  | absent | not mocked (FrameXML/C global) | PathDraw.lua:366 |
 
@@ -601,176 +597,173 @@ Legend — real: `documented` (Blizzard API docs), `framexml` (defined by Blizza
 
 | event | real | payload flags | called from |
 |---|---|---|---|
-| `ACTIONBAR_SLOT_CHANGED` | documented |  | Binds.lua:872 |
-| `ACTIVE_TALENT_GROUP_CHANGED` | documented |  | Macros.lua:1688; Talents.lua:389 |
-| `ADDON_ACTION_BLOCKED` | documented |  | Core.lua:3336,676; Binds.lua:878 |
-| `ADDON_ACTION_FORBIDDEN` | documented |  | Core.lua:3335,676; Binds.lua:877; Macros.lua:1690 |
-| `ADDON_LOADED` | documented |  | Core.lua:3337,735 |
-| `AREA_POIS_UPDATED` | documented |  | PvP.lua:962 |
+| `ACTIONBAR_SLOT_CHANGED` | documented |  | Binds.lua:946 |
+| `ACTIVE_TALENT_GROUP_CHANGED` | documented |  | Macros.lua:1702; Talents.lua:390 |
+| `ADDON_ACTION_BLOCKED` | documented |  | Core.lua:3355,679; Binds.lua:952 |
+| `ADDON_ACTION_FORBIDDEN` | documented |  | Core.lua:3354,679; Binds.lua:951; Macros.lua:1704 |
+| `ADDON_LOADED` | documented |  | Core.lua:3356,738 |
+| `AREA_POIS_UPDATED` | documented |  | PvP.lua:964 |
 | `AUCTION_HOUSE_BROWSE_RESULTS_ADDED` | documented |  | Auction.lua:2609 |
 | `AUCTION_HOUSE_BROWSE_RESULTS_UPDATED` | documented |  | Auction.lua:2609 |
-| `AUCTION_HOUSE_CLOSED` | documented |  | Core.lua:1480; Auction.lua:2602; Edge.lua:1193 |
-| `AUCTION_HOUSE_SHOW` | documented |  | Core.lua:1479; Auction.lua:2602; Edge.lua:1192; MinimapPins.lua:556 |
+| `AUCTION_HOUSE_CLOSED` | documented |  | Core.lua:1499; Auction.lua:2602 |
+| `AUCTION_HOUSE_SHOW` | documented |  | Core.lua:1498; Auction.lua:2602; MinimapPins.lua:573; Tour.lua:1048 |
 | `AUCTION_HOUSE_THROTTLED_SYSTEM_READY` | documented |  | Auction.lua:2603 |
 | `AUCTION_OWNED_LIST_UPDATE` | **MISSING** (RegisterEvent errors: unknown event) |  | Auction.lua:2612 |
-| `BAG_UPDATE` | documented |  | Core.lua:3352 |
-| `BAG_UPDATE_COOLDOWN` | documented |  | Quests.lua:1196 |
-| `BAG_UPDATE_DELAYED` | documented |  | Core.lua:3352; Classes.lua:253; Economy.lua:687; Edge2.lua:921; Gear.lua:880; Highlight.lua:1339 (+9 files) |
-| `BANKFRAME_OPENED` | documented |  | Prof.lua:739 |
-| `BOSS_KILL` | documented |  | Dungeon.lua:984 |
-| `CHARACTER_POINTS_CHANGED` | documented |  | Gear.lua:882; Macros.lua:1689; Talents.lua:389 |
-| `CHAT_MSG_ADDON` | documented |  | Core.lua:3343,736 |
-| `CHAT_MSG_BG_SYSTEM_ALLIANCE` | documented |  | PvP.lua:959 |
-| `CHAT_MSG_BG_SYSTEM_HORDE` | documented |  | PvP.lua:960 |
-| `CHAT_MSG_BG_SYSTEM_NEUTRAL` | documented |  | PvP.lua:961 |
-| `CHAT_MSG_COMBAT_HONOR_GAIN` | documented |  | PvP.lua:977 |
-| `CHAT_MSG_COMBAT_XP_GAIN` | documented |  | Boost.lua:966; Detect.lua:1095; Edge.lua:1195; Edge2.lua:905; Export.lua:989; HunterPro.lua:483 (+3 files) |
-| `CHAT_MSG_LOOT` | documented |  | Economy.lua:685; Edge.lua:1194; Missions.lua:1900; Session.lua:407 |
-| `CHAT_MSG_MONSTER_EMOTE` | documented | secret in chat lockdown | Dungeon.lua:988; Fight.lua:680 |
-| `CHAT_MSG_MONSTER_YELL` | documented | secret in chat lockdown | Dungeon.lua:988; Edge.lua:1205 |
-| `CHAT_MSG_RAID_BOSS_EMOTE` | documented | secret in chat lockdown | Dungeon.lua:988 |
-| `CHAT_MSG_SKILL` | documented | secret in chat lockdown | Prof.lua:738 |
-| `CHAT_MSG_SYSTEM` | documented | secret in chat lockdown | Errands.lua:444 |
-| `COMBAT_END` | **MISSING** (RegisterEvent errors: unknown event) |  | Abandon.lua:683; Boost.lua:978; Detect.lua:1118; Dungeon.lua:993; Fight.lua:699; Gear.lua:883 (+5 files) |
-| `COMBAT_LOG_EVENT_UNFILTERED` | documented | RESTRICTED (CLEU: ADDON_ACTION_FORBIDDEN) | Fight.lua:694; Hunter.lua:830,837; HunterPro.lua:488; Predict.lua:627 |
-| `COMBAT_START` | **MISSING** (RegisterEvent errors: unknown event) |  | Boost.lua:973; Dungeon.lua:992; Economy.lua:691; Fight.lua:695; HunterPro.lua:489; QuickTravel.lua:1242 |
+| `BAG_UPDATE` | documented |  | Core.lua:3371 |
+| `BAG_UPDATE_COOLDOWN` | documented |  | Quests.lua:1280 |
+| `BAG_UPDATE_DELAYED` | documented |  | Core.lua:3371; Classes.lua:253; DungeonPrep.lua:206; Gear.lua:1199; Group.lua:2653; Highlight.lua:1344 (+7 files) |
+| `BANKFRAME_OPENED` | documented |  | Prof.lua:895 |
+| `BOSS_KILL` | documented |  | Dungeon.lua:1791 |
+| `CHARACTER_POINTS_CHANGED` | documented |  | Gear.lua:1201; Macros.lua:1703; Talents.lua:390 |
+| `CHAT_MSG_ADDON` | documented |  | Core.lua:3362,739 |
+| `CHAT_MSG_BG_SYSTEM_ALLIANCE` | documented |  | PvP.lua:961 |
+| `CHAT_MSG_BG_SYSTEM_HORDE` | documented |  | PvP.lua:962 |
+| `CHAT_MSG_BG_SYSTEM_NEUTRAL` | documented |  | PvP.lua:963 |
+| `CHAT_MSG_COMBAT_HONOR_GAIN` | documented |  | PvP.lua:979 |
+| `CHAT_MSG_COMBAT_XP_GAIN` | documented |  | Detect.lua:1095; Export.lua:1056 |
+| `CHAT_MSG_LOOT` | documented |  | Dungeon.lua:1795; Session.lua:432 |
+| `CHAT_MSG_MONSTER_EMOTE` | documented | secret in chat lockdown | Dungeon.lua:1799 |
+| `CHAT_MSG_MONSTER_YELL` | documented | secret in chat lockdown | Dungeon.lua:1799; Edge2.lua:502 |
+| `CHAT_MSG_RAID_BOSS_EMOTE` | documented | secret in chat lockdown | Dungeon.lua:1799 |
+| `CHAT_MSG_SKILL` | documented | secret in chat lockdown | Prof.lua:893 |
+| `CHAT_MSG_SYSTEM` | documented | secret in chat lockdown | Errands.lua:560 |
+| `COMBAT_END` | **MISSING** (RegisterEvent errors: unknown event) |  | Abandon.lua:688; Detect.lua:1118; Dungeon.lua:1804; Fight.lua:218; Gear.lua:1202; Planner.lua:1421 (+4 files) |
+| `COMBAT_START` | **MISSING** (RegisterEvent errors: unknown event) |  | Dungeon.lua:1803; Fight.lua:217; QuickTravel.lua:1209; Tour.lua:1040 |
 | `COMMODITY_PRICE_UPDATED` | documented |  | Auction.lua:2603 |
 | `COMMODITY_SEARCH_RESULTS_ADDED` | documented |  | Auction.lua:1194 |
 | `COMMODITY_SEARCH_RESULTS_UPDATED` | documented |  | Auction.lua:1194,2606 |
-| `CONFIRM_TALENT_WIPE` | documented |  | Talents.lua:393 |
-| `CVAR_UPDATE` | documented |  | MinimapPins.lua:551; PathDraw.lua:656; Quick.lua:867 |
-| `DAMAGE_METER_COMBAT_SESSION_UPDATED` | documented |  | Dungeon.lua:991 |
+| `CONFIRM_TALENT_WIPE` | documented |  | Talents.lua:394 |
+| `CVAR_UPDATE` | documented |  | MinimapPins.lua:568; PathDraw.lua:656; Quick.lua:882 |
+| `DAMAGE_METER_COMBAT_SESSION_UPDATED` | documented |  | Dungeon.lua:1802 |
+| `DETECT` | **MISSING** (RegisterEvent errors: unknown event) |  | Edge2.lua:499; Pro.lua:852; Stats.lua:1243 |
 | `DISPLAY_SIZE_CHANGED` | documented |  | UI.lua:2327 |
-| `DUEL_FINISHED` | documented |  | PvP.lua:981 |
-| `DUEL_REQUESTED` | documented |  | PvP.lua:980 |
-| `ENCOUNTER_END` | documented |  | Dungeon.lua:983 |
-| `ENCOUNTER_START` | documented |  | Dungeon.lua:982 |
-| `EXPORT_UPDATED` | **MISSING** (RegisterEvent errors: unknown event) |  | Planner.lua:1294; ZonePlan.lua:1076 |
-| `GET_ITEM_INFO_RECEIVED` | documented |  | Highlight.lua:1345 |
-| `GLOBAL_MOUSE_DOWN` | documented |  | Hub.lua:251; ZonePlan.lua:886; UI.lua:721 |
-| `GOSSIP_CLOSED` | documented |  | QuickTravel.lua:1230 |
-| `GOSSIP_SHOW` | documented |  | Quick.lua:838; QuickTravel.lua:1229 |
-| `GROUP_ROSTER_UPDATE` | documented |  | Core.lua:1476,3358,3359; Abandon.lua:679; Detect.lua:1107; Dungeon.lua:981; Export.lua:995; Missions.lua:1889 (+7 files) |
-| `HEARTHSTONE_BOUND` | documented |  | Speed.lua:323 |
-| `INSPECT_READY` | documented |  | Team.lua:607 |
+| `DUEL_FINISHED` | documented |  | PvP.lua:983 |
+| `DUEL_REQUESTED` | documented |  | PvP.lua:982 |
+| `ENCOUNTER_END` | documented |  | Dungeon.lua:1790 |
+| `ENCOUNTER_START` | documented |  | Dungeon.lua:1789 |
+| `EXPORT_UPDATED` | **MISSING** (RegisterEvent errors: unknown event) |  | Planner.lua:1424; ZonePlan.lua:1260 |
+| `GET_ITEM_INFO_RECEIVED` | documented |  | Dungeon.lua:1798; Highlight.lua:1350 |
+| `GLOBAL_MOUSE_DOWN` | documented |  | Hub.lua:274; ZonePlan.lua:1057; UI.lua:718 |
+| `GOSSIP_CLOSED` | documented |  | QuickTravel.lua:1197 |
+| `GOSSIP_SHOW` | documented |  | Quick.lua:853; QuickTravel.lua:1196 |
+| `GROUP_ROSTER_UPDATE` | documented |  | Core.lua:1495,3377,3378; Abandon.lua:684; Detect.lua:1107; Dungeon.lua:1782; DungeonPrep.lua:206; Export.lua:1062 (+6 files) |
+| `HEARTHSTONE_BOUND` | documented |  | Speed.lua:336 |
+| `INSPECT_READY` | documented |  | Group.lua:2667 |
 | `ITEM_SEARCH_RESULTS_UPDATED` | documented |  | Auction.lua:2606 |
-| `LEARNED_SPELL_IN_SKILL_LINE` | documented |  | Comfort.lua:386; Macros.lua:1687 |
-| `LEARNED_SPELL_IN_TAB` | **MISSING** (RegisterEvent errors: unknown event) |  | Comfort.lua:385; Macros.lua:1686 |
-| `LOOT_CLOSED` | documented |  | Core.lua:3352; Highlight.lua:1354; Predict.lua:630 |
-| `LOOT_OPENED` | documented |  | Economy.lua:685; Edge2.lua:908; Export.lua:990; Highlight.lua:1352; MinimapPins.lua:554; Predict.lua:628 (+3 files) |
-| `LOOT_SLOT_CLEARED` | documented |  | Highlight.lua:1353 |
-| `MAIL_CLOSED` | documented |  | Economy.lua:685; Errands.lua:434; Quick.lua:854; QuickTravel.lua:1232 |
-| `MAIL_INBOX_UPDATE` | documented |  | Auction.lua:2603; Errands.lua:433; Quick.lua:853 |
-| `MAIL_SHOW` | documented |  | Economy.lua:685; Errands.lua:432; MinimapPins.lua:555; Quick.lua:852 |
-| `MERCHANT_CLOSED` | documented |  | Core.lua:3352; Economy.lua:686; Edge.lua:1191; Quick.lua:851; QuickFight.lua:834; QuickTravel.lua:1232 (+1 files) |
-| `MERCHANT_SHOW` | documented |  | Detect.lua:1104; Economy.lua:686; Edge.lua:1190; MinimapPins.lua:557; Quick.lua:839; QuickFight.lua:833 (+2 files) |
-| `MINIMAP_UPDATE_ZOOM` | documented |  | MinimapPins.lua:550; PathDraw.lua:656 |
-| `NAME_PLATE_UNIT_ADDED` | documented |  | Boost.lua:961; Detect.lua:1096; Edge.lua:1200; Edge2.lua:913; Fight.lua:674; Highlight.lua:1347 (+5 files) |
-| `NAME_PLATE_UNIT_REMOVED` | documented |  | Detect.lua:1097; Edge.lua:1201; Edge2.lua:914; Highlight.lua:1348; PvPMark.lua:385 |
-| `NEW_MOUNT_ADDED` | documented |  | Quick.lua:866 |
+| `LAYOUT_DONE` | **MISSING** (RegisterEvent errors: unknown event) |  | Window.lua:1622 |
+| `LEARNED_SPELL_IN_SKILL_LINE` | documented |  | Binds.lua:947; Macros.lua:1701 |
+| `LEARNED_SPELL_IN_TAB` | **MISSING** (RegisterEvent errors: unknown event) |  | Macros.lua:1700 |
+| `LOOT_CLOSED` | documented |  | Core.lua:3371; Highlight.lua:1359 |
+| `LOOT_OPENED` | documented |  | Edge2.lua:500; Export.lua:1057; Highlight.lua:1357; MinimapPins.lua:571; Pro.lua:845; Quests.lua:1281 (+1 files) |
+| `LOOT_SLOT_CLEARED` | documented |  | Highlight.lua:1358 |
+| `MAIL_CLOSED` | documented |  | Errands.lua:543; Quick.lua:869; QuickTravel.lua:1199 |
+| `MAIL_INBOX_UPDATE` | documented |  | Auction.lua:2603; Errands.lua:542; Quick.lua:868 |
+| `MAIL_SEND_INFO_UPDATE` | documented |  | Errands.lua:544 |
+| `MAIL_SHOW` | documented |  | Errands.lua:541; MinimapPins.lua:572; Quick.lua:867 |
+| `MERCHANT_CLOSED` | documented |  | Core.lua:3371; Quick.lua:866; QuickFight.lua:856; QuickTravel.lua:1199; Stats.lua:1257 |
+| `MERCHANT_SHOW` | documented |  | Detect.lua:1104; MinimapPins.lua:574; Quick.lua:854; QuickFight.lua:855; QuickTravel.lua:1198; Stats.lua:1256 |
+| `MINIMAP_UPDATE_ZOOM` | documented |  | MinimapPins.lua:567; PathDraw.lua:656 |
+| `MIRROR_TIMER_START` | documented |  | Fight.lua:214 |
+| `MIRROR_TIMER_STOP` | documented |  | Fight.lua:215 |
+| `NAME_PLATE_UNIT_ADDED` | documented |  | Boost.lua:140; Detect.lua:1096; Highlight.lua:1352; Pro.lua:846; PvP.lua:972; PvPMark.lua:389 (+1 files) |
+| `NAME_PLATE_UNIT_REMOVED` | documented |  | Detect.lua:1097; Highlight.lua:1353; PvPMark.lua:390 |
+| `NEW_MOUNT_ADDED` | documented |  | Quick.lua:881 |
 | `OWNED_AUCTIONS_UPDATED` | documented |  | Auction.lua:2613 |
-| `PARTY_KILL` | documented | secret: identity of non-group units (combat / instance) | Predict.lua:250 |
-| `PARTY_LEADER_CHANGED` | documented |  | QuickTravel.lua:1240 |
-| `PARTY_MEMBERS_CHANGED` | **MISSING** (RegisterEvent errors: unknown event) |  | Core.lua:3359 |
-| `PET_BAR_UPDATE` | documented |  | Boost.lua:972; Hunter.lua:828 |
-| `PLAYER_ALIVE` | documented |  | Core.lua:1953; Compass.lua:1091; Radar.lua:1147; Session.lua:410; Speed.lua:342 |
-| `PLAYER_CONTROL_GAINED` | documented |  | Export.lua:990 |
-| `PLAYER_CONTROL_LOST` | documented |  | Export.lua:990 |
-| `PLAYER_DEAD` | documented |  | Core.lua:1953; Compass.lua:1091,1094; Dungeon.lua:985; Fight.lua:679; NavTime.lua:250; PvP.lua:979 (+5 files) |
-| `PLAYER_ENTERING_WORLD` | documented |  | Core.lua:1476,3346,3352; Binds.lua:873; Classes.lua:252; Compass.lua:1087; Detect.lua:1087; Dungeon.lua:979 (+19 files) |
-| `PLAYER_EQUIPMENT_CHANGED` | documented |  | Core.lua:3353; Gear.lua:878; Macros.lua:1680; QuickFight.lua:825; Stats.lua:1183 |
-| `PLAYER_FLAGS_CHANGED` | documented |  | Detect.lua:1107; PvPMark.lua:393; Team.lua:599 |
-| `PLAYER_GUILD_UPDATE` | documented |  | Core.lua:3360 |
-| `PLAYER_INTERACTION_MANAGER_FRAME_SHOW` | documented |  | MinimapPins.lua:562 |
-| `PLAYER_LEAVING_WORLD` | documented |  | Hunter.lua:830,860 |
-| `PLAYER_LEVEL_UP` | documented |  | Core.lua:3360,3365; Abandon.lua:678,679; Boost.lua:969; Edge2.lua:919; Finder.lua:937; Gear.lua:879 (+16 files) |
-| `PLAYER_LOGIN` | documented |  | Core.lua:3338,735; Auction.lua:2614; Classes.lua:290; Hunter.lua:954 |
-| `PLAYER_LOGOUT` | documented |  | Core.lua:3340,736; Comfort.lua:387; Export.lua:996; Hunter.lua:830,860; Missions.lua:1902; Session.lua:411 (+2 files) |
-| `PLAYER_MONEY` | documented |  | Core.lua:3360; Dungeon.lua:987; Economy.lua:685; Predict.lua:632; Session.lua:406; Stats.lua:1194 |
-| `PLAYER_PVP_KILLS_CHANGED` | documented |  | PvP.lua:978 |
-| `PLAYER_REGEN_DISABLED` | documented |  | Core.lua:3341,737; Classes.lua:252; Compass.lua:1089; Edge2.lua:906; Export.lua:989; Hunter.lua:827,862 (+6 files) |
-| `PLAYER_REGEN_ENABLED` | documented |  | Core.lua:3342,737; Binds.lua:876; Classes.lua:252; Compass.lua:1088; Detect.lua:1099; Edge2.lua:907 (+13 files) |
-| `PLAYER_STARTED_MOVING` | documented |  | NavTime.lua:247; Stats.lua:1200 |
-| `PLAYER_STOPPED_MOVING` | documented |  | NavTime.lua:248; Stats.lua:1201 |
-| `PLAYER_TALENT_UPDATE` | documented |  | Talents.lua:389 |
-| `PLAYER_TARGET_CHANGED` | documented |  | Boost.lua:962; Detect.lua:1098; Edge.lua:1199; Edge2.lua:909; Export.lua:989; Fight.lua:671 (+11 files) |
-| `PLAYER_UNGHOST` | documented |  | Core.lua:1953; Compass.lua:1091; Radar.lua:1148; Session.lua:409; Speed.lua:343 |
-| `PLAYER_UPDATE_RESTING` | documented |  | Core.lua:1953; Edge2.lua:920; Pro.lua:844; Quick.lua:862; QuickTravel.lua:1232 |
-| `PLAYER_XP_UPDATE` | documented |  | Boost.lua:968; Dungeon.lua:986; Export.lua:991; Predict.lua:631; Quests.lua:1157; Session.lua:402 (+3 files) |
-| `QUESTS_UPDATED` | **MISSING** (RegisterEvent errors: unknown event) |  | Compass.lua:1104; Dungeon.lua:994; Quick.lua:832; Tracker.lua:1253 |
-| `QUEST_ACCEPTED` | documented |  | Abandon.lua:678,679; Compass.lua:1083; Detect.lua:1090; Export.lua:990; Gear.lua:881; Highlight.lua:1341 (+5 files) |
-| `QUEST_COMPLETE` | documented |  | Boost.lua:964; Missions.lua:1899; Pro.lua:842; Quick.lua:836; Session.lua:404 |
-| `QUEST_DETAIL` | documented |  | Pro.lua:842; Quick.lua:834 |
-| `QUEST_FINISHED` | documented |  | Boost.lua:965 |
-| `QUEST_GREETING` | documented |  | Quick.lua:837 |
-| `QUEST_LOG_UPDATE` | documented |  | Abandon.lua:679; Compass.lua:1083; Detect.lua:1090; Edge2.lua:915; Highlight.lua:1340; Missions.lua:1898 (+6 files) |
-| `QUEST_PROGRESS` | documented |  | Quick.lua:835 |
-| `QUEST_REMOVED` | documented |  | Abandon.lua:678,679; Compass.lua:1084; Detect.lua:1090; Highlight.lua:1343; Planner.lua:1283; Quests.lua:1162 (+2 files) |
-| `QUEST_TURNED_IN` | documented |  | Boost.lua:967; Compass.lua:1083; Detect.lua:1094; Economy.lua:685; Export.lua:990; Highlight.lua:1342 (+7 files) |
-| `QUEST_WATCH_LIST_CHANGED` | documented |  | Compass.lua:1083; Quests.lua:1156 |
-| `QUEST_WATCH_UPDATE` | documented |  | Detect.lua:1090; Quests.lua:1157; Stats.lua:1197 |
-| `RAID_BOSS_EMOTE` | documented |  | Dungeon.lua:988 |
-| `READY` | **MISSING** (RegisterEvent errors: unknown event) |  | UI.lua:2328,2703,2908 |
-| `READY_CHECK` | documented | secret in chat lockdown | Core.lua:1627; Errands.lua:440; QuickTravel.lua:1241 |
-| `READY_CHECK_FINISHED` | documented |  | Errands.lua:441 |
+| `PARTY_LEADER_CHANGED` | documented |  | QuickTravel.lua:1207 |
+| `PARTY_MEMBERS_CHANGED` | **MISSING** (RegisterEvent errors: unknown event) |  | Core.lua:3378 |
+| `PET_BAR_UPDATE` | documented |  | Hunter.lua:982,990 |
+| `PLAYER_ALIVE` | documented |  | Core.lua:1969; Compass.lua:1123; Radar.lua:1124; Session.lua:435; Speed.lua:355; Tour.lua:1044 |
+| `PLAYER_CONTROL_GAINED` | documented |  | Export.lua:1057 |
+| `PLAYER_CONTROL_LOST` | documented |  | Export.lua:1057 |
+| `PLAYER_DEAD` | documented |  | Core.lua:1969; Compass.lua:1123,1126; Dungeon.lua:1792; Fight.lua:213; Group.lua:2673; NavTime.lua:250 (+6 files) |
+| `PLAYER_ENTERING_WORLD` | documented |  | Core.lua:1495,3365,3371; Binds.lua:947; Classes.lua:252; Compass.lua:1119; Detect.lua:1087; Dungeon.lua:1780 (+19 files) |
+| `PLAYER_EQUIPMENT_CHANGED` | documented |  | Core.lua:3372; Dungeon.lua:1797; Gear.lua:1197; Macros.lua:1694; QuickFight.lua:847; Stats.lua:1230 |
+| `PLAYER_FLAGS_CHANGED` | documented |  | Detect.lua:1107; Group.lua:2661; PvPMark.lua:398 |
+| `PLAYER_GUILD_UPDATE` | documented |  | Core.lua:3379 |
+| `PLAYER_INTERACTION_MANAGER_FRAME_SHOW` | documented |  | MinimapPins.lua:579 |
+| `PLAYER_LEAVING_WORLD` | documented |  | Hunter.lua:1020,984 |
+| `PLAYER_LEVEL_UP` | documented |  | Core.lua:3379,3384; Abandon.lua:683,684; DungeonPrep.lua:207; Errands.lua:545; Finder.lua:933; Gear.lua:1198 (+15 files) |
+| `PLAYER_LOGIN` | documented |  | Core.lua:3357,738; Auction.lua:2614; Classes.lua:290; Hunter.lua:1113 |
+| `PLAYER_LOGOUT` | documented |  | Core.lua:3359,739; Export.lua:1063; Group.lua:2675; Hunter.lua:1020,984; Session.lua:436; Stats.lua:1259 |
+| `PLAYER_MONEY` | documented |  | Core.lua:3379; Dungeon.lua:1794; Errands.lua:549; Session.lua:431; Stats.lua:1245 |
+| `PLAYER_PVP_KILLS_CHANGED` | documented |  | PvP.lua:980 |
+| `PLAYER_REGEN_DISABLED` | documented |  | Core.lua:3360,740; Classes.lua:252; Compass.lua:1121; Export.lua:1056; Group.lua:2665; Hunter.lua:1022,981 (+6 files) |
+| `PLAYER_REGEN_ENABLED` | documented |  | Core.lua:3361,740; Binds.lua:950; Classes.lua:252; Compass.lua:1120; Detect.lua:1099; Export.lua:1056 (+10 files) |
+| `PLAYER_STARTED_MOVING` | documented |  | NavTime.lua:247; Stats.lua:1251 |
+| `PLAYER_STOPPED_MOVING` | documented |  | NavTime.lua:248; Stats.lua:1252 |
+| `PLAYER_TALENT_UPDATE` | documented |  | Talents.lua:390 |
+| `PLAYER_TARGET_CHANGED` | documented |  | Boost.lua:141; Detect.lua:1098; Export.lua:1056; Fight.lua:212; Finder.lua:931; Group.lua:2664 (+7 files) |
+| `PLAYER_UNGHOST` | documented |  | Core.lua:1969; Compass.lua:1123; Fight.lua:216; Radar.lua:1125; Session.lua:434; Speed.lua:356 (+1 files) |
+| `PLAYER_UPDATE_RESTING` | documented |  | Core.lua:1969; Errands.lua:550; Pro.lua:847; Quick.lua:877; QuickTravel.lua:1199 |
+| `PLAYER_XP_UPDATE` | documented |  | Dungeon.lua:1793; Export.lua:1058; Group.lua:2650; Quests.lua:1241; Session.lua:427; Stats.lua:1244 (+1 files) |
+| `QUESTS_UPDATED` | **MISSING** (RegisterEvent errors: unknown event) |  | Compass.lua:1136; Dungeon.lua:1805; Quick.lua:847; Tracker.lua:1266 |
+| `QUEST_ACCEPTED` | documented |  | Abandon.lua:683,684; Compass.lua:1115; Detect.lua:1090; Export.lua:1057; Gear.lua:1200; Highlight.lua:1346 (+5 files) |
+| `QUEST_COMPLETE` | documented |  | Gear.lua:1195; Group.lua:2671; Pro.lua:845; Quick.lua:851; Session.lua:429 |
+| `QUEST_DETAIL` | documented |  | Pro.lua:845; Quick.lua:849 |
+| `QUEST_FINISHED` | documented |  | Gear.lua:1196 |
+| `QUEST_GREETING` | documented |  | Quick.lua:852 |
+| `QUEST_LOG_UPDATE` | documented |  | Abandon.lua:684; Compass.lua:1115; Detect.lua:1090; DungeonPrep.lua:206; Edge2.lua:501; Group.lua:2648 (+6 files) |
+| `QUEST_PROGRESS` | documented |  | Quick.lua:850 |
+| `QUEST_REMOVED` | documented |  | Abandon.lua:683,684; Compass.lua:1116; Detect.lua:1090; Highlight.lua:1348; Planner.lua:1413; Quests.lua:1246 (+2 files) |
+| `QUEST_TURNED_IN` | documented |  | Compass.lua:1115; Detect.lua:1094; Dungeon.lua:1796; Export.lua:1057; Group.lua:2672; Highlight.lua:1347 (+7 files) |
+| `QUEST_WATCH_LIST_CHANGED` | documented |  | Compass.lua:1115; Quests.lua:1240 |
+| `QUEST_WATCH_UPDATE` | documented |  | Detect.lua:1090; Quests.lua:1241; Stats.lua:1248 |
+| `RAID_BOSS_EMOTE` | documented |  | Dungeon.lua:1799 |
+| `READY` | **MISSING** (RegisterEvent errors: unknown event) |  | UI.lua:2328,2712,2917 |
+| `READY_CHECK` | documented | secret in chat lockdown | Core.lua:1646; Errands.lua:556; QuickTravel.lua:1208 |
+| `READY_CHECK_FINISHED` | documented |  | Errands.lua:557 |
 | `REPLICATE_ITEM_LIST_UPDATE` | documented |  | Auction.lua:2602 |
-| `SKILL_LINES_CHANGED` | documented |  | Macros.lua:1684; Prof.lua:738; Squad.lua:1445 |
-| `SPELLS_CHANGED` | documented |  | Binds.lua:872; Comfort.lua:384; Macros.lua:1685; QuickFight.lua:824 |
-| `SPELL_UPDATE_COOLDOWN` | documented |  | QuickFight.lua:826 |
-| `SQUAD_UPDATE` | **MISSING** (RegisterEvent errors: unknown event) |  | Planner.lua:1296; Todo.lua:1465 |
-| `START_AUTOREPEAT_SPELL` | documented |  | Fight.lua:690; Hunter.lua:829,844 |
-| `START_LOOT_ROLL` | documented |  | Highlight.lua:1355; Squad.lua:1448 |
-| `STOP_AUTOREPEAT_SPELL` | documented |  | Hunter.lua:829,845 |
-| `SUMMARY` | **MISSING** (RegisterEvent errors: unknown event) |  | Abandon.lua:684; Auction.lua:2616; Boost.lua:982; Comfort.lua:388; Compass.lua:1098; Detect.lua:1119 (+20 files) |
-| `SUPER_TRACKING_CHANGED` | documented |  | Compass.lua:1084 |
-| `TAXIMAP_CLOSED` | documented |  | Errands.lua:436; QuickTravel.lua:1228 |
-| `TAXIMAP_OPENED` | documented |  | Errands.lua:435; Export.lua:990; QuickTravel.lua:1227; Route.lua:861 |
-| `TRADE_SKILL_CLOSE` | documented |  | Economy.lua:686 |
-| `TRADE_SKILL_LIST_UPDATE` | documented |  | Prof.lua:738 |
-| `TRADE_SKILL_SHOW` | documented |  | Economy.lua:686; Prof.lua:738 |
-| `TRAINER_CLOSED` | documented |  | Edge2.lua:918; Errands.lua:439; QuickTravel.lua:1233 |
-| `TRAINER_SHOW` | documented |  | Edge.lua:1209; Edge2.lua:916; Errands.lua:437; Pro.lua:842 |
-| `TRAINER_UPDATE` | documented |  | Edge2.lua:917; Errands.lua:438 |
+| `SKILL_LINES_CHANGED` | documented |  | Group.lua:2655; Macros.lua:1698; Prof.lua:893 |
+| `SPELLS_CHANGED` | documented |  | Binds.lua:946; Group.lua:2656; Macros.lua:1699; QuickFight.lua:846 |
+| `SPELL_UPDATE_COOLDOWN` | documented |  | QuickFight.lua:848 |
+| `SQUAD_UPDATE` | **MISSING** (RegisterEvent errors: unknown event) |  | Planner.lua:1426; Todo.lua:1475 |
+| `START_AUTOREPEAT_SPELL` | documented |  | Hunter.lua:1003,983 |
+| `START_LOOT_ROLL` | documented |  | Group.lua:2674; Highlight.lua:1360 |
+| `STOP_AUTOREPEAT_SPELL` | documented |  | Hunter.lua:1004,983 |
+| `SUMMARY` | **MISSING** (RegisterEvent errors: unknown event) |  | Abandon.lua:689; Auction.lua:2616; Boost.lua:143; Compass.lua:1130; Detect.lua:1119; Dungeon.lua:1812 (+14 files) |
+| `SUPER_TRACKING_CHANGED` | documented |  | Compass.lua:1116 |
+| `TAXIMAP_CLOSED` | documented |  | Errands.lua:552; QuickTravel.lua:1195 |
+| `TAXIMAP_OPENED` | documented |  | Errands.lua:551; Export.lua:1057; QuickTravel.lua:1194; Route.lua:896 |
+| `TRADE_SKILL_CLOSE` | documented |  | Prof.lua:894 |
+| `TRADE_SKILL_LIST_UPDATE` | documented |  | Prof.lua:893 |
+| `TRADE_SKILL_SHOW` | documented |  | Prof.lua:893 |
+| `TRAINER_CLOSED` | documented |  | Errands.lua:555; QuickTravel.lua:1200 |
+| `TRAINER_SHOW` | documented |  | Errands.lua:553; Pro.lua:845 |
+| `TRAINER_UPDATE` | documented |  | Errands.lua:554 |
 | `UI_SCALE_CHANGED` | documented |  | UI.lua:2327 |
-| `UNIT_AURA` | documented | secret: auras (combat) | Core.lua:673; Classes.lua:253,257; Export.lua:992; Fight.lua:675; HunterPro.lua:479; Predict.lua:634 (+4 files) |
-| `UNIT_COMBAT` | documented |  | Detect.lua:1113; Fight.lua:678; HunterPro.lua:482 |
-| `UNIT_CONNECTION` | documented |  | Detect.lua:1107; Team.lua:599 |
-| `UNIT_FACTION` | documented |  | PvPMark.lua:392 |
-| `UNIT_FLAGS` | documented |  | Detect.lua:1110; Team.lua:599 |
-| `UNIT_HAPPINESS` | documented |  | Fight.lua:689; Hunter.lua:828; QuickFight.lua:819 |
-| `UNIT_HEALTH` | documented |  | Detect.lua:1114; Edge.lua:1206; PvP.lua:973; PvPMark.lua:399; QuickFight.lua:814; Stats.lua:250,261,345 (+1 files) |
-| `UNIT_INVENTORY_CHANGED` | documented |  | Core.lua:3356; Classes.lua:253,257; Hunter.lua:828,843,866; Macros.lua:1679; Predict.lua:635; Team.lua:608 |
-| `UNIT_LEVEL` | documented |  | Team.lua:599 |
-| `UNIT_MAXHEALTH` | documented |  | QuickFight.lua:815 |
-| `UNIT_PET` | documented |  | Boost.lua:971; Hunter.lua:828; Macros.lua:1681; QuickFight.lua:818 |
-| `UNIT_POWER_UPDATE` | documented |  | QuickFight.lua:816; Team.lua:598 |
-| `UNIT_QUEST_LOG_CHANGED` | documented |  | Detect.lua:1093; Highlight.lua:1344; Planner.lua:1285; Quests.lua:1160; Team.lua:603 |
-| `UNIT_SPELLCAST_CHANNEL_START` | documented | secret: casts of others (combat) | Fight.lua:681 |
-| `UNIT_SPELLCAST_CHANNEL_STOP` | documented | secret: casts of others (combat) | Fight.lua:685 |
-| `UNIT_SPELLCAST_FAILED` | documented | secret: casts of others (combat) | Fight.lua:684 |
-| `UNIT_SPELLCAST_INTERRUPTED` | documented | secret: casts of others (combat) | Fight.lua:684 |
-| `UNIT_SPELLCAST_SENT` | documented | secret: casts of others (combat) | Economy.lua:687 |
-| `UNIT_SPELLCAST_START` | documented | secret: casts of others (combat) | Fight.lua:681; Hunter.lua:829,855 |
-| `UNIT_SPELLCAST_STOP` | documented | secret: casts of others (combat) | Fight.lua:684 |
-| `UNIT_SPELLCAST_SUCCEEDED` | documented | secret: casts of others (combat) | Edge2.lua:922; Fight.lua:685; Hunter.lua:829,846; HunterPro.lua:472; Route.lua:846; Speed.lua:324 |
-| `UNIT_STATS` | documented |  | Stats.lua:1184 |
-| `UNIT_TARGET` | documented |  | PvPMark.lua:395 |
-| `UNIT_THREAT_LIST_UPDATE` | documented |  | Boost.lua:970 |
-| `UNIT_THREAT_SITUATION_UPDATE` | documented |  | Detect.lua:1115; Fight.lua:688 |
-| `UPDATE_BATTLEFIELD_SCORE` | documented |  | PvP.lua:966 |
-| `UPDATE_BATTLEFIELD_STATUS` | documented |  | PvP.lua:967 |
-| `UPDATE_BINDINGS` | documented |  | Binds.lua:872 |
-| `UPDATE_BONUS_ACTIONBAR` | documented |  | Binds.lua:873 |
-| `UPDATE_EXHAUSTION` | documented |  | Todo.lua:1466 |
-| `UPDATE_INVENTORY_DURABILITY` | documented |  | Economy.lua:687; Predict.lua:633; QuickTravel.lua:1232; Squad.lua:1445; Stats.lua:1207; Todo.lua:1466 |
-| `UPDATE_MACROS` | documented |  | Binds.lua:872 |
-| `UPDATE_MOUSEOVER_UNIT` | documented |  | Boost.lua:963; Finder.lua:936; Pro.lua:843; PvP.lua:971; Radar.lua:1138 |
-| `UPDATE_PENDING_MAIL` | documented |  | QuickTravel.lua:1233 |
-| `UPDATE_UI_WIDGET` | documented |  | PvP.lua:963 |
+| `UNIT_AURA` | documented | secret: auras (combat) | Core.lua:676; Classes.lua:253,257; Export.lua:1059; Hunter.lua:984,996; PvP.lua:978; QuickFight.lua:839 (+1 files) |
+| `UNIT_COMBAT` | documented |  | Detect.lua:1113 |
+| `UNIT_CONNECTION` | documented |  | Detect.lua:1107; Group.lua:2661 |
+| `UNIT_FACTION` | documented |  | PvPMark.lua:397 |
+| `UNIT_FLAGS` | documented |  | Detect.lua:1110; Group.lua:2661 |
+| `UNIT_HAPPINESS` | documented |  | Hunter.lua:982; QuickFight.lua:841 |
+| `UNIT_HEALTH` | documented |  | Detect.lua:1114; Group.lua:2658; PvP.lua:975; PvPMark.lua:404; QuickFight.lua:836; Stats.lua:1239 |
+| `UNIT_INVENTORY_CHANGED` | documented |  | Core.lua:3375; Classes.lua:253,257; Group.lua:2668; Hunter.lua:1002,1029,982…; Macros.lua:1693 |
+| `UNIT_LEVEL` | documented |  | Group.lua:2661 |
+| `UNIT_MAXHEALTH` | documented |  | QuickFight.lua:837; Stats.lua:1240 |
+| `UNIT_PET` | documented |  | DungeonPrep.lua:207; Group.lua:2661; Hunter.lua:982,990; Macros.lua:1695; QuickFight.lua:840 |
+| `UNIT_POWER_UPDATE` | documented |  | Group.lua:2659; QuickFight.lua:838 |
+| `UNIT_QUEST_LOG_CHANGED` | documented |  | Detect.lua:1093; DungeonPrep.lua:207; Group.lua:2649; Highlight.lua:1349; Planner.lua:1415; Quests.lua:1244 |
+| `UNIT_SPELLCAST_SENT` | documented | secret: casts of others (combat) | Prof.lua:895 |
+| `UNIT_SPELLCAST_START` | documented | secret: casts of others (combat) | Hunter.lua:1015,983 |
+| `UNIT_SPELLCAST_SUCCEEDED` | documented | secret: casts of others (combat) | Hunter.lua:1005,983; Route.lua:881; Speed.lua:337 |
+| `UNIT_STATS` | documented |  | Stats.lua:1231 |
+| `UNIT_TARGET` | documented |  | PvPMark.lua:400 |
+| `UNIT_THREAT_SITUATION_UPDATE` | documented |  | Detect.lua:1115 |
+| `UPDATE_BATTLEFIELD_SCORE` | documented |  | PvP.lua:968 |
+| `UPDATE_BATTLEFIELD_STATUS` | documented |  | PvP.lua:969 |
+| `UPDATE_BINDINGS` | documented |  | Binds.lua:946; Theme.lua:915 |
+| `UPDATE_BONUS_ACTIONBAR` | documented |  | Binds.lua:947 |
+| `UPDATE_EXHAUSTION` | documented |  | Group.lua:2651; Todo.lua:1476 |
+| `UPDATE_INVENTORY_DURABILITY` | documented |  | DungeonPrep.lua:206; Group.lua:2654; QuickTravel.lua:1199; Stats.lua:1258; Todo.lua:1476 |
+| `UPDATE_MACROS` | documented |  | Binds.lua:946; Macros.lua:1705 |
+| `UPDATE_MOUSEOVER_UNIT` | documented |  | Boost.lua:142; Finder.lua:932; Pro.lua:846; PvP.lua:973; Radar.lua:1115 |
+| `UPDATE_PENDING_MAIL` | documented |  | QuickTravel.lua:1200 |
+| `UPDATE_UI_WIDGET` | documented |  | PvP.lua:965 |
 | `VIGNETTES_UPDATED` | documented |  | Detect.lua:1084 |
 | `VIGNETTE_MINIMAP_UPDATED` | documented |  | Detect.lua:1085 |
-| `ZONE_CHANGED` | documented |  | Radar.lua:1129; Speed.lua:335; Stats.lua:1202 |
-| `ZONE_CHANGED_INDOORS` | documented |  | MinimapPins.lua:550; Radar.lua:1129 |
-| `ZONE_CHANGED_NEW_AREA` | documented |  | Core.lua:1476,3346,3360; Abandon.lua:679; Compass.lua:1084; Detect.lua:1086; Dungeon.lua:980; Errands.lua:443 (+20 files) |
+| `ZONE_CHANGED` | documented |  | Radar.lua:1106; Speed.lua:348; Stats.lua:1253 |
+| `ZONE_CHANGED_INDOORS` | documented |  | MinimapPins.lua:567; Radar.lua:1106 |
+| `ZONE_CHANGED_NEW_AREA` | documented |  | Core.lua:1495,3365,3379; Abandon.lua:684; Compass.lua:1116; Detect.lua:1086; Dungeon.lua:1781; Errands.lua:559 (+20 files) |
 
 <!-- END API-TABLE -->

@@ -979,6 +979,23 @@ local function initDB()
   db.chars = type(db.chars) == "table" and db.chars or {}
   db.group = type(db.group) == "table" and db.group or {}
   db.group.peers = type(db.group.peers) == "table" and db.group.peers or {}
+  -- (4.0) modules retirés (SafePath, Edge, HunterPro, Comfort, Economy, Predict) : leurs données sauvegardées partent
+  -- une fois (taille des SavedVariables = temps de chargement) ; leurs résumés aussi (l'appli ne les lit plus)
+  if not db.gone40 then
+    local gone = { "SafePath", "Edge", "HunterPro", "Comfort", "Economy", "Predict" }
+    for _, n in ipairs(gone) do db.modules[n] = nil end
+    for _, c in pairs(db.chars) do
+      if type(c) == "table" then
+        for _, n in ipairs(gone) do
+          if type(c.modules) == "table" then c.modules[n] = nil end
+          if type(c.moduleSettings) == "table" then c.moduleSettings[n] = nil end
+        end
+        local sm = c.summary
+        if type(sm) == "table" then sm.predict, sm.economy, sm.comfort, sm.hunterPro = nil, nil, nil, nil end
+      end
+    end
+    db.gone40 = true
+  end
   _G.TreeAIDB = db
   TreeAI.db = db
   TreeAI.settings = db.settings
@@ -1979,6 +1996,7 @@ local GLYPHS = {
   ["▶"] = "", ["►"] = "", ["→"] = ">", ["←"] = "<", ["⇒"] = ">", ["✔"] = "OK", ["✓"] = "OK",
   ["✖"] = "x", ["✗"] = "x", ["●"] = "•", ["○"] = "o", ["↑"] = "+", ["↓"] = "-", ["≠"] = "<>",
   ["★"] = "*", ["☆"] = "*", ["⚠"] = "!", ["⏱"] = "", ["⌛"] = "",
+  ["▾"] = "", ["▴"] = "", ["▲"] = "^", ["▼"] = "v", ["◀"] = "<", ["◂"] = "<", ["▸"] = ">",   -- (4.0) « Zone ▾ », Todo…
 }
 local safeCache, safeN = {}, 0
 local function safeText(s)
@@ -1986,7 +2004,7 @@ local function safeText(s)
   local c = safeCache[s]
   if c then return c end
   local r = strgsub(s, "[\226\227][\128-\191][\128-\191]", GLYPHS)
-  r = strgsub(strgsub(r, "^%s+", ""), "  +", " ")
+  r = strgsub(strgsub(strgsub(r, "^%s+", ""), "%s+$", ""), "  +", " ")   -- « Zone : X ▾ » -> « Zone : X »
   if safeN > 400 then safeCache, safeN = {}, 0 end
   safeCache[s], safeN = r, safeN + 1
   return r

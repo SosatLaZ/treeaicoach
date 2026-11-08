@@ -606,7 +606,9 @@ function M:PrepareTarget(name)
     T:Print("Pour cibler " .. name .. " : " .. body .. " (macro modifiable hors combat seulement)")
     return false
   end
-  local idx = try(api("GetMacroIndexByName"), MACRO) or 0
+  -- (FIDELITY) GetMacroIndexByName n'existe pas sur Forever : l'index du module Macros (sinon : une macro de plus à chaque fois)
+  local Mc = T.modules and T.modules.Macros
+  local idx = (Mc and Mc.MacroIndex and try(Mc.MacroIndex, MACRO)) or try(api("GetMacroIndexByName"), MACRO) or 0
   local ok
   if idx and idx > 0 then
     ok = try(api("EditMacro"), idx, MACRO, nil, body) ~= nil
