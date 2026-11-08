@@ -412,9 +412,18 @@ function W.Guide(n, full)
     for i, e in ipairs(st) do
       if i > keepN then break end
       local s = e.step
-      if k < n then
+      -- (QUESTS 4.1) une ligne par ARRÊT : les étapes d'un même arrêt (même quête au même endroit, même PNJ) sont dans
+      -- le titre de la 1re (Route.StopLabel), plus 3 lignes « dans ~13 min » pour le même lieu
+      local sameStop = grp and i > 1 and grp[i] == grp[i - 1] and s and st[i - 1].step
+      if sameStop then
+        -- rien : déjà dans la ligne de l'arrêt
+      elseif k < n then
         k = k + 1
         local step = W.StopItem(P, e, i, st, grp, via, k)
+        if s and grp and grp[i + 1] == grp[i] and type(R.StopLabel) == "function" then
+          local okL, gl = pcall(R.StopLabel, P, st, i, grp)
+          if okL and type(gl) == "string" then step.title = strip(gl) end
+        end
         g.steps[#g.steps + 1] = step
       elseif full and s and s.k == "pick" and s.q and not seenQ[s.q] and #g.upcoming < 8 then
         seenQ[s.q] = true

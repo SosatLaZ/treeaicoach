@@ -82,33 +82,78 @@ local function skey(s) return tostring(s.k) .. ":" .. tostring(s.q or "") .. ":"
 N.StepKey = skey
 
 -- requests = { { q, steps = { ordered, k = pick|obj|turn, map, x, y, svc, value } } } → nodes
--- node = { steps, map, x, y, svc, value, qs = { [q] = rank }, key, area }
+-- node = { steps, map, x, y, svc, value, qs = { [q] = rank }, key, area, delta (journal : +prises −remises) }
 -- dist(a, b) → yards (nil = far / unknown)
+-- (QUESTS 4.1) UNE quête à UN endroit = UN arrêt : les objectifs d'une même quête à moins de N.QUEST_AREA yd l'un de
+-- l'autre (sites de réapparition de rechange compris, s.alt) ne font qu'un arrêt — « La revanche de Gann » : trois
+-- objets de trois camps du même site (≈ 150 yd) étaient 3 arrêts « dans ~2 min », « ~13 min », « ~25 min » (capture
+-- 4.0.5) ; on les ramasse ensemble, le temps sur place est en partie commun (N.SAME_Q_SHARE) ; et les remises / prises au
+-- MÊME PNJ (≤ N.NPC_YD) sont un seul arrêt (« Rendre X + Rendre Y » chez Mangeclous)
+N.QUEST_AREA, N.NPC_YD, N.SAME_Q_SHARE = 400, 25, 0.6
+local function stepDelta(s) return (s.k == "pick" and 1) or (s.k == "turn" and -1) or 0 end
+function N.Delta(nd)
+  if nd.delta then return nd.delta end
+  local d = 0
+  for _, s in ipairs(nd.steps) do d = d + stepDelta(s) end
+  return d
+end
+local function hasPick(nd) for _, s in ipairs(nd.steps) do if s.k == "pick" then return true end end return false end
+N.HasPick = hasPick
 function N.Nodes(requests, dist, area)
   area = area or N.AREA
   local nodes, clusters = {}, {}
-  local objs = {}
+  local objs, npcs = {}, {}
   for _, r in ipairs(requests or {}) do
     for _, s in ipairs(r.steps or {}) do
       if s.k == "obj" and s.x then objs[#objs + 1] = s
+      -- (une remise d'une quête PAS finie reste seule : la fusionner liait deux quêtes dans l'ordre — Route.Groups numérote
+      -- quand même d'un seul numéro les arrêts consécutifs au même PNJ)
+      elseif (s.k == "pick" or (s.k == "turn" and s.ready)) and s.x then npcs[#npcs + 1] = s
       else
         nodes[#nodes + 1] = { steps = { s }, map = s.map, x = s.x, y = s.y, svc = s.svc or 0, value = s.value or 0,
           qs = { [s.q or -1] = RANK[s.k] or 2 }, key = skey(s), theme = s.theme }
       end
     end
   end
-  tsort(objs, function(a, b) if a.q ~= b.q then return (a.q or 0) < (b.q or 0) end return (tonumber(a.o) or 0) < (tonumber(b.o) or 0) end)
+  local function byQ(a, b) if a.q ~= b.q then return (a.q or 0) < (b.q or 0) end return (tonumber(a.o) or 0) < (tonumber(b.o) or 0) end
+  tsort(objs, byQ)
+  -- 1. objectifs d'une même quête : un seul lieu (le 1er objectif) ; un objectif plus loin que N.QUEST_AREA mais dont un
+  -- site de rechange (s.alt) est près, y est déplacé
+  local home1 = {}                                   -- [q] = 1er objectif placé de la quête
+  for _, s in ipairs(objs) do
+    local h = home1[s.q or -1]
+    if h and dist then
+      local d = dist(h, s)
+      if not (d and d <= N.QUEST_AREA) and type(s.alt) == "table" then
+        for _, a in ipairs(s.alt) do
+          local da = a.x and dist(h, a)
+          if da and da <= N.QUEST_AREA then s.map, s.x, s.y, d = a.map, a.x, a.y, da break end
+        end
+      end
+      s._sameQ = (d and d <= N.QUEST_AREA) and h or nil
+    elseif not h then home1[s.q or -1] = s end
+  end
   for _, s in ipairs(objs) do
     local home
-    for _, c in ipairs(clusters) do
-      if c.map == s.map or dist then
-        local d = dist and dist(c, s) or nil
-        if d and d <= area then home = c break end
+    if s._sameQ then home = s._sameQ._node end
+    if not home then
+      for _, c in ipairs(clusters) do
+        if c.map == s.map or dist then
+          local d = dist and dist(c, s) or nil
+          if d and d <= area then home = c break end
+        end
       end
     end
     if home then
       home.steps[#home.steps + 1] = s
-      home.svc, home.value = home.svc + (s.svc or 0), home.value + (s.value or 0)
+      local sv = s.svc or 0
+      -- même quête au même endroit : on les fait ensemble (une part du temps est commune)
+      if s._sameQ then
+        sv = sv * N.SAME_Q_SHARE
+        s.svc = sv                                   -- le trajet (eta) et Route (temps sur place) lisent l'arrêt
+        if s._pred then s._pred = s._pred * N.SAME_Q_SHARE end
+      end
+      home.svc, home.value = home.svc + sv, home.value + (s.value or 0)
       home.qs[s.q or -1] = 2
       home.key = home.key .. "+" .. skey(s)
     else
@@ -116,11 +161,43 @@ function N.Nodes(requests, dist, area)
         qs = { [s.q or -1] = 2 }, key = skey(s), theme = s.theme }
       clusters[#clusters + 1] = home
     end
+    s._node, s._sameQ = home, nil
   end
-  for i, c in ipairs(clusters) do
-    if #c.steps > 1 then c.area = "a" .. i end
+  for _, s in ipairs(objs) do s._node = nil end
+  -- 2. remises / prises au même PNJ (même sorte : jamais « prendre » et « rendre » d'un même arrêt, l'ordre compte)
+  tsort(npcs, function(a, b) if a.k ~= b.k then return a.k < b.k end return byQ(a, b) end)
+  local spots = {}
+  for _, s in ipairs(npcs) do
+    local home
+    for _, c in ipairs(spots) do
+      -- une remise prête (quête finie) n'attend jamais celle d'une quête pas finie au même PNJ
+      if c.kind == s.k and c.map == s.map and not c.qs[s.q or -1] and (c.ready or false) == (s.ready or false) then
+        local d = dist and dist(c, s) or nil
+        if d and d <= N.NPC_YD then home = c break end
+      end
+    end
+    if home then
+      home.steps[#home.steps + 1] = s
+      home.svc, home.value = home.svc + 5, home.value + (s.value or 0)
+      home.qs[s.q or -1] = RANK[s.k]
+      home.key = home.key .. "+" .. skey(s)
+    else
+      home = { steps = { s }, map = s.map, x = s.x, y = s.y, svc = s.svc or 0, value = s.value or 0, kind = s.k,
+        ready = s.ready, qs = { [s.q or -1] = RANK[s.k] or 2 }, key = skey(s), theme = s.theme }
+      spots[#spots + 1] = home
+    end
+  end
+  local k = 0
+  for _, c in ipairs(clusters) do
+    if #c.steps > 1 then k = k + 1; c.area = "a" .. k end
     nodes[#nodes + 1] = c
   end
+  for _, c in ipairs(spots) do
+    if #c.steps > 1 then k = k + 1; c.area = "a" .. k end
+    c.kind, c.ready = nil, nil
+    nodes[#nodes + 1] = c
+  end
+  for _, nd in ipairs(nodes) do nd.delta = N.Delta(nd) end
   tsort(nodes, function(a, b) return a.key < b.key end)
   return nodes
 end
@@ -162,7 +239,7 @@ function N.Greedy(nodes, start, leg, o)
           for rr = 1, r - 1 do if nq[rr] > 0 then ok = false break end end
           if not ok then break end
         end
-        if ok and nd.steps[1].k == "pick" and logCount >= cap then ok = false end
+        if ok and hasPick(nd) and logCount + max(1, N.Delta(nd)) > cap then ok = false end
         if ok then
           local t = ((#ord == 0 and o.first) and o.first(nd) or leg(pos, nd)) + max(10, nd.svc or 0)
           local score = (nd.value or 0) / max(10, t)
@@ -177,8 +254,7 @@ function N.Greedy(nodes, start, leg, o)
     used[best] = true
     ord[#ord + 1] = best
     for q, r in pairs(nd.qs) do need[q][r] = need[q][r] - 1 end
-    local k = nd.steps[1].k
-    if k == "pick" then logCount = logCount + 1 elseif k == "turn" then logCount = logCount - 1 end
+    logCount = logCount + N.Delta(nd)
     if nd.x then pos = nd end
     last = nd
   end
@@ -336,11 +412,9 @@ function N.CapOK(nodes, ord, cap, logCount)
   if not cap then return true end
   local c = logCount or 0
   for _, i in ipairs(ord) do
-    local k = nodes[i].steps[1].k
-    if k == "pick" then
-      if c >= cap then return false end
-      c = c + 1
-    elseif k == "turn" then c = c - 1 end
+    local d = N.Delta(nodes[i])
+    if d > 0 and c + d > cap then return false end
+    c = c + d
   end
   return true
 end
@@ -471,6 +545,17 @@ function Z.ZoneOf(m)
   end
   return m
 end
+-- (QUESTS 4.1) carte d'instance (donjon : type 4) — jamais le nom d'une zone de trajet / d'un titre de carte
+function Z.IsInstance(m)
+  local i = mapInfo(m)
+  return (i and tonumber(i.mapType) == 4) or false
+end
+--- zone « dehors » d'une carte (nil pour une instance : on ne sait pas où elle est sur le continent)
+function Z.OutdoorZone(m)
+  local z = Z.ZoneOf(m)
+  if not z or Z.IsInstance(z) or Z.IsInstance(m) then return nil end
+  return z
+end
 function Z.Cont(m)
   local r = Geo.Rect and Geo.Rect(m)
   return r and r.c or nil
@@ -592,12 +677,39 @@ function Z:InZone(map, A)
   local c = Z.Cont(m)
   return c ~= nil and c == A.cont
 end
--- signature for the Planner: replan when the work area / a setting changes
+-- (QUESTS 4.1) quête passée par « Suivant » (QuestBrain, session)
+function Z.SkippedQuest(q)
+  local QBm = T.QuestBrain
+  return (QBm and type(QBm.skipped) == "table" and QBm.skipped[tonumber(q) or -1]) and true or false
+end
+-- (QUESTS 4.1) mode du cerveau des quêtes (« zone » sans lui)
+function Z.BrainMode()
+  local QBm = T.QuestBrain
+  if not (QBm and QBm.Mode) then return "zone" end
+  if QBm.IsEnabled and not QBm:IsEnabled() then return "zone" end
+  local ok, m = pcall(QBm.Mode)
+  return ok and m or "zone"
+end
+--- zones (dehors) des arrêts d'un trajet, dans leur ordre : « Mille pointes », « Mille pointes + Les Tarides »,
+--- « Mille pointes + 4 zones » ; nil sans arrêt placé
+function Z.StepsZoneLabel(steps)
+  local names, seen = {}, {}
+  for _, s in ipairs(steps or {}) do
+    if s.map and s.x and not s._done and not s._other then
+      local z = Z.OutdoorZone(s.map)
+      if z and not seen[z] then seen[z] = true; names[#names + 1] = Z.MapName(z) end
+    end
+  end
+  if #names == 0 then return nil end
+  if #names <= 2 then return tconcat(names, " + ") end
+  return fmt("%s + %d zones", names[1], #names - 1)
+end
+-- signature for the Planner: replan when the work area / a setting / the quest mode changes
 function Z:Sig()
   if not self:IsEnabled() then return "" end
   local ch = self.char or {}
   local here = (ch.mode or "auto") == "auto" and Geo.Player and Geo.Player() or nil
-  return fmt("%s:%s:%d", tostring(ch.mode), tostring(here and Z.ZoneOf(here) or ""), self.rev or 0)
+  return fmt("%s:%s:%d:%s", tostring(ch.mode), tostring(here and Z.ZoneOf(here) or ""), self.rev or 0, Z.BrainMode())
 end
 function Z:Bump(why)
   self.rev = (self.rev or 0) + 1
@@ -719,6 +831,11 @@ function Z:Accept(q, rec, lq, level, group)
   if grp and not (opt("groupQ") ~= false or group >= 2) then return false, "groupe" end
   local lv = tonumber(rec and rec.lv) or tonumber(lq and lq.lv) or level
   if lv > 0 and lv - level > (tonumber(opt("gap")) or 3) then return false, "niveau" end
+  -- (QUESTS 4.1) grise (pas finie) : 10 à 20 % de son XP pour tout le temps des objectifs — hors trajet, et dit
+  -- (« Hors trajet : 1 grise ») ; finie, elle reste (la remise ne coûte presque rien)
+  local P = T.Planner
+  local E = P and P.Engine
+  if E and lv > 0 and lv <= E.GreyLevel(level) then return false, "grise" end
   return true
 end
 
@@ -743,7 +860,17 @@ function Z:StyleIndex()
   return i
 end
 function Z:Style() return Z.STYLES[self:StyleIndex()].id end
-function Z:StyleName(i) local e = Z.STYLES[i or self:StyleIndex()] return e and e.name or Z.STYLES[1].name end
+-- (QUESTS 4.1) sans argument : ce que fait le trajet en ce moment — le mode du cerveau des quêtes quand ce n'est pas « Tout
+-- faire ici » (« Rendre mes quêtes », « Quêtes à prendre », « Avec le groupe »), sinon l'ordre choisi dans la zone
+function Z:StyleName(i)
+  if i == nil then
+    local bm = Z.BrainMode()
+    local QBm = T.QuestBrain
+    if bm ~= "zone" and QBm and QBm.Label then return QBm.Label(bm) end
+  end
+  local e = Z.STYLES[i or self:StyleIndex()]
+  return e and e.name or Z.STYLES[1].name
+end
 --- by = "brain" (pilote auto) ou nil (le joueur) → char.styleBy : un choix explicite du joueur est reconnu même
 --- quand il vaut le mode par défaut (le pilote ne le remplace jamais)
 function Z:SetStyle(i, by)
@@ -792,9 +919,17 @@ local function lootBoost(q, lq)
   return 1.5
 end
 -- (ZONEFIX) mode « Groupe » : la quête que tes amis ont aussi (journal de groupe du jeu) d'abord
+-- (QUESTS 4.1) client classique : IsUnitOnQuest(index du journal, unité) (C_QuestLog.IsUnitOnQuest absent) — sans ça le
+-- mode « Groupe » ne voyait jamais les quêtes communes
 local function partyOn(q)
   local f = C("C_QuestLog", "IsUnitOnQuest")
-  if not f then return 0 end
+  local idx
+  if not f then
+    local g, ix = G("IsUnitOnQuest"), G("GetQuestLogIndexByID")
+    idx = ix and tonumber(_ns((try(ix, q)))) or nil
+    if not (g and idx and idx > 0) then return 0 end
+    f = function(u) return g(idx, u) end
+  end
   local n = 0
   for i = 1, 4 do
     local u = "party" .. i
@@ -802,6 +937,7 @@ local function partyOn(q)
   end
   return n
 end
+Z.PartyOn = partyOn
 local function worldDist(a, b)
   if not (a and b and a.x and b.x and Geo.Dist) then return nil end
   return Geo.Dist(a.map, a.x, a.y, b.map, b.x, b.y)
@@ -887,6 +1023,7 @@ function Z:Themes(requests, recs, log)
       for i = #(r.steps or {}), 1, -1 do local s = r.steps[i] if s.x and s.k == "turn" then anchor = s break end end
     end
     local hub
+    if anchor and anchor.map and Z.IsInstance(anchor.map) then anchor = nil end   -- (QUESTS 4.1) jamais un camp « dans » une instance
     if anchor and anchor.map then
       for i, h in ipairs(hubs) do
         if h.map == anchor.map then
@@ -960,7 +1097,23 @@ function Z:ThemeParts(q)
   end
   local th = q and self.themes and self.themes[q]
   local zone
-  if th and th.hubMap then zone = Z.MapName(Z.ZoneOf(th.hubMap))
+  -- (QUESTS 4.1) la zone du titre = la zone de l'arrêt (le 1er arrêt placé de cette quête dans le trajet), jamais une
+  -- instance ; le camp seulement s'il est dans cette même zone
+  local stopZone
+  do
+    local P = T.Planner
+    local steps, cur = P and P.steps, P and P.cursor
+    if steps and cur and q then
+      for i = cur, #steps do
+        local s = steps[i]
+        if s and s.q == q and s.map and s.x and not s._done and not s._other then stopZone = Z.OutdoorZone(s.map) if stopZone then break end end
+      end
+    end
+  end
+  local hubZone = th and th.hubMap and Z.OutdoorZone(th.hubMap) or nil
+  if stopZone and hubZone and hubZone ~= stopZone and th then th = { story = th.story, n = th.n } end
+  if stopZone then zone = Z.MapName(stopZone)
+  elseif hubZone then zone = Z.MapName(hubZone)
   else
     local z = _ns(try(G("GetRealZoneText"))) or _ns(try(G("GetZoneText")))
     if type(z) == "string" and z ~= "" then zone = z
@@ -1026,6 +1179,25 @@ function Z:BuildRoute(P, yieldFn)
     for m in pairs(A.maps) do AN.maps[m] = true end
     for m in pairs(A.nb) do AN.maps[m] = true end
   end
+  -- (QUESTS 4.1) mode du cerveau des quêtes (QuestBrain) : « Rendre mes quêtes » = les remises des quêtes finies, toutes
+  -- zones (vols / bateaux / foyer) ; « Quêtes à prendre » = les meilleures prises ; « Avec le groupe » = mode Groupe ;
+  -- « Tout faire ici » = le trajet de la zone, comme avant
+  local bmode = Z.BrainMode()
+  self.brainMode = bmode
+  local pickSet
+  if bmode == "turnin" or bmode == "pickup" then
+    A = { mode = bmode, any = true, here = A.here, cont = A.cont, label = A.label }
+    AN = nil
+    if bmode == "pickup" then
+      local QBm = T.QuestBrain
+      pickSet = QBm and QBm.RouteSet and QBm.RouteSet("pickup") or {}
+      -- quêtes proposées par un PNJ rencontré que Questie ne connaît pas (ou sans Questie) : leur fiche apprise
+      for q in pairs(pickSet) do
+        if not recs[q] and QBm.SyntheticRec then recs[q] = QBm.SyntheticRec(q) end
+      end
+    end
+  end
+  local equal = (bmode == "turnin" or bmode == "pickup")   -- chaque arrêt compte autant : l'ordre = le chemin le plus court
   local leg = P.Leg
   local m, x, y
   if Geo.Player then m, x, y = Geo.Player() end
@@ -1038,7 +1210,9 @@ function Z:BuildRoute(P, yieldFn)
   end
   self.lastStart = start
   local style = self:Style()
+  if bmode == "group" then style = "group" end
   local maxS = (tonumber(opt("maxMin")) or 0) * 60
+  if equal then maxS = 0 end
   local grey = E.GreyLevel(level)
   local isDone = Xm and Xm.IsQuestDone
   local requests, far, fill = {}, {}, {}
@@ -1107,7 +1281,7 @@ function Z:BuildRoute(P, yieldFn)
       mult = 1 + 0.75 * n + ((elite or grp) and group >= 2 and 0.5 or 0)
     end
     for _, s in ipairs(steps) do
-      if style == "clear" then s.value = 1000                      -- finir la zone : chaque arrêt compte autant
+      if style == "clear" or equal then s.value = 1000             -- finir la zone / rendre / prendre : chaque arrêt compte autant
       elseif style == "loot" then
         if s.k == "turn" then s.value = (s.value or 0) * mult * (lq and 1 or rewardBoost(q) / 1.2) end
       elseif mult ~= 1 then s.value = (s.value or 0) * mult end
@@ -1117,6 +1291,13 @@ function Z:BuildRoute(P, yieldFn)
     requests[#requests + 1] = { q = q, steps = steps, inLog = lq ~= nil }
   end
   local function consider(q, rec, lq)
+    if Z.SkippedQuest(q) then                         -- « Suivant » (QuestBrain.Skip) : pas pour cette session
+      skipped["passée"] = (skipped["passée"] or 0) + 1
+      if lq then masked["passée"] = masked["passée"] or {}; masked["passée"][#masked["passée"] + 1] = q end
+      return
+    end
+    if bmode == "turnin" and not (lq and lq.done == 1) then return end
+    if bmode == "pickup" and (lq or not (pickSet and pickSet[q])) then return end
     local ok, why = self:Accept(q, rec, lq, level, group)
     if not ok then
       skipped[why] = (skipped[why] or 0) + 1
@@ -1127,7 +1308,8 @@ function Z:BuildRoute(P, yieldFn)
     if v == "impossible" and not lq then return end
     local steps = P:QuestSteps(q, rec, lq, ctx)
     if yieldFn then yieldFn() end
-    if #steps == 0 then return end
+    if bmode == "pickup" then steps = { steps[1] } end   -- seulement la prise (le reste viendra en « Tout faire ici »)
+    if #steps == 0 or (bmode == "pickup" and not (steps[1] and steps[1].k == "pick")) then return end
     local extra = self.char and self.char.extra[q]
     if extra then          -- détour choisi : gardé tel quel, arrêts hors zone marqués « hors zone »
       local inZone = true
@@ -1150,7 +1332,7 @@ function Z:BuildRoute(P, yieldFn)
   end
   for q, lq in pairs(log) do consider(q, recs[q], lq) end
   for q, rec in pairs(recs) do
-    if not log[q] and rec.st == "avail" and not (isDone and isDone(q)) and not (P.char and P.char.turned[q])
+    if bmode ~= "turnin" and not log[q] and rec.st == "avail" and not (isDone and isDone(q)) and not (P.char and P.char.turned[q])
         and (rec.rl or 0) <= level and not rec.pre and not rec.preAny then
       consider(q, rec, nil)
     end
@@ -1177,10 +1359,10 @@ function Z:BuildRoute(P, yieldFn)
     tsort(fillNames)
   end
   local Rt = T.Route                                  -- trop dures / trop loin → proposition (Route.lua)
-  if Rt and Rt.FilterRequests and Rt:IsEnabled() then
+  if Rt and Rt.FilterRequests and Rt:IsEnabled() and not equal then
     local ok, res = pcall(Rt.FilterRequests, Rt, requests, recs, log, ctx)
     if ok and type(res) == "table" then requests = res end
-  end
+  elseif Rt and equal then Rt.selection = nil end     -- rendre / prendre : rien n'est « mis de côté »
   tsort(requests, function(a, b) return a.q < b.q end)
   tsort(levels)
   if #levels > 0 then info.zoneMedian = levels[floor((#levels + 1) / 2)] end
@@ -1200,12 +1382,23 @@ function Z:BuildRoute(P, yieldFn)
   -- (QA-QUEST F1) la pierre de foyer seulement quand RIEN n'est à moins de 5 min d'ici (sinon : foyer → Orgrimmar →
   -- vol → petite quête → vol retour, alors que la zone de quêtes est à 4 min à pied) ; Route l'affiche pareil
   self.noHearth = nil
-  if first and start then
+  self.hearthAny = (bmode == "turnin") or nil
+  if first and start and not self.hearthAny then
     for _, nd in ipairs(nodes) do
       if nd.x and leg(start, nd) <= 300 then first, self.noHearth = nil, true break end
     end
   end
   local legN = function(a, b) return leg(a, b) end
+  if self.hearthAny and first then                   -- (QUESTS 4.1) rendre : la pierre de foyer compte à chaque étape
+    local Rh = T.Route
+    local bind = Rh and Rh.BindPlace and try(Rh.BindPlace)
+    local D = T.Data and T.Data.Travel
+    if type(bind) == "table" and bind.map and bind.x then
+      local hs = ((D and D.hearthCast) or 10) + ((D and D.hearthLoad) or 5)
+      local b = { map = bind.map, x = bind.x, y = bind.y }
+      legN = function(a, c) return min(leg(a, c), hs + leg(b, c)) end
+    end
+  end
   local st0 = start or { }
   local bondK = (style == "story") and 4 or 1.3
   local ord = N.Greedy(nodes, st0, legN, { horizon = (style == "clear") and 60 or 40, cap = cap - 2, logCount = logCount,
@@ -1228,6 +1421,13 @@ function Z:BuildRoute(P, yieldFn)
       kept = N.Choose(cost, oc)
       if kept == "old" then ord, cost = old, oc end
     end
+  end
+  -- (QUESTS 4.1) « Avec le groupe » : les quêtes que le groupe a aussi, d'un seul tenant, avant les autres (le 2-opt ne voit
+  -- que le chemin et les remêlait) ; ce qui est à portée de main reste devant (NearFirst, ci-dessous)
+  if bmode == "group" and group >= 2 then
+    local shared = {}
+    for _, r in ipairs(requests) do if r.inLog and partyOn(r.q) > 0 then shared[r.q] = true end end
+    ord = N.TimersFirst(nodes, ord, shared, cap - 2, logCount)
   end
   ord = N.NearFirst(nodes, ord, start, worldDist, N.NEAR, cap - 2, logCount)
   ord = N.PositionlessLast(nodes, ord, cap - 2, logCount)   -- (QA-QUEST F10) sans lieu connu : au bout
@@ -1346,10 +1546,18 @@ function Z:BuildRoute(P, yieldFn)
   end
   local zoneLabel = A.label or "?"
   if #fillNames > 0 then zoneLabel = zoneLabel .. " + " .. tconcat(fillNames, " + ") end
+  -- (QUESTS 4.1) le nom de zone du trajet = la zone de ses arrêts (jamais une instance : capture 4.0.5 « Kraal de
+  -- Tranchebauge » au-dessus d'un trajet aux Tarides / Mille pointes) ; rendre / prendre : les zones traversées
+  local sz = Z.StepsZoneLabel(steps)
+  if (equal or (A.here and Z.IsInstance(A.here))) and sz then zoneLabel = sz end
   self.label = zoneLabel
   local route = { id = "auto", title = "Trajet TreeAI", zone = zoneLabel, steps = steps, minutes = minutes, xph = xph,
-    cross = A.cross, style = style }
+    cross = A.cross, style = style, mode = bmode }
   local v, why = E.RouteVerdict(route, ctx, info)
+  if equal then                                      -- « Changez de zone » / « tuer rapporte plus » n'ont pas de sens ici
+    if #steps == 0 then v, why = "impossible", (bmode == "turnin") and "aucune quête finie à rendre" or "aucune bonne quête à prendre ici"
+    elseif v ~= "impossible" then v, why = "ok", nil end
+  end
   route.verdict, route.reasons = v, why and { why } or {}
   if Rt and Rt.selection then Rt.selection.zone = (A.mode ~= "continent") and zoneLabel or nil end
   return route, exp
@@ -1373,6 +1581,10 @@ Z.Recs = recsOf
 function Z:MaskSteps(steps, log)
   if not (self:IsEnabled() and type(steps) == "table") then return 0 end
   local A = self:Allowed()
+  -- (QUESTS 4.1) trajet en jeu « Rendre mes quêtes » / « Quêtes à prendre » : toutes zones (il a été fait ainsi)
+  local P0 = T.Planner
+  local bm = Z.BrainMode()
+  if P0 and P0.src ~= "file" and (bm == "turnin" or bm == "pickup") then A = { any = true } end
   local ch = self.char or {}
   local recs = recsOf(X() and X().Data and X():Data())
   log = log or (T.Planner and T.Planner.log) or {}
@@ -1382,6 +1594,7 @@ function Z:MaskSteps(steps, log)
     local q = tonumber(s.q)
     s._hide = nil
     if q and not s._done then
+      if out[q] == nil and Z.SkippedQuest(q) then out[q], why[q] = "passée", "passée" end
       if out[q] == nil then
         local ok, w = self:Accept(q, recs[q], log[q], level, group)
         out[q] = (not ok) and w or false
@@ -1425,16 +1638,16 @@ function Z:MaskSteps(steps, log)
   return n
 end
 -- « 2 quêtes de donjon, 1 élite hors trajet » (infobulle de la ligne « Zone »), nil sans rien de masqué
-local WHY_TXT = { donjon = "de donjon", ["donjon fait"] = "d'un donjon déjà fait", ["élite"] = "élite", JcJ = "JcJ",
+local WHY_TXT = { ["passée"] = "passée (Suivant)", grise = "grise", donjon = "de donjon", ["donjon fait"] = "d'un donjon déjà fait", ["élite"] = "élite", JcJ = "JcJ",
   raid = "de raid", ["échouée"] = "échouée", niveau = "trop haute", groupe = "de groupe", zone = "hors zone",
   ["ignorée"] = "ignorée" }
 function Z:MaskedText()
   local parts = {}
   local P = T.Planner
   local src = (P and P.src == "file") and self.maskedPlan or self.masked
-  for _, w in ipairs({ "donjon", "donjon fait", "élite", "JcJ", "raid", "échouée", "niveau", "groupe", "zone", "ignorée" }) do
+  for _, w in ipairs({ "donjon", "donjon fait", "élite", "JcJ", "raid", "échouée", "niveau", "grise", "groupe", "zone", "ignorée", "passée" }) do
     local l = src and src[w]
-    if l and #l > 0 then parts[#parts + 1] = fmt("%d %s", #l, WHY_TXT[w]) end
+    if l and #l > 0 then parts[#parts + 1] = fmt("%d %s", #l, (#l > 1 and (w == "grise" and "grises" or w == "passée" and "passées (Suivant)")) or WHY_TXT[w]) end
   end
   if #parts == 0 then return nil end
   return "Hors trajet : " .. tconcat(parts, ", ")
@@ -1462,9 +1675,16 @@ function Z:ExportWork()
   tsort(w.extra)
   return w
 end
+-- (QUESTS 4.1) zones dont les quêtes à prendre sont exportées : la zone de travail + (auto) ses voisines — « Quêtes à
+-- prendre » classe aussi celles d'à côté (le trajet « Tout faire ici », lui, reste dans la zone de travail)
 function Z:ExportZones()
   local A = self:IsEnabled() and self:Allowed() or nil
-  return A and A.maps or nil
+  if not (A and A.maps) then return nil end
+  if not (A.mode == "auto" and A.nb and next(A.nb)) then return A.maps end
+  local out = {}
+  for m in pairs(A.maps) do out[m] = true end
+  for m in pairs(A.nb) do out[m] = true end
+  return out
 end
 
 -- ===================================================================== actions
@@ -1862,8 +2082,29 @@ function Z:ZoneEntries()
   out[#out + 1] = { text = "Réglages du trajet…", fn = function() if T.OpenOptions then T:OpenOptions("ZonePlan") end end }
   return out
 end
+-- (QUESTS 4.1) menu « Que faire » : les quatre modes (avec leur nombre) puis l'ordre des arrêts dans la zone
+function Z:ModeEntries()
+  local QBm = T.QuestBrain
+  local out = { { text = "Que faire ?", head = true } }
+  local ok, modes = pcall(QBm and QBm.Modes or function() return {} end)
+  for _, m in ipairs(ok and modes or {}) do
+    local n = (m.count and m.count > 0) and fmt(" (%d)", m.count) or ""
+    out[#out + 1] = { text = (m.active and "● " or "○ ") .. m.label .. n, fn = function() QBm.SetMode(m.id) end }
+  end
+  out[#out + 1] = { text = "Ordre dans la zone", head = true }
+  local cur = self:StyleIndex()
+  for i, e in ipairs(Z.STYLES) do
+    out[#out + 1] = { text = (i == cur and "● " or "○ ") .. e.name, fn = function() Z:SetStyle(i) end, keep = true }
+  end
+  return out
+end
+function Z:ShowModeMenu()
+  if menu and menu:IsShown() and self.menuKind == "mode" then menu:Hide() return end
+  self:ShowMenu(self:ModeEntries(), "mode")
+end
 function Z:FillMenu()
-  if self.menuKind == "zone" then self:ShowMenu(self:ZoneEntries(), "zone") end
+  if self.menuKind == "zone" then self:ShowMenu(self:ZoneEntries(), "zone")
+  elseif self.menuKind == "mode" then self:ShowMenu(self:ModeEntries(), "mode") end
 end
 function Z:ShowZoneMenu()
   if menu and menu:IsShown() and self.menuKind == "zone" then menu:Hide() return end
@@ -1917,9 +2158,21 @@ function Z:HeadLines()
   local out = {}
   local P = T.Planner
   local file = P and P.src == "file"
-  -- (ZONEFIX) le mode du trajet, choisi d'un clic (infobulle : les cinq modes)
-  out[#out + 1] = { text = "Mode : " .. self:StyleName(), prio = 1, id = "zone:mode", onClick = function() Z:CycleStyle() end,
-    tooltip = self:StyleTip() .. "\nClic : mode suivant (gardé pour ce personnage)" }
+  -- (QUESTS 4.1) « Que faire » : les quatre modes du cerveau des quêtes, un clic (menu) — « Rendre mes quêtes » est ici
+  local QBm = T.QuestBrain
+  local bm = Z.BrainMode()
+  if QBm and QBm.Modes and QBm.IsEnabled and QBm:IsEnabled() then
+    local tip = {}
+    for _, e in ipairs(QBm.MODES or {}) do tip[#tip + 1] = (e.id == bm and "● " or "○ ") .. e.label .. " : " .. e.tip end
+    out[#out + 1] = { text = "Que faire : " .. tostring(QBm.Label(bm)) .. " ▾", prio = 1, id = "qb:mode",
+      onClick = function() Z:ShowModeMenu() end, onRightClick = function() Z:ShowModeMenu() end,
+      tooltip = tconcat(tip, "\n") .. "\nClic : choisir (/tai rendre, /tai prendre, /tai cerveau zone | groupe)" }
+  end
+  -- (ZONEFIX) le mode du trajet, choisi d'un clic (infobulle : les cinq modes) — l'ordre des arrêts dans la zone
+  if bm == "zone" or bm == "group" then
+    out[#out + 1] = { text = "Mode : " .. self:StyleName(self:StyleIndex()), prio = 1, id = "zone:mode", onClick = function() Z:CycleStyle() end,
+      tooltip = self:StyleTip() .. "\nClic : mode suivant (gardé pour ce personnage)" }
+  end
   -- (QA-QUEST) voisines prises en renfort : lesquelles, en clair
   local nb = {}
   for mm in pairs(self.fill or {}) do nb[#nb + 1] = Z.MapName(mm) end

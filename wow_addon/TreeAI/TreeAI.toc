@@ -50,6 +50,7 @@ Modules\Route.lua
 Modules\PathDraw.lua
 Modules\ZonePlan.lua
 Modules\ZoneWatch.lua
+Modules\QuestBrain.lua
 Modules\NavTrace.lua
 Modules\Inventory.lua
 Modules\Boost.lua

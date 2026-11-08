@@ -1481,6 +1481,7 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   PathDraw = { lite = true, desc = "Chemin de l'itinéraire dessiné sur la carte et la minimap" },
   Finder = { lite = true, desc = "Chercher : meilleur familier à apprivoiser, rares, équipement, maîtres, vols" },
   ZonePlan = { lite = true, desc = "Zone de travail et trajet préparé (ordre des arrêts)" },
+  QuestBrain = { lite = true, desc = "Cerveau des quêtes : rendre mes quêtes, quêtes à prendre, tout faire ici, avec le groupe" },   -- (QUESTS 4.1) sûr : QuestBrain.lua s'y inscrit
   Speed = { lite = true, desc = "Aller plus vite : mort, monture, foyer" },
   QuickTravel = { lite = true, desc = "Raccourcis : vols, auberge, courses, outils du groupe" },
   Plain = { lite = true, desc = "Conseils de quête en mots simples" },

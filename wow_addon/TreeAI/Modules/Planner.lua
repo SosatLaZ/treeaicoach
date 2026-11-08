@@ -88,6 +88,8 @@ function E.QuestXPFactor(pl, ql)
   return 0.1
 end
 function E.QuestXPEstimate(ql) return 55 * ql + ql * ql end
+-- (QUESTS 4.1) nombre demandé par défaut d'un objectif d'une quête pas encore prise (QuestieDB ne le donne pas)
+E.DEFAULT_N = { kill = 8, item = 6 }
 -- relative power vs level difference Δ = player − mob
 function E.LF(d)
   if d >= -2 then return 1.10 ^ d elseif d == -3 then return 0.62 elseif d == -4 then return 0.50 elseif d == -5 then return 0.38 end
@@ -780,6 +782,9 @@ local function questTitle(q)
   if lq and lq.t then return lq.t end
   local exp = X() and X():Data()
   for _, r in ipairs(exp and exp.quests or {}) do if r.id == q then return r.t end end
+  local QBm = T.QuestBrain                           -- (QUESTS 4.1) sans Questie : le titre vu chez le PNJ
+  local lt = QBm and QBm.LearnedTitle and QBm.LearnedTitle(q)
+  if lt then return lt end
   return "quête " .. tostring(q)
 end
 local OBJ_VERB = { monster = "Tue", item = "Ramasse", object = "Utilise", event = "Fais", reputation = "Gagne" }
@@ -915,13 +920,18 @@ function P:QuestSteps(q, rec, lq, ctx)
     for j, o in ipairs(objs) do
       local lo = lq and lq.obj[j]
       if not (lo and lo.fin) then
-        local oo = { k = o.k, n = (lo and lo.n) or o.n, have = (lo and lo.have) or 0, p = (o.id and T.Stats and T.Stats:Drop(o.id)) or (X() and o.id and X():DropRate(o.id)) or o.p,
+        -- (QUESTS 4.1) quête pas encore prise : QuestieDB ne donne pas le nombre demandé (« 1 ») → un ordre de grandeur
+        -- (8 monstres, 6 objets) plutôt qu'un temps 6 fois trop court
+        local need = (lo and lo.n) or o.n
+        if not lo and (tonumber(need) or 1) <= 1 then need = E.DEFAULT_N[o.k or ""] or need end
+        local oo = { k = o.k, n = need, have = (lo and lo.have) or 0, p = (o.id and T.Stats and T.Stats:Drop(o.id)) or (X() and o.id and X():DropRate(o.id)) or o.p,
           plf = o.plf, ml = o.ml, mx = o.mx, rank = o.rank }
         local med = E.ObjMinutes(oo, ctx)
         local ml = tonumber(o.mx) or tonumber(o.ml) or ctx.level
         local kxp = (o.k == "kill" or o.k == "item") and E.KillXP(ctx.level, ml) * E.GroupShare(ctx.group) * max(0, (oo.n or 1) - oo.have) or 0
         local st = place({ k = "obj", q = q, o = j, svc = med * 60, _pred = med, value = 0.5 * xp / count + kxp, xp = kxp }, o)
         if not st.x then place(st, lq and waypoint(q)) end
+        if type(o.alt) == "table" then st.alt = o.alt end   -- (QUESTS 4.1) sites de rechange : un arrêt par quête et par lieu
         out[#out + 1] = st
         n = n + 1
       end
@@ -937,8 +947,11 @@ function P:QuestSteps(q, rec, lq, ctx)
       end
     end
   end
-  local fin = (rec and rec.f and rec.f.x and rec.f) or (lq and (done or #out == 0) and waypoint(q)) or nil
-  out[#out + 1] = place({ k = "turn", q = q, svc = 15, value = xp, xp = xp }, fin)
+  -- (QUESTS 4.1) sans Questie : le PNJ qui reprend la quête, vu en jouant (QuestBrain), puis le point du jeu
+  local QBm = T.QuestBrain
+  local seen = QBm and QBm.LearnedFinisher and QBm.LearnedFinisher(q) or nil
+  local fin = (rec and rec.f and rec.f.x and rec.f) or seen or (lq and (done or #out == 0) and waypoint(q)) or nil
+  out[#out + 1] = place({ k = "turn", q = q, svc = 15, value = xp, xp = xp, ready = done or nil }, fin)
   return out
 end
 function P:BuildAuto(yieldFn)
@@ -1548,6 +1561,9 @@ function P:Refresh(force)
       self:StartJob(function()
         P:BuildAuto(budgetYield)   -- no pcall here: Lua 5.1 cannot yield across pcall (resume catches errors)
         P:EnsureSteps(); P:Evaluate(); P:Render()
+        -- (QUESTS 4.1) nouvel ordre : Suivi Forever (s'il guide) le reçoit aussi, même quand le n° d'étape n'a pas bougé
+        local Rt = T.Route
+        if Rt and Rt.OnPlanStep then pcall(Rt.OnPlanStep, Rt) end
         pcall(P.TraceBuilt, P)
         if P._syncDirty then P:SendSync(false) end
         -- (QA-QUEST F20) trajet refait : ceux qui le citent (Abandon : jamais « plus tard » pour un arrêt) se relisent
