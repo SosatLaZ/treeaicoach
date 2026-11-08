@@ -1,6 +1,6 @@
 {
-  "version": "4.1.4",
+  "version": "4.1.5",
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334,
-  "notes": "TreeAI 4.1.4 : « Rendre » finit d'abord la quête juste à côté."
+  "notes": "TreeAI 4.1.5 : boussole plus propre (plus d'encadré bleu, plus transparente, plus petite)."
 }

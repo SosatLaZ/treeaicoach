@@ -20,7 +20,7 @@ if not (T and T.RegisterModule) then return end
 local M = T:RegisterModule("Compass", {
   title = "Boussole",
   -- (ZONEFIX) en combat : la flèche reste (sans texte), sauf si l'option « Cacher en combat » est cochée
-  defaults = { enabled = true, shown = true, units = "m", autoNext = true, announce = true, scale = 1, locked = false,
+  defaults = { enabled = true, shown = true, units = "m", autoNext = true, announce = true, scale = 0.85, locked = false,
                hideCombat = false, hideDup = true },
   charDefaults = { point = "TOP", x = 0, y = -120, custom = nil },
   options = {
@@ -1282,7 +1282,7 @@ local function createFrame()
   frame:SetScript("OnLeave", function() if _G.GameTooltip then pcall(_G.GameTooltip.Hide, _G.GameTooltip) end end)
   local bg = frame:CreateTexture(nil, "BACKGROUND")
   bg:SetAllPoints(frame)
-  bg:SetColorTexture(0, 0, 0, 0.3)
+  bg:SetColorTexture(0, 0, 0, 0.12)   -- (4.1.4) plus transparent
   ring = frame:CreateTexture(nil, "BORDER")
   ring:SetSize(70, 70)
   ring:SetPoint("TOP", frame, "TOP", 0, -2)

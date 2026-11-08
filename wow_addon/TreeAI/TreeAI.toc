@@ -3,7 +3,7 @@
 ## Notes: Conseils en jeu, macros intelligentes et synchro de groupe pour TreeAI Coach.
 ## Notes-frFR: Conseils en jeu, macros intelligentes et synchro de groupe pour TreeAI Coach.
 ## Author: TreeAI
-## Version: 4.1.4
+## Version: 4.1.5
 ## SavedVariables: TreeAIDB
 ## OptionalDeps: QuestieDB, Questie, ShortestPathForever, TomTom, TreeAI_Plan
 ## IconTexture: Interface\Icons\Ability_Hunter_BeastCall

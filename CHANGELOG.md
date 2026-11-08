@@ -3,6 +3,11 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 4.1.5 · 9 novembre 2026
+
+- **Boussole plus propre** : plus d'encadré bleu lumineux (« Objectif proche » = une petite ligne discrète), fond plus
+  transparent, un peu plus petite par défaut.
+
 ## 4.1.4 · 9 novembre 2026
 
 - **« Rendre mes quêtes »** ne te fait plus partir quand une quête pas finie a son objectif juste là (≤ 250 m) :

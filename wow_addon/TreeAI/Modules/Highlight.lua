@@ -1239,7 +1239,7 @@ function M.UpdateCompass()
     pulse.ring:SetPoint("TOPLEFT", pulse, "TOPLEFT", -10, 10)
     pulse.ring:SetPoint("BOTTOMRIGHT", pulse, "BOTTOMRIGHT", 10, -10)
     pulse.text = pulse:CreateFontString(nil, "OVERLAY")
-    fontOf(pulse.text, 11)
+    fontOf(pulse.text, 10)
     pulse.text:SetPoint("TOP", pulse, "BOTTOM", 0, -2)
     local ag = pulse.ring.CreateAnimationGroup and pulse.ring:CreateAnimationGroup()
     if ag then
@@ -1255,12 +1255,14 @@ function M.UpdateCompass()
   pulse:SetPoint("BOTTOMRIGHT", CF, "BOTTOMRIGHT")
   if pulse.SetFrameLevel then pulse:SetFrameLevel((tonumber(meth(CF, "GetFrameLevel")) or 1) + 5) end
   local r, g, b = color("colMob")
-  pulse.ring:SetVertexColor(r, g, b, intensity())
+  -- (4.1.4) plus d'encadré lumineux sur la boussole : juste une petite ligne discrète
+  pulse.ring:SetVertexColor(r, g, b, 0)
+  pulse.ring:Hide()
   local nm = first and (first.name or first.e.obj) or "?"
   pulse.text:SetText(("Objectif proche : %s%s"):format(cut(nm, 24), count > 1 and (" ×" .. count) or ""))
   pulse.text:SetTextColor(r, g, b)
   pulse:Show()
-  if pulse.ag and pulse.ag.Play and opt("anim") ~= false and not (pulse.ag.IsPlaying and pulse.ag:IsPlaying()) then pulse.ag:Play() end
+  pulse.text:SetAlpha(0.8)
   active[pulse] = CF
   local d = ensureDriver() if d then d:Show() end
   nearShown = count
