@@ -162,8 +162,17 @@ local function locked(...) return (T.FrameLocked and T:FrameLocked(...)) or fals
 
 local function newMark(plate)
   local f = CreateFrame("Frame", nil, G.UIParent)
-  f:SetPoint("TOPLEFT", plate, "TOPLEFT", -3, 3)
-  f:SetPoint("BOTTOMRIGHT", plate, "BOTTOMRIGHT", 3, -3)
+  -- (4.1.3) le cadre de la plaque est la zone de clic (énorme) : on entoure la barre de vie seulement, au plus juste
+  local uf = rawget(plate, "UnitFrame")
+  local hb = type(uf) == "table" and (rawget(uf, "healthBar") or rawget(uf, "HealthBarsContainer")) or nil
+  local anchor = (type(hb) == "table" and hb.GetWidth) and hb or plate
+  if anchor == plate then
+    f:SetPoint("CENTER", plate, "CENTER", 0, 0)
+    f:SetSize(110, 14)
+  else
+    f:SetPoint("TOPLEFT", anchor, "TOPLEFT", -1, 1)
+    f:SetPoint("BOTTOMRIGHT", anchor, "BOTTOMRIGHT", 1, -1)
+  end
   local strata = try(plate.GetFrameStrata, plate)
   if strata then f:SetFrameStrata(strata) end
   f:SetFrameLevel((tonumber(try(plate.GetFrameLevel, plate)) or 1) + 12)
@@ -173,7 +182,7 @@ local function newMark(plate)
     t:SetTexture(TEX_WHITE)
     t:SetPoint(p1, f, p1, 0, 0)
     t:SetPoint(p2, f, p2, 0, 0)
-    if horiz then t:SetHeight(2) else t:SetWidth(2) end
+    if horiz then t:SetHeight(1) else t:SetWidth(1) end
     f.edges[#f.edges + 1] = t
   end
   edge("TOPLEFT", "TOPRIGHT", true)
@@ -182,11 +191,11 @@ local function newMark(plate)
   edge("TOPRIGHT", "BOTTOMRIGHT", false)
   f.arrow = f:CreateTexture(nil, "OVERLAY")
   f.arrow:SetTexture(TEX_ARROW)
-  f.arrow:SetSize(20, 20)
+  f.arrow:SetSize(14, 14)
   f.arrow:SetPoint("BOTTOM", f, "TOP", 0, 10)
   f.skull = f:CreateTexture(nil, "OVERLAY")
   f.skull:SetTexture(TEX_SKULL)
-  f.skull:SetSize(16, 16)
+  f.skull:SetSize(12, 12)
   f.skull:SetPoint("LEFT", f, "RIGHT", 2, 0)
   f.badge = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   f.badge:SetPoint("LEFT", f, "RIGHT", 2, 0)
