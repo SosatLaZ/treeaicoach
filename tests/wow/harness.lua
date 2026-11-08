@@ -357,6 +357,10 @@ local function storm()
     if C and C.db then C.db.shown = true end
     M.Advance(2, 0.5)
   end
+  -- (MACRO3) …and the « Pause / Reprendre » of the route (page action, title, rows): how many times it is hit depends
+  -- on how many pages / pooled buttons exist, so scenarios start with the route running, whatever the window holds
+  local R = T and addonName == "TreeAI" and T.Route
+  if R and type(R.char) == "table" and R.char.paused and R.TogglePause then pcall(R.TogglePause, R); M.Advance(1, 0.5) end
 end
 
 if opts.storm then storm() end

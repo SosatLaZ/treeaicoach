@@ -105,6 +105,8 @@ local function playerClass()
 end
 
 local function playerLevel() return try(_G.UnitLevel, "player") or 1 end
+local function now() return (try(_G.GetTime)) or 0 end
+local function stamp() return (try(_G.time)) or 0 end
 
 ---------------------------------------------------------------------------
 -- Module
@@ -112,7 +114,9 @@ local function playerLevel() return try(_G.UnitLevel, "player") or 1 end
 local M = T:RegisterModule("Macros", {
   title = "Macros",
   defaults = { enabled = true, autoConsumables = true, perCharacter = true, autoUpgrade = true },
-  charDefaults = { setup = false, installed = {}, bodies = {} },
+  -- (MACRO3) opts[nom] = réglages de la macro (on, mods, mo, pet, guard, auto, var, tank, name, icon) ;
+  -- preset = « simple » | « complet » | « pro » ; stamps[nom] = heure (time()) de la dernière écriture par TreeAI
+  charDefaults = { setup = false, installed = {}, bodies = {}, opts = {}, stamps = {} },
   options = {
     { key = "autoConsumables", type = "toggle", label = "Macros consommables mises à jour (nourriture, potions, bandages, munitions)" },
     { key = "autoUpgrade", type = "toggle", label = "Améliorer les macros quand tu apprends un sort" },
@@ -124,13 +128,21 @@ T.Macros = M
 
 local function data() return T.Data and T.Data.Macros end
 local function db() return M.db or {} end
+local charOK   -- (MACRO3, perf) la table déjà vérifiée : char() est appelé à chaque tour des boucles de rafraîchissement
 local function char()
   local c = M.char
+  if c ~= nil and c == charOK and c.installed and c.bodies and c.opts and c.stamps then return c end
   if type(c) ~= "table" then c = {}; M.char = c end
   c.installed = c.installed or {}
   c.bodies = c.bodies or {}
+  if type(c.opts) ~= "table" then c.opts = {} end
+  -- un réglage par macro = une table (rien d'autre ne passe les lectures rapides de M:Opt / M:IsOn / M:Opts)
+  for k, o in pairs(c.opts) do if type(o) ~= "table" then c.opts[k] = nil end end
+  if type(c.stamps) ~= "table" then c.stamps = {} end
+  charOK = c
   return c
 end
+M._Char = char
 
 local function suggest(id, text, prio, opts)
   if M.Suggest then return M:Suggest(id, text, prio, opts) end
@@ -140,16 +152,16 @@ end
 -- UNE seule ligne « macros » dans les conseils (installer, nouvelles, à mettre à jour : même id)
 local READY_TEXT = "Nouvelles macros prêtes : clique pour installer"
 local function suggestReady(text, names)
-  local tip = { "Macros TreeAI", "Clic : installer · Maj-clic : voir la liste" }
+  local tip = { "Macros TreeAI", "Clic : tout mettre à jour · Maj-clic : la page Macros (état de chaque macro)" }
   if names and #names > 0 then tip[#tip + 1] = tconcat(names, ", ") end
   suggest("ready", text or READY_TEXT, 2, { ttl = 0, tooltip = tip, onClick = function()
     if inCombat() then return end   -- macros impossibles à créer en combat : la ligne reste, le clic d'après marche
     if _G.IsShiftKeyDown and _G.IsShiftKeyDown() then M:TogglePanel() return end
     M._pending = false
     if M.Clear then M:Clear("ready") end
-    -- nouvelles macros (sort appris) : on les crée ; sinon simple mise à jour des macros installées
+    -- (MACRO3) un clic = « Tout mettre à jour » : installe les macros activées qui manquent, réécrit celles qui ont changé
     if M:IsBlocked() then M:ShowCopy(M:PlanList(false))
-    elseif char().setup and not (names and #names > 0) then M:Refresh(false) else M:Install(false) end
+    elseif not char().setup then M:Install(false) else M:UpdateAll() end
   end })
 end
 M._SuggestReady = suggestReady
@@ -242,7 +254,7 @@ local function resolveSpell(id)
   return res[1], res[2]
 end
 M.ResolveSpell = resolveSpell
-function M:ClearSpellCache() resolveCache = {}; bookNames = nil end
+function M:ClearSpellCache() resolveCache = {}; bookNames = nil; if M.ForgetMemo then M:ForgetMemo() end end
 
 ---------------------------------------------------------------------------
 -- Consommables : meilleur objet des sacs par catégorie (façon Buffet)
@@ -567,6 +579,185 @@ local function remapForms(body, map)
 end
 M.RemapForms = remapForms
 
+---------------------------------------------------------------------------
+-- (MACRO3) Personnalisation : le modèle (jetons) est retouché AVANT le rendu, exactement comme
+-- treeaicoach/wow/macros/generator.py personalize() (les deux sont testés sur les mêmes cas) :
+--   mods=false : variantes Maj/Ctrl/Alt retirées ([mod:x] -> groupe enlevé, [nomod] -> condition enlevée)
+--   mo=false   : groupes @mouseover enlevés ; pet=false : lignes /pet… ; guard=false : ligne « /cast !Faucon »
+--   tank=N     : @party1 -> @partyN (/assist). Une clause sans plus aucun groupe disparaît ; « [] » seul = toujours.
+---------------------------------------------------------------------------
+local CONDCMD = {}
+for _, c in ipairs({ "/cast", "/use", "/castsequence", "/castrandom", "/stopmacro", "/petattack", "/petfollow",
+  "/petpassive", "/petdefensive", "/petaggressive", "/petstay", "/equip", "/target", "/targetenemy", "/assist",
+  "/startattack", "/stopattack", "/cancelaura", "/cancelform", "/dismount", "/userandom", "/equipslot",
+  "/stopcasting", "/click", "/focus", "/clearfocus" }) do CONDCMD[c] = true end
+local CASTLIKE = { ["/cast"] = true, ["/use"] = true, ["/castsequence"] = true, ["/castrandom"] = true,
+  ["/equip"] = true, ["/userandom"] = true }
+
+local function guardLine()
+  local D = data()
+  return "/cast !{" .. tostring((D and D.guard) or 13165) .. "}"
+end
+
+local function leadGroups(c)
+  local groups, rest = {}, (c:gsub("^%s+", ""))
+  while rest:sub(1, 1) == "[" do
+    local j = rest:find("]", 1, true)
+    if not j then break end
+    groups[#groups + 1] = rest:sub(2, j - 1)
+    rest = (rest:sub(j + 1):gsub("^%s+", ""))
+  end
+  return groups, rest
+end
+M.LeadGroups = leadGroups
+
+local function isMod(x)
+  local l = x:lower()
+  return l == "mod" or l == "modifier" or l:find("^mod:") ~= nil or l:find("^modifier:") ~= nil
+end
+local function isNoMod(x)
+  local l = x:lower()
+  return l == "nomod" or l == "nomodifier" or l:find("^nomod:") ~= nil or l:find("^nomodifier:") ~= nil
+end
+
+local function personalize(body, o)
+  local tank = tonumber(o.tank) or 1
+  if o.mods ~= false and o.mo ~= false and o.pet ~= false and o.guard ~= false and tank == 1 then return body end
+  local guard = guardLine()
+  local out = {}
+  for raw in ((body or "") .. "\n"):gmatch("(.-)\n") do
+    local opt = raw:sub(1, 1) == "?"
+    local line = opt and raw:sub(2) or raw
+    if line:sub(1, 1) ~= "/" then
+      out[#out + 1] = raw
+    else
+      local cmd, sep, rest = line:match("^(%S+)( ?)(.*)$")
+      local lc = (cmd or ""):lower()
+      if o.pet == false and lc:sub(1, 4) == "/pet" then
+        -- ligne d'ordre au familier retirée
+      elseif o.guard == false and line == guard then
+        -- garde d'aspect retirée
+      elseif sep == "" or lc == "/run" or lc == "/script" then
+        out[#out + 1] = raw
+      else
+        local new, keep = rest, true
+        if tank ~= 1 and lc == "/assist" then new = new:gsub("@party1", "@party" .. tank) end
+        if (o.mods == false or o.mo == false) and CONDCMD[lc] then
+          local clauses = {}
+          for clause in (new .. ";"):gmatch("([^;]*);") do
+            local c = trim(clause)
+            local q = ""
+            if c:sub(1, 1) == "?" then q = "?"; c = c:sub(2) end
+            local groups, tail = leadGroups(c)
+            if #groups == 0 then
+              clauses[#clauses + 1] = q .. c
+            else
+              local kept = {}
+              for _, g in ipairs(groups) do
+                local conds, drop = {}, false
+                for x in (g .. ","):gmatch("([^,]*),") do
+                  x = trim(x)
+                  if x ~= "" then
+                    if o.mods == false and isMod(x) then drop = true end
+                    if not (o.mods == false and isNoMod(x)) then conds[#conds + 1] = x end
+                  end
+                end
+                if not drop and o.mo == false then
+                  for _, x in ipairs(conds) do
+                    local l = x:lower()
+                    if l == "@mouseover" or l == "target=mouseover" then drop = true end
+                  end
+                end
+                if not drop then kept[#kept + 1] = conds end
+              end
+              if #kept > 0 then
+                if #kept == 1 and #kept[1] == 0 then kept = {} end
+                local gt = {}
+                for _, cs in ipairs(kept) do gt[#gt + 1] = "[" .. tconcat(cs, ",") .. "]" end
+                local gtxt = tconcat(gt)
+                clauses[#clauses + 1] = q .. gtxt .. ((gtxt ~= "" and tail ~= "") and " " or "") .. tail
+              end
+            end
+          end
+          if #clauses == 0 then
+            keep = false
+          else
+            local rebuilt = tconcat(clauses, "; ")
+            if rebuilt:gsub(" ", "") ~= new:gsub(" ", "") then new = rebuilt end
+          end
+        end
+        if keep then out[#out + 1] = (new == rest) and raw or ((opt and "?" or "") .. cmd .. " " .. new) end
+      end
+    end
+  end
+  local cast = false
+  for _, l in ipairs(out) do
+    local c = (l:gsub("^%?+", "")):match("^(%S+)")
+    if c and CASTLIKE[c:lower()] then cast = true break end
+  end
+  if not cast then
+    local keepL = {}
+    for _, l in ipairs(out) do if (l:gsub("^%?+", "")):sub(1, 1) ~= "#" then keepL[#keepL + 1] = l end end
+    out = keepL
+  end
+  return tconcat(out, "\n")
+end
+M.Personalize = personalize
+
+-- sorts / objets obligatoires d'un corps (port de generator.required) : hors lignes et clauses « ? »
+local function requiredOf(b)
+  local D = data() or {}
+  local pets = D.pet or {}
+  local spells, items, seenS, seenI = {}, {}, {}, {}
+  for line in ((b or "") .. "\n"):gmatch("(.-)\n") do
+    if line:sub(1, 1) ~= "?" then
+      local chunks = {}
+      local cmd, rest = line:match("^(/%S+) (.*)$")
+      if cmd then
+        for clause in (rest .. ";"):gmatch("([^;]*);") do
+          if trim(clause):sub(1, 1) ~= "?" then chunks[#chunks + 1] = clause end
+        end
+      else
+        chunks[1] = line
+      end
+      for _, ch in ipairs(chunks) do
+        for sid in ch:gmatch("{(%d+)}") do
+          sid = tonumber(sid)
+          if sid and not pets[sid] and not seenS[sid] then seenS[sid] = true; spells[#spells + 1] = sid end
+        end
+        for cat in ch:gmatch("{item:([%a_]+)}") do
+          if not seenI[cat] then seenI[cat] = true; items[#items + 1] = cat end
+        end
+      end
+    end
+  end
+  return spells, items
+end
+M.RequiredOf = requiredOf
+
+local pcache = setmetatable({}, { __mode = "k" })
+local function optSig(o)
+  return (o.mods ~= false and "m" or "") .. (o.mo ~= false and "o" or "") .. (o.pet ~= false and "p" or "")
+    .. (o.guard ~= false and "g" or "") .. tostring(tonumber(o.tank) or 1)
+end
+local function personalVariant(v, o, sig)
+  sig = sig or optSig(o)
+  if sig == "mopg1" then return v end
+  local per = pcache[v]
+  if not per then per = {}; pcache[v] = per end
+  local hit = per[sig]
+  if hit then return hit end
+  local b = personalize(v.b or "", o)
+  if b == v.b then hit = v
+  else
+    local r, it = requiredOf(b)
+    hit = { b = b, r = r, it = it }
+  end
+  per[sig] = hit
+  return hit
+end
+M.PersonalVariant = personalVariant
+
 local function renderVariant(v, ctx, consumable)
   for _, sid in ipairs(v.r or {}) do
     local name, known = resolveSpell(sid)
@@ -615,11 +806,24 @@ local function renderVariant(v, ctx, consumable)
 end
 M.RenderVariant = renderVariant
 
+-- (MACRO3) avec les réglages du joueur ; la variante qu'il a choisie passe d'abord (si elle est possible).
+-- Renvoie le corps et l'index de la variante rendue.
 function M:Render(def, ctx)
   ctx = ctx or newContext()
-  for _, v in ipairs(def.v or {}) do
-    local body = renderVariant(v, ctx, def.c == "consumable")
-    if body then return body end
+  if not self:Supported(def) then return nil end
+  local o, sig = self:Opts(def)
+  local list = def.v or {}
+  local cons = def.c == "consumable"
+  local pin = tonumber(self:Opt(def, "var"))
+  if pin and list[pin] then
+    local body = renderVariant(personalVariant(list[pin], o, sig), ctx, cons)
+    if body then return body, pin end
+  end
+  for i = 1, #list do
+    if i ~= pin then
+      local body = renderVariant(personalVariant(list[i], o, sig), ctx, cons)
+      if body then return body, i end
+    end
   end
   if def.c == "consumable" then
     return "/run print(\"" .. EMPTY_TEXT .. "\")"
@@ -664,12 +868,25 @@ local function detectSpec()
 end
 
 -- spé effective, auto ? (le choix du joueur dans le panneau prime sur les talents)
+local memo = { t = -1 }   -- (MACRO3, perf) spé / contexte / définitions : une lecture par seconde
+local function memoFresh()
+  local gt = _G.GetTime
+  if type(gt) ~= "function" then return {} end   -- pas d'horloge : rien n'est gardé
+  local t = gt() or 0
+  if memo.t ~= t and (t - memo.t >= 1 or t < memo.t) then memo = { t = t } end
+  return memo
+end
+function M:ForgetMemo() memo = { t = -1 } end
 function M:Spec()
-  local want = char().spec
-  if want then
-    for _, s in ipairs(classSpecs()) do if s.id == want then return want, false end end
+  local m = memoFresh()
+  if m.spec == nil then
+    local want, spec, auto = char().spec, nil, true
+    if want then
+      for _, s in ipairs(classSpecs()) do if s.id == want then spec, auto = want, false end end
+    end
+    m.spec, m.specAuto = spec or detectSpec() or false, auto
   end
-  return detectSpec(), true
+  return m.spec or nil, m.specAuto
 end
 
 function M:SpecName(id)
@@ -685,7 +902,9 @@ end
 function M:Context()
   local want = char().ctx
   if want == "solo" or want == "groupe" then return want, false end
-  return inGroup() and "groupe" or "solo", true
+  local m = memoFresh()
+  if m.ctx == nil then m.ctx = inGroup() and "groupe" or "solo" end
+  return m.ctx, true
 end
 
 local function forSpec(def, spec)
@@ -696,6 +915,8 @@ end
 
 -- Toutes les macros de la classe pour la spé courante (une seule définition par nom).
 function M:Defs()
+  local m = memoFresh()
+  if m.defs then return m.defs end
   local D = data()
   local cls = playerClass()
   local all = (D and D.classes and cls and D.classes[cls]) or {}
@@ -704,15 +925,129 @@ function M:Defs()
   for _, def in ipairs(all) do
     if forSpec(def, spec) then out[#out + 1] = def end
   end
+  m.defs = out
   return out
 end
 
--- Fait partie du jeu installé par défaut pour la spé + le contexte ?
-function M:IsDefault(def)
-  if not def.def then return false end
-  local ctx = self:Context()
-  return def.x == nil or def.x == "" or def.x == ctx
+---------------------------------------------------------------------------
+-- (MACRO3) Préréglages (Simple / Complet / Pro) et réglages par macro, gardés par personnage
+---------------------------------------------------------------------------
+local optGen = 0   -- (perf) +1 à chaque changement de réglage / préréglage : les réglages effectifs gardés sont relus
+local PRESETS = {
+  simple = { label = "Simple", mods = false, mo = false,
+    tip = "Les macros de base, sans variantes Maj/Ctrl/Alt ni survol : un bouton = une chose." },
+  complet = { label = "Complet", mods = true, mo = true,
+    tip = "Le jeu conseillé : variantes Maj/Ctrl/Alt et survol (@mouseover)." },
+  pro = { label = "Pro", mods = true, mo = true,
+    tip = "Complet + les macros « Pro » qui tirent le maximum de chaque touche (pull en un bouton, burst, panique…)." },
+}
+M.PRESETS = PRESETS
+M.PRESET_ORDER = { "simple", "complet", "pro" }
+
+function M:Preset()
+  local p = char().preset
+  return (p and PRESETS[p]) and p or "complet"
 end
+
+-- la macro fait-elle partie du préréglage en cours ? (def = Complet, sp = Simple, pr = Pro)
+function M:InPreset(def)
+  local p = self:Preset()
+  if p == "simple" and def.sp ~= nil then return def.sp and true or false end
+  if p == "pro" and def.pr ~= nil then return def.pr and true or false end
+  return def.def and true or false
+end
+
+-- un réglage : choix du joueur pour cette macro, sinon le préréglage
+function M:Opt(def, key)
+  local o = char().opts[def.n]
+  if o ~= nil and o[key] ~= nil then return o[key] end
+  if key == "on" then return self:InPreset(def) end
+  if key == "mods" or key == "mo" then return PRESETS[self:Preset()][key] end
+  if key == "pet" or key == "guard" or key == "auto" then return true end
+  if key == "tank" then return 1 end
+  return nil
+end
+
+function M:SetOpt(def, key, v)
+  memo = { t = -1 }
+  optGen = optGen + 1
+  local c = char()
+  local o = c.opts[def.n]
+  if type(o) ~= "table" then o = {}; c.opts[def.n] = o end
+  o[key] = v
+  if next(o) == nil then c.opts[def.n] = nil end
+  return v
+end
+
+-- changer de préréglage : les réglages suivent (le nom, l'icône et le tank choisis restent)
+function M:SetPreset(p)
+  if not PRESETS[p] then return false end
+  memo = { t = -1 }
+  optGen = optGen + 1
+  local c = char()
+  c.preset = p
+  for n, o in pairs(c.opts) do
+    if type(o) == "table" then
+      for _, k in ipairs({ "on", "mods", "mo", "pet", "guard", "auto", "var" }) do o[k] = nil end
+      if next(o) == nil then c.opts[n] = nil end
+    end
+  end
+  return true
+end
+
+-- réglages effectifs passés à personalize() (seulement ceux que la macro propose : f = « m o p g t »)
+local ALL_ON = { mods = true, mo = true, pet = true, guard = true, tank = 1 }
+local ocache = setmetatable({}, { __mode = "k" })   -- (perf) def -> réglages effectifs, jusqu'au prochain changement
+local function optOn(f, o, P, letter, key)
+  if not f:find(letter, 1, true) then return true end
+  local v = o and o[key]
+  if v == nil then
+    if key == "mods" or key == "mo" then return P[key] ~= false end
+    return true
+  end
+  return v ~= false
+end
+function M:Opts(def)
+  local f = def.f
+  if f == nil or f == "" then return ALL_ON, "mopg1" end
+  local c = char()
+  local opts, preset = c.opts, c.preset
+  local e = ocache[def]
+  if e and e.gen == optGen and e.opts == opts and e.preset == preset then return e.o, e.sig end
+  local o = opts[def.n]
+  local P = PRESETS[self:Preset()]
+  local r = { mods = optOn(f, o, P, "m", "mods"), mo = optOn(f, o, P, "o", "mo"), pet = optOn(f, o, P, "p", "pet"),
+    guard = optOn(f, o, P, "g", "guard"), tank = (f:find("t", 1, true) and o and tonumber(o.tank)) or 1 }
+  local sig = optSig(r)
+  ocache[def] = { gen = optGen, opts = opts, preset = preset, o = r, sig = sig }
+  return r, sig
+end
+
+-- le client a-t-il ce qu'il faut ? (TAI Pro Focus : la focalisation)
+local function focusOK() return type(_G.FocusUnit) == "function" end
+function M:Supported(def)
+  if def.nf == "focus" and not focusOK() then return false end
+  return true
+end
+
+-- nom de la macro dans le jeu (renommable) ; les tables installed / bodies / opts restent indexées par def.n
+function M:GameName(def)
+  local o = char().opts[def.n]
+  local n = o ~= nil and o.name
+  if n and n ~= "" and type(n) == "string" then return n end
+  return def.n
+end
+
+-- activée ? (choix du joueur, sinon préréglage + contexte solo / groupe)
+function M:IsOn(def)
+  local o = char().opts[def.n]
+  if o ~= nil and o.on ~= nil then return o.on and true or false end
+  if not self:InPreset(def) then return false end
+  if def.x == nil or def.x == "" then return true end
+  return def.x == (self:Context())
+end
+-- (ancien nom, lu par Binds / le panneau) : fait partie du jeu installé = activée
+function M:IsDefault(def) return self:IsOn(def) end
 
 ---------------------------------------------------------------------------
 -- Écriture des macros (hors combat, pendant une action du joueur uniquement)
@@ -765,6 +1100,7 @@ local function macroIndex(name)
   return idx
 end
 M.MacroIndex = macroIndex
+local function gname(def) return M:GameName(def) end
 
 local function freeSlot(perChar)
   local g, c = macroCounts()
@@ -784,8 +1120,6 @@ local function userDo(fn, ...)
 end
 M.UserDo = userDo
 
-local function now() return (try(_G.GetTime)) or 0 end
-local function stamp() return (try(_G.time)) or 0 end
 
 -- Le jeu a refusé l'écriture (ADDON_ACTION_FORBIDDEN, ou CreateMacro qui ne crée rien) : mode
 -- « copier-coller » (gardé d'une session à l'autre ; « Réessayer » dans la fenêtre le remet à zéro).
@@ -817,7 +1151,7 @@ end
 -- État d'une macro : "user" (modifiée à la main / macro du joueur au même nom), "installed",
 -- "ready" (installable), "later" (sorts pas encore appris).
 function M:Status(def, ctx)
-  local idx = macroIndex(def.n)
+  local idx = macroIndex(gname(def))
   local stored = char().bodies[def.n]
   if idx then
     local _, _, cur = try(_G.GetMacroInfo, idx)
@@ -847,34 +1181,47 @@ function M:Write(def, body, force)
   local ch = char()
   local before = blockedCount()
   M._lastWrite = now()
-  local idx = macroIndex(def.n)
+  local gn = gname(def)
+  local idx = macroIndex(gn)
+  -- (MACRO3) icône : rien (le jeu garde la sienne) sauf icône fixe choisie ou changement d'icône demandé
+  local iconWanted = (self:Opt(def, "icon") == "fixed" or self:Opt(def, "iconDirty")) and self:IconArg(def) or nil
   if idx then
     local _, _, cur = try(_G.GetMacroInfo, idx)
     local stored = ch.bodies[def.n]
     -- macro modifiée à la main, ou macro du joueur qui porte déjà ce nom : on n'y touche jamais
     -- (sauf « /tai macros forcer »)
     if not force and (not stored or (cur and not same(cur, stored))) then
-      if same(cur, body) then ch.bodies[def.n] = cur; ch.installed[def.n] = true; return "same" end
+      if same(cur, body) then
+        ch.bodies[def.n] = cur; ch.installed[def.n] = true
+        if not ch.stamps[def.n] then ch.stamps[def.n] = stamp() end
+        return "same"
+      end
       return "user"
     end
-    if same(cur, body) then ch.bodies[def.n] = cur; ch.installed[def.n] = true; return "same" end
-    local ok, err = pcall(_G.EditMacro, idx, def.n, nil, body)
+    if same(cur, body) and not iconWanted then
+      ch.bodies[def.n] = cur; ch.installed[def.n] = true
+      if not ch.stamps[def.n] then ch.stamps[def.n] = stamp() end
+      return "same"
+    end
+    local ok, err = pcall(_G.EditMacro, idx, gn, iconWanted, body)
     invalidateIndex()
     if not ok then self.lastError = tostring(err); return "fail" end
-    local _, _, after2 = try(_G.GetMacroInfo, idx)
+    local _, _, after2 = try(_G.GetMacroInfo, macroIndex(gn) or idx)
     if not same(after2, body) or blockedCount() > before then self:SetBlocked("EditMacro"); return "blocked" end
     ch.bodies[def.n] = body
     ch.installed[def.n] = true
+    ch.stamps[def.n] = stamp()
+    if self:Opt(def, "iconDirty") then self:SetOpt(def, "iconDirty", nil) end
     return "updated"
   end
   local okSlot, perChar = freeSlot(db().perCharacter ~= false)
   if not okSlot then return "full" end
-  local ok, ret = pcall(_G.CreateMacro, def.n, def.i or "INV_MISC_QUESTIONMARK", body, perChar)
+  local ok, ret = pcall(_G.CreateMacro, gn, iconWanted or def.i or "INV_MISC_QUESTIONMARK", body, perChar)
   invalidateIndex()   -- une macro de plus : les index suivants bougent
   if not ok then
     if isLimitError(ret) then return "full" end
     -- icône refusée : une seule autre tentative avec l'ID de fichier du « ? » (rien n'a été créé)
-    ok, ret = pcall(_G.CreateMacro, def.n, 134400, body, perChar)
+    ok, ret = pcall(_G.CreateMacro, gn, 134400, body, perChar)
     if not ok then
       self.lastError = tostring(ret)
       if isLimitError(ret) then return "full" end
@@ -882,7 +1229,7 @@ function M:Write(def, body, force)
     end
   end
   ret = tonumber(ret)
-  local newIdx = (ret and ret > 0 and macroName(ret) == def.n) and ret or macroIndex(def.n)
+  local newIdx = (ret and ret > 0 and macroName(ret) == gn) and ret or macroIndex(gn)
   if not newIdx or blockedCount() > before then
     -- appel accepté mais rien créé : le jeu l'a bloqué (ADDON_ACTION_FORBIDDEN) ou refusé en silence
     self:SetBlocked(blockedCount() > before and "CreateMacro (interdit)" or "CreateMacro (rien créé)")
@@ -890,14 +1237,28 @@ function M:Write(def, body, force)
   end
   ch.bodies[def.n] = body
   ch.installed[def.n] = true
+  ch.stamps[def.n] = stamp()
+  if self:Opt(def, "iconDirty") then self:SetOpt(def, "iconDirty", nil) end
   return "created"
+end
+
+-- (MACRO3) icône donnée au jeu : « ? » (l'icône suit le sort grâce à #showtooltip) ou l'icône fixe choisie
+function M:IconArg(def, ctx)
+  if self:Opt(def, "icon") == "fixed" and M.IconOf then
+    local tex = M.IconOf(def, ctx)
+    if tex and tex ~= "Interface\\Icons\\INV_Misc_QuestionMark" then
+      if type(tex) == "string" then tex = tex:gsub("^Interface\\Icons\\", "") end
+      return tex
+    end
+  end
+  return def.i or "INV_MISC_QUESTIONMARK"
 end
 
 local function keyHints(defs)
   local parts = {}
   for _, def in ipairs(defs) do
     if def.k and def.k ~= "-" and char().installed[def.n] then
-      parts[#parts + 1] = def.n:sub(#PREFIX + 1) .. "=" .. def.k
+      parts[#parts + 1] = gname(def):gsub("^" .. PREFIX, "") .. "=" .. def.k
     end
   end
   return tconcat(parts, ", ")
@@ -1009,7 +1370,7 @@ function M:InstallOne(def, force)
   end
   if r == "created" or r == "updated" or r == "same" then
     char().setup = true
-    local idx = macroIndex(def.n)
+    local idx = macroIndex(gname(def))
     if idx and _G.PickupMacro then try(_G.PickupMacro, idx) end
     say("|cff40ff40OK|r " .. def.n .. " " .. ((r == "created" and "créée") or (r == "updated" and "mise à jour") or "déjà à jour") ..
       " — elle est sur ton curseur : glisse-la sur ta barre (clic droit pour annuler).")
@@ -1049,7 +1410,7 @@ function M:Diagnose(show)
       end
       local ok = (code == "installed")
       if ok then okN = okN + 1 else koN = koN + 1 end
-      items[#items + 1] = { n = def.n, ok = ok, status = code, reason = REASON[code] or code,
+      items[#items + 1] = { n = gname(def), ok = ok, status = code, reason = REASON[code] or code,
                             detail = detail and tostring(detail) or nil, len = body and #body or nil }
     end
   end
@@ -1193,7 +1554,8 @@ function M:FillCopy()
     f.count:SetText("Aucune macro disponible pour l'instant (sorts pas encore appris).")
     return
   end
-  f.name._orig = p.def.n; f.name:SetText(p.def.n)
+  local pn = gname(p.def)
+  f.name._orig = pn; f.name:SetText(pn)
   local ic = p.def.i or "INV_Misc_QuestionMark"
   f.icon:SetText("Icône : " .. ((ic:lower() == "inv_misc_questionmark") and "« ? » (l'icône suit le sort)" or ic))
   f.body._orig = p.body; f.body:SetText(p.body)
@@ -1201,13 +1563,19 @@ function M:FillCopy()
     p.def.k and p.def.k ~= "-" and (" — touche conseillée : " .. p.def.k) or ""))
 end
 
+local usesCache = setmetatable({}, { __mode = "k" })
 local function usesItems(def)
-  if def.c == "consumable" then return true end
-  for _, v in ipairs(def.v or {}) do
-    local b = v.b or ""
-    if b:find("{item:", 1, true) or b:find("{slot:", 1, true) then return true end
+  local hit = usesCache[def]
+  if hit ~= nil then return hit end
+  hit = def.c == "consumable"
+  if not hit then
+    for _, v in ipairs(def.v or {}) do
+      local b = v.b or ""
+      if b:find("{item:", 1, true) or b:find("{slot:", 1, true) then hit = true break end
+    end
   end
-  return false
+  usesCache[def] = hit
+  return hit
 end
 
 -- Met à jour les macros déjà installées (kind = "consumable" ou toutes).
@@ -1217,32 +1585,53 @@ function M:Refresh(onlyConsumables, ctx0, sliced)
   local key = onlyConsumables and "Macros:consumables" or "Macros:refresh"
   runOOC(key, function()
     local ctx = (ctx0 and not inCombat()) and ctx0 or newContext()
+    -- (MACRO3) hors d'un clic (Forever) : la liste de ce qui attend « clique pour mettre à jour »
+    local waiting = {}
+    local noClick = T.InUserAction and not T:InUserAction()
     local defs, i = self:Defs(), 1
+    local function finish()
+      if #waiting > 0 then
+        M._pending = true
+        suggestReady("Macros à mettre à jour : clique pour les mettre à jour", waiting)
+      end
+      if self.panel and self.panel:IsShown() then self:FillPanel() end
+      local W = T.Window
+      if W and W.IsOpen and W.IsOpen() and W.CurrentPage and W.CurrentPage() == "macros" and W.Dirty then W.Dirty() end
+    end
     local function step()
+      local c = char()
+      local installed, bodies = c.installed, c.bodies
       local done = 0
       while i <= #defs do
         local def = defs[i]
         i = i + 1
-        if char().installed[def.n] and (not onlyConsumables or usesItems(def)) and macroIndex(def.n) then
-          local body = self:Render(def, ctx)
-          local idx = body and macroIndex(def.n)
+        -- (MACRO3) seulement les macros activées dont la mise à jour auto n'est pas coupée
+        local idx = installed[def.n] and (not onlyConsumables or usesItems(def)) and self:IsOn(def)
+          and self:Opt(def, "auto") ~= false and macroIndex(gname(def))
+        local body = idx and self:Render(def, ctx)
+        if body then
           local _, _, cur = try(_G.GetMacroInfo, idx)
-          -- rien à changer : pas d'écriture (donc pas de « clique pour mettre à jour » à chaque sac)
-          if body and not same(cur, body) and not self:IsBlocked() then
-            local r = self:Write(def, body, false)
-            if r == "pending" or r == "blocked" then
-              if r == "blocked" then suggestReady("Le jeu bloque la mise à jour auto : clique pour copier-coller") end
-              return
+          local stored = bodies[def.n]
+          -- rien à changer : pas d'écriture (donc pas de « clique pour mettre à jour » à chaque sac) ; une macro
+          -- modifiée à la main n'est jamais proposée (elle n'est jamais réécrite)
+          if not same(cur, body) and not self:IsBlocked() and stored and same(cur, stored) then
+            if noClick then
+              waiting[#waiting + 1] = gname(def)
+            else
+              local r = self:Write(def, body, false)
+              if r == "blocked" then suggestReady("Le jeu bloque la mise à jour auto : clique pour copier-coller") return end
+              if r == "pending" then waiting[#waiting + 1] = gname(def) end
             end
           end
           done = done + 1
+          -- sliced : 3 macros par image au plus (une montée de niveau rendait toutes les macros dans la même image)
           if sliced and done >= 3 and i <= #defs then
             after(0, function() if not inCombat() then step() else runOOC(key, step) end end)
             return
           end
         end
       end
-      if self.panel and self.panel:IsShown() then self:FillPanel() end
+      finish()
     end
     step()
   end)
@@ -1257,8 +1646,11 @@ function M:Remove()
   end
   runOOC("Macros:remove", function()
     local n = 0
+    -- (MACRO3) une macro renommée garde sa clé (nom d'origine « TAI … ») : son nom dans le jeu vient des réglages
     for name in pairs(char().installed) do
-      local idx = macroIndex(name)
+      local o = char().opts[name]
+      local gn = (type(o) == "table" and type(o.name) == "string" and o.name ~= "") and o.name or name
+      local idx = macroIndex(gn)
       if idx and name:sub(1, #PREFIX) == PREFIX then
         local _, _, cur = try(_G.GetMacroInfo, idx)
         local stored = char().bodies[name]
@@ -1326,11 +1718,13 @@ local function cycleSpec()
     end
   end
   char().spec = nextId -- nil = auto (talents)
+  M:ForgetMemo()
 end
 
 local function cycleCtx()
   local cur = char().ctx
   char().ctx = (cur == nil and "solo") or (cur == "solo" and "groupe") or nil
+  M:ForgetMemo()
 end
 
 -- icône d'une macro : 1er sort de la variante rendue, sinon 1er objet, sinon l'icône conseillée
@@ -1370,10 +1764,10 @@ M.OnBars = onBars
 -- prochaine macro TAI installée qui n'est sur aucune barre (flux « Glisser sur la barre »)
 function M:NextToPlace()
   local sel = self:SelectedDef()
-  local selIdx = sel and macroIndex(sel.n)
+  local selIdx = sel and macroIndex(gname(sel))
   if selIdx and not onBars(selIdx) then return sel, selIdx end
   for _, def in ipairs(self:Defs()) do
-    local idx = char().installed[def.n] and macroIndex(def.n)
+    local idx = char().installed[def.n] and macroIndex(gname(def))
     if idx and not onBars(idx) then return def, idx end
   end
   return nil
@@ -1384,13 +1778,13 @@ function M:PickToBar(def)
   if inCombat() then say("Impossible en combat : refais-le après."); return end
   def = def or select(1, self:NextToPlace()) or self:SelectedDef()
   if not def then say("Toutes tes macros TAI sont déjà sur tes barres."); return end
-  local idx = macroIndex(def.n)
+  local idx = macroIndex(gname(def))
   if not idx then
     userDo(M.InstallOne, M, def, false)
     return
   end
   try(_G.PickupMacro, idx)
-  say(def.n .. " est sur ton curseur : clique sur une case de ta barre pour la poser (clic droit : annuler).")
+  say(gname(def) .. " est sur ton curseur : clique sur une case de ta barre pour la poser (clic droit : annuler).")
 end
 
 local function strH(fs)
@@ -1420,7 +1814,27 @@ local function stack(f, items, x, top, width)
   return y
 end
 
+-- (MACRO3) « Macros » (minimap, Outils, Options, /tai macros) : la page de la fenêtre TreeAI quand elle tourne ;
+-- l'ancien panneau (liste + fiche + glisser) reste : « Liste détaillée » (M:ToggleList).
+local function windowPage()
+  local W = T.Window
+  if not (W and type(W.Toggle) == "function" and W.pageIndex and W.pageIndex.macros) then return nil end
+  if W.IsEnabled and not W:IsEnabled() then return nil end
+  return W
+end
 function M:TogglePanel()
+  local W = windowPage()
+  if W then W.Toggle("macros") return end
+  self:ToggleList()
+end
+function M:OpenPage()
+  local W = windowPage()
+  if W then W.Open("macros") return true end
+  self:OpenPanel()
+  return false
+end
+
+function M:ToggleList()
   if self.panel then
     if self.panel:IsShown() then self.panel:Hide() else self:FillPanel(); self.panel:Show() end
     return
@@ -1568,7 +1982,7 @@ end
 function M:OpenPanel()
   if self.panel and self.panel:IsShown() then self:FillPanel() return end
   if self.panel then self:FillPanel(); self.panel:Show() return end
-  self:TogglePanel()
+  self:ToggleList()
 end
 
 function M:SelectedDef()
@@ -1672,11 +2086,11 @@ function M:FillPanel()
     local st, cur = self:Status(def, ctx)
     local body = self:Render(def, ctx)
     f.icon:SetTexture(iconOf(def, ctx))
-    f.name:SetText(def.n)
+    f.name:SetText(gname(def))
     f.desc:SetText(def.d or "")
     f.where:SetText("|cffffd100Où la mettre :|r " .. (def.o or ""))
     local ctxTxt = (def.x == "groupe" and "groupe") or (def.x == "solo" and "solo") or "solo + groupe"
-    local idx = (st == "installed" or st == "user") and macroIndex(def.n)
+    local idx = (st == "installed" or st == "user") and macroIndex(gname(def))
     local placed = idx and (onBars(idx) and " · sur ta barre" or " · pas encore sur une barre") or ""
     f.meta:SetText(("%s%s|r%s · niveau %s · %s · touche conseillée %s"):format(STATUS_COLOR[st] or "",
       STATUS_TXT[st] or "", placed, tostring(def.l or 1), ctxTxt, def.k or "-"))
@@ -1722,11 +2136,654 @@ end
 M.Stack = stack
 
 ---------------------------------------------------------------------------
+-- (MACRO3) État de chaque macro : installée ? à jour ? sur une barre ? touche ? auto ? -> pastille
+--   vert « active » · orange « à installer / à mettre à jour » (clic) · gris « désactivée / plus tard /
+--   modifiée par toi / figée » · rouge « erreur » + raison (le jeu bloque, plus de place, rien dans les sacs…)
+-- Lu à la demande (page « Macros » ouverte) : rien ne tourne en fond pour ça.
+---------------------------------------------------------------------------
+local SLOT_CMD = { { 1, "ACTIONBUTTON" }, { 61, "MULTIACTIONBAR1BUTTON" }, { 49, "MULTIACTIONBAR2BUTTON" },
+  { 25, "MULTIACTIONBAR3BUTTON" }, { 37, "MULTIACTIONBAR4BUTTON" }, { 145, "MULTIACTIONBAR5BUTTON" },
+  { 157, "MULTIACTIONBAR6BUTTON" }, { 169, "MULTIACTIONBAR7BUTTON" } }
+local function slotCommand(slot)
+  for _, b in ipairs(SLOT_CMD) do
+    if slot >= b[1] and slot < b[1] + 12 then return b[2] .. (slot - b[1] + 1) end
+  end
+  return nil
+end
+local function bindingKey(cmd)
+  if not cmd then return nil end
+  local k = try(_G.GetBindingKey, cmd)
+  if type(k) == "string" and k ~= "" then return k end
+  return nil
+end
+
+-- nom de macro -> { slots = {cases}, key = touche } : un relevé des barres (1-120, 145-180), gardé jusqu'à
+-- ACTIONBAR_SLOT_CHANGED / UPDATE_BINDINGS / UPDATE_MACROS. Le nom vient du texte de la case (Mainline : une
+-- macro qui affiche un sort rend « spell » comme sous-type, l'ID n'est alors pas un index de macro).
+local placeCache
+local function placement()
+  if placeCache then return placeCache end
+  local byName = {}
+  placeCache = byName
+  if type(_G.GetActionInfo) ~= "function" then return byName end
+  local addonKeys = {}
+  local B = T.Binds or (T.modules and T.modules.Binds)
+  if B and type(B.ReadAddonBars) == "function" then
+    local ok, k = pcall(B.ReadAddonBars)
+    if ok and type(k) == "table" then addonKeys = k end
+  end
+  for slot = 1, 180 do
+    if slot <= 120 or slot >= 145 then
+      local kind, id, sub = try(_G.GetActionInfo, slot)
+      if kind == "macro" then
+        local name = try(_G.GetActionText, slot)
+        if (type(name) ~= "string" or name == "") and sub ~= "spell" and type(id) == "number" then name = macroName(id) end
+        if type(name) == "string" and name ~= "" then
+          local e = byName[name]
+          if not e then e = { slots = {} }; byName[name] = e end
+          e.slots[#e.slots + 1] = slot
+          if not e.key then
+            local ak = addonKeys[slot]
+            e.key = (type(ak) == "table" and ak.key) or bindingKey(slotCommand(slot))
+          end
+        end
+      end
+    end
+  end
+  return byName
+end
+M.Placement = placement
+function M.DirtyPlacement() placeCache = nil end
+
+local function keyText(k)
+  local B = T.Binds or (T.modules and T.modules.Binds)
+  if k and B and type(B.KeyText) == "function" then return B.KeyText(k) end
+  return k
+end
+M.KeyText = keyText
+
+local BADGE = { ok = "good", install = "warn", update = "warn", off = "muted", later = "muted", user = "muted",
+  frozen = "muted", unsupported = "muted", empty = "muted", blocked = "bad", full = "bad", invalid = "bad" }
+local RGB = { good = { 0.3, 0.9, 0.4 }, warn = { 1, 0.6, 0.15 }, muted = { 0.6, 0.6, 0.62 }, bad = { 1, 0.3, 0.25 } }
+M.BADGE = BADGE
+--- couleur d'une pastille (jetons du thème : good / warn / muted / bad)
+function M.BadgeColor(tok)
+  local th = T.Theme
+  if th and type(th.Color) == "function" then
+    local ok, r, g, b = pcall(th.Color, th, tok)
+    if ok and type(r) == "number" then return r, g, b end
+  end
+  local c = RGB[tok] or RGB.muted
+  return c[1], c[2], c[3]
+end
+local ROUND = "Interface\\CHARACTERFRAME\\TempPortraitAlphaMask"
+M.ROUND = ROUND
+--- pastille ronde dans un texte (« |T…|t » teinté)
+function M.Dot(tok, size)
+  local r, g, b = M.BadgeColor(tok)
+  size = size or 12
+  return ("|T%s:%d:%d:0:0:64:64:6:58:6:58:%d:%d:%d|t"):format(ROUND, size, size,
+    math.floor(r * 255 + 0.5), math.floor(g * 255 + 0.5), math.floor(b * 255 + 0.5))
+end
+
+--- « il y a 2 min » (heure serveur time())
+local function ago(t)
+  t = tonumber(t)
+  if not t then return nil end
+  local d = stamp() - t
+  if d < 0 then d = 0 end
+  if d < 60 then return ("il y a %d s"):format(math.max(1, d)) end
+  if d < 3600 then return ("il y a %d min"):format(math.floor(d / 60)) end
+  if d < 86400 then return ("il y a %d h"):format(math.floor(d / 3600)) end
+  return ("il y a %d j"):format(math.floor(d / 86400))
+end
+M.Ago = ago
+
+local function changeWhat(cur, exp)
+  if type(cur) ~= "string" or type(exp) ~= "string" then return "nouveau texte" end
+  if (cur:match("item:(%d+)") or "") ~= (exp:match("item:(%d+)") or "") then return "meilleur objet du sac" end
+  if #exp > #cur then return "nouveau sort ou réglage" end
+  return "réglage changé"
+end
+
+local CLICK_KEY = "/click TreeAIMacro_(%w+)"
+local function clickKeyOf(def)
+  local v = def.c == "click" and def.v and def.v[1]
+  return v and (v.b or ""):match(CLICK_KEY) or nil
+end
+M.ClickKeyOf = clickKeyOf
+
+--- État d'une macro (page, Raccourcis, tests). place = relevé des barres (placement()).
+function M:MacroState(def, ctx, place)
+  ctx = ctx or newContext()
+  local c = char()
+  local st = { def = def, name = gname(def), on = self:IsOn(def), auto = self:Opt(def, "auto") ~= false }
+  local idx = macroIndex(st.name)
+  local cur
+  if idx then local _, _, b = try(_G.GetMacroInfo, idx) cur = b end
+  st.idx, st.installed, st.current, st.stamp = idx, idx ~= nil, cur, c.stamps[def.n]
+  local body, vi = self:Render(def, ctx)
+  st.expected, st.variant = body, vi
+  local stored = c.bodies[def.n]
+  st.user = (idx ~= nil) and (not stored or (cur ~= nil and not same(cur, stored))) and not same(cur, body) or false
+  local pe = (place or placement())[st.name]
+  st.slots = pe and pe.slots or {}
+  st.onBar = #st.slots > 0
+  st.key = (pe and pe.key) or bindingKey("MACRO " .. st.name)
+  local code, text
+  if not self:Supported(def) then
+    code, text = "unsupported", "pas sur ce client (pas de focalisation)"
+  elseif not st.on then
+    code, text = "off", st.installed and "désactivée (toujours dans tes macros)" or "désactivée"
+  elseif not body then
+    local miss = self:Missing(def)
+    code = "later"
+    if def.l and def.l <= 60 and def.l > playerLevel() then text = "au niveau " .. def.l
+    else text = "pas encore" .. (#miss > 0 and (" : il te manque " .. tconcat(miss, ", ")) or "") end
+  elseif def.c == "consumable" and body:find("^/run print") then
+    code, text = "empty", "en attente : rien pour elle dans tes sacs (elle se remplira toute seule)"
+  elseif st.installed and same(cur, body) and not self:Opt(def, "iconDirty") then
+    code, text = "ok", "active"
+  elseif st.user then
+    code, text = "user", "gardée telle quelle : modifiée par toi"
+  elseif st.installed and not st.auto then
+    code, text = "frozen", "figée (mise à jour auto coupée) : clic pour l'écrire une fois"
+  else
+    local okB, why = M.ValidBody(body)
+    if not okB then
+      code, text = "invalid", "texte refusé : " .. tostring(why)
+    elseif self:IsBlocked() then
+      code, text = "blocked", "le jeu bloque l'écriture : copier-coller"
+    elseif not st.installed and not freeSlot(db().perCharacter ~= false) then
+      local g, n = macroCounts()
+      local maxG, maxC = macroLimits()
+      code, text = "full", ("plus de place (perso %d/%d, compte %d/%d)"):format(n, maxC, g, maxG)
+    elseif st.installed then
+      code = "update"
+      text = "à mettre à jour (" .. (self:Opt(def, "iconDirty") and same(cur, body) and "icône" or changeWhat(cur, body)) .. ") : clic"
+    else
+      code, text = "install", "à installer : clic"
+    end
+  end
+  st.code, st.text, st.badge = code, text, BADGE[code] or "muted"
+  -- auto : TreeAI la garde à jour (objets, sorts, rangs) ; macro « clic » : sa cible suit toute seule
+  local ck = clickKeyOf(def)
+  if ck and code == "ok" then
+    local cs = M._clickState[ck]
+    st.autoText = cs and cs.info and ("suit : " .. cs.info .. (cs.at and (" · " .. ago(cs.at)) or ""))
+      or ("suit tout seul" .. ((cs and cs.why) and (" · " .. cs.why) or ""))
+  elseif code == "ok" then
+    st.autoText = st.auto and ("auto" .. (st.stamp and (" · mise à jour " .. ago(st.stamp)) or "")) or "auto coupé"
+  end
+  return st
+end
+
+--- Toutes les macros de la spé (une passe : un contexte de sacs, un relevé des barres) + compteurs
+function M:States()
+  local ctx, place = newContext(), placement()
+  local list, n = {}, { ok = 0, todo = 0, err = 0, off = 0, nobar = 0 }
+  for _, def in ipairs(self:Defs()) do
+    local st = self:MacroState(def, ctx, place)
+    list[#list + 1] = st
+    if st.badge == "good" then n.ok = n.ok + 1; if not st.onBar then n.nobar = n.nobar + 1 end
+    elseif st.badge == "warn" then n.todo = n.todo + 1
+    elseif st.badge == "bad" and st.on then n.err = n.err + 1
+    else n.off = n.off + 1 end
+  end
+  return list, n, ctx
+end
+
+---------------------------------------------------------------------------
+-- (MACRO3) « Tout mettre à jour » : UN clic (événement matériel) installe les macros activées qui manquent et
+-- réécrit celles qui ont changé. Rien en combat, rien hors d'un clic (Forever : EditMacro / CreateMacro).
+---------------------------------------------------------------------------
+function M:UpdateAll()
+  if inCombat() then say("En combat : refais-le après le combat (rien n'est écrit en combat)."); return 0 end
+  self:ClearSpellCache()
+  if self:IsBlocked() then
+    if T.InUserAction and not T:InUserAction() then suggestReady(); return 0 end
+    self:ShowCopy(self:PlanList(false))
+    return 0
+  end
+  local list = self:States()
+  local made, full, fail, blocked = 0, 0, 0, false
+  for _, st in ipairs(list) do
+    if st.code == "install" or st.code == "update" then
+      local r = self:Write(st.def, st.expected, false)
+      if r == "created" or r == "updated" then made = made + 1
+      elseif r == "pending" then return made
+      elseif r == "full" then full = full + 1
+      elseif r == "blocked" then blocked = true; break
+      elseif r ~= "same" then fail = fail + 1 end
+    end
+  end
+  if self.Clear then self:Clear("ready") end
+  M._pending = false
+  if blocked then
+    say("Le jeu bloque l'écriture des macros : copie-les à la main (fenêtre ouverte).")
+    self:ShowCopy(self:PlanList(false))
+    return made
+  end
+  if made > 0 then char().setup = true end
+  local parts = { ("%d %s"):format(made, pl(made, "macro écrite", "macros écrites")) }
+  if full > 0 then parts[#parts + 1] = ("%d sans place (supprime des macros inutiles)"):format(full) end
+  if fail > 0 then parts[#parts + 1] = ("%d %s par le jeu"):format(fail, pl(fail, "refusée", "refusées")) end
+  say(((made == 0 and full == 0 and fail == 0) and "Tout est déjà à jour." or (tconcat(parts, ", ") .. ".")))
+  M.DirtyPlacement()
+  return made
+end
+
+-- une macro (clic sur sa ligne) : installe / met à jour ; force = écrase ta version modifiée (Maj+clic)
+function M:UpdateOne(def, force)
+  if inCombat() then say("Impossible en combat."); return "fail" end
+  local body = self:Render(def)
+  if not body then say(gname(def) .. " : pas encore disponible."); return "later" end
+  if self:IsBlocked() and not force then self:ShowCopy({ { def = def, body = body } }); return "blocked" end
+  local r = self:Write(def, body, force)
+  if r == "created" or r == "updated" or r == "same" then
+    char().setup = true
+    say(("%s %s."):format(gname(def), (r == "created" and "créée") or (r == "updated" and "mise à jour") or "déjà à jour"))
+  elseif r == "user" then say(gname(def) .. " : modifiée à la main, gardée (Maj+clic pour l'écraser).")
+  elseif r == "full" then say(gname(def) .. " : plus de place dans tes macros."); self:ShowCopy({ { def = def, body = body } })
+  elseif r == "blocked" then say(gname(def) .. " : bloquée par le jeu, copie-la (fenêtre ouverte)."); self:ShowCopy({ { def = def, body = body } })
+  elseif r == "fail" then say(gname(def) .. " : refusée par le jeu (" .. tostring(self.lastError or "?") .. ").") end
+  return r
+end
+
+-- un réglage change pendant un clic : la macro installée est réécrite tout de suite (même clic, hors combat)
+function M:ApplyNow(def)
+  if inCombat() or not (char().installed[def.n] and macroIndex(gname(def))) then return nil end
+  if T.InUserAction and not T:InUserAction() then return nil end
+  local st = self:MacroState(def)
+  if st.code == "update" then return self:Write(def, st.expected, false) end
+  return nil
+end
+
+--- préréglage : 1er clic = « clique encore pour confirmer » (8 s), 2e clic = réglages changés puis écrits tout de
+--- suite (même clic, hors combat). Rien n'est supprimé : une macro qui sort du préréglage est seulement désactivée.
+function M:ApplyPreset(p)
+  if not PRESETS[p] then return end
+  if p == self:Preset() then say(("Préréglage « %s » : déjà celui-ci."):format(PRESETS[p].label)) return end
+  local t = now()
+  local ask = M._presetAsk
+  if not (ask and ask.p == p and t - ask.t < 8) then
+    M._presetAsk = { p = p, t = t }
+    say(("Préréglage « %s » : clique encore pour l'appliquer (tes macros sont réécrites, aucune n'est supprimée)."):format(PRESETS[p].label))
+    return
+  end
+  M._presetAsk = nil
+  self:SetPreset(p)
+  say(("Préréglage « %s »."):format(PRESETS[p].label))
+  if not inCombat() and (not T.InUserAction or T:InUserAction()) then self:UpdateAll() end
+end
+
+---------------------------------------------------------------------------
+-- (MACRO3) Macros « Pro » dynamiques : la macro du jeu fait « /click TreeAIMacro_rare » ; le texte de ce bouton
+-- sécurisé caché est réécrit HORS COMBAT (SetAttribute, comme les boutons « Raccourcis ») : jamais d'EditMacro,
+-- rien à valider. useOnKeyDown = false : le clic relâché que /click envoie déclenche l'action même avec
+-- « lancer à l'appui » (SecureActionButton_OnClick de Forever).
+---------------------------------------------------------------------------
+local clickBtns = {}
+M._clickBtns = clickBtns
+M._clickState = M._clickState or {}
+local function cleanName(n)
+  if type(n) ~= "string" then return nil end
+  n = n:gsub("[\r\n;]", ""):gsub("^%s+", ""):gsub("%s+$", "")
+  if n == "" or #n > 60 then return nil end
+  return n
+end
+local CLICK_SRC = {}
+M.CLICK_SRC = CLICK_SRC
+function CLICK_SRC.rare()
+  local Dt = T.Detect
+  if not (Dt and type(Dt.Rares) == "function") then return nil, "détection coupée" end
+  local ok, list = pcall(Dt.Rares, "rare")
+  local e = ok and type(list) == "table" and list[1] or nil
+  local name = type(e) == "table" and cleanName(e.name) or nil
+  if not name then return nil, "aucun rare repéré pour l'instant" end
+  return "/targetexact " .. name, name
+end
+function CLICK_SRC.quest()
+  local lines, info = {}, {}
+  local Qk = T.Quick
+  if Qk and type(Qk.NextTarget) == "function" then
+    local ok, name = pcall(Qk.NextTarget)
+    name = ok and cleanName(name) or nil
+    if name then lines[#lines + 1] = "/targetexact " .. name; info[#info + 1] = name end
+  end
+  local Q = T.modules and T.modules.Quests
+  if Q and type(Q.PickItem) == "function" then
+    local ok, q = pcall(Q.PickItem, Q.lastList)
+    local id = ok and type(q) == "table" and type(q.item) == "table" and tonumber(q.item.id) or nil
+    if id then
+      lines[#lines + 1] = "/use item:" .. id
+      local A = API()
+      info[#info + 1] = (A.ItemName and A.ItemName(id)) or ("objet " .. id)
+    end
+  end
+  if #lines == 0 then return nil, "rien à cibler ni à utiliser pour l'instant" end
+  return tconcat(lines, "\n"), tconcat(info, " + ")
+end
+
+local function clickButton(key)
+  local b = clickBtns[key]
+  if b or inCombat() or type(_G.CreateFrame) ~= "function" then return b end
+  local ok, f = pcall(_G.CreateFrame, "Button", "TreeAIMacro_" .. key, _G.UIParent, "SecureActionButtonTemplate")
+  if not ok or not f then return nil end
+  if f.RegisterForClicks then f:RegisterForClicks("AnyUp", "AnyDown") end
+  f:SetAttribute("useOnKeyDown", false)
+  f:Hide()
+  clickBtns[key] = f
+  return f
+end
+
+--- (hors combat) réécrit le texte des boutons des macros « clic » activées / installées
+function M:UpdateClickButtons()
+  if inCombat() then return end
+  for _, def in ipairs(self:Defs()) do
+    local key = clickKeyOf(def)
+    local src = key and CLICK_SRC[key]
+    if src and (char().installed[def.n] or self:IsOn(def)) then
+      local b = clickButton(key)
+      if b then
+        local text, info = src()
+        local cs = M._clickState[key] or {}
+        M._clickState[key] = cs
+        local want = text or ""
+        if cs.text ~= want then
+          b:SetAttribute("type", text and "macro" or nil)
+          b:SetAttribute("macrotext", text)
+          cs.text = want
+          cs.at = text and stamp() or nil
+        end
+        cs.info = text and info or nil
+        cs.why = (not text) and info or nil
+      end
+    end
+  end
+end
+local clickPending = false
+function M:ScheduleClickButtons(delay)
+  if clickPending then return end
+  clickPending = true
+  after(delay or 1, function()
+    clickPending = false
+    runOOC("Macros:click", function() M:UpdateClickButtons() end)
+  end)
+end
+
+---------------------------------------------------------------------------
+-- (MACRO3) Renommer : petite fenêtre à nous (zone de texte), la validation est un clic (événement matériel)
+---------------------------------------------------------------------------
+function M:Rename(def, newName)
+  newName = trim(tostring(newName or ""))
+  if newName == "" then newName = def.n end
+  if #newName > 16 then say("Nom trop long : 16 caractères au plus."); return false end
+  local old = gname(def)
+  if newName == old then return true end
+  if macroIndex(newName) then say("Une macro s'appelle déjà « " .. newName .. " »."); return false end
+  local idx = macroIndex(old)
+  if idx then
+    if inCombat() then say("Impossible en combat."); return false end
+    if T.InUserAction and not T:InUserAction() then return false end
+    local ok = pcall(_G.EditMacro, idx, newName, nil, nil)
+    invalidateIndex()
+    M.DirtyPlacement()
+    if not ok or not macroIndex(newName) then say("Le jeu a refusé le nouveau nom."); return false end
+  end
+  self:SetOpt(def, "name", newName ~= def.n and newName or nil)
+  say(("« %s » s'appelle maintenant « %s »."):format(old, newName))
+  return true
+end
+
+function M:AskRename(def)
+  if not (def and _G.CreateFrame) then return end
+  if inCombat() then say("Impossible en combat."); return end
+  local f = self.renameBox
+  if not f then
+    f = _G.CreateFrame("Frame", nil, _G.UIParent, _G.BackdropTemplateMixin and "BackdropTemplate" or nil)
+    f:SetSize(320, 112)
+    f:SetPoint("CENTER", 0, 120)
+    f:SetFrameStrata("DIALOG")
+    if f.SetClampedToScreen then f:SetClampedToScreen(true) end
+    f:EnableMouse(true)
+    if f.SetBackdrop then
+      f:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 12,
+        insets = { left = 3, right = 3, top = 3, bottom = 3 } })
+      f:SetBackdropColor(0, 0, 0, 0.92)
+    end
+    if T.Theme then pcall(T.Theme.Skin, T.Theme, f, "window") end
+    f.title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    f.title:SetPoint("TOPLEFT", 12, -10); f.title:SetWidth(296); f.title:SetJustifyH("LEFT")
+    f.hint = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    f.hint:SetPoint("TOPLEFT", 12, -28); f.hint:SetWidth(296); f.hint:SetJustifyH("LEFT")
+    f.hint:SetText("16 caractères au plus ; vide = nom d'origine.")
+    f.edit = _G.CreateFrame("EditBox", nil, f, "InputBoxTemplate")
+    f.edit:SetSize(280, 20); f.edit:SetPoint("TOPLEFT", 18, -48)
+    f.edit:SetAutoFocus(false)
+    if f.edit.SetMaxLetters then f.edit:SetMaxLetters(16) end
+    f.edit:SetScript("OnEscapePressed", function() f:Hide() end)
+    f.ok = mkButton(f, "Renommer", 120); f.ok:SetPoint("BOTTOMLEFT", 12, 10)
+    f.ok:SetScript("OnClick", function()
+      if f.def and userDo(function() if M:Rename(f.def, f.edit:GetText()) then f:Hide() end end) then
+        if T.Window and T.Window.Dirty then T.Window.Dirty() end
+      end
+    end)
+    f.cancel = mkButton(f, "Annuler", 120); f.cancel:SetPoint("BOTTOMRIGHT", -12, 10)
+    f.cancel:SetScript("OnClick", function() f:Hide() end)
+    self.renameBox = f
+  end
+  f.def = def
+  f.title:SetText("Renommer « " .. gname(def) .. " »")
+  f.edit:SetText(gname(def))
+  f:Show()
+  if f.edit.SetFocus then f.edit:SetFocus() end
+end
+
+---------------------------------------------------------------------------
+-- (MACRO3) Page « Macros » de la fenêtre TreeAI : pastilles, réglages, préréglages, « Tout mettre à jour »
+---------------------------------------------------------------------------
+local ICONS = "Interface\\Icons\\"
+local ORDER = { bad = 1, warn = 2, good = 3, muted = 4 }
+local function yesNo(v) return v and "oui" or "non" end
+
+local function tipFor(st)
+  local def = st.def
+  local t = { def.d or "" }
+  t[#t + 1] = "État : " .. st.text
+  if st.autoText then t[#t + 1] = st.autoText end
+  t[#t + 1] = st.onBar and ("Sur ta barre" .. (st.key and (" · touche " .. keyText(st.key)) or " · sans touche"))
+    or "Pas encore sur une barre : « Sur le curseur » dans ses réglages"
+  if def.t and def.t ~= "" then t[#t + 1] = "Astuce Pro : " .. def.t end
+  if st.expected then
+    local first = st.expected:gsub("\n", "  ·  ")
+    if T.Cut then first = T.Cut(first, 160) end   -- coupe UTF-8 (jamais une lettre accentuée coupée)
+    t[#t + 1] = "|cff9d9d9d" .. first .. "|r"
+  end
+  return t
+end
+
+local function clickOf(st)
+  local def = st.def
+  if st.code == "install" or st.code == "update" or st.code == "frozen" then
+    return function() M._pageSel = def.n; M:UpdateOne(def) end,
+      st.code == "install" and "Clic : l'installer · clic droit : la désactiver"
+        or "Clic : la mettre à jour · clic droit : la désactiver"
+  elseif st.code == "user" then
+    return function()
+      M._pageSel = def.n
+      if _G.IsShiftKeyDown and _G.IsShiftKeyDown() then M:UpdateOne(def, true) end
+    end, "Clic : ses réglages · Maj+clic : remplacer ta version par celle de TreeAI"
+  elseif st.code == "blocked" or st.code == "full" then
+    return function() M._pageSel = def.n; M:ShowCopy({ { def = def, body = st.expected } }) end,
+      "Clic : son texte à copier-coller"
+  end
+  return function() M._pageSel = (M._pageSel ~= def.n) and def.n or nil end,
+    "Clic : ses réglages · clic droit : " .. (st.on and "la désactiver" or "l'activer")
+end
+
+local function toggleOn(def)
+  local on = not M:IsOn(def)
+  M:SetOpt(def, "on", on)
+  if on and not inCombat() then M:UpdateOne(def) end
+  say(("%s %s."):format(gname(def), on and "activée" or "désactivée (rien n'est supprimé)"))
+end
+
+local function optRow(Ly, label, value, onClick, hint, icon)
+  Ly.row({ text = label .. " : " .. value, icon = icon or (ICONS .. "INV_Misc_Gear_01"), onClick = onClick,
+    clickHint = hint, kind = "info" })
+end
+
+function M:RenderPage(Ly)
+  local W = T.Window
+  if not self:IsEnabled() then
+    Ly.empty("Le module Macros est coupé.", { "Allumer « Macros »", function() T:SetModuleEnabled("Macros", true) end,
+      "Clic : allume les macros (sans /reload)" })
+    return
+  end
+  local list, n, bagCtx = self:States()
+  self._lastStates = list
+  local spec, autoSpec = self:Spec()
+  local where, autoCtx = self:Context()
+  local p = self:Preset()
+  Ly.hero(ICONS .. "INV_Misc_Note_01", "Tes macros TreeAI",
+    ("%d %s · %d à installer ou mettre à jour%s"):format(n.ok, pl(n.ok, "active", "actives"), n.todo,
+      n.err > 0 and (" · " .. n.err .. " en erreur") or ""),
+    ("Préréglage %s · %s%s · %s%s%s"):format(PRESETS[p].label, self:SpecName(spec), autoSpec and " (auto)" or "",
+      where, autoCtx and " (auto)" or "", n.nobar > 0 and (" · " .. n.nobar .. " pas sur une barre") or ""),
+    n.todo > 0 and function() M:UpdateAll() end or nil,
+    { "Vert : active et à jour. Orange : à installer ou à mettre à jour (clic).",
+      "Gris : désactivée, plus tard, ou modifiée par toi. Rouge : erreur (raison dans la ligne).",
+      "Rien n'est écrit sans ton clic, jamais en combat ; une macro modifiée à la main n'est jamais écrasée." },
+    n.todo > 0 and "Clic : tout mettre à jour" or nil)
+  local presetBtns = {}
+  local ask = M._presetAsk
+  local asking = ask and (now() - ask.t) < 8 and ask.p or nil
+  for _, id in ipairs(M.PRESET_ORDER) do
+    local P = PRESETS[id]
+    local label = (id == p) and ("« " .. P.label .. " »") or (asking == id and ("Confirmer « " .. P.label .. " »") or P.label)
+    presetBtns[#presetBtns + 1] = { label, function() M:ApplyPreset(id) end,
+      P.tip .. (id == p and " (préréglage en cours)" or " Clic, puis clic encore : l'appliquer (écrit tout de suite).") }
+  end
+  Ly.buttons(presetBtns, 3)
+  table.sort(list, function(a, b)
+    if a.on ~= b.on then return a.on end
+    local oa, ob = ORDER[a.badge] or 9, ORDER[b.badge] or 9
+    if oa ~= ob then return oa < ob end
+    if (a.def.l or 1) ~= (b.def.l or 1) then return (a.def.l or 1) < (b.def.l or 1) end
+    return a.name < b.name
+  end)
+  local shown, sel = 0, nil
+  local on, off = {}, {}
+  for _, st in ipairs(list) do
+    if st.def.n == M._pageSel then sel = st end
+    if W.Match(st.name, st.text, st.def.d, st.def.t) then
+      local t = st.on and on or off
+      t[#t + 1] = st
+    end
+  end
+  local function row(st)
+    local fn, hint = clickOf(st)
+    local def = st.def
+    local right = st.onBar and (st.key and ("touche " .. keyText(st.key)) or "sans touche") or (st.code == "ok" and "pas sur une barre" or "")
+    Ly.row({ text = M.Dot(st.badge) .. " " .. st.name .. "  |cffb0b0b0" .. st.text
+        .. (st.autoText and (" · " .. st.autoText) or "") .. "|r",
+      right = right, icon = iconOf(def, bagCtx), tooltip = tipFor(st), onClick = fn, clickHint = hint,
+      onRightClick = function() toggleOn(def) end, kind = "info" })
+    shown = shown + 1
+  end
+  if #on > 0 and Ly.header("Tes macros", "macros:list", #on, ICONS .. "INV_Misc_Note_01") then
+    for _, st in ipairs(on) do row(st) end
+  end
+  if #off > 0 and Ly.header("Autres macros (clic droit : activer)", "macros:off", #off, ICONS .. "INV_Misc_Note_02", true) then
+    for _, st in ipairs(off) do row(st) end
+  end
+  if shown == 0 and W.Query() ~= "" then Ly.empty("Rien ne correspond à « " .. W.Query() .. " ».") end
+  if sel then self:RenderSettings(Ly, sel) end
+  if Ly.header("Plus", "macros:more", nil, ICONS .. "INV_Misc_Wrench_01", true) then
+    Ly.buttons({
+      { "Liste détaillée", function() M:ToggleList() end, "L'ancien panneau : glisser une ligne sur ta barre, diagnostic" },
+      { "Copier-coller", function() M:ShowCopy(M:PlanList(false)) end, "Le texte de chaque macro, si le jeu bloque la création" },
+      { "Ouvrir les macros du jeu", function() openMacroUI() end, "La fenêtre /macro du jeu" },
+      { "Diagnostic", function() M:Diagnose(true) end, "Chaque macro : installée ou non, et pourquoi" },
+      { "Retirer les macros TAI", function() M:Remove() end, "Supprime les macros TAI non modifiées (les tiennes restent)" },
+    }, 3)
+  end
+end
+
+--- réglages de la macro choisie (une ligne = un réglage, clic = le changer ; la macro installée suit tout de suite)
+function M:RenderSettings(Ly, st)
+  local def = st.def
+  local f = def.f or ""
+  if not Ly.header("Réglages : " .. st.name, "macros:set", nil, iconOf(def)) then return end
+  local function set(key, v)
+    return function()
+      M:SetOpt(def, key, v)
+      if key == "icon" then M:SetOpt(def, "iconDirty", true) end
+      local r = M:ApplyNow(def)
+      say(("%s : %s%s."):format(gname(def), (key == "auto" and (v and "mise à jour auto" or "figée")) or "réglage changé",
+        (r == "updated" or r == "created") and ", macro réécrite" or ""))
+    end
+  end
+  optRow(Ly, "Activée", yesNo(st.on), function() toggleOn(def) end,
+    st.on and "Clic : la désactiver (rien n'est supprimé)" or "Clic : l'activer (installée tout de suite)")
+  optRow(Ly, "Mise à jour auto", st.auto and ("oui" .. (st.stamp and (" · dernière écriture " .. ago(st.stamp)) or "")) or "non (figée)",
+    set("auto", not st.auto), "TreeAI la réécrit quand ton sac, tes sorts ou tes rangs changent (un clic sur Forever)")
+  if f:find("m", 1, true) then
+    local v = M:Opt(def, "mods") ~= false
+    optRow(Ly, "Variantes Maj / Ctrl / Alt", yesNo(v), set("mods", not v), "Clic : " .. (v and "les retirer" or "les remettre"))
+  end
+  if f:find("o", 1, true) then
+    local v = M:Opt(def, "mo") ~= false
+    optRow(Ly, "Survol (@mouseover)", yesNo(v), set("mo", not v),
+      "Oui : agit sur le monstre / l'allié survolé sans changer de cible")
+  end
+  if f:find("p", 1, true) then
+    local v = M:Opt(def, "pet") ~= false
+    optRow(Ly, "Ordres au familier", yesNo(v), set("pet", not v), "Les lignes /petattack, /petfollow de la macro")
+  end
+  if f:find("g", 1, true) then
+    local v = M:Opt(def, "guard") ~= false
+    optRow(Ly, "Aspect du faucon automatique", yesNo(v), set("guard", not v),
+      "Oui : sans Aspect du faucon, l'appui le remet d'abord (« ! » : jamais coupé). Les aspects prennent le temps de "
+      .. "recharge global : l'action suit à l'appui d'après. Un addon ne peut pas le faire sans ton appui.")
+  end
+  if f:find("t", 1, true) then
+    local t = tonumber(M:Opt(def, "tank")) or 1
+    optRow(Ly, "Tank à assister", "groupe " .. t, set("tank", (t % 4) + 1), "Clic : le membre suivant (groupe 1 à 4)")
+  end
+  if def.vl and #def.vl > 1 then
+    local pin = tonumber(M:Opt(def, "var"))
+    local label = pin and def.vl[pin] and (def.vl[pin] .. " (choisie)")
+      or ("auto" .. (st.variant and def.vl[st.variant] and (" (" .. def.vl[st.variant] .. ")") or ""))
+    local nextPin = (not pin and 1) or (pin < #def.vl and pin + 1) or nil
+    optRow(Ly, "Variante", label, set("var", nextPin), "Clic : la suivante (auto = la meilleure que tu connais)")
+  end
+  optRow(Ly, "Nom", st.name, function() M:AskRename(def) end, "Clic : la renommer (16 caractères au plus)")
+  local fixed = M:Opt(def, "icon") == "fixed"
+  optRow(Ly, "Icône", fixed and "fixe (sort principal)" or "suit le sort (« ? »)", set("icon", (not fixed) and "fixed" or nil),
+    "« ? » : l'icône montre le sort qui partira ; fixe : toujours la même")
+  if st.expected then Ly.text(st.expected, "S", "text", 6) end
+  if def.w and def.w ~= "" then Ly.text(def.w, "S", "muted") end
+  if def.t and def.t ~= "" then Ly.text("Astuce Pro : " .. def.t, "S", "gold") end
+  local btns = {}
+  if st.code ~= "ok" and st.expected then btns[#btns + 1] = { st.installed and "Mettre à jour" or "Installer",
+    function() M:UpdateOne(def, (_G.IsShiftKeyDown and _G.IsShiftKeyDown()) and true or false) end, "Clic : l'écrire maintenant" } end
+  btns[#btns + 1] = { "Sur le curseur", function() M:PickToBar(def) end, "Clic : la macro sur ton curseur, pose-la sur ta barre" }
+  if st.expected then btns[#btns + 1] = { "Copier-coller", function() M:ShowCopy({ { def = def, body = st.expected } }) end,
+    "Son texte, à coller dans la fenêtre /macro" } end
+  Ly.buttons(btns, 3)
+end
+
+---------------------------------------------------------------------------
 -- Événements
 ---------------------------------------------------------------------------
 local pendingCons, pendingSpells = false, false
 
 local function scheduleConsumables()
+  local c = M.char
+  if type(c) == "table" and type(c.installed) == "table" and c.installed["TAI Pro Quete"] then M:ScheduleClickButtons(1) end
   if pendingCons or db().autoConsumables == false or not char().setup then return end
   pendingCons = true
   after(1, function() pendingCons = false; M:Refresh(true, nil, true) end)
@@ -1734,6 +2791,7 @@ end
 
 local function scheduleSpells()
   resolveCache, bookNames = {}, nil
+  M:ForgetMemo()   -- talents / spé / groupe : relus tout de suite
   if pendingSpells or db().autoUpgrade == false or not char().setup then return end
   pendingSpells = true
   after(2, function()
@@ -1745,9 +2803,10 @@ local function scheduleSpells()
     after(0.5, function()
       -- nouvelles macros par défaut devenues possibles (sort appris)
       local fresh = {}
+      local installed = char().installed
       for _, def in ipairs(M:Defs()) do
-        if M:IsDefault(def) and def.c ~= "consumable" and not char().installed[def.n]
-          and not macroIndex(def.n) and M:Render(def, ctx) then
+        if def.c ~= "consumable" and not installed[def.n] and M:IsDefault(def)
+          and not macroIndex(gname(def)) and M:Render(def, ctx) then
           fresh[#fresh + 1] = def.n
         end
       end
@@ -1756,6 +2815,37 @@ local function scheduleSpells()
       end
     end)
   end)
+end
+
+--- (MACRO3) la page « Macros » de la fenêtre TreeAI (après « Outils », avant « Fonctions » dans la navigation)
+function M:RegisterPage()
+  local W = T.Window
+  if not (W and type(W.AddPage) == "function") then return false end
+  W.AddPage({ id = "macros", label = "Macros", icon = "Interface\\Icons\\INV_Misc_Note_01", title = "Macros",
+    before = "modules", desc = "Tes macros : actives, à mettre à jour, réglages, préréglages Simple / Complet / Pro",
+    sub = function()
+      local p = M:Preset()
+      local spec = M:Spec()
+      return ("Préréglage %s · %s · rien n'est écrit sans ton clic"):format(PRESETS[p].label, M:SpecName(spec))
+    end,
+    badge = function()
+      if not M._active then return nil end
+      local n = 0
+      for _, st in ipairs(M._lastStates or {}) do if st.on and (st.badge == "warn" or st.badge == "bad") then n = n + 1 end end
+      return n > 0 and n or nil
+    end,
+    render = function(Ly) M:RenderPage(Ly) end,
+    action = function()
+      local n = 0
+      for _, st in ipairs(M._lastStates or {}) do if st.badge == "warn" then n = n + 1 end end
+      if n > 0 then
+        return ("Tout mettre à jour (%d)"):format(n), function() M:UpdateAll() end,
+          "Clic : installe les macros activées qui manquent et réécrit celles qui ont changé (hors combat)"
+      end
+    end,
+    status = function() return M.lastMsg or "Rien n'est écrit sans ton clic ; une macro modifiée à la main n'est jamais écrasée." end,
+  })
+  return true
 end
 
 function M:OnEnable()
@@ -1782,8 +2872,31 @@ function M:OnEnable()
   self:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED", scheduleSpells)
   self:RegisterEvent("CHARACTER_POINTS_CHANGED", scheduleSpells)
   self:RegisterEvent("ADDON_ACTION_FORBIDDEN", M._OnForbidden)   -- le jeu a refusé CreateMacro / EditMacro
-  self:RegisterEvent("UPDATE_MACROS", invalidateIndex)           -- (FIDELITY) table nom -> index à relire
+  -- (FIDELITY) table nom -> index à relire ; (MACRO3) relevé des barres / touches à refaire (page ouverte : redessin)
+  local function pageDirty()
+    M.DirtyPlacement()
+    local W = T.Window
+    if W and W.IsOpen and W.IsOpen() and W.CurrentPage and W.CurrentPage() == "macros" and W.Dirty then W.Dirty() end
+  end
+  self:RegisterEvent("UPDATE_MACROS", function() invalidateIndex() pageDirty() end)
+  self:RegisterEvent("ACTIONBAR_SLOT_CHANGED", pageDirty)
+  self:RegisterEvent("UPDATE_BINDINGS", pageDirty)
   if not data() then return end
+  self:RegisterPage()
+  -- (MACRO3) macros « Pro » dynamiques : boutons cachés réécrits hors combat (rare repéré, objectif + objet de quête)
+  local Dt = T.Detect
+  if Dt and type(Dt.OnChange) == "function" and not M._detectSub then
+    M._detectSub = Dt.OnChange(function(kind)
+      if (kind == "rares" and char().installed["TAI Pro Rare"])
+        or ((kind == "quests" or kind == "questunits") and char().installed["TAI Pro Quete"]) then
+        M:ScheduleClickButtons(1)
+      end
+    end)
+  end
+  self:RegisterEvent("PLAYER_REGEN_ENABLED", function()
+    if char().installed["TAI Pro Rare"] or char().installed["TAI Pro Quete"] then M:ScheduleClickButtons(1) end
+  end)
+  after(5, function() runOOC("Macros:click", function() M:UpdateClickButtons() end) end)
   if self:IsBlocked() and not char().setup then
     suggestReady("Macros prêtes à copier-coller : clique pour les voir")
   elseif char().setup then
@@ -1805,10 +2918,10 @@ local function slash(rest)
   elseif cmd == "liste" or cmd == "list" then M:List()
   elseif cmd == "retirer" or cmd == "remove" then M:Remove()
   elseif cmd == "spe" or cmd == "spé" then cycleSpec(); say("Spé : " .. M:SpecName((M:Spec())))
-  elseif cmd == "solo" or cmd == "groupe" then char().ctx = cmd; say("Contexte : " .. cmd)
+  elseif cmd == "solo" or cmd == "groupe" then char().ctx = cmd; M:ForgetMemo(); say("Contexte : " .. cmd)
   elseif cmd == "diag" or cmd == "diagnostic" then M:Diagnose(true)
   elseif cmd == "copier" or cmd == "copie" or cmd == "copy" then M:ShowCopy(M:PlanList(cmd == "tout"))
-  elseif cmd == "auto" then char().ctx, char().spec = nil, nil; say("Spé et contexte automatiques.")
+  elseif cmd == "auto" then char().ctx, char().spec = nil, nil; M:ForgetMemo(); say("Spé et contexte automatiques.")
   else M:TogglePanel() end
 end
 M.Slash = slash

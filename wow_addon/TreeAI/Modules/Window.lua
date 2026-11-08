@@ -998,7 +998,10 @@ function W.AddPage(p)
     for k, v in pairs(p) do W.pageIndex[p.id][k] = v end
     return
   end
-  W.PAGES[#W.PAGES + 1] = p
+  -- (MACRO3) p.before = id d'une page : insérée juste avant elle (sinon à la fin)
+  local at = #W.PAGES + 1
+  if p.before then for i, q in ipairs(W.PAGES) do if q.id == p.before then at = i break end end end
+  table.insert(W.PAGES, at, p)
   W.pageIndex[p.id] = p
 end
 local NAV_W, TOP_H, FOOT_H, PAD = 176, 56, 40, 16      -- grille de 4 px (Theme.GRID)

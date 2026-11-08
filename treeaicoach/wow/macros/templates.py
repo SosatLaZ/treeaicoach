@@ -58,10 +58,25 @@ class Macro:
     kind: str = "spell"       # "spell" | "consumable" (re-rendered on bag changes)
     tags: tuple[str, ...] = field(default_factory=tuple)
     where: str = ""           # « où le mettre » (one line, French); derived from ``key`` when empty
+    simple: bool | None = None  # in the « Simple » preset (None: same as ``default``)
+    pro: bool = False         # a « Pro » macro (installed by the « Pro » preset only)
+    pro_off: bool = False     # replaced by a « Pro » macro in the « Pro » preset
+    trick: str = ""           # Pro: the trick in one line (tooltip of the page)
+    labels: tuple[str, ...] = ()  # one short label per variant: the page lets the player pick one
+    needs: str = ""           # "focus": only on a client with a focus target (Forever: FocusUnit, /focus)
+    petctl: bool = False      # pet-control macro: no « ordres au familier » switch
 
     @property
     def place(self) -> str:
         return self.where or where_for(self.key)
+
+    @property
+    def in_simple(self) -> bool:
+        return self.default if self.simple is None else self.simple
+
+    @property
+    def in_pro(self) -> bool:
+        return self.pro or (self.default and not self.pro_off)
 
 
 def where_for(key: str) -> str:
@@ -80,6 +95,8 @@ def M(name, desc, key, *variants, classes=CLASSES, specs=(), **kw) -> Macro:
         classes = (classes,)
     if isinstance(specs, str):
         specs = (specs,)
+    if "labels" in kw:
+        kw["labels"] = tuple(kw["labels"])
     return Macro(name, desc, key, tuple(v.strip("\n") for v in variants), tuple(classes),
                  specs=tuple(specs), **kw)
 
@@ -170,6 +187,23 @@ SHARED = [
 /run SetRaidTarget("target",IsShiftKeyDown() and 7 or 8)
 """, icon="Ability_Hunter_SniperShot", default=False, ctx="groupe",
       why="Marque la cible à tuer en premier (crâne) ou à contrôler (croix)."),
+    # « Pro » dynamiques : la macro clique un bouton sécurisé de TreeAI dont la cible / l'objet est réécrit hors
+    # combat (SetAttribute, comme les boutons « Raccourcis ») : le corps de la macro ne change jamais.
+    M("TAI Pro Rare", "Cible le rare repéré par TreeAI (suivi tout seul)", "Ctrl+R", """
+/click TreeAIMacro_rare
+""", kind="click", icon="Ability_Hunter_SniperShot", default=False, pro=True,
+      where="Barre de côté : quand TreeAI annonce un rare tout près.",
+      trick="La macro clique un bouton TreeAI dont la cible suit le rare repéré, réécrite hors combat : aucune "
+            "mise à jour à valider.",
+      why="TreeAI repère les rares (carte, barres de nom) ; un appui cible le plus proche s'il est en vue."),
+    M("TAI Pro Quete", "Cible le monstre de l'objectif et utilise l'objet de quête", "Ctrl+Q", """
+/click TreeAIMacro_quest
+""", kind="click", icon="INV_Misc_Book_09", default=False, pro=True,
+      where="Barre de côté : quêtes « utilise l'objet sur… ».",
+      trick="Un bouton TreeAI fait « /targetexact monstre » puis « /use objet » : les deux en un appui, suivis "
+            "hors combat.",
+      why="La cible de ton objectif en cours et l'objet de quête à utiliser, en un seul appui (ce qui manque "
+          "est sauté)."),
 ]
 
 # ================================================================ WARRIOR
@@ -459,9 +493,14 @@ PALADIN = [
 # ================================================================ HUNTER (the user's class)
 # Auto Shot is never toggled off (« ! »), aspects never cancelled (« ! »), the pet follows the target
 # unless Alt is held, Feign Death / traps follow the Classic rule « traps only out of combat ».
+# Aspects are ON the global cooldown in Forever (SpellCategories 133, 1.5 s). The aspect « garde »
+# « /cast !Aspect du faucon » does nothing while the Hawk is on (« ! »); otherwise that press puts it on and the
+# main action fires on the next press — before the pull (TAI Marque, TAI Pro Tir: first line) or as a fallback
+# after the main shot (TAI Tir: when the shot is on cooldown). The player can turn the garde off per macro.
 _SHOT = """
 #showtooltip
 /cast ?[mod:shift] {{multi_shot}}; {main}
+?/cast !{{aspect_hawk}}
 /cast !{{auto_shot}}
 /petattack [harm,nodead,nomod:alt]
 """
@@ -470,46 +509,55 @@ _SHOT_LOW = """
 /cast !{auto_shot}
 /petattack [harm,nodead,nomod:alt]
 """
+_PET_MO = "/petattack [@mouseover,harm,nodead,nomod:alt][harm,nodead,nomod:alt]"
 HUNTER = [
     M("TAI Tir", "Tir auto + familier + Invocation de faucon (Maj : Flèches multiples)", "1",
       _SHOT.format(main="?[mod:ctrl] {arcane_shot}; {summon_hawk}"),
-      _SHOT.format(main="{arcane_shot}"), _SHOT_LOW, specs="bete",
+      _SHOT.format(main="{arcane_shot}"), _SHOT_LOW, specs="bete", simple=True, pro_off=True,
+      labels=("Invocation de faucon (Ctrl : Arcanes)", "Tir des arcanes", "Tir auto seul"),
       where="Case 1 de la barre principale : le bouton que tu cliques le plus, en boucle.",
       why="Un seul bouton à marteler : « !Tir automatique » relance le tir auto sans jamais le couper, "
           "le familier attaque ta cible (Alt = il reste), puis ton tir instantané. Invocation de faucon "
-          "(talent Bêtes) partage la recharge du Tir des arcanes : elle le remplace, Ctrl garde l'Arcane."),
+          "(talent Bêtes) partage la recharge du Tir des arcanes : elle le remplace, Ctrl garde l'Arcane. "
+          "Sans Aspect du faucon, il revient dès que le tir est en recharge."),
     M("TAI Tir", "Tir auto + familier + Tir des arcanes (Maj : multiples, Ctrl : Visée)", "1",
       _SHOT.format(main="?[mod:ctrl] {aimed_shot}; {arcane_shot}"), _SHOT_LOW,
-      specs=("precision", "survie"),
+      specs=("precision", "survie"), simple=True, pro_off=True,
+      labels=("Tir des arcanes (Ctrl : Visée)", "Tir auto seul"),
       where="Case 1 de la barre principale : le bouton que tu cliques le plus, en boucle.",
       why="« !Tir automatique » relance le tir auto sans jamais le couper, le familier part sur ta cible "
-          "(Alt = il reste). Visée (Ctrl) se lance juste après un tir auto pour ne pas le décaler."),
-    M("TAI Marque", "Marque du chasseur (survol) puis familier", "2", f"""
-#showtooltip
+          "(Alt = il reste). Visée (Ctrl) se lance juste après un tir auto pour ne pas le décaler. Sans Aspect "
+          "du faucon, il revient dès que le tir est en recharge."),
+    M("TAI Marque", "Faucon si besoin, puis Marque du chasseur (survol) + familier", "2", f"""
+#showtooltip {{hunters_mark}}
+?/cast !{{aspect_hawk}}
 /cast {MO} {{hunters_mark}}
-/petattack [nomod:alt,harm,nodead]
-""", where="Case 2 : premier clic de chaque combat, avant le Tir.",
-      why="Ouvre le combat : marque (monstre survolé en priorité) puis envoie le familier — il prend la "
-          "menace avant ton premier tir."),
-    M("TAI Morsure", "Morsure de serpent (Maj : vipère, Ctrl : scorpide)", "3", f"""
+{_PET_MO}
+""", simple=True, pro_off=True, where="Case 2 : premier clic de chaque combat, avant le Tir.",
+      why="Ouvre le combat : si l'Aspect du faucon n'est pas actif, le 1er appui le met (avant le pull, sans "
+          "risque) ; l'appui suivant pose la marque (monstre survolé en priorité) et envoie le familier sur ce "
+          "même monstre (Alt = il reste)."),
+    M("TAI Morsure", "Morsure de serpent + tir auto (Maj : vipère, Ctrl : scorpide)", "3", f"""
 #showtooltip
 /cast ?{mo("shift")} {{viper_sting}}; ?{mo("ctrl")} {{scorpid_sting}}; {MO} {{serpent_sting}}
-""", where="Case 3 : une fois par monstre qui vit plus de 10 s.",
-      why="Une seule piqûre par cible, posable au survol sur un 2e monstre sans changer de cible. "
-          "Vipère sur les lanceurs de sorts, scorpide sur les gros frappeurs."),
+/cast !{{auto_shot}}
+""", simple=True, where="Case 3 : une fois par monstre qui vit plus de 10 s.",
+      why="Une seule piqûre par cible, posable au survol sur un 2e monstre sans changer de cible, puis le tir "
+          "auto repart (« ! » : jamais coupé). Vipère sur les lanceurs de sorts, scorpide sur les gros frappeurs."),
     M("TAI Controle", "Trait de choc (Maj : dispersion, Ctrl : effrayer bête, Alt : Intimidation)",
       "4", f"""
 #showtooltip
 /cast ?{mo("shift")} {{scatter_shot}}; ?{mo("ctrl")} {{scare_beast}}; ?[mod:alt] {{intimidation}}; {MO} {{concussive_shot}}
-""", where="Case 4 : quand un monstre fonce sur toi ou qu'un add arrive.",
-      why="Tous tes contrôles sur une touche. Effrayer une bête au survol garde ta cible ; "
-          "Intimidation (talent) est hors temps de recharge global."),
+""", simple=True, where="Case 4 : quand un monstre fonce sur toi ou qu'un add arrive.",
+      why="Tous tes contrôles sur une touche. Effrayer une bête au survol garde ta cible ; Intimidation "
+          "(talent Bêtes) étourdit la cible de ton familier."),
     M("TAI Melee", "Mangouste puis Raptor (Maj : Coupure d'ailes, Ctrl : Contre-attaque)", "Q", """
 #showtooltip
 /startattack
 /cast ?[mod:shift] {wing_clip}; ?[mod:ctrl] {counterattack}; ?[mod:alt] {strider_kick}; ?{mongoose_bite}
 /cast {raptor_strike}
-""", where="Barre principale, à côté du Tir : seulement quand un monstre est collé à toi.",
+""", simple=True, pro_off=True,
+      where="Barre principale, à côté du Tir : seulement quand un monstre est collé à toi.",
       why="Attaque du raptor remplace ton prochain coup (hors temps de recharge global) : elle part avec "
           "Mangouste (après une esquive) dans le même clic. Maj : Coupure d'ailes pour reprendre tes "
           "distances, puis reviens au Tir."),
@@ -519,7 +567,7 @@ HUNTER = [
 """, """
 #showtooltip
 /cast {immolation_trap}
-""", where="Barre principale : à poser AVANT le pull (les pièges ne se posent que hors combat).",
+""", simple=True, where="Barre principale : à poser AVANT le pull (les pièges ne se posent que hors combat).",
       why="Tous les pièges partagent une recharge : un seul bouton, le modificateur choisit. Hors combat "
           "uniquement : pose-le puis attire le monstre dessus (en combat, TAI FD Piege)."),
     M("TAI FD Piege", "En combat : Feindre la mort ; hors combat : Piège givrant", "Maj+E", """
@@ -527,32 +575,39 @@ HUNTER = [
 /stopcasting [combat]
 /petfollow [combat]
 /cast [combat] {feign_death}; {freezing_trap}
-""", where="À côté de TAI Pieges : clique 2 fois de suite quand un add arrive.",
+""", simple=True, pro_off=True, where="À côté de TAI Pieges : clique 2 fois de suite quand un add arrive.",
       why="1er clic : coupe ta Salve, rappelle le familier et fait le mort (tu sors du combat). 2e clic, "
           "maintenant hors combat : Piège givrant à tes pieds. Sans séquence : jamais bloquée, même si "
           "Feindre la mort est résisté (le 2e clic retente alors Feindre la mort)."),
-    M("TAI Aspects", "Faucon (Maj : guépard, Ctrl : meute, Alt : singe), sans annuler", "X", """
+    M("TAI Aspects", "Le bon aspect : Faucon en combat ou sur une cible hostile, sinon Guépard", "X", """
 #showtooltip
-/cast ?[mod:shift] !{aspect_cheetah}; ?[mod:ctrl] !{aspect_pack}; ?[mod:alt] !{aspect_monkey}; !{aspect_hawk}
+/cast [mod:shift] !{aspect_cheetah}; ?[mod:ctrl] !{aspect_pack}; ?[mod:alt] !{aspect_monkey}; [combat][harm,nodead] !{aspect_hawk}; !{aspect_cheetah}
+""", """
+#showtooltip
+/cast ?[mod:alt] !{aspect_monkey}; !{aspect_hawk}
 """, """
 #showtooltip
 /cast !{aspect_monkey}
-""", where="Barre principale : un clic avant chaque pull, Maj+clic pour voyager.",
-      why="Le « ! » évite d'éteindre l'aspect en recliquant. Repasse en Faucon après le Guépard : "
-          "le moindre coup reçu t'hébète."),
+""", simple=True,
+      where="Barre principale : appuie en arrivant sur un monstre et en repartant (raccourci conseillé : X).",
+      why="Un seul bouton : en combat ou avec une cible hostile, Aspect du faucon ; sinon Aspect du guépard pour "
+          "voyager (l'icône montre celui qui partira). Le « ! » n'éteint jamais l'aspect actif. Maj = Guépard "
+          "quand même, Ctrl = Meute, Alt = Singe. Pourquoi pas tout seul ? Lancer un sort demande ton appui : un "
+          "addon qui change d'aspect sans toi serait un bot, le jeu le bloque. TreeAI choisit, ton appui lance."),
     M("TAI Pet", "Familier : attaque survol / Maj suivre / Ctrl passif / Alt défensif", "F", """
 /petattack [nomod,@mouseover,harm,nodead][nomod,harm,nodead]
 /petfollow [mod:shift]
 /petpassive [mod:ctrl]
 /petdefensive [mod:alt]
-""", icon="Ability_Hunter_Pet_Wolf",
+""", icon="Ability_Hunter_Pet_Wolf", petctl=True, pro_off=True, simple=False,
       where="Barre secondaire : remplace la barre du familier.",
       why="Contrôle complet du familier : envoie-le sur le monstre survolé (sinon ta cible), rappelle-le "
           "(Maj) ou empêche-le de puller (Ctrl)."),
     M("TAI Grondement", "Grondement auto : coupé en groupe, actif en solo", "-", """
 /petautocastoff [group] {growl}
 /petautocaston [nogroup] {growl}
-""", icon="Ability_Physical_Taunt", default=False, where="Barre de côté : un clic en entrant / sortant d'un groupe.",
+""", icon="Ability_Physical_Taunt", default=False, petctl=True,
+      where="Barre de côté : un clic en entrant / sortant d'un groupe.",
       why="En groupe le familier ne doit pas voler les monstres au tank ; en solo il doit les garder. "
           "Un clic règle le Grondement automatique selon ta situation."),
     M("TAI Familier", "Appel / Ressusciter / Guérison (Maj : ressusciter, Ctrl : nourrir)", "V", """
@@ -564,25 +619,54 @@ HUNTER = [
 """, """
 #showtooltip
 /cast [mod:shift][@pet,dead] {revive_pet}; {call_pet}
-""", where="Barre principale : la seule touche dont ton familier a besoin.",
+""", simple=True, where="Barre principale : la seule touche dont ton familier a besoin.",
       why="Appel s'il est absent, Ressusciter s'il est mort, Guérison sinon. Si l'Appel répond « familier "
           "mort » (corps disparu), Maj+clic ressuscite. Ctrl le nourrit avec la nourriture du sac adaptée "
           "à son régime (choisie hors combat quand ton sac change)."),
+    M("TAI Nourrir", "Nourrir le familier avec la meilleure nourriture du sac", "Ctrl+V", """
+#showtooltip
+/cast [pet,@pet,nodead] {feed_pet}
+/use [pet,@pet,nodead] {item:petfood}
+""", kind="consumable", default=False, simple=True,
+      where="Barre secondaire : quand ton familier n'est plus content.",
+      why="Nourrir le familier puis la nourriture du sac adaptée à son régime et à son niveau (choisie hors "
+          "combat quand ton sac change) : un seul appui, rien à glisser."),
     M("TAI Burst", "Tir rapide + Courroux bestial + racial + bijoux", "R", f"""
 #showtooltip {{rapid_fire}}
 /cast {{rapid_fire}}
 ?/cast {{bestial_wrath}}
 {RACIALS}
 {TRINKETS}
-""", where="Barre principale : sur les élites et les combats difficiles.",
+""", simple=True, pro_off=True, where="Barre principale : sur les élites et les combats difficiles.",
       why="Tir rapide et Courroux bestial ne déclenchent pas le temps de recharge global : tout part "
           "en un clic (lignes ajoutées seulement si tu as le racial / un bijou à utiliser)."),
-    M("TAI Defense", "Désengagement (Maj : Dissuasion)", "Maj+Q", """
+    M("TAI Multi", "Flèches multiples + tir auto + familier", "Maj+1", """
 #showtooltip
-/cast ?[mod:shift] {deterrence}; {disengage}
-""", where="Barre principale, à côté de TAI Melee.",
-      why="Désengagement retire de la menace au corps à corps (pratique en groupe) ; Dissuasion "
-          "(talent Survie) pare tout pendant 10 s."),
+/cast {multi_shot}
+/cast !{auto_shot}
+/petattack [harm,nodead]
+""", default=False, simple=True, where="Barre secondaire : sur un groupe de monstres (raccourci conseillé : Maj+1).",
+      why="Flèches multiples sans modificateur (préréglage Simple) : le tir auto et le familier suivent dans le "
+          "même appui."),
+    M("TAI Defense", "Désengagement (Maj : Dissuasion, Alt/Ctrl : racial)", "Maj+Q", """
+#showtooltip
+/cast ?[mod:shift] {deterrence}; ?[mod:alt] {war_stomp}; ?[mod:ctrl] {stoneform}; {disengage}
+""", simple=False, where="Barre principale, à côté de TAI Melee.",
+      why="Désengagement retire de la menace au corps à corps (pratique en groupe) ; Dissuasion (talent "
+          "Survie) pare tout pendant 10 s. Alt = Choc martial (Tauren), Ctrl = Forme de pierre (Nain) : "
+          "ajoutés seulement si ta race les a."),
+    M("TAI Provoc", "Trait provocateur sur survol ou cible (groupe)", "-", f"""
+#showtooltip
+/cast {MO} {{distracting_shot}}
+""", ctx="groupe", default=False, where="Barre de côté : un monstre tape ton soigneur.",
+      why="Le monstre survolé (sinon ta cible) vient sur toi 6 s, le temps que le tank le reprenne ; Feindre la "
+          "mort (niveau 30) te le fait lâcher ensuite."),
+    M("TAI Dressage", "Apprivoiser (survol) ; Ctrl : connaissance, Alt : renvoyer, Maj : dressage", "-", f"""
+#showtooltip
+/cast ?[mod:shift] {{beast_training}}; ?[mod:alt] {{dismiss_pet}}; ?{mo("ctrl")} {{beast_lore}}; {MO} {{tame_beast}}
+""", default=False, ctx="solo", where="Barre de côté : quand tu changes de familier.",
+      why="Apprivoise la bête survolée (sinon ta cible). Ctrl = Connaissance des bêtes (régime, techniques), "
+          "Alt = Renvoyer le familier (obligatoire avant d'apprivoiser), Maj = fenêtre de dressage."),
     M("TAI Salve", "Salve sous la souris", "-", """
 #showtooltip
 /cast [@cursor] {volley}
@@ -603,6 +687,124 @@ HUNTER = [
 /cast ?[mod:shift] {track_humanoids}; {track_beasts}
 """, default=False, ctx="solo", where="Barre de côté : en arrivant dans une zone de quêtes.",
       why="Bêtes pour les quêtes de chasse, humanoïdes pour les camps."),
+    # ------------------------------------------------------------ « Pro » : chaque touche fait le maximum permis
+    # (un appui = une action sur le temps de recharge global ; le reste est hors GCD, ciblage ou ordres au familier)
+    M("TAI Pro Tir", "Pull en un bouton : cible, marque, familier, tir auto, morsure, arcanes", "1", """
+#showtooltip {arcane_shot}
+/targetenemy [noharm][dead]
+?/cast !{aspect_hawk}
+/castsequence reset=target {hunters_mark}, {serpent_sting}, null
+/cast {arcane_shot}
+/cast !{auto_shot}
+/petattack [harm,nodead,nomod:alt]
+""", """
+#showtooltip {arcane_shot}
+/targetenemy [noharm][dead]
+?/cast !{aspect_hawk}
+/castsequence reset=target {hunters_mark}, null
+/cast {arcane_shot}
+/cast !{auto_shot}
+/petattack [harm,nodead,nomod:alt]
+""", """
+#showtooltip
+/targetenemy [noharm][dead]
+/cast !{auto_shot}
+/petattack [harm,nodead,nomod:alt]
+""", default=False, pro=True,
+      labels=("Marque + Morsure, puis Arcanes", "Marque, puis Arcanes", "Tir auto seul"),
+      where="Case 1 : remplace TAI Tir et TAI Marque, un seul bouton pour tout le combat.",
+      trick="« /castsequence reset=target …, null » : marque (et morsure) une seule fois par cible, ensuite chaque "
+            "appui = Tir des arcanes.",
+      why="Sans cible (ou cible morte) : l'ennemi le plus proche devant toi (attention en donjon). Marque puis "
+          "Morsure de serpent une seule fois par cible, ensuite Tir des arcanes à chaque appui ; tir auto jamais "
+          "coupé, familier envoyé (Alt = il reste). Sans Aspect du faucon, le 1er appui le met."),
+    M("TAI Pro Burst", "Burst : Tir rapide + Courroux bestial + racial + bijoux + Arcanes", "R", f"""
+#showtooltip {{rapid_fire}}
+/cast {{rapid_fire}}
+?/cast {{bestial_wrath}}
+{RACIALS}
+{TRINKETS}
+/cast {{arcane_shot}}
+""", default=False, pro=True, where="Barre principale : élites, rares, combats difficiles.",
+      trick="Tout ce qui ne prend pas le temps de recharge global part avant le Tir des arcanes : un seul appui.",
+      why="Tir rapide, Courroux bestial, Fureur sanguinaire (Orc) ou Berserker (Troll) et les bijoux « Utiliser » "
+          "ne déclenchent pas le temps de recharge global : ils partent tous, puis le Tir des arcanes."),
+    M("TAI Pro Panique", "Panique : Feindre la mort + familier au pied (Maj : Piège givrant)", "Maj+E", """
+#showtooltip
+/stopcasting
+/stopattack
+/petfollow
+/cast ?[mod:alt] {war_stomp}; [mod:shift][nocombat] {freezing_trap}; {feign_death}
+""", default=False, pro=True, where="À portée de pouce : quand ça tourne mal.",
+      trick="Feindre la mort ne prend pas le temps de recharge global dans Forever : il part même juste après "
+            "un tir, avec l'arrêt des attaques et le rappel du familier.",
+      why="Coupe ton incantation et tes attaques, rappelle le familier et fait le mort dans le même appui. "
+          "Ensuite (hors combat) ou avec Maj : Piège givrant à tes pieds. Alt = Choc martial (Tauren)."),
+    M("TAI Pro Melee", "Mêlée : Coupure d'ailes 1 fois, puis Mangouste ; Raptor à chaque coup", "Q", """
+#showtooltip {raptor_strike}
+/startattack
+/cast {raptor_strike}
+/castsequence reset=target {wing_clip}, null
+/cast ?[mod:shift] {wing_clip}; ?[mod:alt] {counterattack}; {mongoose_bite}
+""", """
+#showtooltip {raptor_strike}
+/startattack
+/cast {raptor_strike}
+/castsequence reset=target {wing_clip}, null
+""", """
+#showtooltip {raptor_strike}
+/startattack
+/cast {raptor_strike}
+""", default=False, pro=True, where="Barre principale : quand un monstre est collé à toi.",
+      trick="Coupure d'ailes une seule fois par cible (« …, null »), puis Mangouste ; Attaque du raptor part "
+            "sur le prochain coup, hors temps de recharge global.",
+      why="Le 1er appui sur une cible la ralentit (Coupure d'ailes), les suivants lancent Mangouste dès "
+          "qu'elle est possible ; le Raptor part à chaque coup. Maj = Coupure d'ailes à nouveau, Alt = "
+          "Contre-attaque."),
+    M("TAI Pro Pet", "Familier : attaque survol / Maj au pied / Ctrl passif / Alt soin", "F", """
+#showtooltip {mend_pet}
+/petattack [nomod,@mouseover,harm,nodead][nomod,harm,nodead]
+/petfollow [mod:shift]
+/petpassive [mod:ctrl]
+/cast [mod:alt,@pet,exists,nodead] {mend_pet}
+""", """
+/petattack [nomod,@mouseover,harm,nodead][nomod,harm,nodead]
+/petfollow [mod:shift]
+/petpassive [mod:ctrl]
+""", default=False, pro=True, petctl=True, icon="Ability_Hunter_Pet_Wolf",
+      where="Barre secondaire : remplace la barre du familier.",
+      trick="Ordres au familier et soin sur la même touche : les ordres ne coûtent rien, Alt soigne sans le cibler.",
+      why="Attaque le monstre survolé (sinon ta cible), Maj = au pied, Ctrl = passif, Alt = Guérison du familier "
+          "sans changer de cible."),
+    M("TAI Pro Kite", "Kite : Trait de choc (survol) + tir auto + familier", "Maj+4", f"""
+#showtooltip
+/cast ?[mod:shift] {{wing_clip}}; ?[mod:alt] {{disengage}}; {MO} {{concussive_shot}}
+/cast !{{auto_shot}}
+/petattack [harm,nodead]
+""", default=False, pro=True, where="Barre secondaire : un monstre qui fonce sur toi.",
+      trick="Ralentit, relance le tir auto et garde le familier dessus en un appui : recule, tire, rappuie dès "
+            "que le Trait de choc revient.",
+      why="Trait de choc sur le survol (sinon ta cible), puis tir auto et familier. Maj = Coupure d'ailes s'il "
+          "est collé, Alt = Désengagement."),
+    M("TAI Pro Assist", "Groupe : prends la cible du tank, tir auto, familier, Arcanes", "Maj+1", f"""
+#showtooltip {{arcane_shot}}
+/assist [@mouseover,help,nodead][help,nodead][@party1,exists,nodead]
+/cast [harm,nodead] !{{auto_shot}}
+/petattack [harm,nodead]
+/cast [harm,nodead] {{arcane_shot}}
+""", default=False, pro=True, ctx="groupe", where="Barre principale en groupe : à la place du Tir.",
+      trick="« /assist » : la cible de l'allié survolé, sinon de ta cible amie, sinon du tank choisi (groupe 1 à 4).",
+      why="Tu tapes toujours ce que tape le tank : tir auto, familier et Tir des arcanes sur sa cible, sans la "
+          "chercher. Choisis le tank (groupe 1 à 4) dans les réglages de la macro."),
+    M("TAI Pro Focus", "Groupe : contrôle sur la focalisation (Maj : la retenir)", "Ctrl+4", """
+#showtooltip {scare_beast}
+/focus [mod:shift,@target,harm,nodead]
+/stopmacro [mod:shift]
+/cast [@focus,harm,nodead][@mouseover,harm,nodead][] {scare_beast}
+""", default=False, pro=True, ctx="groupe", needs="focus", where="Barre de côté : la bête à contrôler en donjon.",
+      trick="Maj+clic retient ta cible en focalisation ; ensuite chaque appui l'effraie sans la cibler.",
+      why="Effrayer une bête sur la focalisation (sinon le survol, sinon ta cible) : tu gardes ta cible de tir. "
+          "Forever a la focalisation (/focus) ; sur un client sans, la macro n'est pas proposée."),
 ]
 
 # ================================================================ ROGUE

@@ -1290,6 +1290,30 @@ endroit sûr, tout effacé au retour à la vie.
 - Succès : une ligne « N macro(s) TAI prête(s) — clique pour les glisser sur ta barre » ; « Installer cette
   macro » la met directement sur le curseur (`PickupMacro`). `/tai macros copier` ouvre la fenêtre à la main.
 
+## Macros : état, réglages, préréglages, aspect intelligent (agent MACRO3, 4.0.1)
+- Page **« Macros »** de la fenêtre TreeAI (`W.AddPage{ before = "modules" }`, après Outils, ouverte par `M:TogglePanel()` : minimap,
+  Outils, Options, `/tai macros` ; l'ancien panneau = `M:ToggleList()` « Liste détaillée »). Une ligne par macro :
+  pastille (vert active · orange à installer / à mettre à jour, clic · gris désactivée / plus tard / modifiée par toi /
+  figée · rouge erreur + raison), « auto · mise à jour il y a 2 min », sur une barre ? touche ? (relevé des barres
+  `M.Placement()` : nom de la case `GetActionText`, touche `ACTIONBUTTONn`… ou `MACRO nom`, barres d'addons via
+  `Binds.ReadAddonBars`). `M:MacroState(def)` → `{code, badge, text, autoText, installed, current, expected, onBar,
+  key, stamp…}` ; `M:States()` → liste + compteurs. Clic droit = activer / désactiver (jamais supprimée).
+- **« Tout mettre à jour »** (`M:UpdateAll()`, bouton de la page et ligne « Macros à mettre à jour : clic ») : UN clic
+  installe les macros activées qui manquent et réécrit celles qui ont changé ; jamais en combat ni hors d'un clic.
+- **Réglages par macro** (`char.opts[nom]`, par personnage) : on, auto, mods (variantes Maj/Ctrl/Alt), mo (survol),
+  pet (lignes /pet…), guard (« /cast !Aspect du faucon »), var (variante), tank (@party1-4), name, icon. Le corps est
+  retouché avant le rendu par `M.Personalize` = `generator.personalize` (mêmes cas testés des deux côtés) ; une macro
+  installée est réécrite dans le même clic (`M:ApplyNow`). `def.f` = réglages proposés (m o p g t).
+- **Préréglages** `M:ApplyPreset("simple"|"complet"|"pro")` (2 clics : confirmation) : Simple = sans modificateurs ni
+  survol (`def.sp`), Complet = jeu conseillé (`def.def`), Pro = Complet + macros « Pro » (`def.pr`, `def.pro`,
+  astuce `def.t`). Les macros « clic » (TAI Pro Rare / Quete) font `/click TreeAIMacro_<clé>` : bouton sécurisé caché
+  dont le texte est réécrit **hors combat** (`SetAttribute`, `useOnKeyDown = false`) — aucune écriture de macro.
+- **Aspect** : TAI Aspects = `[combat][harm,nodead] !Faucon; !Guépard` (Maj/Ctrl/Alt en Complet). Les aspects
+  prennent le temps de recharge global dans Forever : la garde d'aspect passe d'abord dans le pull (Marque, Pro Tir),
+  après le tir dans TAI Tir. Raccourcis (QuickFight) : bouton d'aspect = même macro, il brille quand l'aspect est
+  mauvais (+ un son, une fois, seulement en combat sous Guépard / Meute : le vrai danger, jamais « sans danger ») ; l'aspect est lu sur les auras hors combat, sur nos lancers en combat (auras secrètes).
+  Chaque bouton des Raccourcis porte une pastille (vert à jour · orange après le combat · rouge plus d'objet).
+
 ## Stats mesurées : module `Stats` (agent STATS, `Modules/Stats.lua`, tôt dans le TOC, avant Macros)
 
 UN centre de statistiques, `TreeAI.Stats`, que les autres modules lisent au lieu de leurs compteurs maison.
