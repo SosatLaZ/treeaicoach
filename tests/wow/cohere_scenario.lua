@@ -39,7 +39,10 @@ return function(M, ctx)
   rawset(_G, "QuestieLoader", { ImportModule = function() return nil end })
   local Cm = T.Compass or T:GetModule("Compass")
   if Cm and Cm.ResetSPF then Cm.ResetSPF() end
-  check(T:GuideMode() == "auto" and T:ExternalGuide() == "spf", "SPF chargé : guidage confié à Suivi Forever")
+  -- (3.9.8) défaut : TreeAI seul, même avec SPF chargé ; le joueur peut choisir Suivi Forever
+  check(T:GuideMode() == "treeai" and T:ExternalGuide() == nil, "défaut : TreeAI guide seul, SPF ignoré")
+  T:SetGuideMode("auto")
+  check(T:GuideMode() == "auto" and T:ExternalGuide() == "spf", "SPF choisi : guidage confié à Suivi Forever")
 
   -- ------------------------------------------------------------ 1. one arrow
   local C = T:GetModule("Compass")
