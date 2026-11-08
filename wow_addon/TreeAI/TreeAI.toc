@@ -23,6 +23,7 @@ Data\Gear.lua
 Data\Talents.lua
 Data\Recipes.lua
 
+Modules\Stats.lua
 Modules\Macros.lua
 Modules\Binds.lua
 Modules\Hunter.lua

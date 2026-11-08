@@ -190,7 +190,8 @@ function M.Ctx()
   c.money = (API.Money and try(API.Money)) or tonumber(try(g("GetMoney"))) or 0
   local P = mod("Predict")
   local r = P and P.Rates and try(P.Rates)
-  local gph = type(r) == "table" and tonumber(r.goldPerHour) or nil
+  local St = T.Stats   -- or/h mesuré sur toutes les sessions (Stats) d'abord
+  local gph = (St and St.GoldPerHour and St:GoldPerHour()) or (type(r) == "table" and tonumber(r.goldPerHour)) or nil
   -- valeur du temps : or/h mesuré (en pc) sinon ~niveau² × 150 pc/h (≈ 10 po/h au niv 26)
   c.copperPerMin = max(50, (gph and gph > 0 and gph or c.level * c.level * 150) / 60)
   return c

@@ -737,3 +737,46 @@ silencieux quand il n'y a rien à dire, soumis à `TreeAI:Quiet` (genre « advic
   `Errands` de l'onglet « Groupe » dès 3 entrées. Résumé : `summary.errands`.
 * Jamais appelés : `TakeTaxiNode`, `BuyTrainerService`, `TakeInbox*`, `AutoLootMailItem`, `OpenAllMail`,
   `ConfirmReadyCheck`, `ResetInstances` (vérifié par `tests/wow/next10_scenario.lua`).
+
+## Stats mesurées : module `Stats` (agent STATS, `Modules/Stats.lua`, tôt dans le TOC, avant Macros)
+
+UN centre de statistiques, `TreeAI.Stats`, que les autres modules lisent au lieu de leurs compteurs maison.
+Uniquement des événements + une minuterie de 60 s (aucun OnUpdate, ≤ 60 kinstr/min vérifié par
+`tests/wow/session_sim.lua`), jamais le journal de combat, valeurs « secrètes » de Forever ignorées (rien en combat).
+
+* **Fiche** (`Stats:Sheet()`) : UnitStat 1-5, PA / PA distance, critique mêlée / distance / sorts, toucher, hâte
+  (+ GetCombatRating si présent), armure, esquive / parade / blocage, résistances, vitesse, dégâts mêlée /
+  distance, regen mana (GetManaRegen / GetPowerRegen), PV / mana max, niveau d'objet moyen. Relue sur
+  PLAYER_EQUIPMENT_CHANGED / UNIT_STATS (1 s) et UNIT_AURA(player) (≤ 1 fois / 10 s), jamais en combat.
+* **Mesures** (par perso, `chars[k].modules.Stats`, v = 1) :
+  `kill[clé] = {s, n}` temps de kill, clé = écart de niveau (-5..5) .. type (`n`/`e` élite/`r` rare/`b` boss) ..
+  `g` en groupe · `fight = {n, s, dm = {s, n}}` combats, secondes, % PV perdus (seulement si mesurable) ·
+  `down = {s}` secondes à manger / boire · `death = {n, hi, el, t = {time()…≤20}, c = {[tueur] = n ≤15}}` ·
+  `act = {q|g|d|t = {x = XP, s = secondes}}` quêtes / farm / donjon / trajet (classé chaque minute) ·
+  `gold = {i, o}` · `played` secondes jouées (hors AFK) · `quest = {n, tot, a2c, c2t = {s, n}, open = {[id] = {a, c}}}` ·
+  `move = {w|m = {d = mètres, s = secondes}}` (début → arrêt, 1 h glissante) · `trans = {["A>B"] = {s, n}}`
+  bateaux / zeppelins · `rep` réparations payées (pc) · `use = {am, fd, dr}` munitions / nourriture / boisson ·
+  `ah = {[objet] = {p, s, x, ts = {s, n}, o = {time()…}}}` (≤ 40) · `win = {{b, x, k, s, g, m0}…}` 12 tranches de 5 min ·
+  `sheet` dernière fiche.
+* **Taux de drop** (compte, `TreeAIDB.stats = {v = 1, drops = {[npc] = {n, nm, t, i = {[item] = {o, k, q}},
+  p = {[nom] = corps en attente}}}, names = {[nom] = item}}`, ≤ 120 monstres × 10 objets) : une **occasion** = un
+  corps que tu as fouillé (GUID source → id du monstre) d'un monstre qui peut lâcher l'objet ; un objet de quête
+  ne compte que tant que l'objectif n'est pas fini ; jamais deux fois le même corps ; dépeçage / pêche ignorés ;
+  corps fouillés par d'autres invisibles donc non comptés (en groupe, l'objet de quête est tiré pour chaque membre
+  qui en a besoin). **Réussite** = l'objet est dans le butin de ce corps. Estimation = **Beta a posteriori** :
+  a priori QuestieDB (`GetItemDroprate`, si sa base en donne un, poids 8 corps) sinon Beta(1, 3) ≈ 25 % ;
+  moyenne + intervalle 80 % (quantiles 10 / 90 %). `Stats:Drop(item [, npc])` → moyenne, occasions, bas, haut ;
+  `Stats:KillsNeeded(reste, item [, npc])` → attendu, pessimiste (« encore ~8, jusqu'à 12 si pas de chance ») ;
+  `DropByName` / `BestSourceByName`. Adopté par Predict (`DropRate`, `BestSource` → Tracker, Highlight, Abandon),
+  Tracker (borne pessimiste, « taux mesuré sur N » dans l'infobulle), Planner.
+* **API** : `Stats:Get("xph.q")` (chemin dans l'instantané), `:KillTime(écart [, type])` (solo, sinon groupe ×1,25,
+  sinon écart voisin, sinon Export), `:XPPerHour("questing"|"grinding"|"dungeon"|nil)`, `:RecentXPPerHour()`,
+  `:TravelSpeed(monté)`, `:Downtime()` → s / combat, part du temps, `:GoldPerHour()`, `:PerHour("ammo"|"food"|
+  "water"|"repair")`, `:DeathsPerHour()`, `:QuestMinutes()`, `:SaleRate(objet)`, `:Respawn(npc)`,
+  `:FlightTime(de, à)` (apprentissage Export), `:Snapshot()`. Tout renvoie nil sans mesure suffisante.
+  Utilisé par Planner (temps de kill, repos, vitesse), Predict (XP/h, or/h, munitions en début de session),
+  Abandon (temps de kill, vitesse, XP/h), Gear (or/h = valeur du temps), Auction (`NotePost` / `NoteAuction`,
+  « tes ventes : 67 % vendues en ~2 h »).
+* **Onglet « Stats »** (sous-menu « Plus », `/tai stats`) : 5-8 lignes (fiche, attaque, combat, repos / morts,
+  XP/h + or/h, trajets, conso / h) + « Exporter pour TreeAI » → `summary.stats` (aussi au /reload, à la
+  déconnexion et à `SUMMARY`), lu par `treeaicoach/wow/stats.py` → bloc « Mes stats mesurées » de l'onglet Session.

@@ -456,6 +456,9 @@ def tab_blocks(key: str, live_snap: dict) -> list[dict]:
         block("Objectifs", [_row(g["text"], meter=g["pct"]) for g in v["goals"]],
               "Objectif du groupe en jeu : /tai mission objectif niveau 30 (ou quetes 15).")
         block("Classement XP", [_row(n, "", f"{x} XP/h" if x else "") for n, x in v["leaderboard"]])
+        from treeaicoach.wow import stats as wstats  # noqa: PLC0415
+        block("Mes stats mesurées", _pairs(wstats.stats_rows(snap.get("summary"))),
+              "Mesurées en jouant par l'addon (Plus → Stats → « Exporter pour TreeAI », puis /reload).")
         block("Évènements", [_row(t) for t in v["events"]])
     return blocks
 
