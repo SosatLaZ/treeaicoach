@@ -712,7 +712,8 @@ function M.ItemName(id, fallback)
   return name or fallback or ("objet " .. tostring(id)), link
 end
 
-local function boost() return mod("Boost") end
+-- (4.0) moteur d'équipement : Gear.Engine (poids, armures / armes par classe, score) — l'ancien Boost n'en a plus
+local function boost() local Gm = T.Gear return type(Gm) == "table" and Gm.Engine or nil end
 -- peut porter / manier ? -> ok, plus tard (niveau)
 local function usableBy(m, info, set)
   local B = boost()
@@ -1513,10 +1514,6 @@ function M:BuildBlocks()
       line(st, "Interruptions : " .. tconcat(p, " · "), 1)
     end
   end
-  -- pull / patrouille en cours : repris de Fight (pas de doublon)
-  local F = mod("Fight")
-  local fl = F and type(F.Lines) == "table" and F.Lines.pull
-  if fl and fl.text then line(nb, fl.text, fl.prio or 1) end
   return B
 end
 

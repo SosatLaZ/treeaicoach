@@ -21,10 +21,9 @@ ns = ns or {}
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 
-local LAYERS = { "target", "path", "rares", "danger", "drops", "squad", "taxi", "services" }
+local LAYERS = { "target", "rares", "danger", "drops", "squad", "taxi", "services" }   -- (4.0) « chemin sûr » retiré avec SafePath
 local LABELS = {
   target = "Cible de la boussole / prochaine étape",
-  path = "Chemin sûr (étapes)",
   rares = "Rares vus",
   danger = "Élites près de ton chemin (anneaux)",
   drops = "Butin de tes objets de quête (sans Questie)",
@@ -38,7 +37,7 @@ for _, l in ipairs(LAYERS) do opts[#opts + 1] = { key = l, type = "toggle", labe
 local MP = T:RegisterModule("MinimapPins", {
   title = "Points sur la minimap",
   description = "Nos repères sur la minimap de Blizzard, seulement ce que Questie ne montre pas.",
-  defaults = { enabled = true, target = true, path = true, rares = true, danger = true, drops = true,
+  defaults = { enabled = true, target = true, rares = true, danger = true, drops = true,
                squad = true, taxi = true, services = true },
   charDefaults = { drops = {}, services = {} },
   options = opts,
@@ -194,7 +193,7 @@ end
 -- besoin d'un service ? (Prévisions : sacs / réparation ; sinon lecture directe)
 function MP.Needs()
   local need = {}
-  local P = mod("Predict")
+  local P = T.Predict   -- (CLEAN 4.0) façade de Stats : les lignes réelles d'Inventaire
   for _, f in ipairs(P and type(P.list) == "table" and P.list or {}) do
     if f.id == "bags" and (f.prio or 0) >= 2 then need.bags = true end
     if f.id == "repair" and (f.prio or 0) >= 2 then need.repair = true end
@@ -246,14 +245,6 @@ function MP.Collect(me, view)
           anchors[#anchors + 1] = p
         end
       end
-    end
-  end
-  -- 2. chemin sûr
-  if MP.LayerOn("path") and R.PathPins then
-    for i, p in ipairs(list(R.PathPins)) do
-      p.float = (i == 1) or nil
-      pins[#pins + 1] = p
-      anchors[#anchors + 1] = p
     end
   end
   -- 3./4. rares + élites (anneaux doux, seulement près de moi / de mon chemin)
@@ -329,7 +320,6 @@ end
 -- ------------------------------------------------------------------ pins (nos cadres)
 local ICON = {
   target = { "Interface\\TargetingFrame\\UI-RaidTargetingIcon_1", nil, 14 },
-  path = { CIRCLE, { 0.35, 0.85, 1 }, 7 },
   rare = { "Interface\\TargetingFrame\\UI-RaidTargetingIcon_3", nil, 13 },
   danger = { CIRCLE, { 1, 0.25, 0.2 }, 10 },
   drop = { CIRCLE, { 1, 0.82, 0.1 }, 8 },
@@ -345,7 +335,7 @@ MP.pool = {}
 -- (UIREDO) chaque point dit : ce que c'est, à quelle distance et en combien de temps, pourquoi il compte
 -- maintenant, et ce que fait le clic. Un point sans raison n'est pas montré (Collect ne garde que ceux-là).
 local WHY = {
-  target = "Ta prochaine étape", path = "Étape du chemin sûr (il évite les élites)",
+  target = "Ta prochaine étape",
   rare = "Rare vu ici : bon butin, souvent seul", danger = "Élites ici : passe autour",
   squad = "Ton ami est loin : rejoins-le pour avancer ensemble", drop = "Ton objet de quête tombe ici",
 }

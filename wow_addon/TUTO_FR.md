@@ -10,18 +10,20 @@
 
 ## Les 3 choses à savoir
 
-1. **Tout part de la pastille de la minimap** (le bouton rond au bord de la carte) : clic = le menu, clic droit =
-   les options. La première fois, une **visite guidée** de 60 secondes montre où cliquer ; elle se rejoue depuis
-   le menu (« Visite guidée »).
-2. **Ta prochaine étape** est dans le panneau et la **boussole** la vise (distance, temps de trajet). Clic sur une
-   ligne = l'action ; survol = le pourquoi ; clic droit sur un conseil = caché 2 h.
+1. **Tout part de la pastille de la minimap** (le bouton rond au bord de la carte) : clic = la **fenêtre TreeAI**
+   (Maintenant, Quêtes, Trajet, Groupe, Options…), clic droit = le **menu rapide**. La première fois, une
+   **visite guidée** de 60 secondes montre où cliquer ; elle se rejoue depuis le menu (« Visite guidée »).
+2. **Ta prochaine étape** est sur la carte « Prochaine étape » et la **boussole** la vise (distance, temps de
+   trajet). Clic sur une ligne = l'action ; survol = le pourquoi ; clic droit sur un conseil = caché 2 h.
 3. **TreeAI conseille, tu joues** : rien ne part sans ton clic (règles de Blizzard), rien en combat.
 
 ## Le menu de la pastille
 
+Clic droit sur la pastille : le menu rapide.
+
 | Entrée | À quoi ça sert |
 |---|---|
-| Maintenant, Quêtes, Groupe, HV, Infos… | ouvre cet onglet du panneau |
+| Maintenant, Quêtes, Groupe, HV, Infos… | ouvre cette page dans la fenêtre TreeAI |
 | Recherche, Meilleur familier | ce qui vaut le détour près de toi, la meilleure bête à apprivoiser |
 | Macros | les macros prêtes pour ta classe : un clic pour les créer, puis glisse-les sur ta barre |
 | Fenêtre « À faire » | toutes tes quêtes, triées, à épingler |

@@ -380,10 +380,10 @@ def identity(snap: Snap) -> Section:
     total = total if total is not None else _n(b.get("total"))
     if free is not None:
         d["sacs"] = f"{int(free)} places libres" + (f" sur {int(total)}" if total else "")
-    inv, eco = snap.sub("inventory"), snap.sub("economy")
+    inv = snap.sub("inventory")
     dmin = _n(inv.get("durMin"))
     if dmin is not None and dmin < 35:
-        cost = money_fr(inv.get("repairCost") or eco.get("repairCost"))
+        cost = money_fr(inv.get("repairCost"))
         d["reparation"] = f"un objet à {int(dmin)} % de durabilité" + (f", réparer ≈ {cost}" if cost else "")
     gs = _i(s.get("groupSize"))
     if gs > 1:
@@ -401,11 +401,16 @@ def _xph_sources(snap: Snap) -> list[dict]:
         m = int(dur // 60)
         out.append({"xph": _i(ch.get("xp")) * 3600.0 / dur, "src": f"mesurée en direct sur {m} min",
                     "conf": "bonne" if m >= 30 else "moyenne", "age": None})
+    # Stats.xph = {all, recent, recentMin, min…}: each rate with the minutes it was measured over (≥ 10 min)
     st = _d(snap.sub("stats").get("xph"))
-    v = _n(st.get("recent")) or _n(st.get("all"))
-    if v and v > 0:
-        out.append({"xph": v, "src": "mesurée par l'addon sur ta dernière heure de jeu", "conf": "moyenne",
-                    "age": snap.age, "volatile": True})
+    rv, rmin = _n(st.get("recent")), _n(st.get("recentMin")) or 0.0
+    av, amin = _n(st.get("all")), _n(st.get("min")) or 0.0
+    if rv and rv > 0 and rmin >= 10:
+        out.append({"xph": rv, "src": f"mesurée par l'addon sur {int(rmin)} min de ta dernière heure de jeu",
+                    "conf": "moyenne", "minutes": int(rmin), "age": snap.age, "volatile": True})
+    elif av and av > 0 and amin >= 10:
+        out.append({"xph": av, "src": f"mesurée par l'addon sur {int(amin)} min de jeu", "conf": "moyenne",
+                    "minutes": int(amin), "age": snap.age, "volatile": True})
     learn = _d(snap.char.get("learn")).get("xph")
     if isinstance(learn, dict) and _n(learn.get("n")) and _n(learn.get("s")):
         n = _i(learn.get("n"))
@@ -1001,12 +1006,10 @@ def pet(snap: Snap) -> Section:
     if a:
         kind = {"arrow": "flèches", "bullet": "balles"}.get(str(a.get("kind") or ""), "munitions")
         txt = f"{num_fr(n_ammo)} {kind}"
-        per_h = _n(_d(snap.sub("stats").get("perH")).get("ammo"))
+        # rythme MESURÉ : Stats (par heure jouée) sinon le module Chasseur (ammo.perHour) ; jamais une estimation
+        per_h = _n(_d(snap.sub("stats").get("perH")).get("ammo")) or _n(a.get("perHour"))
         if per_h and per_h > 0:
             txt += f", ≈ {dur_fr(n_ammo * 3600.0 / per_h)} de jeu à ton rythme"
-        need = _i(snap.sub("hunterPro").get("ammoNeed"))
-        if need:
-            txt += f" (il en faut ≈ {num_fr(need)} pour finir le niveau)"
         if a.get("mismatch"):
             txt += " ; elles ne vont pas dans ton arme"
         d["munitions"] = txt

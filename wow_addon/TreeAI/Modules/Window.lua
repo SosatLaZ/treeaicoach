@@ -651,6 +651,12 @@ function W.ShowCard()
   hidePanelForCard()
 end
 function W.HideCard() if card then meth(card, "Hide") end end
+--- ligne « Zone : … » de la page Trajet (choix de la zone de travail) si elle est à l'écran, sinon nil (visite guidée)
+function W.ZoneRow()
+  local b = W.zoneRow
+  if type(b) == "table" and type(b.entry) == "table" and b.entry.id == "zone:pick" and meth(b, "IsVisible") then return b end
+  return nil
+end
 function W.GetCard() return card end
 
 -- ===================================================================== fenêtre principale
@@ -1620,6 +1626,12 @@ function W:OnEnable()
   local function soon() if card and meth(card, "IsShown") then W.RenderCard() end end
   self:RegisterEvent("ZONE_CHANGED_NEW_AREA", function() W.ForgetStops() soon() end)
   self:RegisterEvent("QUEST_LOG_UPDATE", soon)
+  -- (ONBOARD) la visite guidée montre NOS cadres : la carte « Prochaine étape » et la ligne « Zone » du trajet
+  local Tr = T.Tour
+  if type(Tr) == "table" and type(Tr.Target) == "function" then
+    Tr.Target("next", function() return (card and meth(card, "IsVisible")) and card or nil end)
+    Tr.Target("zone", function() return W.ZoneRow() end)
+  end
   if T.HUB_EXTRA and not W._hub then
     W._hub = true
     table.insert(T.HUB_EXTRA, 1, { group = "jeu", id = "window", title = "Fenêtre TreeAI", icon = ICON .. "INV_Misc_Book_09",

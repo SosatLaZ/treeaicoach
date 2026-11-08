@@ -185,13 +185,16 @@ return function(M, ctx)
     plates[u] = CreateFrame("Frame", nil, UIParent)
     plates[u].namePlateUnitToken = u
   end
+  -- (4.0, audit) un PNJ n'a pas de position lisible dans le vrai client : distance inconnue → ni « 2 ennemis tout
+  -- près » ni « coin sûr » (rien d'inventé) ; la ligne du cadavre (distance réelle au corps) reste
   S:Tick()
   c = sugg("Speed:corpse")
-  check(c and c.text:find("2 ennemis tout près"), "safe spot hint (2 foes near the corpse): " .. tostring(c and c.text))
+  check(c and c.text:find("^Cadavre") and not c.text:find("ennemi") and not c.text:find("coin sûr"),
+    "foes at unknown distance: no safe-spot claim: " .. tostring(c and c.text))
   for i = 1, 2 do M.units["nameplate" .. i] = nil end
   S:Tick()
   c = sugg("Speed:corpse")
-  check(c and c.text:find("coin sûr"), "no foe near: safe spot: " .. tostring(c and c.text))
+  check(c and not c.text:find("coin sûr"), "no plate read: no « coin sûr » claim: " .. tostring(c and c.text))
   -- revive: line gone, compass back to the player's own point
   M.player.dead, M.player.ghost = false, false
   T:InvalidatePlayerState()

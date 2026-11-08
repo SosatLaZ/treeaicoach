@@ -204,7 +204,7 @@ def test_session_view(snap: dict) -> None:
     assert "7 quêtes rendues" in rows["Session du groupe"] and rows["Alpha"] == "niveau 24 → 25"
     assert rows["Durée (au /reload)"] == "42 min"
     assert v["goals"][0] == {"text": "Niveau 30 pour tous · ~2 h 00", "pct": 35}
-    assert v["goals"][1]["text"].startswith("Niveau 27") and v["leaderboard"] == [("Bravo", 20000)]
+    assert v["goals"][1]["text"].startswith("Niveau 27") and v["leaderboard"] == [("Bravo", 30000)]   # 4.0: session XP (Group)
 
 
 def test_tab_blocks_and_empty_states(snap: dict) -> None:
@@ -216,7 +216,7 @@ def test_tab_blocks_and_empty_states(snap: dict) -> None:
         assert blocks or key == "donjon", key                          # no dungeon in the fixture
     hv = pw.tab_blocks("hv", snap)
     assert hv[0]["title"] == "Achat-revente" and hv[0]["rows"][0]["value"] == "+18 pa net"
-    assert hv[0]["rows"][0]["spark"] and "commission 5 %" in hv[0]["foot"]
+    assert hv[0]["rows"][0]["spark"] and "commission 5 %" in hv[0]["foot"].lower()   # foot = a sentence (capitalised)
     t = {b["id"]: b for b in pw.tab_blocks("trajet", snap)}
     stops = t["trajet.stops"]["rows"]
     assert [r["num"] for r in stops] == ["1", "2", "3", "4"] and stops[0]["badge"] == "En cours"

@@ -274,18 +274,18 @@ function M.Zones(cards, zone)
   return list
 end
 
--- Courses : prévisions Predict (marchand, réparation, formation, foyer, munitions, nourriture, sacs).
+-- Courses : les conseils que leurs propriétaires affichent VRAIMENT (Inventaire, Chasseur, Guichets via T.Predict.list).
 local ERRAND_ICON = { ammo = ICON.ammo, food = ICON.food, water = ICON.water, bags = ICON.bags, train = ICON.train,
                       repair = ICON.repair, hearth = ICON.hearth }
 local ERRAND_ORDER = { repair = 1, ammo = 2, bags = 3, food = 4, water = 5, train = 6, hearth = 7 }
--- la course urgente dite simplement (verbe d'abord, sans %) ; le texte détaillé de Predict reste au survol
+-- la course urgente dite simplement (verbe d'abord, sans %) ; le texte détaillé du propriétaire reste au survol
 local ERRAND_TASK = { repair = "Va réparer ton équipement chez un forgeron", ammo = "Achète des flèches au marchand le plus proche",
   bags = "Vends ce qui encombre tes sacs au marchand", food = "Achète à manger au marchand le plus proche",
   water = "Achète à boire au marchand le plus proche", train = "Va voir ton maître de classe (nouveaux sorts)",
   hearth = "Pense à lier ta pierre de foyer à l'auberge" }
 M.ERRAND_TASK = ERRAND_TASK
 function M.Errands()
-  local P = mod("Predict") or T.Predict
+  local P = T.Predict
   local out = {}
   for _, f in ipairs(P and type(P.list) == "table" and P.list or {}) do
     local id = tostring(f.id or "")
@@ -353,7 +353,7 @@ function M.Board(n)
   return out
 end
 
--- Session : niveau, XP, repos, XP/h et temps avant le niveau suivant (Boost, sinon Predict).
+-- Session : niveau, XP, repos, XP/h MESURÉE et temps avant le niveau suivant (Stats, via Boost ou T.Predict).
 function M.Session()
   local lv = try(_G.UnitLevel, "player") or 1
   local xp, xpMax = tonumber((try(_G.UnitXP, "player"))) or 0, tonumber((try(_G.UnitXPMax, "player"))) or 0
@@ -363,8 +363,8 @@ function M.Session()
   local st = B and B.XPStats and try(B.XPStats, B)
   if type(st) == "table" then s.xph, s.eta = tonumber(st.perHour), tonumber(st.eta) end
   if not s.xph then
-    local P = mod("Predict") or T.Predict
-    local r = P and (P.rates or (P.Rates and try(P.Rates))) or {}
+    local P = T.Predict
+    local r = P and P.Rates and try(P.Rates) or {}
     s.xph = tonumber(r.xpPerHour)
     if s.xph and s.xph > 0 and xpMax > 0 then s.eta = (xpMax - xp) / s.xph * 3600 end
   end
@@ -1106,7 +1106,7 @@ function M.Paint(b, r, w, fs)
     b.text:SetPoint("LEFT", b.icon, "RIGHT", 6, 0)
     b.text:SetWidth(w - fs - 50)
     b.text:SetText(hex(PRIO_RGB[e.prio] or PRIO_RGB[1]) .. e.text .. "|r")
-    r.tip = { e.text, "Prévision TreeAI (Predict)" }
+    r.tip = { e.text, "Le même conseil que dans « Maintenant » (sacs, munitions, maître de classe)" }
   elseif r.kind == "board" then
     local e = r.e
     setFont(b.text, fs - 1)

@@ -491,7 +491,7 @@ function M.Context(list)
   local St = T.Stats   -- mesures réelles (Stats) d'abord
   local spk = tonumber(tc.secPerKill) or (St and St.KillTime and St:KillTime(0))
   if not spk then
-    local P = mod("Predict")
+    local P = T.Predict   -- (4.0) façade de Stats (taux mesurés)
     local r = P and P.Rates and try(P.Rates) or {}
     local kph = tonumber(r.killsPerHour)
     spk = (kph and kph > 5) and max(8, min(120, 3600 / kph)) or A.KILL_SEC

@@ -74,10 +74,10 @@ return function(M, ctx)
   T:ClearSuggestion("annoy:x")
   -- one merged line (same topic from two modules): hiding it hides both
   T:Suggest("Hunter:hungry", "Familier juste content : nourris-le", 2, { ttl = 0 })
-  T:Suggest("Fight:mood", "Familier seulement content : nourris-le hors combat", 2, { ttl = 0 })
+  T:Suggest("QuickFight:feed", "Familier seulement content : nourris-le hors combat", 2, { ttl = 0, topic = "petfood" })
   T:DismissSuggestion("Hunter:hungry")
   local still = false
-  for _, e in ipairs(T:GetSuggestions()) do if e.id == "Fight:mood" or e.id == "Hunter:hungry" then still = true end end
+  for _, e in ipairs(T:GetSuggestions()) do if e.id == "QuickFight:feed" or e.id == "Hunter:hungry" then still = true end end
   check(not still, "masqué : la même info venue d'un autre module ne la remplace pas")
   -- kept across /reload (char data), expires after DISMISS_S
   local d = T:CharDB().dismissed
@@ -94,6 +94,8 @@ return function(M, ctx)
   T:CharDB().dismissed = {}
 
   -- 3. dungeons: enter / leave twice -> at most the first explanation in the chat
+  -- (the harness event storm may have toggled « /tai debug » : debug lines are not player chat — off, as by default)
+  if T.settings then T.settings.debug = false end
   mark()
   for _ = 1, 2 do
     M.instance = true; fire("PLAYER_ENTERING_WORLD", false, false); M.Advance(5, 0.5)

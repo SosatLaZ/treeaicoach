@@ -165,15 +165,15 @@ end
 local TAB_DESC, ENTRY_DESC
 local TAB_ICON = {
   now = ICON .. "Spell_Nature_TimeStop", quests = ICON .. "INV_Misc_Note_02", group = ICON .. "Ability_Hunter_Pet_Wolf",
-  predict = ICON .. "INV_Misc_PocketWatch_01", hv = ICON .. "INV_Misc_Coin_01", prof = ICON .. "Trade_BlackSmithing",
+  hunter = ICON .. "Ability_Hunter_BeastCall", hv = ICON .. "INV_Misc_Coin_01", prof = ICON .. "Trade_BlackSmithing",
   talents = ICON .. "Ability_Marksmanship", gear = ICON .. "INV_Chest_Chain", dungeon = ICON .. "INV_Misc_Key_03",
   pvp = ICON .. "Ability_DualWield", info = ICON .. "INV_Misc_QuestionMark", binds = ICON .. "INV_Misc_Key_14",
-  adv = ICON .. "Ability_Hunter_SniperShot",
+  adv = ICON .. "Ability_Hunter_SniperShot", finder = ICON .. "INV_Misc_Spyglass_02", stats = ICON .. "INV_Misc_PocketWatch_01",
 }
 -- une description courte sous chaque entrée (lanceur groupé, comme les menus des gros addons)
 TAB_DESC = {
   now = "Ce que tu peux faire tout de suite", quests = "Étapes, quêtes par zone, trajet", group = "Tes amis et les missions",
-  predict = "Ce qui va te manquer", hv = "Achats-reventes (bêta)", prof = "Montée de métier", talents = "Où mettre tes points",
+  hunter = "Familier, munitions, pièges", hv = "Achats-reventes (bêta)", prof = "Montée de métier", talents = "Où mettre tes points",
   gear = "Améliorations par emplacement", dungeon = "Préparation et boss", pvp = "Aides JcJ", info = "Autotest, erreurs, détails",
   binds = "Raccourcis clavier conseillés", adv = "Petits avantages (bêta)", modules = "Allumer / couper chaque fonction",
   finder = "Meilleur familier, rares, maîtres", stats = "Tes chiffres mesurés",

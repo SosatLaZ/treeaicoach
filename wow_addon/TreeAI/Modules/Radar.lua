@@ -2,7 +2,7 @@
 -- Verre sombre discret, fin anneau doré, cercles de distance, flèche du joueur au centre (carte nord en haut,
 -- ou carte qui tourne avec toi), zoom à la molette (50–400 yd). Points :
 --   objectifs des quêtes en cours (amas d'apparitions Questie / API du jeu, via la Boussole), PNJ de remise,
---   cible de la boussole + étapes du planificateur + chemin sûr (TreeAI.SafePath si présent),
+--   cible de la boussole + étapes du planificateur,
 --   amis du groupe (TreeAI.Squad + positions du groupe, couleur de classe, flèche au bord si loin),
 --   rares vus, élites (zones dangereuses), ton corps, maîtres de vol (C_TaxiMap, connus en vif).
 -- Points loin = collés au bord dans leur direction. Survol = infobulle, clic = cible de la boussole.
@@ -16,12 +16,12 @@ ns = ns or {}
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 
-local LAYERS = { "quests", "turnins", "target", "path", "squad", "rares", "death", "taxi", "danger" }
+local LAYERS = { "quests", "turnins", "target", "squad", "rares", "death", "taxi", "danger" }   -- (4.0) « chemin sûr » retiré avec SafePath
 local R = T:RegisterModule("Radar", {
   title = "Radar",
   defaults = { enabled = true, shown = false, size = 170, zoom = 150, opacity = 0.8, rotate = false,
                hideCombat = false, locked = false, rings = true, compact = false, labels = true, heading = true,
-               quests = true, turnins = true, target = true, path = true, squad = true, rares = true,
+               quests = true, turnins = true, target = true, squad = true, rares = true,
                death = true, taxi = true, danger = true },
   charDefaults = { point = "TOPRIGHT", x = -210, y = -24, death = nil, rares = {}, dangers = {} },
   options = {
@@ -39,7 +39,6 @@ local R = T:RegisterModule("Radar", {
     { key = "quests", type = "toggle", label = "Objectifs de quête (zones d'apparition)", section = "Points" },
     { key = "turnins", type = "toggle", label = "PNJ de remise", section = "Points" },
     { key = "target", type = "toggle", label = "Cible de la boussole / plan", section = "Points" },
-    { key = "path", type = "toggle", label = "Chemin sûr (étapes)", section = "Points" },
     { key = "squad", type = "toggle", label = "Amis du groupe", section = "Points" },
     { key = "rares", type = "toggle", label = "Rares vus", section = "Points" },
     { key = "death", type = "toggle", label = "Mon corps", section = "Points" },
@@ -199,7 +198,7 @@ end
 
 -- ------------------------------------------------------------------ sources de points
 -- pin = { key, kind, layer, c, n, w, label, lines = {..}, count, color = {r,g,b}, mapID, x, y, questID, far }
-local PRIO = { danger = 1, taxi = 2, quest = 3, turnin = 4, path = 5, treasure = 6, rare = 6, death = 7, target = 8, squad = 9 }
+local PRIO = { danger = 1, taxi = 2, quest = 3, turnin = 4, treasure = 6, rare = 6, death = 7, target = 8, squad = 9 }
 local CLASS_FR = { HUNTER = "Chasseur", WARRIOR = "Guerrier", MAGE = "Mage", PRIEST = "Prêtre", ROGUE = "Voleur",
   DRUID = "Druide", PALADIN = "Paladin", SHAMAN = "Chaman", WARLOCK = "Démoniste" }
 local CLASS_RGB = { HUNTER = { 0.67, 0.83, 0.45 }, WARRIOR = { 0.78, 0.61, 0.43 }, MAGE = { 0.25, 0.78, 0.92 },
@@ -295,26 +294,6 @@ function R.TargetPins(me)
           label = cut(s.label or "Étape", 50), step = i, questID = s.questID or s.quest,
           lines = { { ("Plan : étape %d"):format(i), 0.6, 0.9, 1 } } })
       end
-    end
-  end
-  return out
-end
-
--- chemin sûr : TreeAI.SafePath (module optionnel, lecture seule) → liste de { mapID|map, x, y, label? }
-function R.PathPins(me)
-  local out = {}
-  local SP = T.SafePath or mod("SafePath")
-  if type(SP) ~= "table" then return out end
-  local wps
-  for _, fn in ipairs({ "GetWaypoints", "Waypoints", "GetPath" }) do
-    if type(SP[fn]) == "function" then wps = try(SP[fn], SP) if type(wps) == "table" then break end end
-  end
-  wps = type(wps) == "table" and wps or (type(SP.waypoints) == "table" and SP.waypoints) or (type(SP.path) == "table" and SP.path) or {}
-  for i, p in ipairs(wps) do
-    if i > 24 then break end
-    if type(p) == "table" then
-      addMapPin(out, me, { key = "path:" .. i, kind = "path", layer = "path", mapID = p.mapID or p.map, x = p.x, y = p.y,
-        label = cut(p.label or p.name or ("Chemin sûr — étape " .. i), 50), lines = { { "Chemin sûr", 0.5, 0.9, 1 } } })
     end
   end
   return out
@@ -514,7 +493,6 @@ function R.Collect(me)
   end
   if opt("quests") ~= false or opt("turnins") ~= false then add("_quests", function(m) return R.RefreshQuests(m) end) end
   add("target", R.TargetPins)
-  add("path", R.PathPins)
   add("squad", R.SquadPins)
   add("taxi", R.TaxiPins)
   add("rares", R.DetectPins)
@@ -556,7 +534,6 @@ local ICON = {
   quest = { CIRCLE, { 1, 0.82, 0.1 } },
   turnin = { "Interface\\GossipFrame\\ActiveQuestIcon" },
   target = { "Interface\\TargetingFrame\\UI-RaidTargetingIcon_1" },
-  path = { CIRCLE, { 0.35, 0.85, 1 } },
   squad = { CIRCLE },
   rare = { "Interface\\TargetingFrame\\UI-RaidTargetingIcon_3" },
   treasure = { "Interface\\TargetingFrame\\UI-RaidTargetingIcon_1" },
@@ -564,7 +541,7 @@ local ICON = {
   death = { "Interface\\WorldStateFrame\\SkullBones", nil, { 0, 0.5, 0, 0.5 } },
   taxi = { "Interface\\TaxiFrame\\UI-Taxi-Icon-Green" },
 }
-local SIZE = { quest = 9, turnin = 14, target = 14, path = 6, squad = 10, rare = 13, treasure = 12, danger = 12, death = 14, taxi = 13 }
+local SIZE = { quest = 9, turnin = 14, target = 14, squad = 10, rare = 13, treasure = 12, danger = 12, death = 14, taxi = 13 }
 
 local COMPACT = 120
 local function size()
@@ -710,7 +687,7 @@ end
 -- survol du radar : légende (couleur · couche · nombre de points) + portée
 local LEGEND = {
   { "quest", "quests", "Objectifs de quête" }, { "turnin", "turnins", "PNJ de remise" },
-  { "target", "target", "Cible de la boussole" }, { "path", "path", "Chemin sûr" }, { "squad", "squad", "Amis du groupe" },
+  { "target", "target", "Cible de la boussole" }, { "squad", "squad", "Amis du groupe" },
   { "rare", "rares", "Rares vus" }, { "danger", "danger", "Élites (danger)" }, { "death", "death", "Mon corps" },
   { "taxi", "taxi", "Maîtres de vol" }, { "treasure", "rares", "Trésors" },
 }
@@ -856,7 +833,7 @@ end
 -- 4 petits boutons sur l'anneau : − / + (zoom), cadenas, menu (couches & réglages). Clic droit sur le radar
 -- = même menu. Les commandes /tai radar restent en secours.
 local LAYER_FR = { quests = "Objectifs de quête", turnins = "PNJ de remise", target = "Cible boussole / plan",
-  path = "Chemin sûr", squad = "Amis du groupe", rares = "Rares vus", death = "Mon corps", taxi = "Maîtres de vol",
+  squad = "Amis du groupe", rares = "Rares vus", death = "Mon corps", taxi = "Maîtres de vol",
   danger = "Élites (danger)" }
 R.LAYER_FR = LAYER_FR
 

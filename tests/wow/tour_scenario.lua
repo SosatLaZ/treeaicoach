@@ -183,6 +183,8 @@ return function(M, ctx)
   fake:Hide()
   check(Tr.Resolve("compass") ~= fake, "cible enregistrée cachée : repère intégré")
   Tr.targets.compass = nil
+  -- (4.0) la fenêtre TreeAI remplace le panneau par défaut : on l'affiche pour tester sa ligne « Zone »
+  if T.ShowPanel then T:ShowPanel() end
   local p = T:GetPanel()
   local row = CreateFrame("Button", nil, p)
   row.entry = { id = "zone:pick", text = "Zone : Auto ▾" }
@@ -190,6 +192,13 @@ return function(M, ctx)
   check(Tr.FindRow("zone:pick") == row and Tr.Resolve("zone") == row, "ligne « Zone ▾ » du panneau trouvée par son id")
   row:Hide()
   check(Tr.FindRow("zone:pick") == nil, "ligne cachée : pas de cible")
+  -- (4.0) la fenêtre TreeAI enregistre ses cibles : la carte « Prochaine étape » et la ligne « Zone » du trajet
+  local Wn = T.Window
+  if Wn and Wn._active then
+    check(type(Tr.targets.next) == "function" and type(Tr.targets.zone) == "function", "fenêtre : cibles « next » et « zone » enregistrées")
+    local cardF = rawget(_G, "TreeAICard")
+    if cardF and cardF:IsVisible() then check(Tr.Resolve("next") == cardF, "étape « next » : la carte de la fenêtre") end
+  end
 
   -- 6. rejouer : menu de la pastille, options, /tai visite (pas en combat) ---------------------------------------
   H.Toggle()

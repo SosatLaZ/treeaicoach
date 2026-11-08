@@ -1269,12 +1269,9 @@ def session_view(snap: dict) -> dict:
         for lv in _list(ses.get("levels"))[:4]:
             if isinstance(lv, dict) and _i(lv.get("to")) > _i(lv.get("from")):
                 rows.append((str(lv.get("name")), f"niveau {_i(lv.get('from'))} → {_i(lv.get('to'))}"))
-    eco = _d(s.get("economy"))
-    if eco.get("lootValue"):
-        rows.append(("Valeur du butin", money(eco.get("lootValue"))))
-    pred = _d(s.get("predict"))
-    if pred.get("sessionMin") and not chat.get("events"):
-        rows.append(("Durée (au /reload)", duration_text(_i(pred["sessionMin"]) * 60)))
+    my = _d(s.get("session"))          # (4.0) module « Ma session » : sa durée au /reload (Économie / Prévisions retirés)
+    if _i(my.get("minutes")) > 0 and not chat.get("events"):
+        rows.append(("Durée (au /reload)", duration_text(_i(my["minutes"]) * 60)))
     goals = []
     g = _d(ses.get("goal"))
     if g:
@@ -1288,7 +1285,8 @@ def session_view(snap: dict) -> dict:
     q = _d(s.get("quests"))
     if q.get("questsToLevel"):
         goals.append({"text": f"~{_i(q['questsToLevel'])} quêtes pour le niveau suivant", "pct": None})
-    board = [(str(e.get("name")), _i(e.get("xph"))) for e in _list(ses.get("leaderboard")) if isinstance(e, dict)]
+    # (4.0) module Groupe : XP gagnée pendant la session du groupe (plus d'XP/h estimée par membre)
+    board = [(str(e.get("name")), _i(e.get("xp"))) for e in _list(ses.get("leaderboard")) if isinstance(e, dict)]
     events = [str(x) for x in _list(ses.get("events"))][:6]
     return {"rows": rows, "goals": goals, "leaderboard": board, "events": events,
             "empty": not rows and not goals}
@@ -1373,11 +1371,15 @@ def xp_rate(snap: dict) -> dict | None:
         cands.append((_i(chat["xp"]) * 3600 / dur, dur / 60, "en direct", True))
     st = _d(s.get("stats"))
     if st.get("v") == 1:
+        # Stats.xph = {q, g, d, all, recent, recentMin, min}: the last hour's rate is measured over recentMin
+        # minutes, the overall one over min minutes of play (older saves: played)
         xph = _d(st.get("xph"))
-        v = _f(xph.get("recent")) or _f(xph.get("all"))
-        mins = _f(st.get("played")) or 0.0
-        if v and mins >= XP_MIN_S / 60:
-            cands.append((v, mins, "mesurée par l'addon", False))
+        rv, rmin = _f(xph.get("recent")), _f(xph.get("recentMin")) or 0.0
+        av, amin = _f(xph.get("all")), _f(xph.get("min")) or _f(st.get("played")) or 0.0
+        if rv and rmin >= XP_MIN_S / 60:
+            cands.append((rv, rmin, "mesurée par l'addon", False))
+        elif av and amin >= XP_MIN_S / 60:
+            cands.append((av, amin, "mesurée par l'addon", False))
     ses = _d(s.get("session"))
     if _i(ses.get("minutes")) >= XP_MIN_S / 60 and _i(ses.get("xp")) > 0:
         cands.append((_i(ses["xp"]) * 60 / _i(ses["minutes"]), float(_i(ses["minutes"])), "session de l'addon", False))
@@ -1436,10 +1438,9 @@ def danger_facts(snap: dict) -> list[tuple[str, str]]:
     if fresh:
         ld = _d(_d(s.get("fight")).get("lastDeath"))
         if ld:
-            att = _i(ld.get("attackers"))
-            txt = (f"Dernière mort : {att} ennemi{'s' if att > 1 else ''}" if att else "Dernière mort")
+            who = last_death_text(ld)
             adv = _why(ld.get("advice"))
-            out.append((2, txt + (f". {adv}" if adv else ""), "warning"))
+            out.append((2, "Dernière mort" + (f" : {who}" if who else "") + (f". {adv}" if adv else ""), "warning"))
         ses = _d(s.get("session"))
         if _i(ses.get("deaths")) >= 2 and not any(t.endswith("(en direct)") for _p, t, _c in out):
             tip = _why(ses.get("tip"))
@@ -1454,6 +1455,19 @@ def danger_facts(snap: dict) -> list[tuple[str, str]]:
             out.append((2, f"{_i(run['wipes'])} wipe{'s' if _i(run['wipes']) > 1 else ''} dans ce donjon", "warning"))
     out.sort(key=lambda x: -x[0])
     return [(t, c) for _p, t, c in out[:2]]
+
+
+def last_death_text(ld: Any) -> str:
+    """« Loup affamé (niv 24, élite) » from the addon's ``summary.fight.lastDeath`` = {killer, level, elite, advice,
+    zone, time, duration, startHP} (4.0: facts only, read on the target); "" when the killer is unknown."""
+    ld = _d(ld)
+    killer = _why(ld.get("killer"))
+    if not killer:
+        return ""
+    tags = [f"niv {_i(ld['level'])}"] if _i(ld.get("level")) > 0 else []
+    if ld.get("elite"):
+        tags.append("élite")
+    return killer + (f" ({', '.join(tags)})" if tags else "")
 
 
 _TURN_RE = re.compile(r"^(?:Rends|Rendre|Fais|Termine)\b.*?«\s*([^»]+?)\s*»")

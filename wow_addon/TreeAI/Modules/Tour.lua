@@ -22,6 +22,14 @@ if type(T.SAFE_MODULES) == "table" then T.SAFE_MODULES.Tour = true end
 if type(T.MODULE_INFO) == "table" and not T.MODULE_INFO.Tour then
   T.MODULE_INFO.Tour = { lite = true, desc = "Visite guidée et astuces (une fois chacune)" }
 end
+do   -- page d'options rangée dans « Outils » (comme Quick / Finder se rangent eux-mêmes)
+  local fam = type(T.OPTIONS_FAMILY) == "table" and T.OPTIONS_FAMILY[#T.OPTIONS_FAMILY]
+  if type(fam) == "table" and type(fam.mods) == "table" then
+    local has = false
+    for _, n in ipairs(fam.mods) do if n == "Tour" then has = true end end
+    if not has then table.insert(fam.mods, math.min(#fam.mods + 1, 4), "Tour") end
+  end
+end
 
 local M = T:RegisterModule("Tour", {
   title = "Visite guidée",
@@ -226,7 +234,7 @@ M.STEPS = {
       return "Ce qu'il faut faire maintenant. Clic dessus : TreeAI t'y guide."
     end },
   { id = "zone", title = "Ta zone de quêtes",
-    can = function() return M.targets.zone ~= nil or modOn("ZonePlan") end,
+    can = function() return fromRegistry("zone") ~= nil or modOn("ZonePlan") end,   -- cible enregistrée ET visible
     prepare = function(a)
       if fromRegistry("zone") or M.FindRow("zone:pick") then return end
       local Z = T.ZonePlan
@@ -296,7 +304,7 @@ function M.Resolve(id)
 end
 
 -- ===================================================================== astuces (une fois chacune)
-local function groupOn() return modOn("Squad") or modOn("Team") or modOn("Missions") or modOn("Group") end
+local function groupOn() return modOn("Group") end   -- (4.0) Squad / Missions / Team = le module Groupe
 local function inGroup()
   if try(G.IsInGroup) then return true end
   return (tonumber((try(G.GetNumGroupMembers))) or 0) > 0 or (tonumber((try(G.GetNumPartyMembers))) or 0) > 0

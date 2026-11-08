@@ -25,7 +25,7 @@ def test_never_acts_for_the_player():
     for p in SRCS:
         code = _code(p)
         for bad in ("TakeTaxiNode", "BuyTrainerService", "TakeInboxMoney", "TakeInboxItem", "AutoLootMailItem",
-                    "ConfirmReadyCheck", "ResetInstances", "SendChatMessage", "DeleteInboxItem", "SendMail"):
+                    "ConfirmReadyCheck", "ResetInstances", "SendChatMessage", "DeleteInboxItem", "SendMail("):   # never sends
             assert bad not in code, (p.name, bad)
         assert "OpenAllMail\")" not in code.replace('g("OpenAllMail") ~= nil', ""), p.name
 

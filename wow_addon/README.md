@@ -28,16 +28,19 @@ Démarrage rapide côté joueur (installer, 3 choses à savoir, menu, bêta, bug
 ## Ordre de chargement (TOC)
 
 ```
-Core.lua  Locale_frFR.lua  UI.lua  Options.lua
-Data/Macros.lua
-Modules/Macros.lua  Modules/Hunter.lua  Modules/Classes.lua
-Data/PetFood.lua  Data/Consumables.lua
-Modules/Leveling.lua  Modules/Group.lua  Modules/Squad.lua  Modules/Quests.lua  Modules/Compass.lua  Modules/Tracker.lua  Modules/Predict.lua  Modules/Inventory.lua  Modules/Boost.lua  Modules/Auction.lua
-Modules/Leveling.lua  Modules/Group.lua  Modules/Squad.lua  Modules/Missions.lua  Modules/Quests.lua  Modules/Inventory.lua  Modules/Boost.lua  Modules/Auction.lua
-Modules/Leveling.lua  Modules/Group.lua  Modules/Squad.lua  Modules/Quests.lua  Modules/Inventory.lua  Modules/Boost.lua  Modules/Pro.lua  Modules/Economy.lua  Modules/Auction.lua
-Modules/Leveling.lua  Modules/Group.lua  Modules/Squad.lua  Modules/Quests.lua  Modules/Inventory.lua  Modules/Boost.lua  Modules/Fight.lua  Modules/HunterPro.lua  Modules/Comfort.lua  Modules/Auction.lua
-Modules/Leveling.lua  Modules/Group.lua  Modules/Squad.lua  Modules/Quests.lua  Modules/Export.lua  Modules/Planner.lua  Modules/Inventory.lua  Modules/Boost.lua  Modules/Auction.lua
-(4.0, GROUPMERGE : Squad.lua, Missions.lua et Team.lua n'existent plus — tout le groupe est dans Modules/Group.lua)
+Core.lua  Locale_frFR.lua  UI.lua  Modules/Theme.lua  Options.lua  Modules/SelfTest.lua  Data/Macros.lua  Data/PetFood.lua
+Data/Consumables.lua  Data/Dungeons.lua  Data/Gear.lua  Data/Talents.lua  Data/Recipes.lua  Data/Travel.lua
+Data/Pets.lua  Modules/Hunter.lua  Modules/Classes.lua  Modules/Leveling.lua  Modules/Group.lua  Modules/Plain.lua
+Modules/Quests.lua  Modules/Compass.lua  Modules/NavTime.lua  Modules/Horizon.lua  Modules/Detect.lua  Modules/Stats.lua
+Modules/Macros.lua  Modules/Binds.lua  Modules/Tracker.lua  Modules/Todo.lua  Modules/Region.lua  Modules/Hub.lua
+Modules/Export.lua  Modules/Planner.lua  Modules/Speed.lua  Modules/Route.lua  Modules/PathDraw.lua  Modules/ZonePlan.lua
+Modules/Inventory.lua  Modules/Boost.lua  Modules/Fight.lua  Modules/Pro.lua  Modules/Abandon.lua  Modules/Auction.lua
+Modules/Prof.lua  Modules/Glow.lua  Modules/Highlight.lua  Modules/PvP.lua  Modules/PvPMark.lua  Modules/Dungeon.lua
+Modules/DungeonPrep.lua  Modules/Radar.lua  Modules/MinimapPins.lua  Modules/Gear.lua  Modules/Talents.lua
+Modules/Session.lua  Modules/Errands.lua  Modules/Edge2.lua  Modules/Bugs.lua  Modules/Finder.lua  Modules/Quick.lua
+Modules/QuickFight.lua  Modules/QuickTravel.lua  Modules/Shortcuts.lua  Modules/Window.lua  Modules/WindowPages.lua
+Modules/Tour.lua
+(4.0 : Squad / Missions / Team → Group ; SafePath, Edge, HunterPro, Comfort, Economy, Predict retirés — voir plus bas)
 ```
 
 `Modules/Route.lua` + `Data/Travel.lua` (agent ROUTE) : le chemin le plus rapide entre les étapes du plan =
@@ -95,14 +98,9 @@ bouton sécurisé d'objet de quête (créé/modifié hors combat), ligne « Éta
 XP restante, `summary.quests`. Questie détecté: lecture seule de `QuestieLoader._modules.QuestieDB`
 (jamais `ImportModule`, aucun hook), pas d'infobulles en double.
 
-`Modules/Boost.lua` (informatif / un clic, chaque fonction désactivable dans les options) : rares/élites
-(barres de nom, son 1×/GUID, clic = crâne hors combat), meilleure récompense de quête surlignée (jamais
-choisie), infobulles « Amélioration +X % » / « Pas mieux » (poids de stats par classe/spé documentés dans le
-fichier) + prix vendeur vs HV (Auctionator, lecture seule), menace ≥ seuil en groupe (non-tank), moteur d'XP
-(monstres/quêtes avant le niveau, XP/h), chasseur : aspect de voyage (id partagé `Hunter:aspect`) et conseiller
-d'apprivoisement, rappels foyer/munitions/nourriture, récolte (nœud / dépeçage). `/tai boost`.
-Résumé IA : `summary.boost = {raresSeen, lastRare, bestReward, petAdvice, avgKillXP, avgQuestXP,
-killsToLevel, questsToLevel, xpPerHour, secondsToLevel, threatWarnings, tank}`.
+`Modules/Boost.lua` — **Rares** (4.0) : un rare ou un trésor tout près, une ligne, clic = boussole (+ crâne sur ton
+clic, hors combat). Le reste est chez son propriétaire : récompense de quête et infobulles → Gear, XP/h → Stats,
+récolte → Prof, munitions → Hunter, nourriture / foyer → Inventory. Résumé IA : `summary.boost = {raresSeen, lastRare}`.
 `Modules/Auction.lua` (agents AH, AH2): achat-revente à l'hôtel des ventes. **Aucune automatisation**:
 chaque achat / mise en vente / annulation = un clic du joueur (« Acheter », « Poster », « Annuler » ou le
 bouton « Suivant » qui exécute l'étape en tête de file) ; au plus UN appel protégé dans le OnClick, prix
@@ -152,7 +150,7 @@ sinon historique. `/tai hv [vendre|bilan|journal|fenetre|cible|debug|neutre|fact
 monture N|budget N|api auto|moderne|classique]` — `debug` affiche l'API active, le limiteur, le compte à
 rebours, taille/vitesse du dernier scan, Auctionator et les dernières erreurs.
 
-`Modules/Compass.lua` · `Modules/Tracker.lua` · `Modules/Predict.lua` (agent QUEST-PRO) — en complément de
+`Modules/Compass.lua` · `Modules/Tracker.lua` (agent QUEST-PRO ; 4.0 : `Predict.lua` retiré, voir `T.Predict`) — en complément de
 Questie / Shortest Path Forever / TomTom, jamais en doublon, aucun cadre ni fonction de Blizzard touché :
 * **Boussole** (`T.Compass`) : flèche (cadre à nous, déplaçable, molette = taille) vers la cible courante —
   point perso (`/tai way x y [nom]`, `/tai way effacer`) → `C_QuestLog.GetNextWaypoint` / `C_SuperTrack`
@@ -173,24 +171,16 @@ Questie / Shortest Path Forever / TomTom, jamais en doublon, aucun cadre ni fonc
   projection 3D dans l'API) ; suit la boussole (`Horizon.Sync(state)`).
 * **Lueurs** (`T.Glow`, `Modules/Glow.lua`) : `Glow.Ants(host, r, g, b, a, w, h)`, `Glow.Pulse(...)`,
   `Glow.Stop(host)` — animations jouées par le client, sur nos cadres seulement (Highlight).
-* **Route sûre** (`T.SafePath`, `Modules/SafePath.lua`, agent SAFEPATH) — `/tai sur [x y]` (bascule, `/tai sur off`) :
-  **aucun auto-déplacement**, le joueur marche. A* sur une grille 100 × 100 de l'uiMap (hors combat, coroutine
-  ≤ 2 ms/image) ; coût = yards × (1 ou 0,8 près des maîtres de vol / PNJ amicaux) + danger : apparitions des PNJ
-  hostiles (QuestieDB lecture seule, `friendlyToFaction`, `maxLevel`, `rank`) pondérées élite 8 · rouge 6 ·
-  orange 3 · jaune 1 · vert 0,3 (gris ignoré), rayon 20 yd + écart de niveau (+5 élite) ; barres de nom hostiles
-  non grises → secteur ±50° / 40 yd devant le joueur pendant 20 s ; lieux de mort (1 h). Lissage ≤ +1 % de coût,
-  points donnés un à un à la boussole (`Compass:SetTarget` sinon `SetWaypoint`), suivant à 15 yd, point perso
-  rendu à l'arrivée. Message « Détour sûr : +40 m, évite 3 élites ». SPF : `API.GetRoute/Route/GetPath`
-  (supposé, même carte) gardé s'il n'est pas plus exposé (+10 %). Une option par niveau de danger. Pur/testable :
-  `SafePath.Plan{W,H,N,from,to,dangers,roads,live,deaths}`.
+* (4.0) **Route sûre** (`SafePath`) : retirée — ses dangers étaient devinés (positions des monstres illisibles sur
+  Forever). La boussole, le trajet (Route) et la zone de travail (ZonePlan) guident.
 * **Suivi** (`T.Tracker`, refait par TRACK-PRO — comparatif AGF / Questie / RestedXP dans
   `research/agf_vs_treeai.md`) : onglet « Quêtes » (`SetTabLines`) **et** cadre compact optionnel à nous
   (`standalone` : déplaçable, verrou, réduction par quête au clic droit / tout réduire sur l'en-tête, police,
   largeur, échelle, opacité du fond ; sans onglets : cadre de secours `frame`).
   - **Tri par coût** (défaut) : XP/min = XP ÷ (trajet + travail × difficulté + 15 s). Trajet = SPF `Estimate`
     (8 plus proches, hors combat) sinon distance ÷ vitesse ; travail = objectifs restants × s/monstre mesurés
-    (`Predict.Rates().killsPerHour`, sinon 25 s), objets : ⌈restants ÷ taux⌉ monstres (taux mesuré
-    `Predict.BestSource/DropRate`, sinon 35 %) → « encore ~16 × Lion des collines (50 %) · ≈ 5 min », objets à
+    (`T.Predict.Rates().killsPerHour`, mesuré par Stats, sinon 25 s), objets : ⌈restants ÷ taux⌉ monstres (taux mesuré
+    `T.Predict.BestSource/DropRate`, sinon 35 %) → « encore ~16 × Lion des collines (50 %) · ≈ 5 min », objets à
     cliquer 20 s, évènements 90 s ; difficulté = (1 + 0,5·Δniv²) × 2 si seul à +3 × élite max(1,2 ; 3/groupe) ×
     1,8 si groupe suggéré > groupe × donjon (4 à < 3, sinon 1,5) ; partagée avec un ami ×0,7. Hystérésis : la
     tête ne change que pour ≥ 10 % de mieux. Autres tris : `route` (plus proche voisin), `distance`, `niveau`,
@@ -223,36 +213,31 @@ Questie / Shortest Path Forever / TomTom, jamais en doublon, aucun cadre ni fonc
   temps, boutons « Boussole » / « Y aller »), **Étapes du trajet** (`Tracker.PlanSteps` → `Planner:GetActiveSteps`),
   **Quêtes** par zone (cartes repliables : niveau en couleur, barres par objectif + « encore ~N × monstre », temps,
   distance, « À rendre », avatars de classe + progression des amis, récompense + % (Abandon/Boost), verdict Abandon au
-  survol), **Courses** (`Predict.list` : réparation, munitions, sacs, nourriture, formation, foyer), **Groupe**
-  (`Missions.board` / `next`, repli `Squad:Common()`), barre de **session** (`Boost:XPStats`, sinon Predict). Tout à la
+  survol), **Courses** (`T.Predict.list` : les lignes que Inventaire / Chasseur / Guichets affichent vraiment), **Groupe**
+  (`Missions.board` / `next`, repli `Squad:Common()` — façades du module Group), barre de **session** (`Boost:XPStats` = XP/h
+  mesurée par Stats). Tout à la
   souris : puces de filtre (Tout / Zone / Prêtes / Groupe / Faciles / Épinglées), bouton de tri, « Itinéraire »,
   « Ordre auto », case épingler, masquer (réafficher en bas), glisser-déposer ou ▲▼ (ordre sauvé par perso
   `chars[k].modules.Todo.order`), recherche facultative. Rendu ≤ 2/s, mise en page refaite seulement si le contenu change.
   Résumé `summary.todo = {now, pins, hidden, ordered, filter, errands, shown}`. `/tai todo [montrer|cacher|ordre|tout|reset]`.
-* **Prévisions** (`T.Predict`) : taux mesurés (munitions/min, nourriture/boisson par repos, monstres/h via
-  `PARTY_KILL` ou message d'XP, butin par monstre et objet de quête — `TreeAIDB.modules.Predict.mobs` —,
-  XP/h, or/h, durabilité/h, places de sac par monstre) → onglet « Prévisions » ; urgentes dans « Maintenant ».
-  Coûts de formation : table **approximative** `Predict.TRAINING`. `/tai prevoir`.
+* (4.0) **Prévisions** : module retiré (tables approximatives). `T.Predict` (défini dans `Modules/Stats.lua`) garde
+  `DropRate(mob, objet)`, `BestSource(objet)`, `Rates()` et `list` (lignes réelles d'Inventaire, Chasseur, Guichets)
+  pour Tracker, Todo, Highlight, Abandon, Pro, MinimapPins : rien sous 10 min de mesure.
 * Résumés IA : `summary.compass = {target={kind,questID,title,label,zone,src,dist,distText,eta}, targets,
   mapID, custom, hidden}`, `summary.tracker = {route={{id,title,ready,dist,xp,zone,done,total,xpm,sec,mates}}, sort, filter, totalMin, plan, easyNearby,
-  pickup, available, dropMobs}`, `summary.predict = {sessionMin, rates={ammoPerMin, killsPerHour, xpPerHour,
-  goldPerHour, durPerHour, foodPerRest, waterPerRest, restsPerHour, slotsPerKill, kills, loots},
-  forecasts={{id,text,prio}}}`. Message interne `QUESTS_UPDATED` (émis par Quests.Update).
+  pickup, available, dropMobs}` ; XP/h, or/h, kills, drops : `summary.stats` (module Stats, avec leur durée de mesure). Message interne `QUESTS_UPDATED` (émis par Quests.Update).
 
 `Modules/Pro.lua` (agent X1, quêtes, onglets « Quêtes » + « Infos », bloc `Pro`) : journal classé par XP/min
 (XP réelle en API moderne, sinon estimée ≈), quêtes à abandonner (abandon manuel), camp saturé (barres de nom
 `UnitIsTapDenied`), PNJ nommé en vue, escortes (se préparer), chaînes / relais (Questie, lecture seule), donjons
-du niveau + quêtes à prendre avant, checklist au niveau (entraîneur, talents, améliorations marchand), repos
+du niveau + quêtes à prendre avant, checklist au niveau (entraîneur au prix lu chez lui, talents), repos
 (auberges mémorisées), lieu de foyer conseillé, meilleure récompense connue (capturée chez le donneur), temps
-restant par objectif, respawn observé, vrai taux de drop (`TreeAI.Predict` si présent, sinon mesure légère).
+restant par objectif, respawn observé, vrai taux de drop (mesuré par Stats via `T.Predict`, sinon mesure légère) ;
+morts lues sur l'événement `DETECT` (« kill ») de Detect, seul lecteur du message d'XP.
 Calculs hors combat (valeurs secrètes de Forever). `TreeAI.ProUtil` : `Money`, `Dur`, `Upgrade(link)`, `Out`.
 `summary.pro = {top, abandon, checklist}`. `/tai pro`.
-`Modules/Economy.lua` (agent X1, onglets « HV » + « Infos », bloc `Economy`) : améliorations chez les marchands
-(mémorisées par PNJ), quoi vendre/jeter d'abord (valeur/case, prix HV via `Auction.Stats`), or/h par activité,
-bouton « Joindre compos » à la boîte aux lettres (1 clic = 1 pièce jointe hors combat, destinataire et Envoyer
-restent au joueur ; `/tai compos <Nom>`), montée de métier la moins chère (fenêtre de métier), mémoire des nœuds
-(clic = boussole), moment pour aller vendre, réparation prévue + coût estimé, durabilité avant donjon, valeur du
-butin de la session. `summary.economy`. `/tai eco`.
+(4.0) `Modules/Economy.lua` est retiré : « Joindre compos » → Guichets (Errands), or/h → Stats, nœuds et montée de
+métier → Métiers (Prof) ; plus d'améliorations marchand ni de réparation « prévue ».
 
 `Modules/Dungeon.lua` + `Data/Dungeons.lua` (agent PVE, informatif / un clic) : onglet « Donjon » présent
 seulement en instance ou quand un donjon est prévu (`/tai donjon <nom>|liste|stop|marque`, ou auto : groupe +
@@ -297,20 +282,15 @@ d'Économie, niveau de dépeçage), astuces Cuisine/Secourisme/Pêche + camp, m�
 ligne « Heures sup. » (clic = rang +1, Maj-clic = recettes connues seulement), clic sur un métier = cible suivante.
 Données `Data/Recipes.lua` (tables client, `tools/wow_build_data.py --only recipes`, même calcul en Python :
 `treeaicoach/wow/professions.py`). `summary.prof = {profs, legacy, plans, updated}`.
-`Modules/Fight.lua` (agent X2, PvE, informatif) : compteur de pull (barres de nom), élite en patrouille vers toi,
-fuyards (émotes, mémorisés), récap de mort + conseil (`/tai mort`), PV/mana avant pull, sort à interrompre sur la
-cible (avec ton interruption prête), minuteur des contrôles + rupture (petit cadre), familier qui perd l'aggro,
-DPS perdu par l'humeur du familier, tirs entre deux tirs auto. Forever ne donne plus le journal de combat :
-UNIT_COMBAT / UNIT_AURA / UNIT_SPELLCAST_* / barres de nom, valeurs testées avec `issecretvalue` (le journal de
-combat n'est qu'un bonus en Era). Lignes dans « Infos » (source "Fight"), `summary.fight = {deaths, lastDeath, fleeKnown}`.
-`Modules/HunterPro.lua` (chasseur) : familier conseillé par zone/niveau + rangs (`/tai familier`), munitions pour
-finir le niveau, barre de piège (armé 60 s / recharge / déclenché, Maj+glisser), % de réussite de Feindre la mort,
-temps passé par aspect. `summary.hunterPro = {fdTries, fdOk, aspects, ammoPerKill, ammoNeed}`.
-`Modules/Comfort.lua` : changements depuis la dernière connexion (`/tai nouveau`), nouveaux sorts + case de barre
-libre conseillée (jamais posés par l'addon), `/tai perf` (chronométrage de nos fonctions de module, mémoire
-`GetAddOnMemoryUsage`, CPU `GetAddOnCPUUsage` si profilage). Ralentissement auto : FPS < 30 ou > 2 ms/image
-(ou en ville, option) → `TreeAI.perfSlow = true`, `settings.refresh` ×2 (rétabli ensuite et à la déconnexion),
-message `PERF_SLOW`. Les modules avec leur propre minuterie peuvent lire `TreeAI.perfSlow`.
+`Modules/Fight.lua` — **Combat** (CLEAN 4.0, informatif) : « pourquoi je suis mort » sur des faits (contre quoi — nom,
+niveau, élite lus sur ta cible avant le pull —, durée du combat, vie au départ, noyade / épuisement) + un conseil seulement
+s'il découle de ces faits ; « récupère avant le pull » (vie / mana / familier bas en ciblant un hostile hors combat,
+mêmes seuils que la barre de combat). `summary.fight = {deaths, lastDeath = {killer, level, elite, advice, zone, time,
+duration, startHP}}`. Retiré : compteur de pull, patrouilles, sort à interrompre, contrôles, menace (secrets sur Forever).
+`Modules/Boost.lua` — **Rares** : un rare ou un trésor tout près = une ligne, clic = boussole (+ crâne sur ton clic).
+`summary.boost = {raresSeen, lastRare}` ; garde l'ancien contrat (`XPStats` → Stats, `UpgradePct` → Gear).
+(4.0) `HunterPro.lua` (fusionné dans Hunter : barre de piège, Feindre la mort) et `Comfort.lua` (ralenti auto → cœur,
+`TreeAI.perfSlow` / `PERF_SLOW` ; nouveaux sorts → Touches ; `/tai perf` → cœur) sont retirés.
 `Modules/Export.lua` + `Modules/Planner.lua` (agent PLAN-LUA, contrat `treeaicoach/wow/planner/SCHEMA.md`):
 planificateur de trajet de quêtes. Export : `TreeAIDB.export` (journal + quêtes dispo zone courante + 2 voisines +
 escouade, lu à l'exécution via l'API publique QuestieDB `LibQuestieDB` contrat 4, repli
@@ -624,11 +604,9 @@ Une seule règle pour tous les modules (le bilan module par module est dans le c
 jamais un chiffre qu'on n'a pas (« 0 dégâts », « Attaquants : 0 », « ? »). Une même info = **un seul
 propriétaire** : les autres modules lui passent leurs chiffres pour l'infobulle au lieu d'écrire leur ligne.
 
-Propriétaires (CHECKUP) : réparation = `Inventory:inv_repair` (coût estimé d'`Economy.RepairEstimate` en
-infobulle ; les lignes réparation d'Economy se taisent alors) · nourrir le familier = `Hunter:hungry` (DPS gagné
-de `Fight.PetDPS`/`MoodLoss` en infobulle, clic = met à jour « TAI Nourrir » ; `Fight:mood` seulement sans le
-module Chasseur) · aspect = `Hunter:aspect` (le relevé HunterPro passe en infobulle) · apprivoiser = `Finder:now` / onglet « Chercher » pour un chasseur (FINDER ; avant : `Boost:pet`)
-(HunterPro se tait alors) · touches = onglet **« Touches »** (`binds`, module Binds : bouton « Lier le suivant »,
+Propriétaires (CHECKUP, 4.0) : réparation = `Inventory:inv_repair` · nourrir le familier = `Hunter:hungry` (vrais % de
+dégâts de l'humeur en infobulle, clic = met à jour « TAI Nourrir ») · aspect = `Hunter:aspect` · apprivoiser =
+`Finder:now` / onglet « Chercher » pour un chasseur · touches = onglet **« Touches »** (`binds`, module Binds : bouton « Lier le suivant »,
 3 étapes, conflits groupés, listes en infobulle ; plus de ligne « macros pas créées » si `Macros:ready` est là ;
 jamais de ligne « course automatique ») · classement XP/min = 1 ligne « Meilleure quête » de Pro (top 5 en
 infobulle ; les temps par objectif se taisent quand Todo est actif, `Pro.Display`) · autotest = bouton « Autotest »
@@ -1014,8 +992,7 @@ sombre (masque circulaire si dispo, sinon texture ronde teintée), fin anneau do
 flèche du joueur (nord en haut, ou carte qui tourne : option), zoom 50–400 yd (molette ou boutons −/+).
 Tout à la souris : boutons sur l'anneau (−, +, cadenas, menu ≡) et **clic droit = menu** (couches, rotation,
 cercles, taille, verrou, oublier, cacher). Points : objectifs (amas d'apparitions via `Compass.QuestPoints`,
-hors combat, cache monde 6 s), remises, cible boussole + étapes `Planner`, chemin sûr (`TreeAI.SafePath` :
-`GetWaypoints()`/`.waypoints` si présent), amis (`party/raid` en direct puis état `Squad`), rares / élites vus
+hors combat, cache monde 6 s), remises, cible boussole + étapes `Planner`, amis (`party/raid` en direct puis état `Squad`), rares / élites vus
 (relevés à notre position, `char.rares` / `char.dangers`), corps (`PLAYER_DEAD`), maîtres de vol
 (`C_TaxiMap.GetTaxiNodesForMap`). Loin = collé au bord (flèche pour amis / cible), survol = infobulle,
 clic = cible de la boussole. 20 i/s seulement visible, caché en instance. API pure : `R.Project(dn, dw,
@@ -1059,7 +1036,7 @@ silencieux quand il n'y a rien à dire, soumis à `TreeAI:Quiet` (genre « advic
   +2 po 40 pa » (après 5 min ; clic = détail : XP/h, niveaux atteints, meilleure quête, beau butin bleu+, or
   dépensé, où se déconnecter) · **fin de session** : `chars[k].modules.Session.cur` continue après un /reload
   ou une coupure < 30 min, sinon il devient `prev` et s'affiche une fois au retour (« Dernière session : … »,
-  clic = ranger ; sujet `changes` partagé avec `Comfort:changes`) · **pourquoi je meurs** : `M.DeathTrend(deaths)`
+  clic = ranger ; sujet `changes`) · **pourquoi je meurs** : `M.DeathTrend(deaths)`
   (écart de niveau ≥ 3, même tueur, ≥ 3 monstres, élites, même zone → texte + UN conseil + onglet utile), ligne
   « Maintenant » prio 2 au 3e décès en 30 min (sujet `death`, avec `Fight:death`) · **pause** après
   `pauseHours` h (option). Lit `Fight.lastRecap` (tueur, niveau) si présent. `/tai bilan`. Résumé IA :
@@ -1076,69 +1053,18 @@ silencieux quand il n'y a rien à dire, soumis à `TreeAI:Quiet` (genre « advic
   `Errands` de l'onglet « Groupe » dès 3 entrées. Résumé : `summary.errands`.
 * Jamais appelés : `TakeTaxiNode`, `BuyTrainerService`, `TakeInbox*`, `AutoLootMailItem`, `OpenAllMail`,
   `ConfirmReadyCheck`, `ResetInstances` (vérifié par `tests/wow/next10_scenario.lua`).
-`Modules/Edge.lua` (agent CHEAT25) — **Coups d'avance** : 25 avantages « cheatés » mais légaux, chacun = UNE ligne qui
-commence par un verbe (ou un clic), cachée tant qu'elle ne sert à rien, coupable une par une (options « Coups
-d'avance », sections Groupe / Farm / Quêtes / Or / Progrès ; `/tai avance` = état + lignes vues). **Aucune
-automatisation** : pas d'achat, de vente, de cible ni de sort ; un clic ouvre au plus la boussole, le journal de quêtes
-(l'abandon reste manuel), un chuchotement pré-rempli (le joueur appuie sur Entrée) ou le suivi de la mini-carte
-(`C_Minimap.SetTracking` dans `TreeAI:UserAction`). Données : API du jeu, roster de guilde (nom / zone / niveau en
-ligne), QuestieDB en lecture seule (via `Quests.QuestieDB` / `SafePath.DB`), mesures de Predict / Boost / Auction /
-Gear / Prof. Sans donnée fiable, rien (jamais de « ? » ni de chiffre inventé).
-* Groupe : `eliteGuild` (« Demande à X (guilde, ta zone) : « Q » est élite », clic = chuchotement), `dungeonReady`
-  (« Lancez Les Mortemines : 4/4 ont « Q » », `C_QuestLog.IsUnitOnQuest` sinon amis TreeAI), `friendDanger` (membre
-  à portée < 35 % PV, monde ouvert ; valeurs secrètes ignorées), `escortReady` (échouée → abandonner/reprendre ; vie
-  < 90 % près du départ).
-* Farm : `tagRace` (cible tapée par un autre), `respawnCamp` / `namedRepop` (« Reste ici 1 min 20 : X repop » —
-  temps **appris** : heure d'apparition lue dans le GUID du monstre (23 bits bas du spawnUID = heure serveur mod
-  2^23) moins l'heure de la mort la plus proche du temps déjà appris ; médiane de 5, ≥ 3 passages, montré seulement
-  quand plus aucune barre de nom de ce monstre n'est visible ; GUID sans heure fiable = rien appris ;
-  `TreeAIDB.modules.Edge.camps[nom].s`, ≤ 150 noms), `grindSpot` (plus de quêtes dans la zone : monstres non élites
-  [niv−2, niv+1] les plus denses de `SafePath.IndexMap`, coroutine ; clic = boussole), `restedWindow` (« Tue N
-  monstres : le repos suffit pour finir le niveau »), `campBuff` (camp Forever ≥ 20 en métier, 3 min au même endroit
-  en tuant), `gatherTrack` (herboristerie / minage sans aucun suivi actif).
-* Quêtes : `npcQuest` (donneur d'une quête dispo à ≤ 90 yd, Questie `startedBy` + apparitions ; clic = boussole),
-  `keepItem` (chez le marchand : objet des sacs demandé par une quête dispo ici), `chainBreadcrumb` (quête de liaison
-  dont la cible est déjà faite).
-* Or : `foodBuy` (taux mesurés Predict → « Achète 15 × Pain : 1 h de jeu »), `vendorFlip` (prix marchand vs HV,
-  commission 5 % + dépôt, ≥ 20 pa et ≥ +50 %), `boeWorth` (butin vert+ non lié quand ramassé : HV ≥ 3× marchand et
-  ≥ +50 pa), `cheapGear` (à l'HV : achat `Gear.plan.shopping` abordable ≥ +5 %), `trainerSave`
-  (`Predict.NextTraining`), `mountSave` (niv 30–39, objectif réglable, 90 po par défaut ; durée au rythme or/h mesuré).
-* Progrès : `petTrainer` (points de dressage ≥ 30 ; rang de Grondement en capitale, clic = fait), `weaponTrainer`
-  (armes utiles manquantes par classe, en capitale), `dualSpec` (niv 40, 1 groupe de talents, 50 po, capitale),
-  `legacyNext` (≤ 10 points du prochain palier Legacy, `Prof.Engine.Legacy`), `worldBuff` (cri Onyxia / Nefarian /
-  Rend en capitale, Hakkar à Strangleronce).
-Anti-bruit : contrôles tournants dans `AutoRefresh` (légers à chaque passage, moyens /5, lourds /20) ; `say{window,
-sig}` = une même ligne montrée au plus `window` s puis muette jusqu'à ce que le sens change ; mode simple respecté
-(une ligne du module à la fois, prio 2 ou clic) ; état du joueur (mort / fantôme / vol) = règle commune du Core.
-Budgets `session_sim` : `edgeNowPct` 25 %, `edgeDistinctMax` 20, `edgeKinstrMin` 1500. Tests :
-`tests/wow/edge_scenario.lua`, `tests/wow/test_edge.py`.
+(4.0) `Modules/Edge.lua` (« Coups d'avance ») est retiré : ses avantages vérifiables sont dans Edge2, Leveling, Session et
+Errands ; le reste (repop / patrouilles appris sur trop peu de passages, chuchotements, prix devinés) a disparu.
 
-`Modules/Edge2.lua` (agent CHEAT2, juste après Edge) — **Avantages** : 15 avantages légaux de plus, aucun doublon
-avec Edge / Hunter / Boost / Inventory / Leveling / Squad (une info = un propriétaire). Sortie : `Suggest` avec
-`tab = "adv"` → onglet **« Avantages »** (menu « Plus », ordre 31) ; prio 2 = peut monter dans « Maintenant », prio 1 =
-détail dans l'onglet ; chiffres en infobulle ; jamais dans le chat ; options par avantage (sections Farm / Combat /
-Progrès / Sacs). Aucune automatisation (pas de cible, sort, achat, objet détruit) ; un clic = boussole ou « c'est fait ».
-* Farm : `contestCamp` (≥ 2 barres de nom d'un monstre de quête `UnitIsTapDenied`, ≥ 50 % → « Change de camp ou
-  groupe-toi »), `bestMob` (XP/h **mesurée** par monstre : XP du message de kill, temps de combat partagé entre les
-  kills, + repos `Stats:Downtime` ; ≥ 3 kills, ≥ +25 %, jamais sur un monstre d'objectif ; `char.mobs` ≤ 40 noms),
-  `patrolWarn` (même GUID élite qui réapparaît ≥ 3 fois : période = médiane ; au ciblage hors combat d'un autre
-  monstre, s'il est visible ou repasse dans ≤ 20 s), `dropLuck` (série sans drop vs taux `Stats:DropByName` : P < 10 %
-  → meilleure source `Stats:BestSourceByName` si ≥ ×1,3, sinon P < 3 % → « Vérifie la source »), `lootLeft` (solo :
-  ≥ 3 kills sans fenêtre de butin), `nodeRoute` (après une récolte : nœud le plus proche de la mémoire d'Economy
-  récolté il y a ≥ 5 min ; clic = boussole).
-* Combat : `drinkSmart` (coût moyen vie / mana d'un combat appris sur 20 combats → « Mange / bois maintenant » ou
-  « Enchaîne sans boire : N combats »), `buffExpire` (buff ≥ 5 min qui finit dans < 90 s, au ciblage d'un hostile),
-  `bigPull` (élite ciblé : gros sorts de la classe connus et prêts, `Edge2.BIG`).
-* Progrès : `restPlan` (à l'auberge, repos < 140 % : % d'un niveau gagné en 12 h, 5 %/8 h, dehors ÷ 4), `turninLevel`
-  (XP des quêtes finies ≥ XP manquante), `trainerPick` (`TRAINER_SHOW`, or < total : l'essentiel de la classe d'abord,
-  le peu utile — pistages, Œil… — après), `classQuest` (table Classic par classe/niveau, clic = fait, mention « Forever
-  peut différer »), `questTimer` (`C_QuestLog.GetTimeAllowed` ≤ 15 min ; prio 3 sous 90 s).
-* Sacs : `dropCheap` → `Edge2.DropTip()` dans l'infobulle « Sacs pleins » d'Inventory (gris d'abord puis moins de
-  valeur par case ; jamais quête / consommables / munitions / sacs) + ligne détail dans l'onglet.
-Coût : événements + `AutoRefresh` qui fait **une** vérification par passage (rotation), rien en combat ;
-`session_sim` plafond `kinstrModuleMin.Edge2 = 80` (mesuré ≈ 24). Tests : `tests/wow/edge2_scenario.lua`,
-`tests/wow/test_edge2.py`.
-## Détection : module `Detect` (`Modules/Detect.lua`, après Compass et SafePath)
+`Modules/Edge2.lua` — **Avantages** (CLEAN 4.0) : 9 avantages légaux qui reposent sur un FAIT lisible dans le jeu,
+chacun = UNE ligne qui commence par un verbe, coupable une par une. Farm : `contestCamp` (monstres de quête tapés par
+d'autres), `dropLuck` (objet qui ne tombe pas : taux mesuré par Stats), `lootLeft` (corps pas fouillés, solo),
+`gatherTrack` (récolteur sans suivi actif ; un clic l'active). Quêtes : `turninLevel` (quêtes finies = niveau suivant),
+`questTimer`, `escortFail`, `breadcrumb` (quête de liaison devenue inutile). Ville : `worldBuff`. Sortie : `Suggest`
+(`tab = "adv"`, onglet « Avantages »), jamais le chat. Coût : une vérification par `AutoRefresh`, rien en combat ;
+`session_sim` : `kinstrModuleMin.Edge2 = 80`, `edgeNowPct` 25 %, `edgeDistinctMax` 12. Tests :
+`tests/wow/edge2_scenario.lua`, `tests/wow/test_edge2.py`.
+## Détection : module `Detect` (`Modules/Detect.lua`, après Compass)
 
 Tout ce que l'addon voit dans le monde, au même endroit. Les API Forever 1.60.1 ont été vérifiées dans
 Blizzard_APIDocumentationGenerated (branche `forever`). Les modules qui utilisent `TreeAI.Detect` gardent chaque appel.
@@ -1156,7 +1082,7 @@ Blizzard_APIDocumentationGenerated (branche `forever`). Les modules qui utilisen
 | `:OnChange(cb)` | `cb(kind, data)` : `rares`, `questunits`, `quests`, `progress`, `kill`, `services`, `group`, `combat` (+ message `DETECT`) |
 
 Utilisé par : Boost (ligne rare / trésor, clic = y aller), Highlight (repli UnitIsRelatedToActiveQuest), Compass
-(`TargetNearest(kind)`), Predict (« · Réparation : PNJ — 230 m »), Radar (couche rares : vignettes).
+(`TargetNearest(kind)`), Radar (couche rares : vignettes), Pro / Stats / Edge2 (morts : message `DETECT` « kill »).
 Commande : `/tai detect [rare|tresor|marchand|reparation|vol|auberge|courrier]`. Résumé IA : `summary.detect`.
 **Vérité des données (agent DATA)** : un monstre / objet de quête ne vient que d'un objectif NON fini d'une quête du
 journal, par questID. `Detect.Norm(s)`, `ObjectiveFor(nom)` (exact, objectifs « monstre »), `InLog(qid)`,
@@ -1215,14 +1141,14 @@ Uniquement des événements + une minuterie de 60 s (aucun OnUpdate, ≤ 60 kins
   a priori QuestieDB (`GetItemDroprate`, si sa base en donne un, poids 8 corps) sinon Beta(1, 3) ≈ 25 % ;
   moyenne + intervalle 80 % (quantiles 10 / 90 %). `Stats:Drop(item [, npc])` → moyenne, occasions, bas, haut ;
   `Stats:KillsNeeded(reste, item [, npc])` → attendu, pessimiste (« encore ~8, jusqu'à 12 si pas de chance ») ;
-  `DropByName` / `BestSourceByName`. Adopté par Predict (`DropRate`, `BestSource` → Tracker, Highlight, Abandon),
+  `DropByName` / `BestSourceByName`. Exposé par la façade `T.Predict` (`DropRate`, `BestSource` → Tracker, Highlight, Abandon, Pro),
   Tracker (borne pessimiste, « taux mesuré sur N » dans l'infobulle), Planner.
 * **API** : `Stats:Get("xph.q")` (chemin dans l'instantané), `:KillTime(écart [, type])` (solo, sinon groupe ×1,25,
   sinon écart voisin, sinon Export), `:XPPerHour("questing"|"grinding"|"dungeon"|nil)`, `:RecentXPPerHour()`,
   `:TravelSpeed(monté)`, `:Downtime()` → s / combat, part du temps, `:GoldPerHour()`, `:PerHour("ammo"|"food"|
   "water"|"repair")`, `:DeathsPerHour()`, `:QuestMinutes()`, `:SaleRate(objet)`, `:Respawn(npc)`,
   `:FlightTime(de, à)` (apprentissage Export), `:Snapshot()`. Tout renvoie nil sans mesure suffisante.
-  Utilisé par Planner (temps de kill, repos, vitesse), Predict (XP/h, or/h, munitions en début de session),
+  Utilisé par Planner (temps de kill, repos, vitesse), `T.Predict` (XP/h, or/h), Chasseur (munitions / h),
   Abandon (temps de kill, vitesse, XP/h), Gear (or/h = valeur du temps), Auction (`NotePost` / `NoteAuction`,
   « tes ventes : 67 % vendues en ~2 h »).
 * **Onglet « Stats »** (sous-menu « Plus », `/tai stats`) : 5-8 lignes (fiche, attaque, combat, repos / morts,
@@ -1265,8 +1191,7 @@ Uniquement des événements + une minuterie de 60 s (aucun OnUpdate, ≤ 60 kins
   Path Forever, renvoie le trajet. Sans trajet : la boussole guide et l'arrêt rejoint le prochain trajet.
   **Y aller** = `Compass.SetTarget`.
 * **Maintenant** : au plus une ligne `Finder:now`, seulement si un résultat ≥ 15 pts est à ≤ `nearMin` min
-  (« Apprivoise X à 300 m : Morsure 3 »). Propriétaire unique d'« apprivoiser » : `Finder.OwnsPet()` → `Boost:pet`
-  et la ligne familier de HunterPro se taisent.
+  (« Apprivoise X à 300 m : Morsure 3 »). Propriétaire unique d'« apprivoiser » (`Finder.OwnsPet()`).
 * Perf : événements (cible, survol, niveau, zone) + relevé toutes les 30 s hors combat (calcul ≤ 1 / 25 s, à la
   demande sinon) ; QuestieDB lu une fois par PNJ et par session. Budget session_sim `Finder = 60` kinstr/min (mesuré
   ~11). Rien d'automatique, aucune fonction protégée. Test : `tests/wow/finder_scenario.lua`, `tests/wow/test_finder.py`.

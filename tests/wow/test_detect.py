@@ -15,7 +15,7 @@ def test_toc_lists_detect_after_compass_before_consumers():
     lines = [ln.strip() for ln in (ADDON / "TreeAI.toc").read_text(encoding="utf-8").splitlines()]
     i = lines.index("Modules\\Detect.lua")
     assert i > lines.index("Modules\\Compass.lua")
-    for consumer in ("Predict", "Boost", "Highlight", "Radar"):
+    for consumer in ("Boost", "Highlight", "Radar"):   # Predict removed in 4.0 (CLEAN)
         assert i < lines.index(f"Modules\\{consumer}.lua")
 
 
@@ -31,7 +31,7 @@ def test_forever_safe_and_read_only():
         assert api in SRC, api
     assert "section =" in SRC
     # every adopter goes through T.Detect guarded
-    for mod in ("Boost", "Highlight", "Compass", "Predict", "Radar"):
+    for mod in ("Boost", "Highlight", "Compass", "Radar"):
         src = (ADDON / "Modules" / f"{mod}.lua").read_text(encoding="utf-8")
         assert re.search(r"T\.Detect", src), mod
 

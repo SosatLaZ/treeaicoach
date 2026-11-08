@@ -4,9 +4,11 @@ return function(M, ctx)
   local Gr = T and T.modules and T.modules.Gear
   ctx.check(Gr and Gr.db and Gr.db.enabled, "Gear registered + enabled")
   ctx.check(T.Data and T.Data.Gear and T.Data.Gear.items and T.Data.Gear.items[2507], "client gear data loaded (Data/Gear.lua)")
+  local E = Gr and Gr.Engine
+  ctx.check(E and E.ScoreStats and E.Weights and E.EQUIP_SLOTS, "Gear owns the weights / scorer (moved from Boost)")
   local B = T.modules.Boost
-  ctx.check(B and B.ScoreStats and B.Weights and B.EQUIP_SLOTS, "Boost exports its weights / scorer")
-  if not (Gr and B) then return end
+  ctx.check(B and B.UpgradePct and B.CanUse, "old Boost contract kept as forwards (Quick, Dungeon, Abandon)")
+  if not (Gr and E) then return end
   M.LeaveCombat()
 
   -- 1. real client data first: a full plan must run without error for the level-26 hunter
@@ -79,6 +81,9 @@ return function(M, ctx)
   for _, l in ipairs(lines) do txt = txt .. (l.text or "") .. "\n" end
   ctx.check(txt:find("Priorité des stats : Agilité"), "French stat priority line")
   ctx.check(txt:find("Torse : Gilet porté") and txt:find("Gilet%-test agile"), "slot line with next upgrade")
+  ctx.check(txt:find("Gilet%-test agile %(emplacement vide%)") or txt:find("Gilet%-test agile %(nettement mieux%)"),
+    "verdict in words, never « +X % »")
+  ctx.check(not txt:find("%+%d+ %%"), "no estimated percentage shown: " .. txt)
   ctx.check(txt:find("Liste de courses"), "shopping list lines")
   ctx.check(txt:find("tu n'en as pas"), "ammo warning line")
   ctx.check(txt:find("DPS"), "ranged weapon DPS / speed shown")
@@ -113,6 +118,49 @@ return function(M, ctx)
   Gr:AutoRefresh()
   for _ = 1, 50 do M.Advance(0.2) end
   ctx.check(Gr.plan.slots[9] and Gr.plan.slots[9][1] and Gr.plan.slots[9][1].id == 990011, "background plan finished")
+
+  T.Data.Gear.items, T.Data.Gear.crafted = realItems, realCrafted
+
+  -- 4. quest reward (moved from Boost): leather agi beats cloth int / plate for the hunter; glow anchored, never parented
+  M.AddItem(90101, { name = "Gilet usé", classID = 4, subclassID = 2, equipLoc = "INVTYPE_CHEST", quality = 2,
+    sellPrice = 100, stats = { ITEM_MOD_AGILITY_SHORT = 5 } })
+  M.AddItem(90102, { name = "Robe de tissu", classID = 4, subclassID = 1, equipLoc = "INVTYPE_ROBE", quality = 2,
+    sellPrice = 900, stats = { ITEM_MOD_INTELLECT_SHORT = 8 } })
+  M.AddItem(90103, { name = "Gilet agile", classID = 4, subclassID = 2, equipLoc = "INVTYPE_CHEST", quality = 2,
+    sellPrice = 300, stats = { ITEM_MOD_AGILITY_SHORT = 10 } })
+  M.AddItem(90104, { name = "Cuirasse lourde", classID = 4, subclassID = 4, equipLoc = "INVTYPE_CHEST", quality = 2,
+    sellPrice = 5000, stats = { ITEM_MOD_STRENGTH_SHORT = 20 } })
+  local keepChest = M.inventory[5]
+  M.inventory[5] = { id = 90101, count = 1 }
+  M.questChoices = { 90104, 90102, 90103 }
+  local bi = Gr.RankQuestRewards()
+  ctx.check(bi == 3, "best reward = leather agi (got " .. tostring(bi) .. ")")
+  CreateFrame("Button", "QuestInfoRewardsFrameQuestInfoItem3", UIParent)
+  ctx.fire("QUEST_COMPLETE")
+  M.Advance(1)
+  local rw = S["Gear:reward"]
+  ctx.check(rw and rw.text:find("^Prends « Gilet agile » : nettement mieux"), "reward line, verb first, words: " .. tostring(rw and rw.text))
+  M.questChoices = { 90104, 90102 }
+  local i2, v2, why2 = Gr.RankQuestRewards()
+  ctx.check(i2 == 1 and why2 == "sell" and v2 == 5000, "no upgrade -> best vendor price")
+  ctx.fire("QUEST_FINISHED")
+  ctx.check(not S["Gear:reward"], "reward line cleared when the window closes")
+  -- 5. item tooltip (moved from Boost): words, sell price ; plate refused for a hunter
+  GameTooltip.__item, GameTooltip.__lines = 90103, {}
+  local fn = GameTooltip:GetScript("OnTooltipSetItem")
+  ctx.check(fn, "tooltip hooked")
+  if fn then
+    fn(GameTooltip)
+    local joined = table.concat(GameTooltip.__lines, " | ")
+    ctx.check(joined:find("TreeAI : nettement mieux que ce que tu portes"), "upgrade in words: " .. joined)
+    ctx.check(joined:find("Se vend 3 pa au marchand"), "vendor price line: " .. joined)
+    GameTooltip.__item, GameTooltip.__lines = 90104, {}
+    fn(GameTooltip)
+    ctx.check(table.concat(GameTooltip.__lines, " "):find("pas pour toi %(armure que tu ne peux pas porter%)"), "plate refused")
+    GameTooltip.__item = nil
+  end
+  M.inventory[5] = keepChest
+  M.questChoices = {}
 
   -- slash
   M.RunSlash("/tai equipement")

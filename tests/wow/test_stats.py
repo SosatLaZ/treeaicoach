@@ -22,7 +22,7 @@ def _code(p):
 def test_toc_early():
     toc = [ln.strip() for ln in (ADDON / "TreeAI.toc").read_text(encoding="utf-8").splitlines()]
     i = toc.index("Modules\\Stats.lua")
-    assert i < toc.index("Modules\\Macros.lua") < toc.index("Modules\\Predict.lua")
+    assert i < toc.index("Modules\\Macros.lua")   # Predict removed in 4.0: Stats carries the T.Predict facade
     if "Modules\\Detect.lua" in toc:
         assert toc.index("Modules\\Detect.lua") < i
 

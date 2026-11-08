@@ -3,15 +3,15 @@
 --  3 camp saturé (monstres déjà tagués)            4 PNJ nommé de quête en vue
 --  5 escorte : « prépare-toi avant de lancer »     6 chaînes : ce qui se débloque ensuite et où (Questie)
 --  7 quêtes relais (breadcrumbs, Questie)          8 quêtes à prendre avant un donjon
---  9 checklist au niveau (entraîneur, talents, améliorations marchand)
+--  9 checklist au niveau (entraîneur au prix lu, talents)
 -- 10 repos : où se déconnecter                    11 meilleur lieu pour la pierre de foyer
 -- 12 meilleure récompense connue avant de finir   13 temps restant par objectif (« 4/10 : ~3 min »)
--- 14 respawn des monstres de quête (observé)      15 vrai taux de drop (TreeAI.Predict si présent)
+-- 14 respawn des monstres de quête (observé)      15 vrai taux de drop (mesuré : Stats, sinon le nôtre)
 -- Sortie : onglet « Quêtes » (TreeAI:SetTabLines, bloc "Pro") + « Infos » ; repli Suggest. Jamais le chat.
 -- Rien n'est fait à la place du joueur. Aucune sélection dans le journal de quêtes Blizzard (taint).
 -- Questie : lecture seule (QuestieLoader._modules.QuestieDB ou LibQuestieDB), rien n'est copié.
 -- Forever : valeurs « secrètes » en combat → calculs hors combat, issecretvalue testé.
--- Lua 5.1, aucune globale. Expose TreeAI.ProUtil (outils partagés avec Economy.lua).
+-- Lua 5.1, aucune globale. Expose TreeAI.ProUtil (outils partagés).
 local T = _G.TreeAI
 if not T or not T.RegisterModule then return end
 local API = T.API or {}
@@ -298,10 +298,10 @@ local function questXP(q)
   return M.EstimateXP(q.level, level()), false
 end
 
--- kills : mesurés par TreeAI.Predict (si présent) sinon par nos messages d'XP « X meurt »
+-- kills : mesurés par Stats (façade T.Predict, ≥ 10 min de mesure) sinon par les morts que Detect publie (« X meurt »)
 local S = { kills = {}, deaths = {}, plates = {}, seen = {}, killT = {}, lastKill = nil, start = 0 }
 local function killSeconds()
-  local P = mod("Predict")
+  local P = T.Predict
   if P and P.Rates then
     local ok, r = pcall(P.Rates)
     if ok and type(r) == "table" and tonumber(r.killsPerHour) and r.killsPerHour > 5 then return 3600 / r.killsPerHour end
@@ -315,12 +315,12 @@ local function killSeconds()
 end
 M.KillSeconds = killSeconds
 
--- taux de drop (15) : Predict si présent, sinon nos propres observations
+-- taux de drop (15) : mesuré par Stats (façade T.Predict) si connu, sinon nos propres observations
 local function dropRate(item)
-  local P = mod("Predict")
+  local P = T.Predict
   if P and P.BestSource then
     local ok, mob, r, n = pcall(P.BestSource, item)
-    if ok and mob and tonumber(r) then return r, n, mob, "Predict" end
+    if ok and mob and tonumber(r) then return r, n, mob, "Stats" end
   end
   local d = M.db and M.db.dropData and M.db.dropData[low(item)]
   if d and (d.k or 0) >= 3 then return (d.n or 0) / d.k, d.k, d.mob, "TreeAI" end
@@ -435,11 +435,9 @@ function M.CampState()
 end
 
 -- ------------------------------------------------------------------ events
-local KILL_FR, KILL_EN = "^(.-) meurt, vous gagnez", "^(.-) dies, you gain"
-function M:CHAT_MSG_COMBAT_XP_GAIN(_, msg)
-  if type(msg) ~= "string" or secret(msg) then return end
-  local name = msg:match(KILL_FR) or msg:match(KILL_EN)
-  if not name then return end
+-- (4.0) un seul lecteur du message d'XP : Detect publie chaque mort (« X meurt, vous gagnez… ») par l'événement DETECT
+function M.OnKill(name)
+  if type(name) ~= "string" or name == "" or secret(name) then return end
   S.killT[#S.killT + 1] = now()
   while #S.killT > 30 do table.remove(S.killT, 1) end
   S.lastKill = { name = name, t = now() }
@@ -447,7 +445,6 @@ function M:CHAT_MSG_COMBAT_XP_GAIN(_, msg)
 end
 
 function M:LOOT_OPENED()
-  if mod("Predict") then return end  -- Predict mesure déjà les drops : pas de doublon
   local mob = S.lastKill and now() - S.lastKill.t < 120 and S.lastKill.name or nil
   if not mob then return end
   M.db.dropData = M.db.dropData or {}
@@ -533,16 +530,14 @@ end
 function M.Checklist()
   local pl, items = level(), {}
   if pl % 2 == 0 and (M.char.trainerLevel or 0) < pl then
-    local cost
-    local P = mod("Predict")
-    if P and P.NextTraining then local ok, lv, c = pcall(P.NextTraining, pl - 1) if ok and lv == pl then cost = c end end
-    items[#items + 1] = "entraîneur" .. (tonumber(cost) and (" (≈ " .. U.Money(cost) .. ")") or "")
+    -- (4.0) prix RÉEL lu chez le maître de classe à la dernière visite (Guichets), jamais une estimation
+    local Er = T.modules and T.modules.Errands
+    local nt = Er and type(Er.char) == "table" and Er.char.nextTrain
+    local cost = type(nt) == "table" and tonumber(nt.level) == pl and tonumber(nt.cost) or nil
+    items[#items + 1] = "entraîneur" .. ((cost and cost > 0) and (" (" .. U.Money(cost) .. ")") or "")
   end
   local tp = talentPoints()
   if tp > 0 then items[#items + 1] = tp .. " point(s) de talent" end
-  local E = mod("Economy")
-  local up = E and E.KnownUpgrades and try(E.KnownUpgrades, E) or nil
-  if type(up) == "table" and #up > 0 then items[#items + 1] = #up .. " amélioration(s) chez un marchand" end
   return items
 end
 
@@ -847,13 +842,14 @@ end
 
 function M:OnEnable()
   S.start = now()
-  for _, ev in ipairs({ "CHAT_MSG_COMBAT_XP_GAIN", "LOOT_OPENED", "QUEST_DETAIL", "QUEST_COMPLETE", "TRAINER_SHOW",
+  for _, ev in ipairs({ "LOOT_OPENED", "QUEST_DETAIL", "QUEST_COMPLETE", "TRAINER_SHOW",
     "PLAYER_LEVEL_UP", "NAME_PLATE_UNIT_ADDED", "PLAYER_TARGET_CHANGED", "UPDATE_MOUSEOVER_UNIT", "QUEST_LOG_UPDATE",
     "PLAYER_UPDATE_RESTING" }) do
     M:RegisterEvent(ev)
   end
   M:On("SUMMARY", function() pcall(M.WriteSummary, M) end)
   M:On("COMBAT_END", function() M.Refresh(1) end)
+  M:On("DETECT", function(_, _, kind, data) if kind == "kill" and type(data) == "table" then M.OnKill(data.name) end end)
   if T.RegisterSlash then
     T:RegisterSlash("pro", function() M.Update(true) end, "quêtes pro : recalcule (ordre, temps, chaînes…)")
   end

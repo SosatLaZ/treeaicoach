@@ -4,10 +4,14 @@
 --  2 courrier à risque : contre-remboursement (somme, expéditeur) et lettres avec objets qui expirent ;
 --    l'échéance est gardée et rappelée au login si tu n'es pas repassé à une boîte.
 --  3 maître de vol : « pierre de foyer ou vol » vers ton auberge (temps de recharge de la pierre + prix du vol).
---  4 entraîneur : prix exact de ce qui est à apprendre ; sans assez d'or, quoi prendre d'abord.
+--  4 maître de classe : prix exact de ce qui est à apprendre ; sans assez d'or, quoi prendre d'abord. Le prix des
+--    sorts du niveau suivant (lu dans la même fenêtre) est gardé : « garde 3 po 20 pour le niveau 30 » avant d'y être,
+--    et « va voir ton maître de classe » au passage de niveau (prix réel, plus de table approximative).
 --  5 appel « prêt » (ready check) : ce qui te manque avant de répondre (PV, mana, sacs, munitions, familier,
 --    réparation) ; rien n'est dit si tout va bien. La réponse reste au joueur.
 --  6 limite d'instances : entrées de la dernière heure (5 par heure), place libre dans X min (onglet « Groupe »).
+--  7 courrier (option, coupée par défaut) : bouton « Joindre compos » collé à la fenêtre d'envoi ; UN clic = UNE pile
+--    de compos jointe ; le destinataire et « Envoyer » restent à toi.
 -- Chaque ligne s'efface à la fermeture de la fenêtre. Aucune fonction protégée, aucun cadre Blizzard touché.
 -- Lua 5.1, aucune globale.
 local T = _G.TreeAI
@@ -15,14 +19,15 @@ if not (T and T.RegisterModule) then return end
 
 local M = T:RegisterModule("Errands", {
   title = "Guichets",
-  defaults = { enabled = true, mail = true, taxi = true, trainer = true, ready = true, instances = true, inst = {} },
-  charDefaults = { mail = false, trainer = false },
+  defaults = { enabled = true, mail = true, taxi = true, trainer = true, ready = true, instances = true, mats = false, inst = {} },
+  charDefaults = { mail = false, trainer = false, nextTrain = false, trainPending = false },
   options = {
     { key = "mail", type = "toggle", label = "Boîte aux lettres : à récupérer, contre-remboursement, expiration", section = "Fenêtres" },
     { key = "taxi", type = "toggle", label = "Maître de vol : pierre de foyer ou vol", section = "Fenêtres" },
     { key = "trainer", type = "toggle", label = "Entraîneur : prix exact et quoi prendre d'abord", section = "Fenêtres" },
     { key = "ready", type = "toggle", label = "Appel « prêt » : ce qui te manque", section = "Groupe" },
     { key = "instances", type = "toggle", label = "Limite de 5 instances par heure", section = "Groupe" },
+    { key = "mats", type = "toggle", label = "Courrier : bouton « Joindre compos » (une pile par clic)", section = "Fenêtres" },
   },
 })
 if T.TOPIC_IDS then
@@ -166,6 +171,61 @@ function M.MailReminder()
     { ttl = 600, tab = "hv", sound = false, onClick = dismiss("expireLogin"), tooltip = { "Clic : ranger" } })
 end
 
+-- ------------------------------------------------------------------ 7 « Joindre compos » (option)
+local matsBtn
+local function sendOpen()
+  local f = g("SendMailFrame")
+  return type(f) == "table" and f.IsShown and try(f.IsShown, f) and true or false
+end
+--- compos d'artisanat (classe d'objet 7) non verrouillées dans les sacs : { {bag, slot} }
+function M.Mats()
+  local list, API = {}, T.API or {}
+  if not API.IterBags then return list end
+  for bag, slot, it in API.IterBags() do
+    local classID = it and select(12, try(API.ItemInfo, it.link or it.itemID))
+    if classID == 7 and not it.locked then list[#list + 1] = { bag = bag, slot = slot } end
+  end
+  return list
+end
+--- clic du joueur : joint UNE pile (UseContainerItem, onglet « Envoyer » ouvert, hors combat) — jamais autre chose
+function M.MatsClick()
+  if try(g("InCombatLockdown")) or not sendOpen() then return false end
+  local m = M.Mats()[1]
+  if not m then return false end
+  local C = g("C_Container")
+  local use = (C and C.UseContainerItem) or g("UseContainerItem")
+  if use then pcall(use, m.bag, m.slot) end
+  if T.After then T:After(0.3, function() pcall(M.ShowMats, true) end) end
+  return true
+end
+function M.ShowMats(show)
+  if not opt("mats") or try(g("InCombatLockdown")) then show = false end
+  local mf = g("MailFrame")
+  if show and not (mf and (not mf.IsShown or mf:IsShown())) then show = false end
+  if show and not matsBtn then
+    local CF, parent = g("CreateFrame"), g("UIParent")
+    if not (CF and parent) then return end
+    matsBtn = CF("Button", nil, parent, "UIPanelButtonTemplate")
+    matsBtn:SetSize(170, 24)
+    matsBtn:SetPoint("TOPLEFT", mf, "TOPRIGHT", 6, -70)   -- ancré à la fenêtre du courrier (jamais son enfant)
+    if matsBtn.SetClampedToScreen then matsBtn:SetClampedToScreen(true) end
+    matsBtn:SetScript("OnClick", function() pcall(M.MatsClick) end)
+    matsBtn:SetScript("OnEnter", function(self)
+      local tt = g("GameTooltip")
+      if not tt then return end
+      tt:SetOwner(self, "ANCHOR_RIGHT")
+      tt:AddLine("Joindre compos", 1, 1, 1)
+      tt:AddLine("Onglet « Envoyer » ouvert : chaque clic joint une pile de compos.", 0.85, 0.85, 0.85, true)
+      tt:AddLine("Le destinataire et « Envoyer » restent à toi.", 0.85, 0.85, 0.85, true)
+      tt:Show()
+    end)
+    matsBtn:SetScript("OnLeave", function() local tt = g("GameTooltip") if tt then tt:Hide() end end)
+  end
+  if not matsBtn then return end
+  local n = show and #M.Mats() or 0
+  if n > 0 then matsBtn:SetText(fmt("Joindre compos (%d)", n)) matsBtn:Show() else matsBtn:Hide() end
+end
+
 -- ------------------------------------------------------------------ 3 pierre de foyer ou vol
 function M.HearthLeft()
   local API = T.API or {}
@@ -275,7 +335,7 @@ end
 function M.ReadTrainer()
   if try(g("IsTradeskillTrainer")) then return nil end
   local k = num(try(g("GetNumTrainerServices"))) or 0
-  local avail, nextLevel = {}, nil
+  local avail, nextLevel, later = {}, nil, {}
   local me = num(try(g("UnitLevel"), "player")) or 1
   for i = 1, min(k, 200) do
     local name, _, cat = try(g("GetTrainerServiceInfo"), i)
@@ -284,22 +344,66 @@ function M.ReadTrainer()
         avail[#avail + 1] = { name = name, cost = num(try(g("GetTrainerServiceCost"), i)) or 0 }
       elseif cat == "unavailable" then
         local req = num(try(g("GetTrainerServiceLevelReq"), i))
-        if req and req > me and (not nextLevel or req < nextLevel) then nextLevel = req end
+        if req and req > me then
+          if not nextLevel or req < nextLevel then nextLevel = req end
+          later[#later + 1] = { req = req, cost = num(try(g("GetTrainerServiceCost"), i)) or 0 }
+        end
       end
     end
   end
-  return avail, nextLevel
+  local nextCost = 0
+  for _, l in ipairs(later) do if l.req == nextLevel then nextCost = nextCost + l.cost end end
+  return avail, nextLevel, nextCost
+end
+
+--- rappel « garde ton or » (pur) : prochain palier lu chez le maître, niveau, or -> texte ou nil
+function M.SaveText(nt, lvl, have)
+  if type(nt) ~= "table" or not tonumber(nt.level) or not tonumber(nt.cost) or nt.cost <= 0 then return nil end
+  lvl, have = tonumber(lvl) or 0, tonumber(have) or 0
+  if lvl < nt.level - 2 or lvl >= nt.level or have >= nt.cost then return nil end
+  return fmt("Garde %s pour ton maître de classe au niveau %d : tu as %s", money(nt.cost), nt.level, money(have))
+end
+function M.UpdateSave()
+  local nt = M.char and M.char.nextTrain
+  local text = opt("trainer") and M.SaveText(nt, num(try(g("UnitLevel"), "player")), num(try(g("GetMoney"))))
+  if T.SetTabLines then
+    pcall(T.SetTabLines, T, "info", text and { { text = text, prio = 1,
+      tooltip = { "Prix des sorts de ce niveau, lu dans la fenêtre de ton maître de classe à ta dernière visite." } } } or {},
+      "Errands")
+  end
+end
+
+--- passage de niveau : nouveaux sorts chez le maître de classe (prix réel s'il a été lu)
+function M.TrainerReminder()
+  local lvl = num(try(g("UnitLevel"), "player")) or 1
+  local p = M.char and M.char.trainPending
+  if not (opt("trainer") and p) or try(g("InCombatLockdown")) then return end
+  local nt = M.char.nextTrain
+  local known = type(nt) == "table" and tonumber(nt.level) and nt.level <= lvl and tonumber(nt.cost) and nt.cost > 0
+  if not known and p % 2 == 1 then return end   -- sans prix lu : seulement aux niveaux pairs (nouveaux sorts Classic)
+  local text = known and fmt("Va voir ton maître de classe : nouveaux sorts pour %s", money(nt.cost))
+    or fmt("Va voir ton maître de classe : nouveaux sorts au niveau %d", p)
+  local resting = try(g("IsResting")) and true or false
+  M:Suggest("trainer", text, resting and 2 or 1, { ttl = 0, tab = "now", topic = "train", sound = false,
+    onClick = dismiss("trainer"),
+    tooltip = { known and "Prix lu dans la fenêtre de ton maître de classe." or "Le prix exact s'affichera dans sa fenêtre.",
+      "Clic : ranger" } })
 end
 
 function M.UpdateTrainer()
   if not opt("trainer") then return end
-  local avail, nextLevel = M.ReadTrainer()
+  local avail, nextLevel, nextCost = M.ReadTrainer()
   if not avail then M:Clear("trainer") return end
   local text, prio = M.TrainerPlan(avail, num(try(g("GetMoney"))), nextLevel)
-  if M.char and #avail > 0 then
-    local total = 0
-    for _, s in ipairs(avail) do total = total + s.cost end
-    M.char.trainer = { level = num(try(g("UnitLevel"), "player")), cost = total, n = #avail, at = now() }
+  if M.char then
+    M.char.trainPending = false
+    if #avail > 0 then
+      local total = 0
+      for _, s in ipairs(avail) do total = total + s.cost end
+      M.char.trainer = { level = num(try(g("UnitLevel"), "player")), cost = total, n = #avail, at = now() }
+    end
+    if nextLevel and (nextCost or 0) > 0 then M.char.nextTrain = { level = nextLevel, cost = nextCost, at = now() } end
+    M.UpdateSave()
   end
   if text then
     M:Suggest("trainer", text, prio, { ttl = 0, tab = "now", topic = "train", sound = false, onClick = dismiss("trainer"),
@@ -424,19 +528,31 @@ end
 
 -- ------------------------------------------------------------------ cycle de vie
 function M:AutoRefresh()
-  if M.mailOpen then pcall(M.UpdateMail) end
-  if (now() - (M.lastGroup or 0)) >= 60 then M.lastGroup = now(); M.UpdateGroupTab() end
+  if M.mailOpen then pcall(M.UpdateMail) pcall(M.ShowMats, sendOpen()) end
+  if (now() - (M.lastGroup or 0)) >= 60 then
+    M.lastGroup = now()
+    M.UpdateGroupTab()
+    pcall(M.UpdateSave)
+    pcall(M.TrainerReminder)
+  end
 end
 
 function M:OnEnable()
   M:RegisterEvent("MAIL_SHOW", function() M.mailOpen = true; hidden.mail, hidden.cod1, hidden.cod2, hidden.expire = nil, nil, nil, nil; M:Clear("expireLogin"); pcall(M.UpdateMail) end)
   M:RegisterEvent("MAIL_INBOX_UPDATE", function() pcall(M.UpdateMail) end)
-  M:RegisterEvent("MAIL_CLOSED", function() M.ClearMail() end)
+  M:RegisterEvent("MAIL_CLOSED", function() M.ClearMail() pcall(M.ShowMats, false) end)
+  M:RegisterEvent("MAIL_SEND_INFO_UPDATE", function() pcall(M.ShowMats, sendOpen()) end)
+  M:RegisterEvent("PLAYER_LEVEL_UP", function(_, _, lv)
+    if M.char then M.char.trainPending = num(lv) or num(try(g("UnitLevel"), "player")) end
+    T:After(2, function() pcall(M.TrainerReminder) pcall(M.UpdateSave) end)
+  end)
+  M:RegisterEvent("PLAYER_MONEY", function() pcall(M.UpdateSave) end)
+  M:RegisterEvent("PLAYER_UPDATE_RESTING", function() pcall(M.TrainerReminder) end)
   M:RegisterEvent("TAXIMAP_OPENED", function() pcall(M.UpdateTaxi) end)
   M:RegisterEvent("TAXIMAP_CLOSED", function() M:Clear("taxi") end)
   M:RegisterEvent("TRAINER_SHOW", function() pcall(M.UpdateTrainer) end)
   M:RegisterEvent("TRAINER_UPDATE", function() pcall(M.UpdateTrainer) end)
-  M:RegisterEvent("TRAINER_CLOSED", function() M:Clear("trainer") end)
+  M:RegisterEvent("TRAINER_CLOSED", function() M:Clear("trainer") pcall(M.TrainerReminder) end)
   M:RegisterEvent("READY_CHECK", function() pcall(M.OnReadyCheck) end)
   M:RegisterEvent("READY_CHECK_FINISHED", function() M:Clear("ready") end)
   M:RegisterEvent("PLAYER_ENTERING_WORLD", function() pcall(M.OnZone) end)
@@ -449,13 +565,14 @@ function M:OnEnable()
     s.errands = { instancesHour = k, trainer = M.char and M.char.trainer or nil,
       mailExpire = M.char and type(M.char.mail) == "table" and M.char.mail.expireAt or nil }
   end)
-  T:After(10, function() pcall(M.MailReminder) end)
+  T:After(10, function() pcall(M.MailReminder) pcall(M.UpdateSave) pcall(M.TrainerReminder) end)
   M.UpdateGroupTab()
 end
 
 function M:OnDisable()
   M.ClearMail()
-  if T.SetTabLines then pcall(T.SetTabLines, T, "group", {}, "Errands") end
+  pcall(M.ShowMats, false)
+  if T.SetTabLines then pcall(T.SetTabLines, T, "group", {}, "Errands") pcall(T.SetTabLines, T, "info", {}, "Errands") end
 end
 function M:OnOptionChanged() M.UpdateGroupTab() end
 

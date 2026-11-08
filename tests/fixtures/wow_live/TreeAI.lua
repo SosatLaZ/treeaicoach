@@ -32,10 +32,10 @@ TreeAIDB = {
 				["zone"] = "Zone Test", ["subzone"] = "Camp Factice",
 				["money"] = 123456, ["groupSize"] = 1,
 				["updated"] = 1762500000,
-				["predict"] = { ["sessionMin"] = 42, ["rates"] = { ["xpPerHour"] = 18000, ["goldPerHour"] = 25000 } },
-				["fight"] = { ["deaths"] = 2, ["lastDeath"] = { ["attackers"] = 3, ["total"] = 900, ["advice"] = "Tire-les un par un." } },
-				["boost"] = { ["secondsToLevel"] = 2600 },
-				["economy"] = { ["goldPerHour"] = 24000, ["lootValue"] = 5400 },
+				["session"] = { ["minutes"] = 42, ["xp"] = 12600, ["quests"] = 3, ["levels"] = 0, ["money"] = 5400, ["deaths"] = 1 },
+				["fight"] = { ["deaths"] = 2, ["lastDeath"] = { ["killer"] = "Sanglier Factice", ["level"] = 27, ["elite"] = true,
+					["advice"] = "Tire-les un par un.", ["zone"] = "Zone Test", ["time"] = 1762499000, ["duration"] = 25, ["startHP"] = 90 } },
+				["boost"] = { ["raresSeen"] = 1, ["lastRare"] = "Rare Factice" },
 				["quests"] = {
 					["count"] = 4, ["complete"] = 1, ["questsToLevel"] = 6, ["next"] = "Rends « Quête Une » au camp.",
 					["list"] = {
@@ -76,7 +76,7 @@ TreeAIDB = {
 						["start"] = 1762490000, ["duration"] = 5400, ["turned"] = 7, ["missions"] = 2, ["deaths"] = 1,
 						["levels"] = { { ["name"] = "Alpha", ["from"] = 24, ["to"] = 25 } },
 						["goal"] = { ["kind"] = "level", ["text"] = "Niveau 30 pour tous", ["pct"] = 35, ["eta"] = 7200 },
-						["leaderboard"] = { { ["name"] = "Bravo", ["xp"] = 30000, ["xph"] = 20000 } },
+						["leaderboard"] = { { ["name"] = "Bravo", ["xp"] = 30000 } },
 						["events"] = { "Alpha passe niveau 25" },
 					},
 				},

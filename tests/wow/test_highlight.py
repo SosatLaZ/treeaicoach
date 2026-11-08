@@ -15,7 +15,7 @@ def test_toc_lists_highlight_after_quests_modules():
     lines = [ln.strip() for ln in (ADDON / "TreeAI.toc").read_text(encoding="utf-8").splitlines()]
     assert "Modules\\Highlight.lua" in lines
     assert lines.index("Modules\\Highlight.lua") > lines.index("Modules\\Quests.lua")
-    assert lines.index("Modules\\Highlight.lua") > lines.index("Modules\\Predict.lua")
+    assert lines.index("Modules\\Highlight.lua") > lines.index("Modules\\Stats.lua")   # measured rates (Predict removed in 4.0)
 
 
 def test_taint_rules():

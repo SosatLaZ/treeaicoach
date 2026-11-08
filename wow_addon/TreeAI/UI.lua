@@ -20,17 +20,18 @@ local MAX_ROWS = 15
 local PRIMARY = { "now", "quests", "group" }
 local IS_PRIMARY = { now = true, quests = true, group = true }
 local MORE = "__more"
-local SHORT = { now = "Maint.", quests = "Quêtes", group = "Groupe", [MORE] = "Plus", predict = "Prévis.",
+local SHORT = { now = "Maint.", quests = "Quêtes", group = "Groupe", [MORE] = "Plus", hunter = "Chass.",
   gear = "Équip.", prof = "Métiers", talents = "Talents", dungeon = "Donjon", pvp = "JcJ", hv = "HV", info = "Infos",
-  binds = "Touches", adv = "Avant." }
+  binds = "Touches", adv = "Avant.", finder = "Cherch.", stats = "Stats" }
 local TAB_ICONS = {
   now = "Interface\\Icons\\Spell_Nature_TimeStop", quests = "Interface\\Icons\\INV_Misc_Note_02",
   group = "Interface\\Icons\\Ability_Hunter_Pet_Wolf", [MORE] = "Interface\\Buttons\\UI-PlusButton-Up",
-  predict = "Interface\\Icons\\INV_Misc_PocketWatch_01", hv = "Interface\\Icons\\INV_Misc_Coin_01",
+  hunter = "Interface\\Icons\\Ability_Hunter_BeastCall", hv = "Interface\\Icons\\INV_Misc_Coin_01",
   prof = "Interface\\Icons\\Trade_BlackSmithing", talents = "Interface\\Icons\\Ability_Marksmanship",
   gear = "Interface\\Icons\\INV_Chest_Chain", dungeon = "Interface\\Icons\\INV_Misc_Key_03",
   pvp = "Interface\\Icons\\Ability_DualWield", info = "Interface\\Icons\\INV_Misc_QuestionMark",
   binds = "Interface\\Icons\\INV_Misc_Key_14", adv = "Interface\\Icons\\Ability_Hunter_SniperShot",
+  finder = "Interface\\Icons\\INV_Misc_Spyglass_02", stats = "Interface\\Icons\\INV_Misc_PocketWatch_01",
 }
 TreeAI.PANEL_MIN_WIDTH = MIN_W
 local moreOpen = false
@@ -77,14 +78,11 @@ local TOPIC_ICONS = {
 local MODULE_ICONS = {
   Quests = "Interface\\Icons\\INV_Misc_Note_02", Tracker = "Interface\\Icons\\INV_Misc_Note_02",
   Leveling = "Interface\\Icons\\INV_Misc_Book_09", Compass = "Interface\\Icons\\INV_Misc_Spyglass_02",
-  Predict = "Interface\\Icons\\INV_Misc_PocketWatch_01", Squad = "Interface\\Icons\\Ability_Hunter_Pet_Wolf",
-  Group = "Interface\\Icons\\Ability_Hunter_Pet_Wolf", Missions = "Interface\\Icons\\INV_Misc_Note_06",
-  Auction = "Interface\\Icons\\INV_Misc_Coin_01", Economy = "Interface\\Icons\\INV_Misc_Coin_02",
-  Hunter = "Interface\\Icons\\Ability_Hunter_BeastCall", HunterPro = "Interface\\Icons\\Ability_Hunter_BeastCall",
+  Stats = "Interface\\Icons\\INV_Misc_PocketWatch_01", Group = "Interface\\Icons\\Ability_Hunter_Pet_Wolf",
+  Auction = "Interface\\Icons\\INV_Misc_Coin_01", Hunter = "Interface\\Icons\\Ability_Hunter_BeastCall",
   Fight = "Interface\\Icons\\Ability_DualWield", Boost = "Interface\\Icons\\Spell_Holy_BorrowedTime",
   Inventory = "Interface\\Icons\\INV_Misc_Bag_08", Macros = "Interface\\Icons\\INV_Misc_Note_01",
-  Classes = "Interface\\Icons\\Spell_Holy_WordFortitude", Comfort = "Interface\\Icons\\INV_Misc_Gear_01",
-  Pro = "Interface\\Icons\\INV_Misc_Note_02",
+  Classes = "Interface\\Icons\\Spell_Holy_WordFortitude", Pro = "Interface\\Icons\\INV_Misc_Note_02",
 }
 local function iconOf(e)
   if e.icon then return e.icon end
@@ -103,9 +101,8 @@ local KIND_SET = { danger = true, warn = true, turnin = true, quest = true, kill
   info = true }
 -- l'icône d'un module (objet précis, nourriture…) dit plus que l'icône du genre : gardée pour ces genres
 local KEEP_ICON = { gear = true, consumable = true, money = true, pet = true, info = true, group = true }
-local MOD_KIND = { Gear = "gear", Hunter = "pet", HunterPro = "pet", Squad = "group", Team = "group",
-  Missions = "group", Group = "group", Auction = "money", Economy = "money", Route = "travel", Speed = "travel",
-  SafePath = "travel", Inventory = "consumable" }
+local MOD_KIND = { Gear = "gear", Hunter = "pet", Group = "group", Auction = "money", Route = "travel", Speed = "travel",
+  Inventory = "consumable" }
 local TOPIC_KIND = { ammo = "consumable", food = "consumable", petfood = "pet", pet = "pet", repair = "gear",
   hub = "travel" }
 -- verbes : au début de l'action (après « Étape : », « Ensuite : »…)
@@ -508,7 +505,7 @@ local function tabButton(id)
   if id == MORE then
     b:SetScript("OnClick", function() TreeAI:ToggleMoreMenu() end)
     b:SetScript("OnEnter", function(self)
-      showTooltip(self, L["Plus"], { { L["Prévisions, HV, Métiers, Talents, Équipement, Donjon, JcJ, Infos…"], 0.8, 0.8, 0.8 } })
+      showTooltip(self, L["Plus"], { { L["HV, Métiers, Talents, Équipement, Donjon, JcJ, Stats, Infos…"], 0.8, 0.8, 0.8 } })
     end)
   else
     b:SetScript("OnClick", function(self) TreeAI:SelectTab(self.id) end)
@@ -2269,8 +2266,8 @@ function TreeAI:AutoLayout(force)
     end
   end
 
-  -- 6. barres du chasseur (tir auto, pièges) : au-dessus des barres d'action, au centre
-  local bars = { { "Hunter", "barPos", 160, 10, "map" }, { "HunterPro", "trapPos", 170, 12, "list" } }
+  -- 6. barre du chasseur (tir auto) : au-dessus des barres d'action, au centre (la barre de piège se déplace seule)
+  local bars = { { "Hunter", "barPos", 160, 10, "map" } }
   local floorY = 0
   for _, n in ipairs({ "MainMenuBar", "MainActionBar", "MultiBarBottomLeft", "MultiBarBottomRight", "ElvUI_Bar1", "BT4Bar1" }) do
     local r = named[n]

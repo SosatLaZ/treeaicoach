@@ -13,11 +13,11 @@ return function(M, ctx)
 
   -- 1. même sens, plusieurs modules -> une ligne (la plus prioritaire), tooltip « aussi signalé par »
   T:Suggest("Hunter:ammo", "Munitions basses : 150 flèches.", 2, { module = "Hunter" })
-  T:Suggest("Predict:ammo", "Munitions : vides dans ~12 min, achète 400", 3, { module = "Predict", sound = false })
-  T:Suggest("HunterPro:ammo", "Munitions pour finir le niveau : ~900", 2, { module = "HunterPro" })
+  T:Suggest("Stats:ammo", "Munitions : vides dans ~12 min, achète 400", 3, { module = "Stats", sound = false })
+  T:Suggest("Session:ammo", "Munitions pour finir le niveau : ~900", 2, { module = "Session" })
   T:Suggest("Boost:ammo30", "Munitions : ~20 min de jeu restantes", 1, { module = "Boost" })
   T:Suggest("Inventory:inv_bags", "Sacs presque pleins (2 places).", 2, { module = "Inventory" })
-  T:Suggest("Predict:bags", "Sacs pleins dans ~4 monstres", 3, { module = "Predict", sound = false })
+  T:Suggest("Stats:bags", "Sacs pleins dans ~4 monstres", 3, { module = "Stats", sound = false })
   T:Suggest("Squad:top1", "Passage marchand : 2 joueurs ont les sacs pleins", 2, { module = "Squad" })
   local now = T:GetTabLines("now")
   local ammo, bags = 0, 0
@@ -29,8 +29,8 @@ return function(M, ctx)
   check(now[1].prio == 3, "la ligne gardée est la plus prioritaire")
   local kept
   for _, e in ipairs(now) do if T:TopicOf(e) == "ammo" then kept = e end end
-  check(kept and kept.id == "Predict:ammo" and kept._also and kept._also.Hunter and kept._also.HunterPro,
-    "munitions : Prédiction gardée, Chasseur/ChasseurPro fusionnés")
+  check(kept and kept.id == "Stats:ammo" and kept._also and kept._also.Hunter and kept._also.Session,
+    "munitions : la plus urgente gardée, les autres fusionnées (aussi signalé par)")
 
   -- 2. encadré : 1 max / 20 s, sujet déjà signalé, pas en combat sauf danger
   T:ClearSuggestions(); T:ResetAlertGate()
@@ -40,14 +40,14 @@ return function(M, ctx)
   T:Suggest("Hunter:petdead", "Familier mort.", 3, { module = "Hunter", sound = false })
   check(st.shown == shown0 + 1, "2 urgences en 1 s -> 1 seul encadré")
   M.Advance(21, 1)
-  T:Suggest("Predict:bags", "Sacs pleins dans ~2 monstres", 3, { module = "Predict", sound = false })
+  T:Suggest("Stats:bags", "Sacs pleins dans ~2 monstres", 3, { module = "Stats", sound = false })
   check(st.shown == shown0 + 1, "même sujet (sacs) 21 s après : pas de nouvel encadré")
   local snd = #M.sounds
   M.inCombat = true
   T:Suggest("Hunter:pethp", "Familier à 20 % !", 3, { module = "Hunter" })
   check(st.shown == shown0 + 1 and #M.sounds == snd, "en combat : pas d'encadré ni de son pour un non-danger")
   M.Advance(21, 1)
-  T:Suggest("Fight:ccbreak", "Contrôle rompu : Ours (Piège) — 5 s trop tôt !", 3, { module = "Fight", sound = false })
+  T:Suggest("Hunter:aspect", "Quitte « Aspect du guépard » : tu es en combat", 3, { module = "Hunter", sound = false })
   check(st.shown == shown0 + 2, "en combat : le danger de mort passe")
   M.inCombat = false
   T:ResetAlertGate()
@@ -76,14 +76,14 @@ return function(M, ctx)
   T:ClearSuggestions()
 
   -- 4. module coupé en direct : plus de conseils ni de bloc d'onglet, rallumé sans /reload
-  T:SetModuleEnabled("Predict", false)
-  T:Suggest("Predict:ammo", "Munitions : test", 2, { module = "Predict" })
-  check(not T._suggestions["Predict:ammo"], "module coupé : suggestion ignorée")
+  T:SetModuleEnabled("Edge2", false)
+  T:Suggest("Edge2:test", "Avantage : test", 2, { module = "Edge2" })
+  check(not T._suggestions["Edge2:test"], "module coupé : suggestion ignorée")
   local tabs = {}
   for _, t in ipairs(T:GetTabs()) do tabs[t.id] = true end
-  check(not tabs.predict, "module coupé : son onglet disparaît")
-  T:SetModuleEnabled("Predict", true)
-  check(T.modules.Predict._active, "module rallumé en direct")
+  check(not tabs.adv, "module coupé : son onglet disparaît")
+  T:SetModuleEnabled("Edge2", true)
+  check(T.modules.Edge2._active, "module rallumé en direct")
   T:SetEnabled(false)
   check(not T.modules.Quests._active, "TreeAI coupé : modules arrêtés")
   T:SetEnabled(true)

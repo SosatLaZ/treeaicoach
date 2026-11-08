@@ -9,8 +9,8 @@ return function(M, ctx)
   local T = TreeAI
   local TR, Q, C, P = T:GetModule("Tracker"), T:GetModule("Quests"), T:GetModule("Compass"), T:GetModule("Predict")
   local check = ctx.check
-  check(TR and Q and C and P, "Tracker, Quests, Compass, Predict registered")
-  if not (TR and Q and C and P) then return end
+  check(TR and Q and C and P == nil and T.Predict, "Tracker, Quests, Compass registered ; Predict retiré (façade des taux de Stats)")
+  if not (TR and Q and C) then return end
   local modern = rawget(_G, "CreateVector2D") ~= nil
   local function near(a, b, eps) return a and b and math.abs(a - b) <= (eps or 1e-6) end
 
@@ -116,7 +116,9 @@ return function(M, ctx)
   mapAPI.GetAreaInfo = function(id) return id == 267 and ZONE or "Ailleurs" end
 
   -- measured drop rate: 4 lions looted, 2 blood vials → 50 %
-  for k = 1, 4 do P.RecordLoot("Lion des collines", (k % 2 == 0) and { { name = "Sang de lion", questItem = true } } or {}) end
+  -- (CLEAN 4.0 : mesuré par Stats, lu par la façade T.Predict ; ici on pose directement la mesure)
+  T.Predict.BestSource = function(item) if tostring(item):lower():find("sang de lion") then return "Lion des collines", 0.5, 4 end end
+  T.Predict.DropRate = function(_, item) if tostring(item):lower():find("sang de lion") then return 0.5, 4 end end
 
   local tabs = {}
   local oldSet = T.SetTabLines

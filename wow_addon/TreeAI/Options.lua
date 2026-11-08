@@ -589,13 +589,13 @@ end
 -- ---------------------------------------------------------------- canvas : arbre des catégories + page à droite
 -- familles de modules (ordre logique : jouer → combat → groupe → sacs → réglages) ; inconnu → « Autres »
 local FAMILY = {
-  { title = "Quêtes et trajet", mods = { "Quests", "Tracker", "Todo", "ZonePlan", "Planner", "Compass", "Radar", "MinimapPins",
-    "SafePath", "Highlight", "Predict", "Abandon", "Leveling", "Errands", "Edge", "Edge2" } },
-  { title = "Combat et classe", mods = { "Hunter", "HunterPro", "Classes", "Fight", "Boost", "Talents", "Macros",
-    "Binds", "Detect", "PvPMark" } },
-  { title = "Groupe", mods = { "Group", "Squad", "Missions", "Dungeon", "PvP" } },
-  { title = "Sacs, or, métiers", mods = { "Inventory", "Economy", "Auction", "Gear", "Prof" } },
-  { title = "Outils", mods = { "Session", "Comfort", "Pro", "Theme", "Export", "SelfTest" } },
+  { title = "Quêtes et trajet", mods = { "Quests", "Tracker", "Todo", "ZonePlan", "Planner", "Route", "Compass", "NavTime",
+    "Horizon", "Radar", "MinimapPins", "Highlight", "Abandon", "Region", "Speed", "Leveling", "Errands", "Edge2" } },
+  { title = "Combat et classe", mods = { "Hunter", "Classes", "Fight", "Boost", "Talents", "Macros", "Binds", "Detect",
+    "QuickFight", "PvPMark" } },
+  { title = "Groupe", mods = { "Group", "Dungeon", "QuickTravel", "PvP" } },
+  { title = "Sacs, or, métiers", mods = { "Inventory", "Auction", "Gear", "Prof", "Stats" } },
+  { title = "Outils", mods = { "Window", "Shortcuts", "Hub", "Session", "Pro", "Theme", "Export", "SelfTest", "Bugs" } },
 }
 TreeAI.OPTIONS_FAMILY = FAMILY
 

@@ -79,10 +79,7 @@ return function(M, ctx)
   check(petLine and petLine.onClick and type(petLine.tooltip) == "table" and ctl == 2, "tab « Chercher »: lines + 2 buttons")
   check(T.tabs.finder and T.tabs.finder.title == "Chercher", "« Chercher » is a tab of the Plus menu")
   check(F.OwnsPet(), "Finder owns taming for a hunter")
-  local Bo, HP = T.modules.Boost, T.modules.HunterPro
-  if Bo and Bo.UpdatePet then Bo:UpdatePet() end
-  if HP and HP.UpdatePet then HP:UpdatePet() end
-  check(not sugg("Boost:pet") and not (HP and HP.Lines and HP.Lines.pet), "Boost / HunterPro taming lines defer to Finder")
+  check(not sugg("Boost:pet") and T.modules.HunterPro == nil, "taming lines only from Finder (Boost / HunterPro: retirés)")
 
   -- ------------------------------------------------------------ query words
   local cats, free = F.ParseQuery("Familier")
@@ -171,9 +168,8 @@ return function(M, ctx)
   F.Show(false)
   local out0 = #M.output
   SlashCmdList["TREEAI"]("cherche familier")
-  local printed = false
-  for i = out0 + 1, #M.output do if M.output[i]:find("1%. Apprivoise") then printed = true end end
-  check(printed, "/tai cherche familier prints the top")
+  check(#M.output == out0 and F.frame and F.frame:IsShown(), "/tai cherche familier ouvre la fenêtre, rien dans la discussion")
+  F.Show(false)
   local b0 = #M.blocked
   M.inCombat = true
   check(F:Refresh(true) == nil and F:AddToRoute(pet) == false, "nothing heavy / no route change in combat")

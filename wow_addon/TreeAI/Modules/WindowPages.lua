@@ -175,8 +175,11 @@ W.AddPage({ id = "route", label = "Trajet", icon = W.TAB_ICON.route, title = "Tr
     if Zp and Zp.HeadLines and Zp.IsEnabled and Zp:IsEnabled() then
       local ok, zl = pcall(Zp.HeadLines, Zp)
       for _, l in ipairs(ok and type(zl) == "table" and zl or {}) do
-        if l.text then Ly.row({ text = l.text, prio = l.prio, icon = l.icon or W.TAB_ICON.route, tooltip = l.tooltip,
-          onClick = l.onClick, onRightClick = l.onRightClick }) end
+        if l.text then
+          local b = Ly.row({ id = l.id, text = l.text, prio = l.prio, icon = l.icon or W.TAB_ICON.route, tooltip = l.tooltip,
+            onClick = l.onClick, onRightClick = l.onRightClick })
+          if l.id == "zone:pick" then W.zoneRow = b end   -- (ONBOARD) cible « zone » de la visite guidée
+        end
       end
     end
     local plan = R.PlanLines and select(2, pcall(R.PlanLines, R, P)) or nil

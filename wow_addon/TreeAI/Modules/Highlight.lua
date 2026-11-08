@@ -1003,7 +1003,7 @@ function M.UnitObjective(unit)
     if e then how = "kill" end
   end
   if not e and name and on("plateDrops") and rel ~= false then  -- taux mesurés (nom du monstre -> objet)
-    local P = mod("Predict")
+    local P = T.Predict   -- (4.0) façade de Stats : taux MESURÉS (l'ancien module Predict est retiré)
     if P and type(P.DropRate) == "function" then
       for k, ent in pairs(D.byName) do
         if not ent.done and not ent.ready and not D.mobName[mobKey(k)] then
@@ -1031,7 +1031,7 @@ function M.UnitObjective(unit)
     end
   end
   if e and how == "drop" and name then
-    local P = mod("Predict")
+    local P = T.Predict
     local r = P and type(P.DropRate) == "function" and try(P.DropRate, name, low(e.obj))
     e = setmetatable({ rate = r }, { __index = e })
   end

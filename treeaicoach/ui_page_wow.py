@@ -507,9 +507,9 @@ def _session(snap: dict, ctx: dict) -> list[dict]:
     _sec(out, "session.recap", "Récap", recap)
     goals = [_row(g["text"], meter=g["pct"]) for g in v["goals"] if g.get("pct") is not None]
     goals += [_row(g["text"]) for g in v["goals"] if g.get("pct") is None]
-    _sec(out, "session.goals", "Objectifs", goals, "Objectif du groupe en jeu : /tai mission objectif niveau 30.")
-    _sec(out, "session.board", "Classement XP du groupe",
-         [_row(n, "", f"{live.fmt_int(x)} XP/h" if x else "") for n, x in v["leaderboard"]])
+    _sec(out, "session.goals", "Objectifs", goals, "Objectif du groupe en jeu : /tai objectif niveau 30.")
+    _sec(out, "session.board", "XP du groupe cette session",
+         [_row(n, "", f"+{live.fmt_int(x)} XP" if x else "") for n, x in v["leaderboard"]])
     loot = [(f"{n} x{c}" if c > 1 else str(n), "", "") for n, c in (chat.get("loot") or []) if fresh["live"]]
     _sec(out, "session.loot", "Butin (en direct)", loot, kind="list")
     _sec(out, "session.stats", "Mes stats mesurées", [_row(t, "", val) if len(str(val)) < 34 else _row(t, val)
@@ -539,9 +539,7 @@ def _deaths(snap: dict, live_chat: bool) -> list[dict]:
         rows.append(_row("Morts", src, str(n) if n else "Aucune", value_tone="warning" if n >= 2 else ""))
     ld = (s.get("fight") or {}).get("lastDeath") if isinstance(s.get("fight"), dict) else None
     if isinstance(ld, dict) and ld and not live.freshness(snap)["stale"]:
-        att = live._i(ld.get("attackers"))
-        rows.append(_row("Dernière mort", live._why(ld.get("advice")),
-                         f"{att} ennemi{'s' if att > 1 else ''}" if att else ""))
+        rows.append(_row("Dernière mort", live._why(ld.get("advice")), live.last_death_text(ld)))
     return rows
 
 

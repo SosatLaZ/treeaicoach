@@ -8,7 +8,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 ADDON = Path(os.environ.get("TREEAI_WOW_ADDON") or ROOT / "wow_addon" / "TreeAI")
-MODULES = ["Compass", "Tracker", "Predict"]
+MODULES = ["Compass", "Tracker"]   # Predict removed in 4.0 (CLEAN): rates come from Stats
 LUA = shutil.which("lua5.1")
 needs_lua = pytest.mark.skipif(not LUA, reason="lua5.1 not installed")
 

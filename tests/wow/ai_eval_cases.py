@@ -60,8 +60,7 @@ def _summary(updated: float) -> dict[str, Any]:
                    "pet": {"family": "Loup", "level": 27, "happiness": 2, "loyalty": "Loyauté (4)", "tpFree": 3,
                            "diet": ["meat"], "food": 2672, "dead": False},
                    "ammo": {"kind": "arrow", "total": 0, "equipped": 1240, "quiver": True, "mismatch": False}},
-        "hunterPro": {"ammoNeed": 650},
-        "stats": {"xph": {"recent": 20500, "all": 19900}, "perH": {"ammo": 600}},
+        "stats": {"xph": {"recent": 20500, "recentMin": 52, "all": 19900, "min": 640}, "perH": {"ammo": 600}},
         "group": {"v": 2, "updated": updated, "size": 4, "members": [
             {"name": ME, "class": "Chasseur", "level": 28, "me": True, "zone": "Orneval", "hp": 100},
             {"name": "Fakepriest", "class": "Prêtre", "level": 27, "zone": "Orneval", "hp": 80, "mana": 20, "bags": 8},
@@ -90,7 +89,6 @@ def _summary(updated: float) -> dict[str, Any]:
                     "gold": {"total": 352075, "reserve": 100000, "invested": 0}},
         "inventory": {"greyCount": 7, "greyValue": 11850, "durMin": 62, "repairCost": 4200,
                       "mats": {"Cuir moyen": 12}},
-        "economy": {"durability": 78},
         "dungeon": {"runs": 2, "meter": {"total": 1000, "top": "Fakemage"}},
         "talents": {"unspent": 1, "points": "18/0/0"},
         "gear": {"priority": "Agilité > DPS de l'arme à distance > Toucher / Critique",

@@ -186,17 +186,19 @@ end
 -- ennemis vivants visibles à ≤ ~25 yd (barres de nom ; API.Distance : UnitPosition ou portée d'interaction)
 function S:HostilesNear(range)
   local NP, API = G("C_NamePlate"), T.API
-  local n = 0
+  local n, read = 0, 0
   if not (NP and NP.GetNamePlates and API and API.Distance) then return nil end
   for _, p in ipairs(try(NP.GetNamePlates) or {}) do
     local u = type(p) == "table" and (p.namePlateUnitToken or (type(p.UnitFrame) == "table" and p.UnitFrame.unit))
     if type(u) == "string" and try(G("UnitCanAttack"), "player", u) and not try(G("UnitIsDead"), u)
       and not try(G("UnitIsPlayer"), u) then
       local d = API.Distance(u)
-      if d and d <= (range or E.SAFE_RANGE) + 3 then n = n + 1 end
+      if not d then return nil end   -- (audit) distance non lue (PNJ : pas de position en vrai) → on ne dit rien
+      read = read + 1
+      if d <= (range or E.SAFE_RANGE) + 3 then n = n + 1 end
     end
   end
-  return n
+  return read > 0 and n or nil   -- aucune distance vraiment lue : ni « coin sûr » ni « ennemis tout près »
 end
 function S:OnDead()
   local map, x, y = playerPos()

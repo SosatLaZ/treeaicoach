@@ -25,7 +25,7 @@ return function(M, ctx)
     { title = "Crocs de raptor", level = 29, complete = false, xp = 2600,
       objectives = { { text = "Croc de raptor : 0/6", done = false, have = 0, need = 6 } } },
   }
-  -- friends (Squad) + verdicts (Abandon) + errands (Predict) + board (Missions) + XP (Boost)
+  -- friends (Squad) + verdicts (Abandon) + errands (owners via T.Predict.list) + board (Missions) + XP (Boost)
   local S = T:GetModule("Squad")
   S.IsActive = function() return true end
   S.MemberList = function()
@@ -47,9 +47,10 @@ return function(M, ctx)
       text = "Plus tard « Crocs de raptor » : loin d'ici.", score = 42 },
     { q = { id = BEARS }, verdict = "keep", short = "ok", text = "Garde « Les ours » : Lea l'a aussi.", score = 80 },
   }
-  local P = T:GetModule("Predict")
-  P.list = { { id = "repair", text = "Réparation bientôt : durabilité 30 %", prio = 2 }, { id = "ammo", text = "Munitions : ~40 min de tir", prio = 1 },
-    { id = "drop:x", text = "ignored", prio = 1 } }
+  -- (CLEAN 4.0) Predict retiré : les courses = les lignes réelles des propriétaires, lues par la façade T.Predict.list
+  local P = T.Predict
+  rawset(P, "list", { { id = "repair", text = "Réparation bientôt : durabilité 30 %", prio = 2 }, { id = "ammo", text = "Munitions : ~40 min de tir", prio = 1 },
+    { id = "drop:x", text = "ignored", prio = 1 } })
   local Mi = T:GetModule("Missions")
   Mi.board = { { id = BEARS, title = "Les ours de Hautebrande", pct = 50, holders = { "A", "B" }, done = { "B" }, need = { "A" },
     missing = {}, multi = true, per = {} } }

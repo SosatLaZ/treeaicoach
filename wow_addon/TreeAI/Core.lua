@@ -316,7 +316,10 @@ function API.Distance(unit)
       return (dx * dx + dy * dy) ^ 0.5
     end
   end
-  if _G.CheckInteractDistance then
+  -- (CLEAN 4.0, audit) repli « portée d'interaction » pour un membre du groupe seulement, hors combat (restreint en
+  -- combat) : un PNJ hors groupe n'a pas de position dans le vrai client → nil, et l'appelant se tait (pas 10 / 28).
+  if _G.CheckInteractDistance and not pub(try(_G.InCombatLockdown))
+    and (pub(try(_G.UnitInParty, unit)) or pub(try(_G.UnitInRaid, unit))) then
     if pub(try(_G.CheckInteractDistance, unit, 3)) then return 10 end
     if pub(try(_G.CheckInteractDistance, unit, 4)) then return 28 end
   end
@@ -849,15 +852,34 @@ runSlices = function(jobs, t0)
   safecall(sliceDone)
 end
 
+-- (CLEAN 4.0, repris du module Confort) ralenti auto : sous 30 images/s deux relevés de suite (toutes les 2 s),
+-- le cycle des :AutoRefresh() passe à ×2 ; il revient quand le jeu remonte à 40 images/s cinq relevés de suite.
+local slowBad, slowGood = 0, 0
+local function perfSample()
+  local fps = tonumber(pub(try(_G.GetFramerate)))
+  if not fps or fps <= 0 then return end
+  if fps < 30 then slowBad, slowGood = slowBad + 1, 0 elseif fps >= 40 then slowGood, slowBad = slowGood + 1, 0 end
+  if not TreeAI.perfSlow and slowBad >= 2 then
+    TreeAI.perfSlow = true
+    TreeAI:Fire("PERF_SLOW", true)
+  elseif TreeAI.perfSlow and slowGood >= 5 then
+    TreeAI.perfSlow = false
+    TreeAI:Fire("PERF_SLOW", false)
+  end
+end
+TreeAI._PerfSample = perfSample
+
 function TreeAI:StartAutoRefresh()
   if self._refreshTicker or not self.NewTicker then return end
-  local n = 0
+  local n, ticks = 0, 0
   self._refreshTicker = self:NewTicker(1, function()
-    n = n + 1
+    n, ticks = n + 1, ticks + 1
+    if ticks % 2 == 0 then perfSample() end
     local every = tonumber(self.settings and self.settings.refresh) or 3
     if every <= 0 then return end
     local fighting = InCombatLockdown and InCombatLockdown()
     if fighting then every = every * 2 end
+    if self.perfSlow then every = every * 2 end
     if n < every or slicePending then return end
     n = 0
     sliceFight = fighting and true or false
@@ -1229,44 +1251,35 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Horizon = { lite = true, desc = "Bande d'horizon : les prochains arrêts selon ton cap" },
   Planner = { lite = true, desc = "Itinéraire de quêtes optimisé" },
   Export = { lite = true, desc = "Export du perso et du plan vers TreeAI Coach" },
-  Group = { lite = true, gate = "group", desc = "Synchro des quêtes avec tes amis (en groupe)" },
-  Squad = { lite = true, gate = "group", combat = true, desc = "Groupe : état des amis, partage de quêtes (en groupe)" },
-  Missions = { lite = true, gate = "group", desc = "Missions de groupe (en groupe)" },
+  Group = { lite = true, gate = "group", desc = "Groupe : tes amis (avec ou sans TreeAI), objectif, quêtes à partager, prêts à tirer" },
   Macros = { lite = true, liteParts = true, desc = "Macros intelligentes (panneau Macros)" },
   Auction = { lite = true, gate = "ah", desc = "Hôtel des ventes (quand l'HV est ouvert)" },
   Highlight = { lite = true, liteParts = true, desc = "Surligne les objets utiles des sacs et du butin" },
-  Hunter = { lite = true, combat = true, desc = "Chasseur : familier, munitions, aspects" },
+  Hunter = { lite = true, combat = true, desc = "Chasseur : familier (humeur, nourriture, dressage), munitions, aspects, pièges" },
   Abandon = { lite = true, liteParts = true, desc = "Quêtes à abandonner (calculé à la demande)" },
   Dungeon = { lite = true, gate = "instance", combat = true, desc = "Donjon (s'allume tout seul en instance)" },
-  Boost = { lite = false, combat = true, desc = "Rappels de buffs, menace en groupe" },
-  Fight = { lite = false, combat = true, desc = "Combat : contrôles, interruptions, récap de mort" },
-  HunterPro = { lite = false, combat = true, desc = "Chasseur avancé : pièges, barre de tir" },
-  Comfort = { lite = false, desc = "Confort : nouveautés, nouveaux sorts, ralenti auto" },
+  Boost = { lite = false, desc = "Rares : un rare ou un trésor tout près, clic = y aller (+ crâne)" },
+  Fight = { lite = false, desc = "Combat : pourquoi je suis mort, prêt avant le pull" },
   Pro = { lite = false, desc = "Conseils avancés (repos, sacs, trajets)" },
-  Economy = { lite = false, desc = "Économie : or gagné, valeur des sacs" },
-  Session = { lite = false, desc = "Ma session : bilan, pauses" },
-  Errands = { lite = false, desc = "Guichets : courrier, entraîneur, vols" },
-  Gear = { lite = false, desc = "Équipement : améliorations" },
+  Session = { lite = false, desc = "Ma session : bilan, pourquoi je meurs, pause, monture" },
+  Errands = { lite = false, desc = "Guichets : courrier, maître de classe (prix réel), vols, appel prêt" },
+  Gear = { lite = false, desc = "Équipement : mieux ou pas (infobulles), récompense de quête, plan par emplacement" },
   Talents = { lite = false, desc = "Talents : où mettre tes points" },
-  Prof = { lite = false, desc = "Métiers : recettes et composants" },
+  Prof = { lite = false, desc = "Métiers : montée la moins chère, récolte (nœuds, dépeçage)" },
   PvP = { lite = false, combat = true, desc = "JcJ : aides contre les joueurs" },
   PvPMark = { lite = true, combat = true, desc = "Joueurs ennemis attaquables surlignés (barres de nom)" },
   Radar = { lite = false, desc = "Radar rond des objectifs" },
-  SafePath = { lite = false, desc = "Chemin sûr : évite les monstres" },
-  Edge = { lite = false, desc = "Astuces avancées (petits avantages)" },
   Detect = { lite = true, desc = "Détection : rares, trésors, monstres de quête, services proches" },
   MinimapPins = { lite = true, desc = "Points sur la minimap (ce que Questie ne montre pas)" },
-  Binds = { lite = false, desc = "Raccourcis clavier conseillés" },
-  QuickFight = { lite = true, combat = true, desc = "Raccourcis : boutons entre les combats (manger, familier, aspect, pull)" },
-  Leveling = { lite = false, desc = "Montée de niveau : zones, rythme" },
-  Inventory = { lite = false, desc = "Inventaire : tri, objets inutiles" },
+  Binds = { lite = false, desc = "Touches : sur quoi lier tes sorts et macros, nouveaux sorts à poser" },
+  QuickFight = { lite = true, combat = true, desc = "Barre de combat : manger, familier, aspect, pull, prêt ou pas" },
+  Leveling = { lite = false, desc = "Progression : repos, zone dangereuse, talents, compétence d'arme" },
+  Inventory = { lite = false, desc = "Inventaire : sacs, réparation, vente des gris, nourriture" },
   Classes = { lite = false, combat = true, desc = "Conseils de classe (autres classes)" },
-  Predict = { lite = false, desc = "Prévisions : ce qui va te manquer" },
-  Stats = { lite = true, desc = "Statistiques mesurées du perso (sur événement)" },
-  Team = { lite = true, gate = "group", desc = "Groupe : tous les membres, même sans TreeAI (en groupe)" },
+  Stats = { lite = true, desc = "Statistiques mesurées : XP/h et or/h (avec leur durée de mesure), kills, drops" },
   Route = { lite = true, desc = "Itinéraire le plus rapide entre les étapes" },
   PathDraw = { lite = true, desc = "Chemin de l'itinéraire dessiné sur la carte et la minimap" },
-  Finder = { lite = true, desc = "Chercher : meilleur familier, rares, équipement, maîtres, vols, trésors" },
+  Finder = { lite = true, desc = "Chercher : meilleur familier à apprivoiser, rares, équipement, maîtres, vols" },
   ZonePlan = { lite = true, desc = "Zone de travail et trajet préparé (ordre des arrêts)" },
   Speed = { lite = true, desc = "Aller plus vite : mort, monture, foyer" },
   QuickTravel = { lite = true, desc = "Raccourcis : vols, auberge, courses, outils du groupe" },
@@ -1276,10 +1289,7 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Window = { lite = true, desc = "Fenêtre TreeAI (pages, recherche) + carte « Prochaine étape »" },
   Shortcuts = { lite = true, desc = "Une seule barre « Raccourcis » : quêtes, voyage, combat, familier" },
   Quick = { lite = true, desc = "Raccourcis : barre d'actions rapides, quêtes acceptées et rendues" },
-  Detect = { lite = true, desc = "Détection : rares, trésors, monstres de quête, services proches" },
-  MinimapPins = { lite = true, desc = "Points sur la minimap (ce que Questie ne montre pas)" },
-  Edge = { lite = false, desc = "Astuces avancées (petits avantages)" },
-  Edge2 = { lite = false, desc = "Avantages : repop, patrouilles, XP/h par monstre, repos, maître de classe…" },
+  Edge2 = { lite = false, desc = "Avantages : camp disputé, objet qui ne tombe pas, quêtes finies = niveau…" },
   Tour = { lite = true, desc = "Visite guidée et astuces (une fois chacune)" },   -- (ONBOARD) sûr : Tour.lua s'y inscrit
 }
 
@@ -1758,18 +1768,16 @@ end
 -- id complet de suggestion -> sujet. Plusieurs modules qui disent la même chose partagent un sujet :
 -- « Maintenant » n'en garde qu'une ligne (la plus prioritaire), l'encadré ne la répète pas.
 TreeAI.TOPIC_IDS = TreeAI.TOPIC_IDS or {
-  ["Hunter:ammo"] = "ammo", ["Predict:ammo"] = "ammo", ["HunterPro:ammo"] = "ammo", ["Boost:ammo30"] = "ammo",
-  ["Inventory:inv_bags"] = "bags", ["Predict:bags"] = "bags", ["Boost:hearth"] = "bags",
-  ["Inventory:inv_repair"] = "repair", ["Predict:repair"] = "repair",
-  ["Predict:food"] = "food", ["Predict:water"] = "food", ["Boost:food"] = "food",
-  ["Leveling:lvl_train"] = "train", ["Predict:train"] = "train",
-  ["Hunter:aspect"] = "aspect", ["HunterPro:aspect"] = "aspect",
-  ["Hunter:fd"] = "fd", ["HunterPro:fd"] = "fd",
-  ["Hunter:hungry"] = "petfood", ["Fight:mood"] = "petfood",
-  ["Leveling:lvl_hub"] = "hub", ["Tracker:hub"] = "hub",
-  ["Hunter:petdead"] = "pet", ["Hunter:pethp"] = "pet", ["Hunter:nopet"] = "pet",
+  ["Hunter:ammo"] = "ammo",
+  ["Inventory:inv_bags"] = "bags",
+  ["Inventory:inv_repair"] = "repair",
+  ["Inventory:inv_food"] = "food", ["Inventory:inv_buy_food"] = "food", ["Inventory:inv_buy_water"] = "food",
+  ["Errands:trainer"] = "train",
+  ["Hunter:aspect"] = "aspect", ["Hunter:fd"] = "fd", ["Hunter:hungry"] = "petfood",
+  ["Tracker:hub"] = "hub",
+  ["Hunter:petdead"] = "pet", ["Hunter:nopet"] = "pet",
+  ["Fight:prepull"] = "prepull",
   ["Quests:grey"] = "abandon",
-  ["Fight:interrupt"] = "interrupt", ["Fight:ccend"] = "cc", ["Fight:ccbreak"] = "cc",
 }
 -- repli par le texte (lignes de groupe, nouveaux modules) : motif en minuscules -> sujet
 TreeAI.TOPIC_PATTERNS = TreeAI.TOPIC_PATTERNS or {
@@ -1779,8 +1787,7 @@ TreeAI.TOPIC_PATTERNS = TreeAI.TOPIC_PATTERNS or {
 }
 -- danger de mort : seules alertes permises dans l'encadré pendant un combat
 TreeAI.DANGER_IDS = TreeAI.DANGER_IDS or {
-  ["Fight:ccbreak"] = true, ["Fight:ccend"] = true, ["Fight:interrupt"] = true, ["HunterPro:fd"] = true,
-  ["Boost:threat"] = true, ["Hunter:aspect"] = true, ["Hunter:fd"] = true,
+  ["Hunter:aspect"] = true, ["Hunter:fd"] = true,
 }
 TreeAI.PRESETS = {
   -- simple (défaut) : 3 lignes, seulement ce qu'on peut faire (clic ou conseil utile), pas de bavardage
@@ -2273,8 +2280,8 @@ local tabSources = {}   -- tabId -> { order = {source,...}, lines = { [source] =
 local NOW_TAB, DEFAULT_TAB = "now", "info"
 -- where a module's suggestions are listed (besides « Maintenant »); others -> « Infos »
 TreeAI.MODULE_TAB = TreeAI.MODULE_TAB or {
-  Quests = "quests", Leveling = "quests", Tracker = "quests", Compass = "quests", Predict = "quests",
-  Squad = "group", Group = "group", Missions = "group",
+  Quests = "quests", Leveling = "quests", Tracker = "quests", Compass = "quests",
+  Group = "group", Squad = "group", Missions = "group",   -- (4.0) Squad / Missions = façades de Group (ids gardés)
   Auction = "hv",
 }
 
@@ -2451,9 +2458,9 @@ end
 function Fmt.Pct(x) return math.floor((tonumber(x) or 0) + 0.5) .. " %" end
 
 -- bloc de lignes -> module propriétaire (coupé = bloc masqué tout de suite, sans /reload)
-TreeAI.SOURCE_OWNER = TreeAI.SOURCE_OWNER or { missions = "Missions" }
-TreeAI.MAIN_OWNER = TreeAI.MAIN_OWNER or { predict = "Predict", quests = "Tracker", hv = "Auction" }
-TreeAI.TAB_OWNER = TreeAI.TAB_OWNER or { predict = "Predict" }
+TreeAI.SOURCE_OWNER = TreeAI.SOURCE_OWNER or { missions = "Group" }   -- (4.0) bloc des missions : module Groupe
+TreeAI.MAIN_OWNER = TreeAI.MAIN_OWNER or { quests = "Tracker", hv = "Auction" }
+TreeAI.TAB_OWNER = TreeAI.TAB_OWNER or {}
 local function moduleOff(name)
   local m = name and TreeAI.modules[name]
   return (m and m._active == false) and true or false
@@ -2991,13 +2998,13 @@ function TreeAI:HasSlash(cmd) return type(cmd) == "string" and slash[cmd:lower()
 TreeAI.SLASH_GROUPS = TreeAI.SLASH_GROUPS or {
   { "Démarrer", { "aide", "bienvenue", "mode", "profil", "options" } },
   { "Panneau", { "afficher", "cacher", "basculer", "mini", "onglet", "edit", "placer", "verrou", "reset", "alerte" } },
-  { "Quêtes", { "quetes", "suivi", "itineraire", "prevoir", "pro", "abandon", "surbrillance", "highlight" } },
+  { "Quêtes", { "quetes", "suivi", "itineraire", "zone", "pro", "abandon", "surbrillance", "highlight" } },
   { "Boussole", { "boussole", "aller", "cible", "way" } },
-  { "Groupe", { "groupe", "mission", "prends", "partir", "pret", "sync" } },
-  { "Chasseur et combat", { "familier", "mort", "boost", "pvp" } },
+  { "Groupe", { "groupe", "objectif", "partir", "pret", "sync" } },
+  { "Combat", { "cherche", "stats", "pvp" } },
   { "Macros et touches", { "macros", "binds", "touches", "raccourcis" } },
-  { "Économie et HV", { "hv", "compos", "eco" } },
-  { "Outils", { "modules", "module", "statut", "perf", "nouveau", "selftest", "diag", "debug", "test", "bloque" } },
+  { "HV et métiers", { "hv", "metiers" } },
+  { "Outils", { "modules", "module", "statut", "perf", "selftest", "diag", "debug", "test", "bloque" } },
 }
 
 --- { { title=, items = { {cmd=, help=}, ... } }, ... } : toutes les commandes documentées, groupées.

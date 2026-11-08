@@ -92,4 +92,4 @@ def test_lua_modules_smoke():
     for extra in ([], [str(core)] if core.is_file() else []):
         r = subprocess.run(args + extra, capture_output=True, text=True, timeout=30)
         assert r.returncode == 0, r.stderr
-        assert "1 gris vendu" in r.stdout
+        assert "gris vendu" not in r.stdout   # 4.0: the sale itself is asserted in the smoke; never a chat line

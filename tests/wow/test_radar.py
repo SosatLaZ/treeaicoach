@@ -35,7 +35,7 @@ def test_own_frame_never_blizzard_minimap():
 
 def test_options_have_sections_and_layers():
     src = SRC.read_text(encoding="utf-8")
-    for key in ("size", "zoom", "opacity", "rotate", "quests", "turnins", "target", "path", "squad", "rares",
+    for key in ("size", "zoom", "opacity", "rotate", "quests", "turnins", "target", "squad", "rares",
                 "death", "taxi", "danger"):
         assert f'key = "{key}"' in src, key
     assert src.count("section = ") >= 15

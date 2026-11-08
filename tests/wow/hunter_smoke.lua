@@ -76,7 +76,13 @@ GetUnitSpeed = function() return 0 end
 CombatLogGetCurrentEventInfo = nil
 
 TreeAI = { mods = {} }
+local tabs = {}
 function TreeAI:Suggest(id, text, prio) said[#said + 1] = { id = id, text = text, prio = prio } end
+function TreeAI:SetTabLines(id, lines) tabs[id] = lines end
+local function tabHas(id, pat)
+  for _, l in ipairs(tabs[id] or {}) do if tostring(l.text):find(pat) then return true end end
+  return false
+end
 -- Mini-cœur conforme au contrat de wow_addon/README.md (M.db, M:Suggest préfixé, classes, OnEnable).
 local summary = {}
 function TreeAI:Summary() return summary end
@@ -118,22 +124,22 @@ check(TreeAI.mods.Hunter and TreeAI.mods.Classes, "modules enregistrés")
 fire("PLAYER_LOGIN")
 fire("PLAYER_ENTERING_WORLD")
 check(find("Hunter:hungry") and find("Hunter:hungry").text:find("Objet3771"), "nourriture 25 choisie")
-check(macros["TAI Nourrir"] and macros["TAI Nourrir"]:find("item:3771"), "macro nourrir")
+check(next(macros) == nil, "aucune macro écrite par le module (TAI Familier = panneau Macros)")
 check(find("Hunter:ammo") and find("Hunter:ammo").prio == 3, "munitions critiques")
-check(find("Hunter:quiver"), "carquois")
-check(find("Hunter:tp"), "points d'entraînement")
+check(tabHas("hunter", "carquois"), "carquois dans l'onglet Chasseur")
+check(tabHas("hunter", "Nourriture : Objet3771"), "fiche : nourriture")
+check(find("Hunter:tp") and find("Hunter:tp").text:find("20 points"), "points de dressage libres = total - utilisés")
+-- avant le pull : élite ciblé hors combat -> marque
+fire("PLAYER_TARGET_CHANGED")
+check(find("Hunter:mark"), "marque avant un élite (hors combat)")
 -- Combat avec aspect du guépard
 S.combat, S.buffs.player = true, { 5118 }
 T = T + 100
 fire("PLAYER_REGEN_DISABLED")
 check(find("Hunter:aspect") and find("Hunter:aspect").prio == 3, "guépard en combat")
-check(find("Hunter:mark"), "marque sur élite")
--- Macro jamais modifiée en combat
 S.bag[0] = { 4599, 2515 }
-local before = macros["TAI Nourrir"]
 fire("BAG_UPDATE_DELAYED")
-check(macros["TAI Nourrir"] == before, "pas d'EditMacro en combat")
-check(find("Hunter:pethp"), "familier bas")
+check(not find("Hunter:pethp"), "pas de PV du familier en combat (valeur secrète sur Forever)")
 -- Tir auto + barre
 fire("START_AUTOREPEAT_SPELL")
 fire("UNIT_SPELLCAST_SUCCEEDED", "player", "x", 75)

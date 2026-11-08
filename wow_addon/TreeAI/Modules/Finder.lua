@@ -7,10 +7,11 @@
 --  * Recherche générique (onglet « Chercher » du menu Plus, fenêtre, /tai cherche <mot>) : familier, rare / élite,
 --    amélioration d'équipement (plan de Gear), maître de classe / d'armes, point de vol non appris, marchand
 --    (munitions, boissons), trésor (Detect), quête clé (Pro), donjon pour le groupe (Data/Dungeons).
---  * Chaque résultat : trajet, pourquoi (infobulle), « Ajouter au trajet » (arrêt inséré dans le trajet du Planner →
---    Route le montre et le renvoie à Shortest Path Forever s'il le suit) et « Y aller » (Compass.SetTarget).
+--  * Chaque résultat : trajet, pourquoi EN MOTS (jamais un score), « Ajouter au trajet » (arrêt inséré dans le trajet
+--    du Planner → Route le montre et le renvoie à Shortest Path Forever s'il le suit) et « Y aller » (Compass.SetTarget).
 --  * « Maintenant » : au plus UNE ligne, seulement si un truc qui change tout est à ≤ N min (« Apprivoise X à
---    300 m : Morsure 3 »). Propriétaire unique d'« apprivoiser » : Boost / HunterPro se taisent (F.OwnsPet).
+--    300 m : Morsure 3 ») ET sûr : une bête VUE par toi en jeu ou placée par QuestieDB (jamais une position de la
+--    liste Classic approximative). Seul propriétaire d'« apprivoiser » (F.OwnsPet) ; le Chasseur renvoie ici.
 -- Rien d'automatique : tout sur clic, calculs hors combat et à la demande (petit relevé toutes les 30 s hors combat).
 -- Aucune fonction protégée, aucun cadre de Blizzard touché. Lua 5.1, aucune globale.
 local T = _G.TreeAI
@@ -274,6 +275,8 @@ function F.RankPets(n, ctx)
   local here = me()
   local fz = faction()
   local out = {}
+  local c2 = {}   -- (CLEAN) un seul contexte réutilisé (PetValue ne le garde pas) : pas une table par bête
+  for k, v in pairs(ctx) do c2[k] = v end
   local function consider(b, spots)
     if b.fz and b.fz ~= "" and fz and b.fz ~= fz then return end
     local best, bs, byd
@@ -282,8 +285,6 @@ function F.RankPets(n, ctx)
       if s and (not bs or s < bs) then best, bs, byd = p, s, yd end
     end
     best = best or spots[1]
-    local c2 = {}
-    for k, v in pairs(ctx) do c2[k] = v end
     c2.sec, c2.far = bs, not bs
     local gain, parts, info = F.PetValue(D, b, c2)
     if gain then out[#out + 1] = { b = b, gain = gain, parts = parts, info = info, sec = bs, yd = byd, spot = best } end
@@ -322,7 +323,6 @@ local CATS = {
   { id = "flight", label = "Vol", kw = { "vol", "fly", "griffon", "wyverne", "taxi" } },
   { id = "vendor", label = "Marchand", kw = { "marchand", "munition", "fleche", "flèche", "balle", "boisson", "eau", "vendor" } },
   { id = "treasure", label = "Trésor", kw = { "coffre", "tresor", "trésor", "chest" } },
-  { id = "quest", label = "Quête clé", kw = { "quete", "quête", "xp", "recompense", "récompense" } },
   { id = "dungeon", label = "Donjon", kw = { "donjon", "instance", "groupe" } },
 }
 F.CATS = CATS
@@ -365,16 +365,17 @@ S.pet = function()
     local head = fmt("%s : %s, attaque %s s%s", b.n, i.ability and (i.rank or 0) > 0 and fmt("%s rang %d", i.ability, i.rank) or fam,
       num1(i.atk), e.sec and (", " .. minutes(e.sec) .. " de trajet") or "")
     local tip = { head }
-    if i.probable then tip[#tip + 1] = "Rang probable : vérifie avec « Connaissance des bêtes » avant d'apprivoiser." end
-    if i.atkGuess then tip[#tip + 1] = "Vitesse d'attaque supposée (2,0 s) : vérifie en jeu." end
-    tip[#tip + 1] = fmt("%s · régime : %s · fidélité : ~même temps pour toutes les bêtes (≈).", fam,
-      F.DietText((pets().families[b.fam] or {}).diet))
-    if e.spot and e.spot.approx then tip[#tip + 1] = "Position approximative (QuestieDB absent)." end
-    tip[#tip + 1] = b.seen and "Vue par toi ici." or "Liste Classic (≈), revérifiée dans QuestieDB."
+    if i.probable then tip[#tip + 1] = "Rang déduit de son niveau : vérifie avec « Connaissance des bêtes »." end
+    tip[#tip + 1] = fmt("%s · régime : %s.", fam, F.DietText((pets().families[b.fam] or {}).diet))
+    local sure = b.seen or (e.spot and not e.spot.approx)
+    tip[#tip + 1] = b.seen and "Vue par toi à cet endroit." or (sure and "Position donnée par QuestieDB."
+      or "Position de la liste Classic, sans QuestieDB : à vérifier sur place.")
     local p = e.spot and { map = e.spot.map, x = e.spot.x, y = e.spot.y, sec = e.sec, yd = e.yd }
+    -- « Maintenant » : seulement une bête sûre (vue en jeu / QuestieDB), et le rang seulement s'il n'est pas déduit
     out[#out + 1] = result("pet", b.npc or b.n, fmt("Apprivoise %s (%s)", b.n, lv), e.gain, e.parts, p, {
       tip = tip, stopKind = "find", stopLabel = "Apprivoiser « " .. cut(b.n, 30) .. " »",
-      now = fmt("Apprivoise %s à %s : %s", cut(b.n, 28), e.yd and dist(e.yd) or minutes(e.sec or 0), abTxt) })
+      now = sure and fmt("Apprivoise %s à %s : %s", cut(b.n, 28), e.yd and dist(e.yd) or minutes(e.sec or 0),
+        i.probable and fam or abTxt) or nil })
   end
   return out
 end
@@ -437,7 +438,7 @@ S.vendor = function(here, ctx)
     end
   end
   local W = T.Data and T.Data.Consumables and T.Data.Consumables.water
-  if type(W) == "table" and ctx.level >= 5 then
+  if type(W) == "table" and ctx.level >= 5 and myClass() ~= "HUNTER" then   -- le chasseur ne s'arrête pas pour boire
     local have = 0
     for _, w in ipairs(W) do if (w[2] or 0) <= ctx.level then have = have + (tonumber(API.ItemCount and API.ItemCount(w[1])) or 0) end end
     if have == 0 then
@@ -479,7 +480,7 @@ end
 S.trainer = function(here, ctx)
   local out = {}
   local sug = T._suggestions or {}
-  if sug["Leveling:lvl_train"] then
+  if sug["Errands:trainer"] then   -- (CLEAN) le rappel du maître de classe est chez Guichets (prix réel)
     local e, p = service(here, "trainer")
     local why = { { 25, "nouveaux sorts de classe à ton niveau" } }
     local sc = 25 + (e and travelPart(why, p.sec) or 0)
@@ -499,10 +500,10 @@ S.trainer = function(here, ctx)
         end
         if #new > 0 then
           local p = placeOf(here, m.map, m.x, m.y)
-          local why = { { 6 + 2 * min(3, #new), fmt("nouvelle%s compétence%s d'arme : %s (10 pa chacune ≈)", #new > 1 and "s" or "", #new > 1 and "s" or "", tconcat(new, ", ")) } }
+          local why = { { 6 + 2 * min(3, #new), fmt("nouvelle%s compétence%s d'arme : %s (10 pa chacune)", #new > 1 and "s" or "", #new > 1 and "s" or "", tconcat(new, ", ")) } }
           local sc = why[1][1] + travelPart(why, p.sec)
           local r = result("trainer", "wm:" .. m.n, "Apprends " .. cut(tconcat(new, ", "), 40) .. " chez " .. m.n, sc, why, p,
-            { stopKind = "train", stopLabel = "Maître d'armes " .. m.n, tip = { "Maître d'armes (position Classic ≈, à vérifier)." } })
+            { stopKind = "train", stopLabel = "Maître d'armes " .. m.n, tip = { "Maître d'armes : position des données Classic." } })
           if not best or r.score > best.score then best = r end
         end
       end
@@ -558,7 +559,8 @@ S.gear = function(here, ctx)
     local cd = type(list) == "table" and list[1]
     local src = cd and cd.src
     if src and VERB[src.kind] and (cd.need or 0) <= ctx.level and (cd.pct or 0) >= 5 and cd.name then
-      local why = { { min(40, floor(cd.pct)), fmt("+%d %% sur l'emplacement", floor(cd.pct)) } }
+      local word = (Gm.Verdict and Gm.Verdict(cd.pct)) or "mieux"
+      local why = { { min(40, floor(cd.pct)), word .. " que ce que tu portes" } }
       local p
       if src.kind == "quest" and src.qid and T.Compass and T.Compass.QuestPoints then
         local pts = try(T.Compass.QuestPoints, { id = src.qid }, here and { mapID = here.map }) or {}
@@ -569,28 +571,6 @@ S.gear = function(here, ctx)
       out[#out + 1] = result("gear", cd.id or slot, fmt("%s %s", VERB[src.kind], cut(cd.name, 34)), sc, why, p,
         { tip = { "Où : " .. tostring(src.text or "?") }, stopKind = "find", stopLabel = "Équipement : " .. cut(cd.name, 30) })
     end
-  end
-  return out
-end
-S.quest = function(here)
-  local Pm = mod("Pro")
-  local ranked = Pm and Pm.ranked
-  if type(ranked) ~= "table" or #ranked == 0 then return {} end
-  local best = tonumber(ranked[1].xpm) or 1
-  local out = {}
-  for i = 1, min(3, #ranked) do
-    local r = ranked[i]
-    local q = r.q or {}
-    local why = { { floor(10 + 20 * (tonumber(r.xpm) or 0) / max(1, best)), fmt("%d XP/min estimés", floor(tonumber(r.xpm) or 0)) } }
-    local p
-    if T.Compass and T.Compass.QuestPoints and q.id then
-      local pts = try(T.Compass.QuestPoints, q, here and { mapID = here.map }) or {}
-      local w = pts[1]
-      if w and (w.mapID or w.map) and w.x then p = placeOf(here, w.mapID or w.map, w.x, w.y) end
-    end
-    local sc = why[1][1] + (p and travelPart(why, p.sec) or 0)
-    out[#out + 1] = result("quest", q.id or i, "Fais « " .. cut(q.title or q.t or "quête", 34) .. " »", sc, why, p,
-      { stopKind = "find", stopLabel = "Quête « " .. cut(q.title or q.t or "?", 30) .. " »" })
   end
   return out
 end
@@ -614,7 +594,7 @@ S.dungeon = function(_, ctx)
       local sc = 0 for _, w in ipairs(why) do sc = sc + w[1] end
       local Dg = mod("Dungeon")
       out[#out + 1] = result("dungeon", d.key, "Fais " .. cut(d.n, 34) .. " en groupe", sc, why, nil, {
-        act = Dg and Dg.SetPlanned and { label = "Prévoir", fn = function() pcall(Dg.SetPlanned, d.key) F:Print("Donjon prévu : " .. d.n) end } or nil })
+        act = Dg and Dg.SetPlanned and { label = "Prévoir", fn = function() pcall(Dg.SetPlanned, d.key) end } or nil })   -- l'onglet « Donjon » le montre : rien dans la discussion
     end
   end
   tsort(out, function(a, b) return a.score > b.score end)
@@ -647,15 +627,27 @@ function F.Search(query)
   F.last, F.lastAt, F.lastQuery = out, now(), query
   return out
 end
+--- le pourquoi EN MOTS (le score sert seulement à trier) : les plus d'abord, puis « mais : … »
 function F.WhyText(r)
+  local plus, minus = {}, {}
+  for _, w in ipairs(r.why or {}) do
+    if (w[1] or 0) >= 0 then plus[#plus + 1] = w[2] else minus[#minus + 1] = w[2] end
+  end
   local t = {}
-  for _, w in ipairs(r.why or {}) do t[#t + 1] = fmt("%+d %s", w[1], w[2]) end
+  for _, x in ipairs(plus) do t[#t + 1] = "+ " .. x end
+  for _, x in ipairs(minus) do t[#t + 1] = "mais : " .. x end
   return t
+end
+--- raison principale, courte (sous-titre de la fenêtre)
+function F.MainWhy(r)
+  local best
+  for _, w in ipairs(r.why or {}) do if (w[1] or 0) > 0 and (not best or w[1] > best[1]) then best = w end end
+  return best and best[2] or nil
 end
 function F.Tooltip(r)
   local tip = {}
   for _, l in ipairs(r.tip or {}) do tip[#tip + 1] = l end
-  tip[#tip + 1] = fmt("Pourquoi (gain %d) :", r.score)
+  tip[#tip + 1] = "Pourquoi :"
   for _, l in ipairs(F.WhyText(r)) do tip[#tip + 1] = "  " .. l end
   if r.map then tip[#tip + 1] = "Clic : y aller (boussole) · Maj-clic : ajouter au trajet" end
   return tip
@@ -663,7 +655,7 @@ end
 
 -- ===================================================================== actions (clic seulement)
 function F.GoTo(r)
-  if not (r and r.map and r.x) then F:Print("Pas de position connue pour ça.") return nil end
+  if not (r and r.map and r.x) then F:Say("Pas de position connue pour ça") return nil end
   local Cm = T.Compass
   if not (Cm and Cm.SetTarget) then return nil end
   return try(Cm.SetTarget, Cm, { mapID = r.map, x = r.x, y = r.y, label = cut(r.stopLabel or r.title, 40), source = "finder" })
@@ -714,8 +706,8 @@ function F.StopDone(s)
   return true
 end
 function F:AddToRoute(r)
-  if inCombat() then self:Print("Trajet : après le combat.") return false end
-  if not (r and r.map and r.x) then self:Print("Pas de position connue pour « " .. cut(r and r.title, 40) .. " ».") return false end
+  if inCombat() then self:Say("Trajet : après le combat") return false end
+  if not (r and r.map and r.x) then self:Say("Pas de position connue pour « " .. cut(r and r.title, 40) .. " »") return false end
   local list = stops()
   for i = #list, 1, -1 do if list[i].key == r.key or list[i].done then table.remove(list, i) end end
   list[#list + 1] = { key = r.key, k = r.stopKind or "find", label = cut(r.stopLabel or r.title, 60), map = r.map, x = r.x, y = r.y }
@@ -729,11 +721,11 @@ function F:AddToRoute(r)
     if P.Render then pcall(P.Render, P) end
     if R and R.following and R.OnPlanStep then pcall(R.OnPlanStep, R)
     elseif R and R.SPF and R.SPF() and R.Follow then pcall(R.Follow, R) end
-    self:Print("Ajouté au trajet : " .. cut(r.stopLabel or r.title, 50) .. ".")
+    self:Say("Ajouté au trajet : " .. cut(r.stopLabel or r.title, 50))
     return "route"
   end
   self.GoTo(r)
-  self:Print("Pas de trajet en cours : la boussole te guide ; l'arrêt rejoindra le prochain trajet.")
+  self:Say("Pas de trajet en cours : la boussole te guide vers l'arrêt")
   return "compass"
 end
 function F.RemoveStop(key)
@@ -756,7 +748,7 @@ function F:UpdateNow(list)
     if r.now and r.sec and r.sec <= lim and r.score >= NOW_MIN and (not best or r.score > best.score) then best = r end
   end
   if best then
-    self:Suggest("now", best.now, 1, { ttl = 120, cooldown = 600, sound = false, tab = TAB, tooltip = F.Tooltip(best),
+    self:Suggest("now", best.now, 1, { ttl = 150, cooldown = 600, sound = false, tab = TAB, tooltip = F.Tooltip(best),
       onClick = function() if try(G("IsShiftKeyDown")) then F:AddToRoute(best) else F.GoTo(best) end end })
   else
     self:Clear("now")
@@ -787,6 +779,9 @@ function F:Publish(list)
   if T.SetTabLines then pcall(T.SetTabLines, T, TAB, lines, "Finder") end
 end
 local lastRun = -1000
+--- retour d'un clic : une ligne brève dans le panneau (jamais la discussion)
+function F:Say(text) pcall(self.Suggest, self, "info", text, 1, { ttl = 8, cooldown = 0, sound = false, tab = TAB }) end
+
 function F:Refresh(force)
   if inCombat() then self._dirty = true return end
   if not force and now() - lastRun < 25 then return end
@@ -857,7 +852,7 @@ function F.CreateFrame()
   eb:SetScript("OnEnterPressed", function(self) F.lastQuery = self:GetText() F:Refresh(true) self:ClearFocus() end)
   eb:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
   f.search = eb
-  f.go = btn(f, "Chercher", 90, 20, function() F.lastQuery = eb:GetText() F:Refresh(true) end, { "Mots : familier, rare, équipement, maître, vol, marchand, trésor, quête, donjon… (vide = tout)" })
+  f.go = btn(f, "Chercher", 90, 20, function() F.lastQuery = eb:GetText() F:Refresh(true) end, { "Mots : familier, rare, équipement, maître, vol, marchand, trésor, donjon… (vide = tout)" })
   f.go:SetPoint("LEFT", eb, "RIGHT", 10, 0)
   local chips = { { "", "Tout" } }
   for _, c in ipairs(CATS) do chips[#chips + 1] = { c.kw[1], c.label } end
@@ -904,7 +899,8 @@ function F.Render()
     if r then
       row.text:SetText(fmt("%s", r.title))
       local where = r.sec and (minutes(r.sec) .. (r.yd and (" · " .. dist(r.yd)) or "")) or (r.map and "trajet inconnu" or "sans position")
-      row.sub:SetText(fmt("gain %d · %s", r.score, where))
+      local why = F.MainWhy(r)
+      row.sub:SetText(why and (cut(why, 44) .. " · " .. where) or where)
       if r.map then row.add:Show() row.go:Show() if row.go.SetLabel then row.go:SetLabel("Y aller") end
       elseif r.act then row.add:Hide() row.go:Show() if row.go.SetLabel then row.go:SetLabel(r.act.label) end
       else row.add:Hide() row.go:Hide() end
@@ -938,7 +934,8 @@ function F:OnEnable()
   self:RegisterEvent("ZONE_CHANGED_NEW_AREA", function() F._dirty = true end)
   self.ticker = T:NewTicker(30, function()
     if inCombat() then return end
-    if F._dirty or now() - lastRun >= 90 then F:Refresh(true) end
+    -- (CLEAN) toutes les 2 min suffisent ; jamais dans l'image du minuteur (où tournent d'autres modules) : 1 s après
+    if F._dirty or now() - lastRun >= 120 then T:After(1.1, function() if not inCombat() then F:Refresh(true) end end) end
   end, self)
   T:After(8, function() if not inCombat() then F:Refresh(true) end end)
 end
@@ -950,14 +947,7 @@ end
 function F:OnOptionChanged() lastRun = -1000 end
 
 T:RegisterSlash("cherche", function(rest)
-  rest = tostring(rest or "")
-  F.lastQuery = rest
-  local list = F:Refresh(true) or F.last or {}
-  F.Show(true)
-  if inCombat() then F:Print("Recherche : après le combat.") return end
-  if #list == 0 then F:Print("Rien trouvé" .. (rest ~= "" and (" pour « " .. rest .. " »") or "") .. ".") return end
-  for i = 1, min(3, #list) do
-    local r = list[i]
-    F:Print(fmt("%d. %s%s (gain %d)", i, r.title, r.sec and (" · " .. minutes(r.sec)) or "", r.score))
-  end
-end, "chercher un truc qui change tout : /tai cherche [familier|rare|équipement|maître|vol|marchand|trésor|quête|donjon]")
+  F.lastQuery = tostring(rest or "")
+  F:Refresh(true)
+  F.Show(true)   -- tout est dans la fenêtre (rien dans le chat)
+end, "chercher un truc qui change tout : /tai cherche [familier|rare|équipement|maître|vol|marchand|trésor|donjon]")

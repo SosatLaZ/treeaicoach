@@ -6,15 +6,18 @@
 --  3 « pourquoi je meurs » : tendance des morts de la soirée (écart de niveau, même monstre, trop de monstres,
 --    élites, même zone) + UN conseil ; une ligne dans « Maintenant » au 3e décès en 30 min (une fois vivant).
 --  4 pause : après 2 h de jeu d'affilée, un petit rappel cliquable (option, une fois toutes les 2 h).
--- Données : événements du jeu (XP, argent, quêtes rendues, butin perso, mort) + le récap du module Fight s'il
--- est là (tueur, niveau). Jamais un chiffre qu'on n'a pas. Rien n'est fait à la place du joueur.
+--  5 monture (niveaux 30 à 39) : l'or mis de côté face à ton objectif (réglable), et le temps qu'il faut à ton
+--    rythme d'or MESURÉ (Stats, au moins 10 min) — repris de l'ancien module « Coups d'avance ».
+-- Données : événements du jeu (XP, argent, quêtes rendues, butin perso, mort) + le récap du module Combat s'il
+-- est là (contre quoi, niveau). Jamais un chiffre qu'on n'a pas (pas d'XP/h ici : c'est Stats, avec sa durée de
+-- mesure). Rien n'est fait à la place du joueur.
 -- Sortie : onglet « Infos » (TreeAI:SetTabLines, bloc "Session") + Suggest rares. Lua 5.1, aucune globale.
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 
 local M = T:RegisterModule("Session", {
   title = "Ma session",
-  defaults = { enabled = true, card = true, prev = true, deaths = true, pause = true, pauseHours = 2 },
+  defaults = { enabled = true, card = true, prev = true, deaths = true, pause = true, pauseHours = 2, mount = true, mountGoal = 90 },
   charDefaults = { cur = false, prev = false },
   options = {
     { key = "card", type = "toggle", label = "Bilan de la session dans « Infos »", section = "Bilan" },
@@ -22,6 +25,8 @@ local M = T:RegisterModule("Session", {
     { key = "deaths", type = "toggle", label = "« Pourquoi je meurs » : tendance + un conseil", section = "Conseils" },
     { key = "pause", type = "toggle", label = "Petit rappel de pause après une longue session", section = "Conseils" },
     { key = "pauseHours", type = "range", label = "Rappel de pause après (heures)", min = 1, max = 4, step = 1, section = "Conseils" },
+    { key = "mount", type = "toggle", label = "Niveaux 30 à 39 : l'or mis de côté pour la monture", section = "Conseils" },
+    { key = "mountGoal", type = "range", label = "Objectif pour la monture (po)", min = 40, max = 200, step = 5, section = "Conseils" },
   },
 })
 if T.MODULE_TAB and not T.MODULE_TAB.Session then T.MODULE_TAB.Session = "info" end
@@ -29,7 +34,6 @@ if T.TOPIC_IDS then
   T.TOPIC_IDS["Session:deaths"] = "death"
   T.TOPIC_IDS["Fight:death"] = T.TOPIC_IDS["Fight:death"] or "death"
   T.TOPIC_IDS["Session:prev"] = "changes"
-  T.TOPIC_IDS["Comfort:changes"] = T.TOPIC_IDS["Comfort:changes"] or "changes"
 end
 
 local floor, max, min = math.floor, math.max, math.min
@@ -298,7 +302,8 @@ function M.Lines()
       { "Ta soirée en un coup d'oeil", M.open and "Clic : refermer le détail" or "Clic : voir le détail" })
     if M.open then
       local d = max(1, t - s.start)
-      if (s.xp or 0) > 0 then add(fmt("XP gagnée : %s, soit %s par heure", n(s.xp), n(s.xp * 3600 / d)), 1, function() M.Toggle() end) end
+      if (s.xp or 0) > 0 then add(fmt("XP gagnée : %s en %s", n(s.xp), dur(d)), 1, function() M.Toggle() end,
+        { "XP par heure, mesurée et datée : onglet « Stats »." }) end
       for i, l in ipairs(s.levels or {}) do
         if i <= 3 then add(fmt("Beau moment : niveau %d atteint", l.lv), 1, function() M.Toggle() end) end
       end
@@ -315,7 +320,27 @@ function M.Lines()
     local txt, tip, tab = M.DeathTrend(s.deaths)
     if txt then add(txt .. ". " .. tip, 2, openTab(tab ~= "now" and tab or "info"), { "Pourquoi je meurs", tip }) end
   end
+  local mt, mtip = M.MountLine()
+  if mt then add(mt, 1, nil, mtip) end
   return out
+end
+
+--- monture du niveau 40 (niveaux 30 à 39) : or réel face à l'objectif réglable ; durée seulement si l'or/h est mesuré
+function M.MountText(lvl, money_, goal, goldPerHour)
+  lvl, money_, goal = tonumber(lvl) or 0, tonumber(money_) or 0, tonumber(goal) or 0
+  if lvl < 30 or lvl >= 40 or goal <= 0 or money_ >= goal then return nil end
+  local txt = fmt("Monture au niveau 40 : %s de côté sur %s", money(money_), money(goal))
+  if goldPerHour and goldPerHour > 0 then txt = txt .. fmt(", ≈ %s de jeu à ton rythme", dur((goal - money_) / goldPerHour * 3600)) end
+  return txt
+end
+function M.MountLine()
+  if not opt("mount") then return nil end
+  local St = T.Stats
+  local gph = St and St.GoldPerHour and St:GoldPerHour() or nil
+  local txt = M.MountText(myLevel(), myMoney(), (tonumber(M.db and M.db.mountGoal) or 90) * 10000, gph)
+  if not txt then return nil end
+  return txt, { "Monture + compétence de monte au niveau 40 : le prix exact dépend de ta race et de ta réputation.",
+    "Règle l'objectif dans les options (Ma session)." }
 end
 
 function M.Toggle()

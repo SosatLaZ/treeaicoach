@@ -37,8 +37,8 @@ def test_no_automation():
 def test_hooks_and_budget():
     hub = (ADDON / "Modules" / "Hub.lua").read_text(encoding="utf-8")
     assert "T.HUB_EXTRA" in hub
-    team = (ADDON / "Modules" / "Team.lua").read_text(encoding="utf-8")
-    assert "function M.GearOf(guid)" in team
+    group = (ADDON / "Modules" / "Group.lua").read_text(encoding="utf-8")   # 4.0: Team is a facade of Group
+    assert "function TM.GearOf(guid)" in group and "M.GearOf = TM.GearOf" in group
     sim = (ROOT / "tests/wow/session_sim.lua").read_text(encoding="utf-8")
     assert re.search(r"kinstrModuleMin = \{[^}]*Dungeon = 80", sim)
 

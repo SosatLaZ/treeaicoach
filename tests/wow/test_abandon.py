@@ -13,7 +13,8 @@ SRC = ADDON / "Modules" / "Abandon.lua"
 
 def test_toc_lists_abandon_after_economy():
     lines = [ln.strip() for ln in (ADDON / "TreeAI.toc").read_text(encoding="utf-8").splitlines()]
-    assert lines.index("Modules\\Abandon.lua") > lines.index("Modules\\Economy.lua") > lines.index("Modules\\Quests.lua")
+    assert lines.index("Modules\\Abandon.lua") > lines.index("Modules\\Quests.lua")   # Economy removed in 4.0 (CLEAN)
+    assert "Modules\\Economy.lua" not in lines
 
 
 def test_never_abandons_nor_selects():

@@ -56,9 +56,17 @@ return function(M, ctx)
   ctx.check(all:find("Meilleures zones (70–124)", 1, true) and all:find("tu y es", 1, true), "gathering zones")
   ctx.check(all:find("Bravo : Alchimie 150", 1, true) and all:find("potions", 1, true), "squad professions")
   ctx.check(all:find("Camp : ", 1, true), "camp tip")
-  local nowPinned = false
-  for _, l in ipairs(T:GetTabLines("prof")) do if l.pin and T.PlainText(l.text):find("maintenant", 1, true) then nowPinned = true end end
-  ctx.check(nowPinned, "now tip pinned in « Maintenant »")
+  local function pinned()
+    for _, l in ipairs(T:GetTabLines("prof")) do if l.pin and T.PlainText(l.text):find("maintenant", 1, true) then return true end end
+    return false
+  end
+  -- (4.0) « Fais N× … maintenant » ne monte dans « Maintenant » que fenêtre de métier ouverte (sinon : onglet seulement)
+  ctx.check(not pinned(), "now tip stays in the tab while the trade window is closed")
+  M.FireEvent("TRADE_SKILL_SHOW")
+  P.Update(true)
+  ctx.check(pinned(), "now tip pinned in « Maintenant » with the trade window open")
+  M.FireEvent("TRADE_SKILL_CLOSE")
+  P.Update(true)
 
   -- target via slash, recomputed; in combat nothing is recomputed
   M.RunSlash("/tai metiers cible 60 secourisme")
