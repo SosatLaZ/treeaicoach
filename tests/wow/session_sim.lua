@@ -15,6 +15,8 @@
 -- Fake names only. Lua 5.1:
 --   lua5.1 tests/wow/session_sim.lua [--class HUNTER] [--flavor modern] [--minutes 60] [--addon DIR] [-v]
 --     [--profile essentiel|tout] (default essentiel = what a new player gets) [--fine] (CPU by function)
+--   Hitches (SPIKE): cost of every main-client frame (timers + OnUpdate, 0.2-s step): worst / p99, the 1-Hz
+--   phase ratio, the worst frames with their top functions (-v: + the jobs that pay), KB allocated / s.
 local HERE = (arg and arg[0] or "session_sim.lua"):match("^(.*)[/\\][^/\\]*$") or "."
 local opts = { class = "HUNTER", flavor = "modern", minutes = 60, addon = HERE .. "/../../wow_addon/TreeAI" }
 do
@@ -54,7 +56,15 @@ local BUDGET = {
   blockedMax = 0,                -- TAINT: actions the game would block (ADDON_ACTION_BLOCKED, « Échec des actions d'interface »)
   edgeNowPct = 25,               -- CHEAT25 « Avantages » (Edge): % of sampled seconds with an Edge line in « Maintenant »
   edgeDistinctMax = 20,          -- distinct Edge lines (text skeleton) shown in « Maintenant » over the session
-  edgeKinstrMin = 1500,          -- Edge CPU, avg kilo-instructions / minute (25 checks, rotating)
+  edgeKinstrMin = 1500,
+  -- SPIKE (3.9.7): per-frame peaks on the main client (one frame = timers + OnUpdate of a 0.2-s step)
+  -- 3.9.6 (every C_Timer ticker in phase, all :AutoRefresh() in one frame): worst 129 / 297 (tout), p99 56 / 123,
+  -- phase ratio 2.06 / 2.42 ; 3.9.7 scheduler: worst 97 / 171, p99 40 / 61, ratio ≤ 1.36
+  frameLoginKinstr = 4000,       -- worst frame in the first 30 s (one-time panel layout, loading screen just gone)
+  frameWorstKinstr = (opts.profile == "tout") and 210 or 115,   -- worst single frame after 30 s (kilo-instructions)
+  frameP99Kinstr = (opts.profile == "tout") and 80 or 48,
+  framePhaseRatio = 1.6,         -- busiest of the 5 frame phases / average phase (1.0 = flat; 1-Hz spikes → ≫ 1)
+  allocKBps = (opts.profile == "tout") and 280 or 160,   -- KB allocated / s in frames (GC pressure)          -- Edge CPU, avg kilo-instructions / minute (25 checks, rotating)
 }
 
 local BASE = {}
@@ -178,6 +188,9 @@ local function modOf(src)
   return m
 end
 local getinfo = debug.getinfo
+-- SPIKE: per-frame cost on the main client (one frame = timers + OnUpdate of one wowmock Advance step,
+-- 0.2 s on the main client). FR.acc = samples (×1000 instr) in the open frame; FR.mods = by Module:line.
+local FR = { open = false, acc = 0, mods = {}, jobs = {}, fjobs = {}, costs = {}, phase = {}, worst = {}, idx = 0, kbStart = 0, kb = {} }
 local fine = {}             -- --fine: samples by « Module:line » of the innermost addon function (main client)
 local function hook()
   local lvl, m = 2, nil
@@ -202,6 +215,26 @@ local function hook()
       break
     end
     lvl = lvl + 1
+  end
+  if FR.open then
+    FR.acc = FR.acc + 1
+    local mk = m or "(mock/sim)"
+    local byLine = FR.mods[mk]
+    if not byLine then byLine = {}; FR.mods[mk] = byLine end
+    local line = 0
+    if m then local info = getinfo(lvl, "S") if info then line = info.linedefined end end
+    byLine[line] = (byLine[line] or 0) + 1   -- no string building here: the hook's own work is counted / allocated
+    if opts.verbose then   -- outermost non-Core addon function = the job (ticker / OnUpdate / slice) that pays
+      local l, job = lvl, nil
+      while true do
+        local i2 = getinfo(l, "S")
+        if not i2 then break end
+        local m2 = modOf(i2.source)
+        if m2 and (m2 ~= "Core" or not job) then job = m2 .. ":" .. i2.linedefined end
+        l = l + 1
+      end
+      if job then FR.jobs[job] = (FR.jobs[job] or 0) + 1; FR.fjobs[job] = (FR.fjobs[job] or 0) + 1 end
+    end
   end
   local byMin = cpu[MINUTE]
   if not byMin then byMin = {}; cpu[MINUTE] = byMin end
@@ -506,11 +539,53 @@ end
 -- time ----------------------------------------------------------------------------------------------
 local T0
 local function simSeconds() return order[1].M.now - T0 end
+local FRAMES_PER_SEC = 5   -- main client Advance step 0.2 s
+local function frameHook(begin)
+  if begin then
+    FR.acc = 0
+    for _, byLine in pairs(FR.mods) do for k in pairs(byLine) do byLine[k] = nil end end
+    for k in pairs(FR.fjobs) do FR.fjobs[k] = nil end
+    collectgarbage("stop")
+    FR.kbStart = collectgarbage("count")
+    FR.open = true
+    return
+  end
+  FR.open = false
+  local kb = collectgarbage("count") - FR.kbStart
+  collectgarbage("restart")
+  if not T0 then return end   -- login frames: not measured
+  FR.idx = FR.idx + 1
+  local sec = math.floor(order[1].M.now - T0)
+  FR.kb[sec] = (FR.kb[sec] or 0) + math.max(0, kb)
+  local cost = FR.acc
+  if sec < 30 then   -- login / first layout (loading screen just gone): measured apart
+    if cost > (FR.loginWorst or 0) then FR.loginWorst = cost end
+    return
+  end
+  FR.costs[#FR.costs + 1] = cost
+  local ph = FR.idx % FRAMES_PER_SEC
+  FR.phase[ph] = (FR.phase[ph] or 0) + cost
+  local w = FR.worst
+  if #w < 5 or cost > w[#w].cost then
+    local top = {}
+    for mk, byLine in pairs(FR.mods) do for line, n in pairs(byLine) do top[#top + 1] = { k = mk .. ":" .. line, n = n } end end
+    local jt = {}
+    for k, n in pairs(FR.fjobs) do jt[#jt + 1] = { k = k, n = n } end
+    table.sort(jt, function(a, b) return a.n > b.n end)
+    for i = #jt, 5, -1 do jt[i] = nil end
+    table.sort(top, function(a, b) return a.n > b.n end)
+    for i = #top, 7, -1 do top[i] = nil end
+    w[#w + 1] = { cost = cost, t = order[1].M.now - T0, top = top, jobs = jt }
+    table.sort(w, function(a, b) return a.cost > b.cost end)
+    if #w > 5 then w[#w] = nil end
+  end
+end
 local function tick(sec)
   sec = sec or 1
   for _ = 1, sec do
     for _, c in ipairs(order) do
       CUR = c.name
+      if c.main then c.M.FrameHook = frameHook end
       c.M.Advance(1, c.main and 0.2 or 0.5)
     end
     pump()
@@ -1129,6 +1204,51 @@ if (perMod.Stats or 0) / nMin > BUDGET.kinstrStatsMin then
   fail(("cpu: Stats %.1f kinstr/min > %d"):format((perMod.Stats or 0) / nMin, BUDGET.kinstrStatsMin))
 end
 P(("  total addon  %7.0f kinstr/min"):format(totalMain / nMin))
+-- SPIKE: per-frame peaks (hitches) + allocation rate, main client
+do
+  local c = {}
+  for i, v in ipairs(FR.costs) do c[i] = v end
+  table.sort(c)
+  local n = #c
+  local function pct(p) return n > 0 and c[math.max(1, math.ceil(n * p))] or 0 end
+  local sum = 0
+  for _, v in ipairs(c) do sum = sum + v end
+  local mean = n > 0 and sum / n or 0
+  local phMax, phSum = 0, 0
+  for ph = 0, FRAMES_PER_SEC - 1 do
+    local v = FR.phase[ph] or 0
+    phSum = phSum + v
+    if v > phMax then phMax = v end
+  end
+  local phRatio = phSum > 0 and phMax / (phSum / FRAMES_PER_SEC) or 0
+  local kbs, kbMax, nk = 0, 0, 0
+  for sec, kb in pairs(FR.kb) do if sec >= 60 then kbs = kbs + kb nk = nk + 1 if kb > kbMax then kbMax = kb end end end
+  local kbAvg = nk > 0 and kbs / nk or 0
+  P(("login (first 30 s): worst frame %d kinstr (budget %d)"):format(FR.loginWorst or 0, BUDGET.frameLoginKinstr))
+  if (FR.loginWorst or 0) > BUDGET.frameLoginKinstr then fail(("hitch: login frame %d kinstr > %d"):format(FR.loginWorst, BUDGET.frameLoginKinstr)) end
+  P(("frames: %d  worst %d kinstr  p99 %d  p50 %d  mean %.1f  1-Hz phase ratio %.2f  alloc %.1f KB/s (max %.0f KB in 1 s)")
+    :format(n, c[n] or 0, pct(0.99), pct(0.5), mean, phRatio, kbAvg, kbMax))
+  if opts.verbose then
+    local js = {}
+    for k, v in pairs(FR.jobs) do js[#js + 1] = { k = k, n = v } end
+    table.sort(js, function(a, b) return a.n > b.n end)
+    for i = 1, math.min(25, #js) do P(("  job %-24s %6d kinstr total"):format(js[i].k, js[i].n)) end
+    local ph = {}
+    for p = 0, FRAMES_PER_SEC - 1 do ph[#ph + 1] = tostring(FR.phase[p] or 0) end
+    P("  phases: " .. table.concat(ph, " "))
+  end
+  for i, w in ipairs(FR.worst) do
+    local parts = {}
+    for _, e in ipairs(w.top) do parts[#parts + 1] = ("%s=%d"):format(e.k, e.n) end
+    local jp = {}
+    for _, e in ipairs(w.jobs) do jp[#jp + 1] = ("%s=%d"):format(e.k, e.n) end
+    P(("  worst#%d %4d kinstr @%6.1fs  %s  | jobs %s"):format(i, w.cost, w.t, table.concat(parts, " "), table.concat(jp, " ")))
+  end
+  if (c[n] or 0) > BUDGET.frameWorstKinstr then fail(("hitch: worst frame %d kinstr > %d"):format(c[n], BUDGET.frameWorstKinstr)) end
+  if pct(0.99) > BUDGET.frameP99Kinstr then fail(("hitch: p99 frame %d kinstr > %d"):format(pct(0.99), BUDGET.frameP99Kinstr)) end
+  if phRatio > BUDGET.framePhaseRatio then fail(("hitch: 1-Hz pattern, frame phase ratio %.2f > %.2f"):format(phRatio, BUDGET.framePhaseRatio)) end
+  if kbAvg > BUDGET.allocKBps then fail(("gc: %.1f KB/s allocated > %d"):format(kbAvg, BUDGET.allocKBps)) end
+end
 do  -- CHEAT25 : les avantages restent discrets (une ligne quand elle sert, rien sinon)
   local ek = (perMod.Edge or 0) / nMin
   local pct = 100 * (S.edgeSec or 0) / math.max(1, S.samples)

@@ -383,6 +383,9 @@ TreeAI:BlockedTop(n)                  -- actions bloquées par le jeu : { {func,
                                       -- (TreeAIDB.diag.blockedTop / blockedTotal ; ligne « Blocages » dans Infos ; /tai bloque [reset])
 TreeAI:After(sec, fn)                 -- C_Timer.After ou fallback OnUpdate
 TreeAI:NewTicker(sec, fn[, owner])    -- retourne objet avec :Cancel() ; owner = module (défaut : celui dont le code tourne)
+                                      -- (3.9.7) un seul ordonnanceur (OnUpdate du cœur) : phase propre par ticker
+                                      -- (nombre d'or), ≤ 3 rappels « lourds » (période ≥ 1 s) par image, ~1,5 ms ;
+                                      -- les :AutoRefresh() du cycle passent en tranches sur plusieurs images
 TreeAI:CharKey()                      -- "Nom-Royaume" (en jeu uniquement)
 TreeAI:PlayerClass()                  -- "HUNTER", ...
 TreeAI:Summary()                      -- table résumé du perso (voir schéma), modifiable

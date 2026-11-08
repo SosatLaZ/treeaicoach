@@ -10,7 +10,7 @@ local type, pairs, ipairs, tostring, tonumber, select = type, pairs, ipairs, tos
 local pcall, setmetatable, next = pcall, setmetatable, next
 local tinsert, tremove, tsort, tconcat = table.insert, table.remove, table.sort, table.concat
 local strsub, strfind, strgsub, strformat, strbyte, strchar = string.sub, string.find, string.gsub, string.format, string.byte, string.char
-local mmax = math.max
+local mmax, mmin = math.max, math.min
 
 local TreeAI = _G.TreeAI or {}
 _G.TreeAI = TreeAI
@@ -537,9 +537,87 @@ function Ticker:Cancel()
   if self.real then self.real:Cancel(); self.real = nil end
 end
 function Ticker:IsCancelled() return self.cancelled and true or false end
+-- SPIKE (3.9.7) : ordonnanceur unique. Avant, chaque ticker était un C_Timer.NewTicker créé au même instant
+-- (OnEnable de tous les modules à la connexion) : tous les tickers d'1 s (puis 2, 3, 5 s…) tombaient dans
+-- la MÊME image, chaque seconde pile → saccade régulière. Maintenant : un seul OnUpdate, chaque ticker a sa
+-- phase propre (suite du nombre d'or : jamais deux tickers sur le même instant), au plus SLICE_JOBS rappels
+-- « lourds » (période ≥ 1 s) par image et ~SLICE_MS de travail (debugprofilestop) ; le reste passe à l'image suivante (file par échéance).
+local SLICE_JOBS, SLICE_MS, SLICE_WAIT = 3, 1.5, 0.5   -- SLICE_WAIT : image « longue »
+local sched, schedFrame, schedNext, schedSeq = {}, nil, math.huge, 0
+local dueBuf = {}
+local function byNext(a, b) return a.next < b.next end
+local runSlices, slicePending   -- file « tranches » (rafraîchissement auto) : voir StartAutoRefresh
+local function schedStep(elapsed)
+  local t = now()
+  -- image très longue (≥ 0,5 s : chargement, tests à pas d'1 s) : rien n'est retardé, comme avant
+  local coarse = (tonumber(elapsed) or 0) >= SLICE_WAIT
+  local jobs, t0 = 0, profile and profile()
+  if t >= schedNext then
+    local n = 0
+    for i = #sched, 1, -1 do
+      local p = sched[i]
+      if p.cancelled or not p.real then tremove(sched, i)
+      elseif p.next <= t then n = n + 1; dueBuf[n] = p end
+    end
+    for i = #dueBuf, n + 1, -1 do dueBuf[i] = nil end
+    if n > 1 then tsort(dueBuf, byNext) end
+    for i = 1, n do
+      local p = dueBuf[i]
+      dueBuf[i] = nil
+      local heavy = p.sec >= 1   -- < 1 s = pas de travail découpé / minuterie de combat : léger, jamais retardé
+      if p.cancelled or not p.real then   -- annulé par un rappel précédent de cette image
+      elseif heavy and not coarse and (jobs >= SLICE_JOBS or (jobs > 0 and t0 and (profile() - t0) > SLICE_MS)) then
+        -- reste dû : passera à l'image suivante (file par échéance, le plus en retard d'abord)
+      else
+        local nx = p.next + p.sec
+        p.next = (nx > t) and nx or (t + p.sec)   -- en retard : on garde la cadence sans rafale de rattrapage
+        if heavy then jobs = jobs + 1 end
+        p.cb()
+      end
+    end
+    local m = math.huge
+    for i = 1, #sched do local p = sched[i] if p.next < m then m = p.next end end
+    schedNext = m
+  end
+  if runSlices then runSlices(jobs, t0) end
+end
+TreeAI._SchedStep = schedStep   -- tests
+local function ensureSched()
+  if schedFrame ~= nil then return schedFrame end
+  schedFrame = false
+  if _G.CreateFrame then
+    local ok, f = pcall(_G.CreateFrame, "Frame")
+    if ok and f then
+      f:SetScript("OnUpdate", function(_, elapsed)
+        if slicePending or now() >= schedNext then safecall(schedStep, elapsed) end   -- image sans travail : 1 comparaison
+      end)
+      schedFrame = f
+    end
+  end
+  return schedFrame
+end
+local function schedHandle(p)
+  local h = {}
+  function h.Cancel()
+    for i = #sched, 1, -1 do if sched[i] == p then tremove(sched, i) end end
+    if p.real == h then p.real = nil end
+  end
+  return h
+end
 local function startTicker(p)
   if p.real or p.cancelled then return end
   local cb = function() runAs(p.owner, p.fn) end
+  if ensureSched() then
+    schedSeq = schedSeq + 1
+    local frac = (schedSeq * 0.6180339887) % 1   -- phase propre (nombre d'or) dans la seconde
+    p.cb = cb
+    p.next = now() + p.sec + frac * mmin(1, p.sec)
+    local h = schedHandle(p)
+    p.real = h
+    sched[#sched + 1] = p
+    if p.next < schedNext then schedNext = p.next end
+    return
+  end
   if C_Timer and C_Timer.NewTicker then
     p.real = C_Timer.NewTicker(p.sec, cb)
     return
@@ -739,6 +817,38 @@ function TreeAI:UserAction(fn, ...)
 end
 function TreeAI:InUserAction() return (self._userAction or 0) > 0 end
 
+-- SPIKE : le cycle ne lance plus tous les :AutoRefresh() dans la même image ; il remplit une file que
+-- l'ordonnanceur vide par tranches (≤ SLICE_JOBS rappels / image, budget SLICE_MS), puis REFRESH + panneau.
+local sliceQ, sliceHead, sliceN, sliceFight, sliceAt = {}, 1, 0, false, 0
+local function sliceDone()
+  TreeAI:Fire("REFRESH")
+  -- le panneau ne se redessine que si un conseil / une ligne a changé (ou un conseil a expiré)
+  if TreeAI.RefreshPanel and TreeAI:PanelDirty() then TreeAI:RequestRefresh() end
+end
+runSlices = function(jobs, t0)
+  if not slicePending then return end
+  local late = jobs < 0 or now() >= sliceAt   -- échéance : avant le cycle suivant, tout est passé
+  local info = TreeAI.MODULE_INFO or {}
+  while sliceHead <= sliceN do
+    if not late and (jobs >= SLICE_JOBS or (jobs > 0 and t0 and (profile() - t0) > SLICE_MS)) then return end
+    local name = sliceQ[sliceHead]
+    sliceQ[sliceHead] = nil
+    sliceHead = sliceHead + 1
+    local m = TreeAI.modules and TreeAI.modules[name]
+    -- (LITE) en combat, seuls les modules utiles au combat se recalculent
+    if m and type(m.AutoRefresh) == "function" and m._active and (not m.IsEnabled or m:IsEnabled())
+        and not (sliceFight and not (info[name] and info[name].combat)) then
+      TreeAI._ctx = name .. ":AutoRefresh"
+      runAs(m, m.AutoRefresh, m)
+      TreeAI._ctx = nil
+      jobs = jobs + 1
+    end
+  end
+  slicePending = false
+  sliceHead, sliceN = 1, 0
+  safecall(sliceDone)
+end
+
 function TreeAI:StartAutoRefresh()
   if self._refreshTicker or not self.NewTicker then return end
   local n = 0
@@ -748,22 +858,17 @@ function TreeAI:StartAutoRefresh()
     if every <= 0 then return end
     local fighting = InCombatLockdown and InCombatLockdown()
     if fighting then every = every * 2 end
-    if n < every then return end
+    if n < every or slicePending then return end
     n = 0
-    local info = self.MODULE_INFO or {}
+    sliceFight = fighting and true or false
     for _, name in ipairs(self.moduleOrder or {}) do
       local m = self.modules and self.modules[name]
-      -- (LITE) en combat, seuls les modules utiles au combat se recalculent
-      if m and type(m.AutoRefresh) == "function" and m._active and (not m.IsEnabled or m:IsEnabled())
-          and not (fighting and not (info[name] and info[name].combat)) then
-        self._ctx = name .. ":AutoRefresh"
-        runAs(m, m.AutoRefresh, m)
-        self._ctx = nil
-      end
+      if m and type(m.AutoRefresh) == "function" and m._active then sliceN = sliceN + 1; sliceQ[sliceN] = name end
     end
-    self:Fire("REFRESH")
-    -- le panneau ne se redessine que si un conseil / une ligne a changé (ou un conseil a expiré)
-    if self.RefreshPanel and self:PanelDirty() then self:RequestRefresh() end
+    sliceHead, sliceAt = 1, now() + mmax(1, every - 1)
+    if schedFrame then slicePending = true return end
+    slicePending = true
+    runSlices(-math.huge, nil)   -- pas d'ordonnanceur (tests sans CreateFrame) : tout de suite
   end)
 end
 
