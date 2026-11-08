@@ -3,6 +3,13 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 3.9.7 · 8 novembre 2026
+
+- **WoW : fini les « actions bloquées »** (159 en une session) : le badge de quête près du portrait de la cible
+  était accroché à un cadre protégé du jeu ; il est maintenant posé à côté. Rien de TreeAI ne bouge les cadres
+  du jeu en combat (barres de nom, sacs, butin : replacés après le combat).
+- `/tai bloque` (et la ligne « Blocages » dans Infos) : ce qui a été bloqué, par quel module, combien de fois.
+
 ## 3.9.6 · 8 novembre 2026
 
 - **WoW : interface rangée** : options en une seule entrée, catégories à gauche, page qui défile, plus aucun
