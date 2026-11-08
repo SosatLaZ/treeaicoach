@@ -232,19 +232,21 @@ function M.Lines(st)
   local function add(text, prio, tooltip, pin, onClick)
     lines[#lines + 1] = { text = text, prio = prio or 1, tooltip = tooltip, pin = pin, onClick = onClick }
   end
+  -- règle d'affichage : pas de ligne « rien à faire » (arbre pas encore lu = silence), les actions de
+  -- l'onglet sont des boutons (control), un talent pris sur plusieurs rangs = une seule ligne « 1 → 3/5 »
   if not st then add("Talents : données absentes (Data/Talents.lua).", 1) return lines end
   local r = st.r
-  if not r.ok then
-    add(r.modern and "Talents : arbre moderne détecté — conseils écrits seulement (/tai talents)." or
-      "Talents : arbre illisible pour l'instant (réessaie après le chargement).", 1)
+  if not r.ok and r.modern then
+    add("Talents : arbre moderne détecté — conseils écrits seulement (/tai talents).", 1)
   end
   if r.level < 10 then add("Talents au niveau 10 : TreeAI te dira quoi prendre et pourquoi.", 1) end
   local b, plan = st.build, st.plan
   if not b then return lines end
-  add(fmt("Parcours : %s (%s) — %s  [clic : changer]", b.name, b.split, st.pickWhy), 1,
+  add(fmt("Parcours : %s (%s) — %s", b.name, b.split, st.pickWhy), 1,
     { b.summary, "Clic : auto → solo → groupe → auto", "(ou /tai talents solo | groupe | auto)" }, nil, M.CycleMode)
-  add(M.full and "[Clic] Masquer le parcours complet" or "[Clic] Voir le parcours complet, point par point", 1,
-    { "Liste toutes les étapes du parcours avec le niveau et le pourquoi." }, nil, M.ToggleFull)
+  lines[#lines + 1] = { text = M.full and "[Clic] Masquer le parcours complet" or "[Clic] Voir le parcours complet, point par point",
+    label = M.full and "Masquer le parcours" or "Parcours complet", control = true, prio = 1,
+    tooltip = { "Liste toutes les étapes du parcours avec le niveau et le pourquoi." }, onClick = M.ToggleFull }
   if M.full then
     for _, s in ipairs(b.steps or {}) do
       local have = (r.ranks[C.Key(s[1], s[2], s[3])] or 0) >= s[4]
@@ -263,12 +265,18 @@ function M.Lines(st)
       add(fmt("%d point(s) libre(s) : parcours terminé, mets-les où tu veux.", r.unspent), 2)
     end
   end
-  local shown = 0
+  local shown, last = 0, nil
   for i, u in ipairs(plan.upcoming) do
     if i > 1 or r.unspent == 0 then
-      shown = shown + 1
-      if shown > ((M.db and tonumber(M.db.upcoming)) or 3) then break end
-      add(fmt("Ensuite : %s (%d/%d) — %s", u.name, u.rank, u.target, u.why), 1, howTo(u, r.tabs))
+      if last and last.name == u.name then
+        last.to = u.rank
+        last.line.text = fmt("Ensuite : %s (%d → %d/%d) — %s", u.name, last.from, u.rank, u.target, u.why)
+      else
+        shown = shown + 1
+        if shown > ((M.db and tonumber(M.db.upcoming)) or 3) then break end
+        add(fmt("Ensuite : %s (%d/%d) — %s", u.name, u.rank, u.target, u.why), 1, howTo(u, r.tabs))
+        last = { name = u.name, from = u.rank, line = lines[#lines] }
+      end
     end
   end
   if plan.off > 0 then

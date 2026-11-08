@@ -47,10 +47,10 @@ return function(M, ctx)
   local p1 = res.plan[1]
   ctx.check(p1 and B.StepText(p1) == "Mets « TAI Marque » sur la touche 2 (barre 1 case 2, libre)",
     "plan 1: " .. tostring(p1 and B.StepText(p1)))
-  local lines = T:GetTabLines("info")
+  local lines = T:GetTabLines("binds")
   local found = false
   for _, l in ipairs(lines) do if l.text:find("Mets « TAI Marque »", 1, true) and l.onClick then found = true end end
-  ctx.check(found, "plan shown in « Infos » with a click action")
+  ctx.check(found, "plan shown in « Touches » with a click action")
 
   -- in combat: nothing happens
   M.EnterCombat()
@@ -70,7 +70,7 @@ return function(M, ctx)
   local cmd = (p2.item.kind == "macro" and "MACRO " or "SPELL ") .. p2.item.name
   ctx.check(M.bindings[cmd] == nil and B.confirm, "confirmation asked first")
   local conf = false
-  for _, l in ipairs(T:GetTabLines("info")) do if l.text:find("^Confirmer") then conf = true end end
+  for _, l in ipairs(T:GetTabLines("binds")) do if l.text:find("^Confirmer") then conf = true end end
   ctx.check(conf, "confirmation line shown")
   T:UserAction(B.DoStep, B, p2)
   ctx.check(M.bindings[cmd] == p2.key and M.savedBindings ~= nil, "bound " .. cmd .. " to " .. tostring(p2.key))
@@ -84,7 +84,7 @@ return function(M, ctx)
   T:UserAction(B.DoStep, B, p3)
   ctx.check(B.db.bindBlocked == true, "binding blocked remembered")
   local manual = false
-  for _, l in ipairs(T:GetTabLines("info")) do
+  for _, l in ipairs(T:GetTabLines("binds")) do
     if type(l.tooltip) == "string" and l.tooltip:find("^À la main") then manual = true end
   end
   ctx.check(manual, "manual instructions in tooltips")

@@ -502,6 +502,38 @@ if TreeAI.SetTabLines then TreeAI:SetTabLines("group", lines, "Squad") else --[[
   sinon « Infos ». Rafraîchissement regroupé (≤ 2/s, `TreeAI:RequestRefresh()`).
 * Aussi : `TreeAI:SelectTab(id)`, `GetActiveTab()`, `SetMini(bool)`, `ToggleMini()`, `ShowAlert(e)`.
 
+## Où va quelle info — guide d'affichage unique (agent CHECKUP)
+
+Une seule règle pour tous les modules (le bilan module par module est dans le check-up de la ronde 5).
+
+| Endroit | Ce qui y va | Ce qui n'y va jamais |
+|---|---|---|
+| **Maintenant** | au plus **3 lignes actionnables** (préréglage simple) : la chose à faire tout de suite, une par sujet | un constat sans action, un chiffre seul, un doublon d'une autre ligne |
+| **Onglet** (Quêtes, Groupe, Plus › …) | le **détail** du module : lignes cliquables, ≤ 3 étapes d'une liste, 1 ligne par genre de problème ; les actions sans contexte = **boutons** (`control = true` + `label`) dans la barre de l'onglet | une liste brute de 10+ lignes, un bouton écrit comme une ligne (« [Clic] … »), un compteur seul (« Missions : 0 en commun ») |
+| **Infobulle** | les **chiffres et le pourquoi** (coût, XP/min, DPS, liste complète, sources, alternatives) | une action (elle va sur la ligne) |
+| **Encadré du coin** | **danger** (mort imminente, contrôle qui casse) ou **rare** (rare / élite / bonne affaire) — prio 3 | un rappel, une info |
+| **Minimap** (MinimapPins) | les **lieux** (cible, rare, PNJ utile, ami loin) | un texte |
+| **Fenêtre** | seulement **HV**, **macros**, **À faire** (Todo) — et le courrier « Joindre compos » collé à la fenêtre de courrier visible (jamais flottant) | un conseil |
+
+**Chaque ligne** : verbe d'abord (« Répare… », « Lie… », « Achète… », « Nourris… »), ≤ 2 lignes courtes
+(`TreeAI.LINE_MAX`), un clic fait l'évidence (sinon la ligne n'a pas de clic et doit être utile en elle-même),
+jamais un chiffre qu'on n'a pas (« 0 dégâts », « Attaquants : 0 », « ? »). Une même info = **un seul
+propriétaire** : les autres modules lui passent leurs chiffres pour l'infobulle au lieu d'écrire leur ligne.
+
+Propriétaires (CHECKUP) : réparation = `Inventory:inv_repair` (coût estimé d'`Economy.RepairEstimate` en
+infobulle ; les lignes réparation d'Economy se taisent alors) · nourrir le familier = `Hunter:hungry` (DPS gagné
+de `Fight.PetDPS`/`MoodLoss` en infobulle, clic = met à jour « TAI Nourrir » ; `Fight:mood` seulement sans le
+module Chasseur) · aspect = `Hunter:aspect` (le relevé HunterPro passe en infobulle) · apprivoiser = `Boost:pet`
+(HunterPro se tait alors) · touches = onglet **« Touches »** (`binds`, module Binds : bouton « Lier le suivant »,
+3 étapes, conflits groupés, listes en infobulle ; plus de ligne « macros pas créées » si `Macros:ready` est là ;
+jamais de ligne « course automatique ») · classement XP/min = 1 ligne « Meilleure quête » de Pro (top 5 en
+infobulle ; les temps par objectif se taisent quand Todo est actif, `Pro.Display`) · autotest = bouton « Autotest »
+d'« Infos » (ligne seulement en cas d'échec) · « Prêt ? » = bouton de l'onglet Groupe (compteurs des missions en
+infobulle) · talents : bouton « Parcours complet », rangs consécutifs fusionnés (« 1 → 3/5 »), rien quand l'arbre
+n'est pas encore lu · équipement : une ligne par emplacement avec une vraie piste, pistes vagues regroupées
+(« Surveille l'HV et le butin »), verbe selon la source dans « Maintenant » (« Équipe » seulement pour un objet des
+sacs, sinon « Achète », « Fais fabriquer », « Choisis en récompense »…).
+
 ## Interface d'abord, anti-bruit, placement, mode édition (agent POLISH)
 
 **Tout est cliquable** ; les commandes sont secondaires. Barre d'outils du panneau : *Tout* (page de toutes

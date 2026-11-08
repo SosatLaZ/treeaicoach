@@ -100,14 +100,21 @@ return function(M, ctx)
   ctx.check(F.MoodLoss(1, 30) == 20 and F.MoodLoss(2, 40) == 10 and F.MoodLoss(3, 50) == 0, "mood loss maths")
   M.pet.happiness = 1
   F:CheckPetMood()
-  ctx.check(sug("Fight:mood") and sug("Fight:mood").text:find("mécontent"), "pet mood line")
+  ctx.check(not sug("Fight:mood"), "pet mood: the Hunter module owns the feed line (one line per topic)")
+  local hunterMod = T.modules and T.modules.Hunter
+  if hunterMod and hunterMod.db then hunterMod.db.enabled = false end
+  F:CheckPetMood()
+  ctx.check(sug("Fight:mood") and sug("Fight:mood").text:find("mécontent"), "pet mood line (Hunter module off)")
+  if hunterMod and hunterMod.db then hunterMod.db.enabled = true end
   M.pet.happiness = 3
   F:CheckPetMood()
   ctx.check(not sug("Fight:mood"), "mood cleared when happy")
 
   -- 35. shot tips
-  local tip = F.ShotTip(2.9, { arcane = "Tir des arcanes", aimed = "Visée" })
-  ctx.check(tip and tip:find("2%.9 s") and tip:find("Tir des arcanes") and tip:find("ouverture"), "shot tip: " .. tostring(tip))
+  local tipText, tipMore = F.ShotTip(2.9, { arcane = "Tir des arcanes", aimed = "Visée" })
+  local more = table.concat(tipMore or {}, " ")
+  ctx.check(tipText and tipText:find("^Lance") and tipText:find("2%.9 s") and more:find("Tir des arcanes") and more:find("ouverture"),
+    "shot tip: " .. tostring(tipText) .. " / " .. more)
   ctx.check(F:UpdateShotTip(), "shot tip for the hunter")
 
   -- 36. pet advisor

@@ -123,13 +123,13 @@ local function scanUnit(unit)
   local lvl = pub(try(G.UnitLevel, unit)) or 0
   local lv = (lvl and lvl > 0) and (" (niv " .. lvl .. ")") or " (niv ??)"
   if cls == "elite" then
-    M:Suggest("elite", "Élite : " .. name .. lv .. " — à plusieurs, ou évite.", 1, { ttl = 45, cooldown = 120 })
+    M:Suggest("elite", "Évite l'élite " .. name .. lv .. " ou viens à plusieurs", 1, { ttl = 45, cooldown = 120 })
     return
   end
   stats.rares, stats.lastRare = stats.rares + 1, name
   markGUID = guid
   local label = (cls == "rareelite") and "Rare élite" or (cls == "worldboss" and "Boss" or "Rare")
-  M:Suggest("rare", label .. " : " .. name .. lv .. " à proximité ! (clic : crâne)", 2,
+  M:Suggest("rare", "Vise le " .. label:lower() .. " " .. name .. lv .. " : il est tout près (clic : crâne)", 2,
     { ttl = 90, cooldown = 5, sound = opt("rareSound") and true or false, soundKind = "rare", onClick = markRare })
 end
 
@@ -718,7 +718,8 @@ end
 function M:UpdateXP()
   if not opt("xp") then return end
   local txt = self:XPText()
-  if txt then self:Suggest("xp", txt, 1, { ttl = 120, cooldown = 600, sound = false }) end
+  -- information (pas une action) : ligne de l'onglet « Quêtes », jamais dans « Maintenant » (prio 1, sans clic)
+  if txt then self:Suggest("xp", "Encore " .. txt, 1, { ttl = 120, cooldown = 600, sound = false, tab = "quests" }) end
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -750,7 +751,7 @@ function M:CheckTravel()
     name = "« " .. spellName(CHEETAH, "Aspect du guépard") .. " » (+30 % vitesse, hébété si touché)"
   end
   travelShown = true
-  T:Suggest("Hunter:aspect", "Tu voyages sans aspect : " .. name .. ".", 1, { module = "Boost", ttl = 20, cooldown = 300 })
+  T:Suggest("Hunter:aspect", "Active " .. name .. " pour voyager", 1, { module = "Boost", ttl = 20, cooldown = 300 })
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -906,7 +907,7 @@ function M:CheckReminders()
   if free <= 1 and (API.ItemCount and API.ItemCount(HEARTH) or 0) > 0 and itemCooldownReady(HEARTH)
       and not try(G.IsResting) then
     local bind = try(G.GetBindLocation)
-    self:Suggest("hearth", "Pierre de foyer prête, sacs pleins : rentre" .. (bind and (" (" .. bind .. ")") or "") .. ".", 2,
+    self:Suggest("hearth", "Rentre en ville — Pierre de foyer prête, sacs pleins" .. (bind and (" (" .. bind .. ")") or ""), 2,
       { ttl = 120, cooldown = 900 })
   else
     self:Clear("hearth")
@@ -922,8 +923,8 @@ function M:CheckReminders()
       local need = math.floor(30 * 60 / speed * 0.5)
       local minutes = math.floor(ammo / (60 / speed * 0.5))
       if ammo < need then
-        self:Suggest("ammo30", ("Munitions : ~%d min de jeu restantes, prends-en ~%d de plus."):format(minutes,
-          math.ceil((need - ammo) / 200) * 200), 1, { ttl = 300, cooldown = 1200 })
+        self:Suggest("ammo30", ("Achète ~%d munitions : il t'en reste pour ~%d min"):format(
+          math.ceil((need - ammo) / 200) * 200, minutes), 1, { ttl = 300, cooldown = 1200 })
       else self:Clear("ammo30") end
     end
   end
@@ -935,7 +936,7 @@ function M:CheckReminders()
   if food < 5 then low[#low + 1] = food .. " nourriture" end
   if mana and drink < 5 then low[#low + 1] = drink .. " boisson" .. (drink > 1 and "s" or "") end
   if #low > 0 then
-    self:Suggest("food", "Plus que " .. table.concat(low, " et ") .. " : refais le plein chez l'aubergiste.", 1,
+    self:Suggest("food", "Refais le plein chez l'aubergiste : plus que " .. table.concat(low, " et "), 1,
       { ttl = 300, cooldown = 1500 })
   else self:Clear("food") end
 end

@@ -716,21 +716,29 @@ function M.Lines(plan)
     if h.ammoSwitch then add("Attention : la prochaine arme change de munitions (" .. h.ammoSwitch .. ")", 2) end
     if h.mail then add(h.mail, c.level >= 38 and 2 or 1) end
   end
-  local nUp = 0
+  -- règle d'affichage : une ligne par emplacement qui a une VRAIE piste (« Torse : Gilet → Gilet agile (+12 %) ·
+  -- marchand ») ; durée, coût, score et alternatives dans l'infobulle ; emplacements sans piste sûre (butin
+  -- aléatoire / inconnu) regroupés en UNE ligne ; « rien de mieux » = pas de ligne.
+  local nUp, weak, none = 0, {}, 0
   for _, slot in ipairs(SLOT_LIST) do
     local e = plan.cur[slot] or {}
     local best = plan.slots[slot] or {}
     local cd = best[1]
-    local head = e.name and ("%s : %s (%d)"):format(SLOT_FR[slot] or slot, e.name, floor((e.score or 0) + 0.5))
-      or ((SLOT_FR[slot] or slot) .. " : vide")
-    if cd then
+    local head = e.name and ("%s : %s"):format(SLOT_FR[slot] or slot, e.name) or ((SLOT_FR[slot] or slot) .. " (vide)")
+    if cd and cd.src and cd.src.kind == "world" then
+      nUp = nUp + 1
+      weak[#weak + 1] = ("%s : %s — %s"):format(SLOT_FR[slot] or slot, cd.name or "?", cd.src.text or "?")
+    elseif cd then
       nUp = nUp + 1
       local s = cd.src or {}
       local lvl = (cd.need or 0) > c.level and (" — niv " .. cd.need) or ""
-      local cost = ((s.cost or 0) > 0 and s.kind ~= "ah") and (" · " .. money(s.cost)) or ""
-      local text = ("%s → %s %s%s · %s%s · %s"):format(head, cd.name or "?", pctText(cd.pct), weaponTxt(cd), s.text or "?",
-        cost, s.kind == "bag" and "maintenant" or dur(s.min))
-      local tip = { "Gain " .. pctText(cd.pct) .. lvl, "Où : " .. (s.text or "?") }
+      local gain = (cd.pct and cd.pct < 999) and (" (" .. pctText(cd.pct) .. ")") or ""
+      local where = tostring(s.text or "?"):gsub(" — .*$", "")
+      local text = ("%s → %s%s%s · %s"):format(head, cd.name or "?", gain, weaponTxt(cd), where)
+      local tip = { (cd.pct and cd.pct >= 999) and ("Emplacement vide : tout objet est un gain" .. lvl) or ("Gain " .. pctText(cd.pct) .. lvl),
+        "Où : " .. (s.text or "?"),
+        "Effort : " .. (s.kind == "bag" and "maintenant" or dur(s.min)) .. (((s.cost or 0) > 0) and (" · " .. money(s.cost)) or "") }
+      if e.name then tip[#tip + 1] = ("Porté : %s (score %d)"):format(e.name, floor((e.score or 0) + 0.5)) end
       for i = 2, #(cd.sources or {}) do tip[#tip + 1] = "  ou " .. cd.sources[i].text end
       for i = 2, #best do
         local o = best[i]
@@ -739,7 +747,7 @@ function M.Lines(plan)
       local prio = (s.kind == "bag") and 3 or ((cd.pct >= 25 and (cd.need or 0) <= c.level) and 2 or 1)
       local open = M.expanded[slot]
       tip[#tip + 1] = open and "Clic : replier" or "Clic : voir toutes les sources et alternatives"
-      add((open and "▼ " or "► ") .. text, prio, tip, function() M.expanded[slot] = not M.expanded[slot] republish() end)
+      add(text, prio, tip, function() M.expanded[slot] = not M.expanded[slot] republish() end)
       if open then
         for i = 2, #(cd.sources or {}) do add(("      ou %s · %s"):format(cd.sources[i].text, dur(cd.sources[i].min)), 1) end
         for i = 2, #best do
@@ -748,8 +756,14 @@ function M.Lines(plan)
         end
       end
     else
-      add(head .. " — rien de mieux à portée", 1)
+      none = none + 1
     end
+  end
+  if #weak > 0 then
+    local names = {}
+    for i, w in ipairs(weak) do if i <= 4 then names[#names + 1] = (w:match("^(.-) :")) end end
+    weak[#weak + 1] = "Pas de source sûre : garde un œil sur l'HV et le butin des monstres."
+    add(("Surveille l'HV et le butin : %s%s"):format(table.concat(names, ", "), #weak - 1 > 4 and "…" or ""), 1, weak)
   end
   local sh = plan.shopping or {}
   if #sh > 0 then
@@ -759,7 +773,11 @@ function M.Lines(plan)
         e.affordable and "" or " (pas assez d'or)"), e.affordable and 1 or 1)
     end
   end
-  if nUp == 0 then add("Équipement au top pour ton niveau : rien à chercher pour l'instant.", 1) end
+  if nUp == 0 then add("Équipement au top pour ton niveau : rien à chercher pour l'instant.", 1)
+  elseif none > 0 and lines[1] and lines[1].control then
+    local tip = lines[1].tooltip
+    if type(tip) == "table" then tip[#tip + 1] = ("%d emplacement(s) déjà au mieux pour ton niveau."):format(none) end
+  end
   return lines
 end
 
@@ -804,9 +822,14 @@ function M:Publish(plan)
       if not (top and top.src.kind == "bag" and cd.src.kind ~= "bag") then top = cd top.slot = slot end
     end
   end
-  if top and top.name and (top.src.kind == "bag" or top.pct >= 10) then
-    self:Suggest("upgrade", ("Équipe %s %s (%s) — %s"):format(top.name, pctText(top.pct), SLOT_FR[top.slot] or "?",
-      top.src.text or ""), top.src.kind == "bag" and 2 or 1, { ttl = 600, cooldown = 300, onClick = selectTab })
+  -- verbe selon la source (on n'« équipe » que ce qui est dans les sacs) ; jamais une piste vague dans « Maintenant »
+  local VERB = { bag = "Équipe", vendor = "Achète", ah = "Achète à l'HV", craft = "Fais fabriquer", quest = "Choisis en récompense",
+    boss = "Vise en donjon", drop = "Va chercher" }
+  if top and top.name and top.src.kind ~= "world" and (top.src.kind == "bag" or top.pct >= 10) then
+    local gain = top.pct < 999 and (" " .. pctText(top.pct)) or ""
+    self:Suggest("upgrade", ("%s %s (%s%s)"):format(VERB[top.src.kind] or "Vise", top.name, SLOT_FR[top.slot] or "?", gain),
+      top.src.kind == "bag" and 2 or 1, { ttl = 600, cooldown = 300, onClick = selectTab,
+        tooltip = { "Où : " .. (top.src.text or "?"), "Clic : onglet « Équipement »." } })
   else
     self:Clear("upgrade")
   end

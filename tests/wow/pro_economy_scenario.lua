@@ -164,6 +164,12 @@ return function(M, ctx)
     if sl and sl.id == 4865 then M.bags[b].slots[s] = nil end
   end end
   E.char.mailTo = "Amie"
+  -- the button only exists next to a visible mail window (never floating)
+  if not rawget(_G, "MailFrame") then
+    local mf = CreateFrame("Frame", "MailFrame", UIParent)
+    rawset(_G, "MailFrame", mf)
+    mf:Show()
+  end
   M.FireEvent("MAIL_SHOW")
   local btn = E.mailButton
   ctx.check(btn and btn:IsShown(), "19 mail button shown at the mailbox")
@@ -204,7 +210,10 @@ return function(M, ctx)
 
   -- tabs + summary + combat guard
   local tl = T.GetTabLines and T:GetTabLines("quests") or {}
-  ctx.check(find(tl, "^1%. Courrier rendu — prête à rendre"), "Pro lines in the « Quêtes » tab")
+  ctx.check(find(tl, "^Meilleure quête : « Courrier rendu"), "Pro ranking in the « Quêtes » tab, one line: " .. dump(tl))
+  local nRank = 0
+  for _, l in ipairs(tl) do if tostring(l.text):find("^%d%. ") then nRank = nRank + 1 end end
+  ctx.check(nRank == 0, "ranking folded into one line (top 5 in the tooltip)")
   ctx.check(find(T.GetTabLines and T:GetTabLines("hv") or {}, "Or/h"), "Economy lines in the « HV » tab")
   T:Fire("SUMMARY")
   local s = T:Summary()

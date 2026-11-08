@@ -20,8 +20,14 @@ Tes potes : chacun installe l'addon (même zip) pour la **synchro de groupe**.
 - **Assistant au 1er lancement** (3 étapes) : ce que fait TreeAI → combien de conseils (**Mode calme /
   Normal / Tout**) + où mettre le panneau (**Auto** = TreeAI scanne ton écran et prend la meilleure place
   libre) → boutons rapides Macros / Touches / Boussole / Aide. Le revoir : options → *Assistant de démarrage*.
-- **Le panneau** : onglets Maintenant · Quêtes · Prévisions · Groupe · HV · Infos. Clic sur une ligne =
-  l'action, clic droit = masquer (pour 2 h, même après /reload ; revient seulement si ça change vraiment), molette = défiler. Couleurs : gris = info, or = conseil, rouge = urgent.
+- **Le panneau** : onglets Maintenant · Quêtes · Groupe · **Plus** (menu : Prévisions, HV, Infos, Équipement,
+  **Touches**, Métiers, Donjon, JcJ). Clic sur une ligne = l'action, clic droit = masquer (2 h, même après /reload), molette = défiler.
+  Couleurs : gris = info, or = conseil, rouge = urgent. Les petits boutons sous les onglets (« Recalculer »,
+  « Lier le suivant », « Prêt ? », « Autotest »…) sont les actions de l'onglet ; survole une ligne pour le
+  pourquoi et les chiffres.
+- **Où va quelle info** : *Maintenant* = au plus 3 choses à faire tout de suite ; un onglet = le détail ;
+  l'infobulle = les chiffres et le pourquoi ; l'encadré du coin = danger ou rare seulement ; la minimap = les
+  lieux ; une fenêtre = HV, macros, « À faire ». Chaque ligne commence par un verbe et un clic fait l'évidence.
 - **Barre d'outils du panneau** (à droite du titre) : **Tout** (icône livre) (toutes les actions de tous les modules,
   rangées par rubrique, un clic = lancer), **mode édition** (icône clé), boussole, macros, groupe, options, cadenas,
   mini (une ligne), fermer.
@@ -130,7 +136,7 @@ Prévisions (munitions / nourriture / sacs / réparation / formation avant que �
 (qui a besoin de quoi, prêt ?, rendez-vous), Chasseur + Chasseur pro (familier, munitions, aspects, pièges,
 tir auto), Classes (buffs oubliés), Combat (pull, patrouilles, fuyards, interruptions, récap de mort),
 Inventaire (sacs, réparation, gris), Montée (formation, XP reposée, talents), Avantages (rares, récompense,
-amélioration), Macros + Touches, Confort (nouveautés, nouveaux sorts, /tai perf), Pro, Économie, HV.
+amélioration), Macros + Touches (onglet « Touches » : bouton *Lier le suivant*, 3 étapes, conflits groupés), Confort (nouveautés, nouveaux sorts, /tai perf), Pro, Économie, HV.
 Chaque module a sa page d'options et ses actions dans « Tout ».
 
 **Ma session** (onglet Infos, `/tai bilan`) : durée, XP, niveaux, quêtes, or ; clic = le détail et où te

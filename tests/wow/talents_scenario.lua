@@ -40,6 +40,9 @@ return function(M, ctx)
   end
   local function tab() return T:GetTabLines("info") end
 
+  -- the harness event storm clicks panel rows (the « Parcours » line cycles the mode): start from auto
+  if TL.char then TL.char.mode = "auto" end
+  TL.full = false
   -- level 26: BM started (Aspects mortels 5, Entraînement 5, Fureur libérée 3) + 4 free points
   M.player.level = 26
   set(1, 1, 2, 5); set(1, 1, 3, 5); set(1, 3, 3, 3)
@@ -54,7 +57,10 @@ return function(M, ctx)
   local s = sugg()
   ctx.check(s and s.text:find("Prochain point : Fureur libérée", 1, true), "« Prochain point » in Maintenant")
 
-  -- clicks: full list, then mode cycle auto -> solo -> group
+  -- clicks: full list, then mode cycle auto -> solo -> group (the harness storm may have clicked rows: reset)
+  TL.char.mode, TL.full = "auto", false
+  TL.Update()
+  lines = tab()
   local full = find(lines, "[Clic] Voir le parcours complet")
   ctx.check(full and full.onClick, "full list line clickable")
   if full and full.onClick then full.onClick() end

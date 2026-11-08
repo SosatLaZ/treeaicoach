@@ -44,7 +44,7 @@ local function level() return sv(try(G.UnitLevel, "player")) or 1 end
 local function fmt(n) n = math.floor((tonumber(n) or 0) + 0.5) local s = tostring(n):reverse():gsub("(%d%d%d)", "%1 "):reverse() return (s:gsub("^ ", "")) end
 
 local lines = {}
-local function setLine(k, text, prio) lines[k] = text and { text = text, prio = prio or 1 } or nil end
+local function setLine(k, text, prio, tip) lines[k] = text and { text = text, prio = prio or 1, tooltip = tip } or nil end
 local ORDER = { "trap", "fd", "aspect", "ammo", "pet" }
 local lastPush = 0
 function M:PushLines(force)
@@ -52,7 +52,14 @@ function M:PushLines(force)
   if not force and t - lastPush < 0.5 then return end
   lastPush = t
   local out = {}
-  for _, k in ipairs(ORDER) do if lines[k] then out[#out + 1] = { text = lines[k].text, prio = lines[k].prio } end end
+  local sugg = T._suggestions or {}
+  for _, k in ipairs(ORDER) do
+    local l = lines[k]
+    -- une ligne déjà suggérée (munitions, aspect) n'est pas répétée dans l'onglet
+    -- « Active un aspect » du module Chasseur déjà affiché : pas de 2e ligne aspect
+    local dupAspect = k == "aspect" and sugg["Hunter:aspect"]
+    if l and not sugg["HunterPro:" .. k] and not dupAspect then out[#out + 1] = { text = l.text, prio = l.prio, tooltip = l.tooltip } end
+  end
   if T.SetTabLines then try(T.SetTabLines, T, TAB, out, "HunterPro") end
 end
 M.Lines = lines
@@ -143,9 +150,9 @@ function M.PetAdvice(zone, lvl)
   end
   local txt
   if pick then
-    txt = ("Familier conseillé ici : %s niv %d–%d (%s)"):format(pick.fam, pick.lo, pick.hi, fam.role or "")
+    txt = ("Apprivoise un %s niv %d–%d ici (%s)"):format(pick.fam, pick.lo, pick.hi, fam.role or "")
   else
-    txt = "Pas de famille repérée pour ta zone : un Chat reste le meilleur DPS solo"
+    txt = "Apprivoise un Chat dès que possible : meilleur DPS solo"
   end
   if #ranks > 0 then txt = txt .. " — rangs apprenables : " .. table.concat(ranks, ", ") end
   return txt .. ".", pick and pick.fam
@@ -155,7 +162,12 @@ function M:UpdatePet()
   if not opt("petZone") then setLine("pet", nil) return end
   local zone = try(G.GetRealZoneText) or try(G.GetZoneText)
   local txt = M.PetAdvice(zone, level())
-  setLine("pet", txt, 1)
+  -- Boost a déjà une ligne d'apprivoisement (rangs du familier ACTUEL) : une seule ligne « Apprivoise »
+  local boost = T._suggestions and T._suggestions["Boost:pet"]
+  local head, ranks = txt, nil
+  local cut = txt and txt:find(" — rangs apprenables : ", 1, true)
+  if cut then head, ranks = txt:sub(1, cut - 1), "Rangs apprenables : " .. txt:sub(cut + #" — rangs apprenables : ") end
+  setLine("pet", (not boost) and head or nil, 1, ranks)
   return txt
 end
 
@@ -215,12 +227,13 @@ function M:UpdateAmmo()
   local perKill = avg(M.char.ammoPerKill) or 8
   local b = M.AmmoBudget(remaining, killXP, perKill, have)
   if not b then setLine("ammo", nil) return end
-  local txt = ("Munitions pour finir le niveau %d : ~%s (%d monstres × %.0f), tu en as %s"):format(
+  -- verbe d'abord ; rien à faire (assez de munitions) = pas de ligne, le calcul reste dans l'infobulle
+  local why = ("Niveau %d : ~%s munitions (%d monstres × %.0f), tu en as %s."):format(
     lvl, fmt(b.need), b.kills, perKill, fmt(have))
-  if b.missing > 0 then txt = txt .. (" → achète %d pile%s de 200"):format(b.stacks, b.stacks > 1 and "s" or "") end
-  setLine("ammo", txt .. ".", b.missing > have and 2 or 1)
+  local txt = ("Achète %d pile%s de 200 munitions pour finir le niveau"):format(b.stacks, b.stacks > 1 and "s" or "")
+  setLine("ammo", b.missing > 0 and txt or nil, b.missing > have and 2 or 1, why)
   if b.missing > 0 and b.missing > have and not inCombat() then
-    M:Suggest("ammo", txt .. ".", 2, { ttl = 120, cooldown = 1800, tab = TAB })
+    M:Suggest("ammo", txt, 2, { ttl = 120, cooldown = 1800, tab = TAB, tooltip = why })
   else M:Clear("ammo") end
   M.lastBudget = b
   return b
@@ -419,14 +432,16 @@ function M:EndFight()
   local rep, bad = M.AspectReport(f)
   if not rep then return end
   local sess = M.AspectReport(M.char.aspect)
-  setLine("aspect", "Aspects (dernier combat) : " .. rep .. (sess and (" — session : " .. sess) or ""), bad >= 30 and 2 or 1)
+  -- bon aspect (≥ 70 % du combat) = rien à dire ; sinon une ligne qui commence par un verbe, le relevé en infobulle
+  setLine("aspect", bad >= 30 and ("Garde un aspect en combat : %d %% du dernier combat sans bon aspect"):format(bad) or nil,
+    2, { "Dernier combat : " .. rep .. ".", sess and ("Session : " .. sess .. ".") or nil })
   -- the Hunter module's live « Aucun aspect actif » still shown: the post-fight report stays in the tab
   local live = T._suggestions and T._suggestions["Hunter:aspect"]
   local tnow = G.GetTime and G.GetTime() or 0
   live = live and live.prio == 2 and (not live.expires or live.expires > tnow)   -- « Aucun aspect actif »
   if bad >= 30 and not live then
-    M:Suggest("aspect", ("Dernier combat : %d %% sans bon aspect (%s). Faucon pour tirer, Singe au corps à corps."):format(bad, rep),
-      2, { ttl = 30, cooldown = 120, tab = TAB })
+    M:Suggest("aspect", ("Change d'aspect en combat : %d %% sans bon aspect (%s)"):format(bad, rep),
+      2, { ttl = 30, cooldown = 120, tab = TAB, tooltip = "Faucon pour tirer, Singe au corps à corps." })
   end
 end
 

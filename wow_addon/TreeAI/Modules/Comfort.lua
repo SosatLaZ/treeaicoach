@@ -218,8 +218,9 @@ function M:CheckSpells()
   local lines = {}
   for i, name in ipairs(new) do
     if i > 5 then break end
-    local txt = "Nouveau sort : « " .. name .. " »" .. (slot and (" — place-le : " .. slot) or " — glisse-le depuis le grimoire (P)")
-    lines[#lines + 1] = { text = txt, prio = 2 }
+    -- verbe d'abord ; le 1er est la suggestion (déjà listée dans l'onglet) : pas de doublon dans le bloc
+    local txt = "Place ton nouveau sort « " .. name .. " »" .. (slot and (" : " .. slot) or " (grimoire, touche P)")
+    if i > 1 then lines[#lines + 1] = { text = txt, prio = 1 } end
     if i == 1 then M:Suggest("spell", txt .. (#new > 1 and (" (+" .. (#new - 1) .. " autres)") or ""), 2,
       { ttl = 300, cooldown = 10, tab = "info" }) end
   end

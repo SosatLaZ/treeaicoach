@@ -19,14 +19,14 @@ ns.Inventory = M
 local function core() return _G.TreeAI end
 
 local lastSent = {}
-local function suggest(id, text, prio, every)
+local function suggest(id, text, prio, every, tip)
   local now = (GetTime and GetTime()) or 0
   local prev = lastSent[id]
   if prev and prev.text == text and now - prev.t < (every or 120) then return end
   lastSent[id] = { text = text, t = now }
   local T = core()
   if M.core and M.Suggest then
-    pcall(M.Suggest, M, id, text, prio or 2, { cooldown = every or 120, ttl = math.min(every or 120, 300) })
+    pcall(M.Suggest, M, id, text, prio or 2, { cooldown = every or 120, ttl = math.min(every or 120, 300), tooltip = tip })
   elseif T and T.Suggest then
     pcall(T.Suggest, T, id, text, prio or 2)
   elseif DEFAULT_CHAT_FRAME then
@@ -251,10 +251,15 @@ function M.CheckDurability()
   local d = store("inventory")
   if d then d.durMin, d.broken = p, broken end
   if not p then return end
+  -- coût estimé (module Économie) dans l'infobulle : une seule ligne « répare » dans tout l'addon
+  local T = core()
+  local E = T and T.modules and T.modules.Economy
+  local est = E and E.RepairEstimate and select(2, pcall(E.RepairEstimate))
+  local tip = (type(est) == "number" and est > 0) and ("Coût estimé : " .. money(est) .. ".") or nil
   if broken > 0 then
-    suggest("inv_repair", "Équipement cassé (rouge) : répare au plus vite !", 3, 180)
+    suggest("inv_repair", "Répare au plus vite : équipement cassé (rouge)", 3, 180, tip)
   elseif p <= opts().durWarn then
-    suggest("inv_repair", ("Équipement à %d %% : répare au prochain marchand."):format(p), 2, 600)
+    suggest("inv_repair", ("Répare au prochain marchand : équipement à %d %%"):format(p), 2, 600, tip)
   elseif p > 60 then
     clear("inv_repair")
   end
