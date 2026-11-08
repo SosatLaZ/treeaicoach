@@ -1,8 +1,12 @@
 -- Groupe (Modules/Group.lua, GROUPMERGE 4.0) : moteur pur + fil v4 + simulation de 4 clients qui échangent leurs
 -- messages par un faux canal PARTY (chacun charge Group.lua dans son propre environnement setfenv, avec ses propres
 -- API simulées), + un 5e membre sans l'addon et un ami resté en 3.9 (Squad v2). Noms 100 % fictifs.
+-- 4.0.1 (GROUPJOIN) : Modules/GroupJoin.lua chargé avec (même module) — positions vraies (géographie réelle des tables
+-- de vol : Mille pointes, Les Tarides, Orneval), « Rejoindre » au plus vite / rentable, rendez-vous « J'y vais », vote,
+-- trajet partagé + « Suivre le groupe », intention déduite du chat de groupe, une seule ligne du groupe dans « Maintenant ».
 -- Usage : lua5.1 tests/wow/group_spec.lua [chemin/Group.lua]
 local path = arg[1] or "wow_addon/TreeAI/Modules/Group.lua"
+local jpath = path:gsub("Group%.lua$", "GroupJoin.lua")
 local fails, checks = 0, 0
 local function ok(cond, msg)
   checks = checks + 1
@@ -25,6 +29,17 @@ end
 local clock = 1000
 local NAMES = { "Alpha", "Bravo", "Charlie", "Delta" }
 local OUTSIDER = "Echo"   -- dans le groupe, sans TreeAI
+-- (GROUPJOIN) le monde : POS[nom] = { carte, x, y } (0..1), vide au début (les tests d'avant restent sans positions) ;
+-- rectangles monde des cartes tirés des maîtres de vol de Data/Travel.lua (même repère que UnitPosition)
+local POS = {}
+local RECTS = { [1441] = { top = -3967.4, left = -434.3, w = 4400, h = 2933.33, c = 1 },
+  [1413] = { top = 1611.9, left = 2626.3, w = 10132.6, h = 6755.7, c = 1 },
+  [1440] = { top = 4674.0, left = 1702.4, w = 5766.7, h = 3843.75, c = 1 } }
+local MAPNAME = { [1441] = "Mille pointes", [1413] = "Les Tarides", [1440] = "Orneval" }
+local function world(map, x, y) local r = RECTS[map] if not r then return nil end return r.top - y * r.h, r.left - x * r.w, r.c end
+local DUNGEONS = { { key = "RFK", n = "Kraal de Tranchebauge", min = 24, max = 32, kw = { "kraal", "razorfen kraul" } },
+  { key = "WC", n = "Cavernes des Lamentations", min = 17, max = 24, kw = { "lamentations", "wailing" } },
+  { key = "BFD", n = "Profondeurs de Brassenoire", min = 22, max = 30, kw = { "brassenoire" } } }
 
 -- -------------------------------------------------------------- un client simulé (cœur minimal + API du jeu)
 local function newClient(me, cfg, bus)
@@ -40,8 +55,36 @@ local function newClient(me, cfg, bus)
     SpellName = function(id) return cfg.spellNames and cfg.spellNames[id] end,
     IsSpellKnown = function(id) return cfg.spells and cfg.spells[id] or false end,
   }
-  T.Data = { Macros = { items = { food = { { 117, 1 } }, water = { { 159, 1 } } } } }
-  T.Compass = { SetTarget = function(_, tg) T.compass[#T.compass + 1] = tg return tg end }
+  T.Data = { Macros = { items = { food = { { 117, 1 } }, water = { { 159, 1 } } } }, Dungeons = { list = DUNGEONS } }
+  T.Compass = { SetTarget = function(_, tg) T.compass[#T.compass + 1] = tg return tg end, targets = {} }
+  function T.Compass.Current()
+    local tg = T.compass[#T.compass]
+    return tg and not tg.cleared and { kind = "custom", label = tg.label, mapID = tg.mapID, x = tg.x, y = tg.y } or nil
+  end
+  function T.Compass.ClearWaypoint() T.compass[#T.compass + 1] = { cleared = true } end
+  -- (GROUPJOIN) géométrie (Export.Geo), zone de travail (ZonePlan), donjon prévu, trajet, journal — doublures fidèles
+  T.Geo = {
+    World = function(map, x, y) return world(map, (tonumber(x) or 0) / 100, (tonumber(y) or 0) / 100) end,
+    FromWorld = function(map, a, b) local r = RECTS[map] if not r then return nil end return (r.left - b) / r.w * 100, (r.top - a) / r.h * 100 end,
+    Player = function() local p = POS[me] if not p then return nil end return p[1], p[2] * 100, p[3] * 100 end,
+  }
+  T.ZonePlan = { _active = true, calls = {}, char = { mode = "auto", zones = {} } }
+  function T.ZonePlan.ZoneOf(m) return m end
+  function T.ZonePlan:IsEnabled() return true end
+  function T.ZonePlan:SetMode(mode, map)
+    self.calls[#self.calls + 1] = { mode, map }
+    if mode == "zone" then self.char.mode = "zones"; self.char.zones[map] = true else self.char.mode, self.char.zones = mode, {} end
+  end
+  function T.ZonePlan:Allowed()
+    if self.char.mode ~= "zones" then return { mode = "auto" } end
+    local maps = {}
+    for k in pairs(self.char.zones) do maps[k] = true end
+    return { mode = "zones", maps = maps }
+  end
+  T.Dungeon = { _active = true, IsEnabled = function() return true end, IsDone = function() return false end }
+  function T.Dungeon.SetPlanned(k) T.Dungeon.planned = k end
+  function T.Dungeon.FindExact(name) for _, d in ipairs(DUNGEONS) do if d.n == name then return d end end end
+  T.Planner = { cursor = 1, StepLabel = function(_, s2) return s2.label end }
   T.Fmt = { Num = function(n) return tostring(math.floor(n)) end }
   function T:RegisterModule(name, tbl)
     tbl.name, tbl.core = name, self
@@ -120,8 +163,14 @@ local function newClient(me, cfg, bus)
   env.GetXPExhaustion = function() return cfg.rested or 0 end
   env.GetRealZoneText = function() return cfg.zone end
   env.GetSubZoneText = function() return "Moulin" end
-  env.C_Map = { GetBestMapForUnit = function(u) return u == "player" and 1424 or nil end,
-    GetMapInfo = function(id) return { name = "Carte " .. id } end }
+  env.C_Map = { GetBestMapForUnit = function(u)
+      local p = POS[unitName(u) or ""]
+      if p then return p[1] end
+      return u == "player" and 1424 or nil
+    end,
+    GetMapInfo = function(id) return { name = MAPNAME[id] or ("Carte " .. id) } end }
+  env.IsInInstance = function() return false, "none" end
+  env.UnitFactionGroup = function() return "Horde", "Horde" end
   env.UnitHealth = function(u) return u == "player" and 100 or (other(u).hp or 100) end
   env.UnitHealthMax = function() return 100 end
   env.UnitPowerType = function(u)
@@ -137,7 +186,12 @@ local function newClient(me, cfg, bus)
   env.UnitInRange = function(u) return other(u).far ~= true, true end
   env.UnitIsVisible = function() return true end
   env.UnitGroupRolesAssigned = function() return "NONE" end
-  env.UnitPosition = function() return nil end
+  env.UnitPosition = function(u)
+    local p = POS[unitName(u) or ""]
+    if not p then return nil end
+    local n, w, c = world(p[1], p[2], p[3])
+    return n, w, 0, c
+  end
   env.UnitCanAttack = function(_, u) return u == "target" and cfg.target ~= nil end
   env.UnitIsPlayer = function() return false end
   env.GetInventoryItemDurability = function(s) if s == 1 then return cfg.dur or 90, 100 end end
@@ -165,6 +219,14 @@ local function newClient(me, cfg, bus)
   local chunk = assert(loadfile(path))
   setfenv(chunk, env)
   chunk("TreeAI", ns)
+  local jf = io.open(jpath, "r")
+  if jf then
+    jf:close()
+    local jchunk = assert(loadfile(jpath))
+    setfenv(jchunk, env)
+    jchunk("TreeAI", ns)
+  end
+  T.modules.Quests = { lastList = {} }
   local G = T.modules.Group
   G:OnInit()
   G:OnEnable()
@@ -529,6 +591,260 @@ local st = Wr.DecodeStep(Wr.EncodeStep("obj", 200, 1, "Tue « Ogre », vite"))
 ok(st and st.k == "obj" and st.q == 200 and st.o == 1 and st.l == "Tue « Ogre », vite", "étape en cours : codec")
 ok(A.G.Significant("am", 1500, 1480) == false and A.G.Significant("am", 210, 190) == true and A.G.Significant("du", 30, 24) == true
   and A.G.Significant("xs", 1000, 1050) == false, "seuils : on n'envoie que ce qui compte (valeur exacte)")
+
+-- -------------------------------------------------------------- 4.0.1 GROUPJOIN : moteur pur
+local JE = A.G.Join and A.G.Join.Engine
+ok(JE, "GroupJoin chargé dans le module Groupe (M.Join)")
+local function P(n, w) return { c = 1, n = n, w = w } end
+local walk = function(a, b) local d = JE.Dist(a, b) return d and d / 7 end   -- 7 yd/s, sans détour (calcul simple)
+-- tout droit 700 yd = 100 s ; un rendu à 30 yd du chemin (15 s) passe, un objectif à 300 yd non (≤ 20 %)
+local from, to = P(0, 0), P(700, 0)
+local legs = { { mode = "walk", sec = 100, to = to } }
+local cands = { { place = P(350, 30), svc = 15, xp = 1450, value = 1450, kind = "turn", label = "rendre « A »" },
+  { place = P(350, 300), svc = 15, xp = 900, value = 900, kind = "turn", label = "rendre « B »" } }
+local d = JE.Detour(from, legs, 100, cands, walk)
+ok(d and #d.stops == 1 and d.stops[1].cand.label == "rendre « A »" and d.turnins == 1 and d.xp == 1450 and not d.approx,
+  "rentable : le rendu sur le chemin, pas celui à 300 yd")
+ok(d and math.abs(d.extra - (2 * math.sqrt(350 ^ 2 + 30 ^ 2) / 7 - 100 + 15)) < 0.01 and d.extra <= 30 + 1e-9 and d.total == 100 + d.extra,
+  "rentable : temps ajouté exact (détour + 15 s au PNJ), ≤ 20 % (au moins 30 s) : " .. tostring(d and d.extra))
+ok(JE.Extra(d.extra) == "+15 s" and JE.Extra(185) == "+3 min" and JE.Min(30) == "moins d'1 min" and JE.Min(582) == "10 min",
+  "textes : +15 s, +3 min, moins d'1 min, 10 min : " .. JE.Extra(d.extra))
+-- un vol ne s'arrête pas en route ; avant une pierre de foyer on peut s'arrêter
+local fl = { { mode = "walk", sec = 10, to = P(70, 0) }, { mode = "fly", sec = 300, to = P(9000, 0) }, { mode = "walk", sec = 10, to = P(9070, 0) } }
+ok(JE.Detour(P(0, 0), fl, 320, { { place = P(4500, 10), svc = 15, value = 1, kind = "turn", label = "x" } }, walk) == nil,
+  "rentable : rien au milieu d'un vol")
+local hs = { { mode = "hs", sec = 15, to = P(5000, 0) }, { mode = "walk", sec = 100, to = P(5700, 0) } }
+local dh = JE.Detour(P(0, 0), hs, 115, { { place = P(20, 0), svc = 15, xp = 300, value = 300, kind = "turn", label = "avant" } }, walk)
+ok(dh and dh.stops[1].k == 1 and math.abs(dh.extra - (20 / 7 + 15)) < 0.01, "rentable : un rendu juste avant la pierre de foyer")
+ok(JE.MainMode(fl) == "fly" and JE.MainMode(hs) == "hs" and JE.MainMode(legs) == "walk", "mode principal du trajet")
+local ll = JE.LegLines(fl, "Bravo")
+ok(ll[1]:find("maître de vol", 1, true) and ll[2]:find("^Vol") and ll[3] == "À pied jusqu'à Bravo (moins d'1 min)", "étapes en clair : " .. table.concat(ll, " | "))
+ok(JE.Jusqua("le groupe (Bravo)") == "jusqu'au groupe (Bravo)" and JE.Jusqua("l'entrée de X") == "jusqu'à l'entrée de X", "« jusqu'au » / « jusqu'à »")
+-- point de rencontre : minimax ; le prochain arrêt commun l'emporte s'il coûte ≤ 25 % de plus au plus loin
+local pos = { { name = "toi", place = P(0, 0) }, { name = "Bravo", place = P(2000, 0) } }
+local spots = { { place = P(1000, 0), kind = "fm", label = "Milieu" }, { place = P(200, 0), kind = "fm", label = "Chez toi" },
+  { place = P(1150, 0), kind = "hub", useful = true, label = "rendre « C »" } }
+local best, far, farName = JE.Meeting(pos, spots)
+ok(best and best.label == "rendre « C »" and math.floor(far) == 1150 and farName == "toi", "rencontre : l'arrêt commun (1 150 ≤ 1,25 × 1 000)")
+spots[3].place = P(1400, 0)
+best = JE.Meeting(pos, spots)
+ok(best and best.label == "Milieu", "rencontre : sinon le milieu (minimax)")
+-- vote
+local v = { choices = { { label = "A" }, { label = "B" }, { label = "C" } }, ballots = { Alpha = 2, Bravo = 2, Charlie = 1 } }
+local n, win, tie, waiting = JE.Tally(v, { "Alpha", "Bravo", "Charlie", "Delta" })
+ok(win == 2 and n[2] == 2 and not tie and #waiting == 1 and waiting[1] == "Delta", "vote : B gagne, Delta n'a pas voté")
+v.ballots.Delta = 1
+_, win, tie = JE.Tally(v, { "Alpha", "Bravo", "Charlie", "Delta" })
+ok(win == nil or tie, "vote : égalité 2–2")
+-- « se rapproche »
+ok(JE.Approach({ { t = 0, d = 900 }, { t = 15, d = 820 }, { t = 30, d = 700 } }) ~= nil, "se rapproche : 200 yd en 30 s")
+ok(JE.Approach({ { t = 0, d = 900 }, { t = 15, d = 950 }, { t = 30, d = 700 } }) == nil, "pas toujours plus près : non")
+ok(JE.Approach({ { t = 0, d = 900 }, { t = 15, d = 880 }, { t = 30, d = 860 } }) == nil, "trop lent / trop peu : non")
+-- chat : mots-clés FR / EN, noms de lieux (sans accents ni ponctuation), abréviations
+ok(JE.Norm("Kraal de Tranchebauge, ÉTÉ !") == " kraal de tranchebauge ete ", "normalisation : " .. JE.Norm("Kraal de Tranchebauge, ÉTÉ !"))
+local IDX = { { pat = " kraal de tranchebauge ", kind = "dg", key = "RFK", name = "Kraal de Tranchebauge", q = 1 },
+  { pat = " tarides ", kind = "z", key = 1413, name = "Les Tarides", q = 1 },
+  { pat = " camp taurajo ", kind = "fm", key = 77, name = "Camp Taurajo", q = 0.9 },
+  { pat = " tranchebauge ", kind = "dg", key = "RFK", name = "Kraal de Tranchebauge", q = 0.9 },
+  { pat = " kraal ", kind = "dg", key = "RFK", name = "Kraal de Tranchebauge", q = 0.8 },
+  { pat = " rfk ", kind = "dg", key = "RFK", name = "Kraal de Tranchebauge", q = 0.8 } }
+local function kinds(list) local o = {} for _, x in ipairs(list) do o[#o + 1] = x.kind .. (x.key and (":" .. tostring(x.key)) or "") end table.sort(o) return table.concat(o, ",") end
+local s1 = JE.ParseChat("On va au Kraal de Tranchebauge ?", IDX)
+ok(kinds(s1) == "dg:RFK" and s1[1].w == 1.5, "« on va au Kraal de Tranchebauge » : donjon, poids fort (verbe), une fois : " .. kinds(s1))
+ok(kinds(JE.ParseChat("go rfk", IDX)) == "dg:RFK", "« go rfk » : abréviation")
+ok(kinds(JE.ParseChat("rdv à Camp Taurajo", IDX)) == "fm:77", "« rdv à Camp Taurajo » : maître de vol")
+ok(kinds(JE.ParseChat("attendez 2 min", IDX)) == "wait", "« attendez 2 min » : pause")
+ok(kinds(JE.ParseChat("je rends et on finit les Tarides", IDX)) == "finish:1413,turn", "« je rends et on finit les Tarides »")
+ok(kinds(JE.ParseChat("on fait un donjon ce soir", IDX)) == "dgany", "« on fait un donjon » : donjon sans nom (→ vote)")
+ok(kinds(JE.ParseChat("lol", IDX)) == "", "rien d'intentionnel : rien")
+-- intention : déclin, hystérésis, confiance (avance sur la 2e lecture)
+local ev = { { key = "dg:RFK", w = 1.5, at = 0, tau = 300, what = "chat" }, { key = "dg:RFK", w = 1.2, at = 0, tau = 300, what = "chat" },
+  { key = "z:1441", w = 0.5, what = "here" } }
+local it = JE.Intent(ev, 0)
+ok(it and it.key == "dg:RFK" and it.conf > 0.75, "intention : 2 messages pour le Kraal > zone actuelle (conf " .. string.format("%.2f", it and it.conf or 0) .. ")")
+it = JE.Intent(ev, 1200)
+ok(it and it.key == "z:1441", "20 min plus tard : le chat s'est éteint, la zone reprend")
+ok(JE.Intent({ { key = "a", w = 1.0 }, { key = "b", w = 1.1 } }, 0, "a").key == "a", "hystérésis : il faut 25 % de plus pour changer")
+ok(JE.Intent({ { key = "a", w = 1.0 }, { key = "b", w = 1.3 } }, 0, "a").key == "b", "… et au-delà, ça change")
+
+-- -------------------------------------------------------------- 4.0.1 GROUPJOIN : 4 clients, positions vraies
+POS.Alpha, POS.Bravo, POS.Charlie = { 1441, 0.455, 0.50 }, { 1413, 0.449, 0.585 }, { 1413, 0.425, 0.890 }
+POS.Delta, POS.Echo = { 1441, 0.70, 0.70 }, { 1441, 0.46, 0.505 }
+for _, nm in ipairs(NAMES) do clients[nm].fire("ZONE_CHANGED_NEW_AREA") end
+run(30)
+settle()
+ok(Bv.T.Squad:State("Alpha").ps == "455.500" and Bv.T.Squad:State("Alpha").m == 1441, "position partagée par le fil (ps = ‰ de la carte m) : "
+  .. tostring(Bv.T.Squad:State("Alpha").ps))
+local function line(cl, pat) return find(cl.T.tabs.group, pat) end
+local rj = line(A, "Rejoindre Bravo (Les Tarides) : au plus vite")
+ok(rj and rj.right == "à pied · 10 min" and rj.onClick, "rejoindre Bravo : à pied 10 min (3,1 km, 7 yd/s, détour 1,3) : " .. tostring(rj and rj.right))
+ok(line(A, "Rejoindre Delta : au plus vite"), "rejoindre Delta (sans TreeAI) : position lue par le jeu")
+ok(not line(A, "Rejoindre Echo"), "Echo à côté (≤ 120 yd) : rien à rejoindre")
+ok(line(A, "Delta · Voleur 20 (90 %) · à 1,1 km"), "carte de Delta : distance vraie (pas « à côté » sur la foi de UnitInRange)")
+-- rentable : le rendu prêt de « Sang de lion » près de Camp Taurajo (XP du jeu)
+A.T.Compass.targets = { { kind = "turnin", questID = 500, title = "Sang de lion", xp = 1450, mapID = 1413, x = 0.452, y = 0.570 } }
+A.G.Join._state.cache = {}
+settle()
+local rt = line(A, "Rentable : ")
+ok(rt and rt.text == "Rentable : +50 s · 1 rendu · +1450 XP" and rt.right == "11 min" and rt.onClick, "rentable : " .. tostring(rt and rt.text) .. " / " .. tostring(rt and rt.right))
+-- clic « Rentable » : la boussole passe d'abord par le PNJ, le groupe sait que j'arrive
+A.T.modules.Quests.lastList = { { id = 500, complete = true }, { id = 100, complete = true }, { id = 200, complete = false } }
+rt.onClick()
+local tgA = A.T.compass[#A.T.compass]
+ok(tgA and tgA.source == "join" and tostring(tgA.label):find("Sang de lion", 1, true) and math.abs(tgA.x - 0.452) < 0.001,
+  "rentable : la boussole vise d'abord la remise : " .. tostring(tgA and tgA.label))
+ok(A.T.sugg["Group:join"] and A.T.sugg["Group:join"].text:find("^Rejoindre Bravo") and A.T.sugg["Group:join"].opts.tab == "now",
+  "« Maintenant » : la ligne du trajet en cours (une seule ligne du groupe) : " .. tostring(A.T.sugg["Group:join"] and A.T.sugg["Group:join"].text))
+run(8)
+settle()
+local arr = line(Bv, "Alpha arrive vers toi : ≈ ")
+ok(arr and arr.text:find("— attends-le", 1, true), "Bravo voit qu'Alpha arrive (champ j / je du fil) : " .. tostring(arr and arr.text))
+ok(line(Bv, "Alpha · Guerrier 22") and line(Bv, "vient vers toi"), "carte d'Alpha chez Bravo : « vient vers toi »")
+-- la quête rendue → la boussole vise Bravo ; arrivé à côté → « Tu as rejoint Bravo », plus de « j » sur le fil
+A.T.modules.Quests.lastList = { { id = 100, complete = true }, { id = 200, complete = false } }
+A.tick()
+local tgB = A.T.compass[#A.T.compass]
+ok(tgB and tgB.label == "Rejoindre Bravo (Les Tarides)", "rendu fait : la boussole vise Bravo : " .. tostring(tgB and tgB.label))
+POS.Alpha = { 1413, 0.4492, 0.5852 }
+A.tick()
+ok(A.T.sugg["Group:joined"] and A.T.sugg["Group:joined"].text == "Tu as rejoint Bravo" and not A.T.sugg["Group:join"], "arrivée : « Tu as rejoint Bravo »")
+run(12)
+settle()
+ok(not line(Bv, "Alpha arrive vers toi"), "plus de « arrive vers toi » chez Bravo")
+POS.Alpha = { 1441, 0.455, 0.50 }
+run(25)
+-- rendez-vous : Bravo propose Camp Taurajo ; Alpha « J'y vais » d'un clic ; Bravo voit qui vient (Echo : sans TreeAI)
+local BJ = Bv.G.Join
+local tx, ty = 44.5, 59.1
+ok(BJ.Propose({ place = BJ.WorldPct(1413, tx, ty), label = "Camp Taurajo", kind = "fm" }), "Bravo propose un point de rencontre")
+run(4)
+local rv = A.T.sugg["Group:rdv"]
+ok(rv and rv.text:find("^Bravo propose un rendez%-vous : Camp Taurajo · toi ") and rv.opts.onClick and rv.opts.sound, "proposition reçue, « J'y vais » d'un clic : " .. tostring(rv and rv.text))
+rv.opts.onClick()
+local tgR = A.T.compass[#A.T.compass]
+ok(tgR and tgR.source == "join" and math.abs(tgR.x - tx / 100) < 0.001, "j'y vais : la boussole vise le point")
+run(6)
+settle()
+local rl = line(Bv, "Rendez-vous Camp Taurajo : ")
+local rlTip = rl and table.concat(rl.tooltip, " | ") or ""
+ok(rl and rl.text:find(": Alpha (≈ 10 min) y va · 3 sans réponse", 1, true) and rlTip:find("Charlie : pas encore répondu", 1, true)
+  and rlTip:find("Echo : sans TreeAI", 1, true) and #rl.text <= 96, "Bravo voit qui vient (ligne courte, détails dans l'infobulle) : "
+  .. tostring(rl and rl.text) .. " / " .. rlTip)
+A.G.Join.Stop()
+for _, nm in ipairs(NAMES) do clients[nm].G.Join._state.rdv = nil end   -- rendez-vous fini (isole la suite)
+-- « Ce que veut le groupe » : où va chacun ; Bravo, Charlie et Delta suivent une étape en Orneval → « Suivre le groupe »
+for _, nm in ipairs({ "Bravo", "Charlie", "Delta" }) do
+  clients[nm].T.Planner.steps = { { k = "obj", q = 200, o = 1, map = 1440, x = 50, y = 50, label = "Tue « Ogre »" } }
+  clients[nm].G._state.lastStep = -1e9
+end
+run(20)
+settle()
+local cf = line(A, " vont vers « Orneval », toi et Echo dans « Mille pointes »")
+ok(cf and cf.prio == 2 and cf.onClick and cf.text:find("^Bravo, Charlie et Delta"), "conflit : « Bravo, Charlie et Delta vont vers « Orneval », toi et Echo dans « Mille pointes » » : "
+  .. tostring((line(A, "vont vers") or {}).text))
+local follow
+for _, l in ipairs(A.T.tabs.group) do if l.control and l.label == "Suivre le groupe" then follow = l end end
+ok(follow and follow.onClick, "bouton « Suivre le groupe »")
+local it2 = line(A, "Le groupe ")
+ok(it2 and it2.text:find("Orneval", 1, true), "intention déduite (étapes TreeAI : 3/5 y vont) : " .. tostring(it2 and it2.text))
+follow.onClick()
+local zc = A.T.ZonePlan.calls
+ok(#zc >= 2 and zc[#zc - 1][1] == "auto" and zc[#zc][1] == "zone" and zc[#zc][2] == 1440, "suivre : la zone de travail du trajet passe en Orneval")
+-- « Partager mon trajet » : Alpha partage, Bravo peut le suivre d'un clic
+A.T.Planner.steps = { { k = "turn", q = 100, map = 1441, x = 46, y = 51, label = "Rendre « Les sangliers »" } }
+A.G._state.lastStep = -1e9
+A.G.Join._state.lastShare = -1e9
+ok(A.G.Join.ShareRoute(), "partager mon trajet")
+run(6)
+local pl = Bv.T.sugg["Group:plan:Alpha"]
+local pline = find(Bv.T.tabs.group, "Trajet de Alpha")
+ok((pl or pline), "Bravo reçoit le trajet d'Alpha")
+Bv.G:Build()
+pline = line(Bv, "Trajet de Alpha : « Mille pointes »")
+ok(pline and pline.onClick and pline.text:find("Rendre « Les sangliers »", 1, true), "ligne « Trajet de Alpha » : " .. tostring(pline and pline.text))
+pline.onClick()
+local bz = Bv.T.ZonePlan.calls
+ok(bz[#bz] and bz[#bz][1] == "zone" and bz[#bz][2] == 1441, "Bravo suit le trajet d'Alpha (zone Mille pointes)")
+-- vote léger : Alpha lance, chacun clique, même résultat partout (Echo, sans TreeAI, ne vote pas)
+for _, nm in ipairs(NAMES) do clients[nm].G.Join._state.lastVote = -1e9 end
+ok(A.G.Join.StartVote(), "vote lancé")
+run(10)
+local vb = Bv.T.sugg["Group:vote"]
+ok(vb and vb.text == "Alpha lance un vote : la suite du groupe — clic : voter", "vote reçu : " .. tostring(vb and vb.text))
+local function choiceOf(cl, label) for i, c in ipairs(cl.G.Join._state.vote.choices) do if c.label == label then return i end end end
+local wc = choiceOf(A, "Cavernes des Lamentations")
+ok(wc and choiceOf(Bv, "Cavernes des Lamentations") == wc and not choiceOf(A, "Kraal de Tranchebauge"), "donjons à portée de tous (20–22) : les Lamentations, pas le Kraal")
+Bv.G.Join.Ballot(wc); C.G.Join.Ballot(wc); D.G.Join.Ballot(1)
+run(6)
+A.G.Join.Ballot(wc)
+run(6)
+for _, nm in ipairs(NAMES) do
+  local vv = clients[nm].G.Join._state.vote
+  ok(vv and vv.closed and vv.result == wc and vv.count == 3, nm .. " : vote clos, les Lamentations gagnent (3 voix)")
+end
+settle()
+local vr = line(C, "Vote : Cavernes des Lamentations gagne")
+ok(vr and vr.onClick and vr.text:find("Les Lamentations", 1, true) == nil, "résultat affiché : " .. tostring(vr and vr.text))
+vr.onClick()
+ok(C.T.Dungeon.planned == "WC", "suivre le vote : donjon prévu (Cavernes des Lamentations)")
+-- intention déduite du chat de groupe (lu, jamais écrit ; en mémoire seulement) : tous les clients le lisent
+for _, nm in ipairs(NAMES) do
+  clients[nm].fire("CHAT_MSG_PARTY", "on va au kraal après ?", "Bravo-Royaume")
+  clients[nm].fire("CHAT_MSG_PARTY_LEADER", "go rfk, rdv à l'entrée", "Alpha-Royaume")
+end
+settle()
+for _, nm in ipairs(NAMES) do
+  local il = line(clients[nm], "Kraal de Tranchebauge")
+  ok(il and il.text:find("^Le groupe ") and table.concat(il.tooltip or {}, " "):find("confiance", 1, true), nm .. " : « " .. tostring(il and il.text) .. " »")
+end
+local il = line(Bv, "Le groupe semble aller vers : Kraal de Tranchebauge (1/5 à l'entrée)")
+local tipB = il and table.concat(il.tooltip, " | ") or ""
+ok(il and tipB:find("Chat de Alpha", 1, true) and tipB:find("Chat de Bravo", 1, true) == nil and tipB:find("Ton message", 1, true)
+  and tipB:find("confiance moyenne", 1, true), "preuves et confiance dans l'infobulle (pas sûr = « semble ») : " .. tipB)
+local ic = line(C, "Kraal de Tranchebauge")
+ok(ic and table.concat(ic.tooltip, " "):find("Tu y es déjà", 1, true) and not ic.onClick, "Charlie, déjà à l'entrée : « Tu y es déjà », rien à suivre")
+local seenText = false
+local function scan(t, depth)
+  if depth > 6 or type(t) ~= "table" then return end
+  for k, x in pairs(t) do
+    if type(x) == "string" and (x:find("on va au kraal", 1, true) or x:find("go rfk", 1, true)) then seenText = true end
+    if type(k) == "string" and k:find("on va au", 1, true) then seenText = true end
+    if type(x) == "table" then scan(x, depth + 1) end
+  end
+end
+for _, nm in ipairs(NAMES) do scan(clients[nm].G.Join._state, 0); scan(clients[nm].G.db, 0); scan(clients[nm].G.char, 0) end
+ok(not seenText, "vie privée : aucun texte du chat gardé (seulement le lieu déduit)")
+clock = clock + 1800
+settle()
+ok(not line(Bv, "Kraal de Tranchebauge"), "30 min plus tard : l'intention du chat s'est éteinte")
+-- « Maintenant » : une seule ligne du groupe à la fois (la plus importante), le reste dans la page
+local G2 = Bv.G
+G2:Offer("t1", "news", "Annonce-test", 1, { ttl = 60 })
+G2:Offer("t2", "ready", "Prêt-test", 2, { ttl = 60 })
+G2:Offer("t3", "vote", "Vote-test", 2, { ttl = 60 })
+local posted = {}
+for k in pairs(Bv.T.sugg) do if k:find("^Group:t%d$") then posted[#posted + 1] = k end end
+ok(#posted == 1 and posted[1] == "Group:t2", "une seule annonce dans « Maintenant » : la plus importante (prêt) : " .. table.concat(posted, ","))
+G2:Withdraw("t2")
+posted = {}
+for k in pairs(Bv.T.sugg) do if k:find("^Group:t%d$") then posted[#posted + 1] = k end end
+ok(#posted == 1 and posted[1] == "Group:t3", "elle partie, la suivante prend sa place (vote)")
+G2:Build()
+ok(line(Bv, "Annonce-test") and not line(Bv, "Vote-test"), "les autres restent dans la page (le vote a déjà sa section)")
+G2:Withdraw("t1"); G2:Withdraw("t3")
+-- débit : positions immobiles → rien de plus sur le fil
+for _, nm in ipairs(NAMES) do clients[nm].G.Join.Stop() end
+run(30)
+local t1 = clock
+run(60)
+for _, nm in ipairs(NAMES) do ok(sendsOf(clients[nm], t1) == 0, nm .. " : immobile, rien ne change → aucun message (" .. sendsOf(clients[nm], t1) .. ")") end
+-- en combat : aucun clic n'agit, aucune lecture de position
+clients.Alpha.cfg.combat = true
+local before = #A.T.compass
+local rj2 = line(A, "Rejoindre Bravo")
+if rj2 and rj2.onClick then rj2.onClick() end
+ok(#A.T.compass == before and A.T.sugg["Group:say"] and A.T.sugg["Group:say"].text == "Hors combat seulement", "en combat : « Hors combat seulement », boussole inchangée")
+clients.Alpha.cfg.combat = false
 
 -- -------------------------------------------------------------- instantanés pour TreeAI Coach (formats gardés)
 A.G:SaveSummary()
