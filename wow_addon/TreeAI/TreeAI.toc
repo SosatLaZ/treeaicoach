@@ -89,4 +89,5 @@ Modules\Meter.lua
 Modules\Addons.lua
 Modules\Brain.lua
 Modules\BrainPage.lua
+Modules\ProfLevel.lua
 Modules\Tour.lua

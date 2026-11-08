@@ -516,9 +516,14 @@ local function buildCard()
       W.RenderCard(true)
       local oe = self and self:GetScript("OnEnter")
       if oe and self.IsMouseOver and self:IsMouseOver() then oe(self) end
-    else W.Open(card.mode == "dungeon" and "dungeon" or "quests") end
+    else W.Open((card.mode == "dungeon" and "dungeon") or (card.mode == "focus" and "prof") or "quests") end
   end)
   meth(hero, "SetScript", "OnEnter", function(self)
+    if card.mode == "focus" then   -- (PROFLEVEL) session métier
+      W.Tooltip(self, "Session métier", { "Le trajet de quêtes est en pause : chaque étape t'amène au bon PNJ.",
+        "Glisser : déplacer la carte" }, "Clic : la page « Métiers » (quitter la session)\nClic droit : réglages de la carte")
+      return
+    end
     if card.mode == "dungeon" then
       W.Tooltip(self, "Prochaine étape", { "En donjon : le prochain boss, les objets de quête, la préparation.",
         "Glisser : déplacer la carte" }, "Clic : ouvrir la fenêtre TreeAI (Donjons)\nClic droit : réglages de la carte")
@@ -745,7 +750,18 @@ function W.CardModel(nSteps, now, ps)
       rows[#rows + 1] = lineRow(notice, "i", { notice = true, danger = false, title = nt[1], sub = nt[2] })
     end
     if danger then rows[#rows + 1] = lineRow(danger, "!", { danger = true }) end
-    if inDungeon() then
+    -- (PROFLEVEL 4.0.2) mode focus (contrat T.focus, ex. « Session métier ») : ses étapes à la place du trajet en pause
+    local F = T.focus
+    local frows, ftitle, fsum
+    if not inDungeon() and type(F) == "table" and type(F.card) == "function" then
+      local okF
+      okF, frows, ftitle, fsum = pcall(F.card, nSteps)
+      if not okF or type(frows) ~= "table" then frows = nil end
+    end
+    if frows then
+      mode, title, sum = "focus", ftitle or F.label or "Focus", fsum or ""
+      for _, r in ipairs(frows) do rows[#rows + 1] = r end
+    elseif inDungeon() then
       mode, sum = "dungeon", dungeonSub()
       for _, r in ipairs(dungeonRows(nSteps)) do rows[#rows + 1] = r end
     else
@@ -838,6 +854,7 @@ function W.RenderCard(force)
     .. tostring(P and P.cursor) .. tostring(P and P.steps and #P.steps) .. tostring(Q and Q.lastList) .. playerBucket()
     .. tostring(R and R.char and R.char.paused) .. (danger and tostring(danger.text) or "") .. (notice and "N" or "")
     .. (ps.ghost and "G" or (ps.dead and "D" or "")) .. (dg and "I" or "")
+    .. ((type(T.focus) == "table") and ("F" .. tostring(T.focus.gen)) or "")   -- (PROFLEVEL) étapes du mode focus
   if not force and key == cardKey then return end
   cardKey, cardAt = key, t
   local nSteps = min(5, max(1, tonumber(W.db.cardSteps) or 3))

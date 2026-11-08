@@ -1634,3 +1634,40 @@ placés à la position LUE des fenêtres du jeu). `TreeAI.QuickTravel` :
 * **Point de rencontre** (GROUPMERGE 4.0) : `Q.SendMeet` / `Q.OnMeet` passent par le module « Groupe » (protocole
   unique `GRP`, événement `meet`, envoi ≤ 1 / 15 s, réception membres du groupe ≤ 1 / 10 s) → ligne « Rejoins X au
   point de rencontre » (`Group:meet`, 10 min) + boussole ; plus de message `QTM` (encore décodé pour les amis en 3.9).
+
+## Métiers : montée + « Session métier » (agent PROFLEVEL, 4.0.2, `Modules/Prof.lua` + `Modules/ProfLevel.lua`)
+`ProfLevel.lua` étend le module **Prof** (bêta, même interrupteur, même coût mesuré ; chargé après `Window.lua`) :
+* **Planificateur** `Prof.Engine.Session(inp)` / `Prof.Engine.Split(res, have, reserve, vinfo, price)` = miroir ligne à
+  ligne de `treeaicoach/wow/professions.py` (`session_plan` / `split`, parité testée par `tests/wow/test_proflevel.py`).
+  Une fabrication à la fois (comptes entiers), la recette UTILISABLE au meilleur (coût ou compos rares) / point attendu ;
+  chance Classic (orange 1, jaune / vert (gris − compétence) / (gris − jaune), « Heures sup. » + 4 %/rang) ; la recette en
+  cours garde la main à 15 % près, une recette à apprendre doit faire 30 % mieux. Mode `full` (« Complet » : atteindre la
+  cible, ce qui manque s'achète : marchand au prix exact, HV, sinon « à farmer ») / `exact` (« Pile-poil » : tes compos +
+  celles d'un marchand). Au plafond du rang : le rang suivant (niveau requis, sinon arrêt `level`). Utilisable = connue
+  (fenêtre du métier), apprise avec le métier (drapeau 1 des données), recette d'entraîneur dont l'exigence est atteinte
+  (lue chez lui : `db.treq`, sinon = seuil jaune, drapeau 2 — les tables du client n'ont pas l'exigence), jamais un patron
+  inconnu. `PL.Compute(line, mode, target)` (cache 6 plans) : stock = sacs + banque (relevé à BANKFRAME_OPENED,
+  `char.pl.bank`) + courrier (`char.pl.mail`) − réserve de quête (objectifs « objet » du journal) ; prix `PL.PriceOf`
+  (marchand, `Auction.Stats` conf ≥ 30 %, Auctionator ; jamais deviné) ; couleurs du jeu (`char.cal` : maxTrivialLevel,
+  relativeDifficulty) ; intermédiaires du même métier (« Crée d'abord N× Peau moyenne traitée »).
+* **Page « Métiers »** de la fenêtre (après « HV ») : métier, mode, cible (±5, palier), « Demander avant l'HV », étapes,
+  achats (marchand / HV / à farmer + total, alerte si plus que ton or), tes compos (sacs · banque · courrier, « gardé pour
+  « quête » »), en plus (compos inutiles à vendre, revente des objets créés, meilleur bandage, ami dépeceur). Bouton :
+  « Lancer la session métier » / « Quitter la session ».
+* **Session métier** (mode focus) : trajet de quêtes en pause (ZonePlan / Route, rendu à la sortie seulement si c'est la
+  session qui l'a mis en pause), étapes dans l'ordre (courrier, banque, maître, marchand, HV du plus proche au plus loin,
+  à farmer, puis les fabrications avec le maître au bon palier), boussole vers le PNJ de l'étape (marchands de compos et
+  maîtres vus `db.vend` / `db.trn`, puis QuestieDB `vendors` / `professionTrainers`, banque / HV / boîte de Detect).
+  Sous la fenêtre du jeu ouverte, une carte « Session métier » : UN bouton = UNE action par clic (`BuyMerchantItem`
+  quantité exacte, arrondie au lot, une pile max ; `UseContainerItem` d'une case de banque, cases en surbrillance, jamais
+  avec un marchand ouvert ; `C_TradeSkillUI.CraftRecipe(recette, N)` ou `DoTradeSkill` (Era) ; HV : recherche → achat →
+  confirmation, prix plafonné à +20 %) ; rien en combat. Avance seule (étapes recalculées sur tes sacs / ta compétence).
+  Reprise après /reload (< 12 h). `/tai metiers focus | pilepoil | complet | page`.
+* **Contrat « focus »** (pour Brain, ZonePlan, la carte, la boussole) : `T.focus = nil | { kind = "prof", owner = "Prof",
+  label = "Session métier", line, mode, since, gen, pausedRoute, card = function(n) → rows, titre, résumé }` ;
+  `T:FocusMode()` → `kind | nil, T.focus` ; message `FOCUS_CHANGED` (`kind | nil`). Pendant un focus : ne pas reprendre
+  le trajet, ne pas insérer de courses ni changer de zone. La carte « Prochaine étape » (`Window.CardModel`, mode `focus`)
+  montre `T.focus.card` à la place du trajet (hors mort / donjon) ; clic sur son en-tête = la page « Métiers ».
+* Tests : `tests/wow/proflevel_scenario.lua` (banque, marchand, fabrication un clic = une action, combat, pause / reprise,
+  page), `tests/wow/test_proflevel.py` (moteur, données, parité Lua ↔ Python). Mock : `M.SetBank` / `M.SetBankItem`,
+  `M.merchantItems`, `M.SetTradeSkill` (`M.trade`), `M.SetTrainer` (`M.trainer`).

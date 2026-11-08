@@ -81,9 +81,12 @@ def test_build_step_pure():
         "Item": [], "ItemEffect": [], "ItemXItemEffect": [],
     }
     rec = m.build_recipes(T)
-    assert rec["recipes"][129] == [[3275, 1251, 1, 1, 30, 60, 1, 0, "Bandage en lin", [2589, 1]]]
-    assert rec["mats"][2589] == ["Étoffe de lin", 0, 0, 13]
+    # (PROFLEVEL) trainer recipe: the client has no requirement (MinSkillLineRank 1) -> learn = yellow, flag 2
+    assert rec["recipes"][129] == [[3275, 1251, 1, 30, 30, 60, 1, 0, "Bandage en lin", [2589, 1], 2]]
+    assert rec["mats"][2589] == ["Étoffe de lin", 0, 0, 13, 1]
     assert rec["gather"][182] == [[2447, 1]]
+    T["SkillLineAbility"][0]["AcquireMethod"] = "1"          # learned with the profession -> 1, flag 1
+    assert m.build_recipes(T)["recipes"][129][0][3:4] + m.build_recipes(T)["recipes"][129][0][10:] == [1, 1]
 
 
 def test_zone_names_exist():

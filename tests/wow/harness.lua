@@ -355,6 +355,9 @@ local function storm()
     if Z and Z.db then Z.db.autoWatch = true end
     if W and W.db then W.db.card = true end
     if C and C.db then C.db.shown = true end
+    -- (PROFLEVEL) a « Session métier » started by a click of the storm ends here (route resumed, compass released)
+    local PLv = mods.Prof and mods.Prof.Level
+    if PLv and PLv.FocusOn and PLv.FocusOn() and PLv.StopFocus then PLv.StopFocus("silent") end
     M.Advance(2, 0.5)
   end
   -- (MACRO3) …and the « Pause / Reprendre » of the route (page action, title, rows): how many times it is hit depends
