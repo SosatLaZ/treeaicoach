@@ -10,8 +10,8 @@ return function(M, ctx)
   if not A then return end
   ctx.check(A.Flavor() == "modern", "C_AuctionHouse detected: " .. tostring(A.Flavor()))
 
-  M.AddItem(2589, { name = "Étoffe de lin", stack = 20, sellPrice = 13, type = "Artisanat" })
-  M.AddItem(2592, { name = "Étoffe de laine", stack = 20, sellPrice = 33, type = "Artisanat" })
+  M.AddItem(2589, { name = "Étoffe de lin", stack = 20, sellPrice = 13, type = "Artisanat", classID = 7 })
+  M.AddItem(2592, { name = "Étoffe de laine", stack = 20, sellPrice = 33, type = "Artisanat", classID = 7 })
   M.AddItem(2770, { name = "Minerai de cuivre", stack = 20, sellPrice = 5, type = "Artisanat" })
   M.AddItem(9990, { name = "Griffe d'ours", stack = 1, sellPrice = 500, type = "Divers" })
   M.AddItem(7070, { name = "Épée de test", stack = 1, sellPrice = 100, type = "Arme" })
@@ -112,7 +112,7 @@ return function(M, ctx)
   for id, v in pairs(per) do
     local isVendor = false
     for _, d in ipairs(plan) do if d.id == id and d.kind == "vendor" then isVendor = true end end
-    ctx.check(isVendor or v <= math.floor(g.budget * 0.35), "per-item cap respected")
+    ctx.check(isVendor or v <= A.F.itemCap(g.total, A.db.capGold, g.budget), "per-item cap (% of all gold) respected")
   end
   for _, d in ipairs(A.deals) do
     if d.kind == "flip" then ctx.check(d.deposit and d.relist and d.relist >= 0, "deposit + relist risk on every flip") end

@@ -857,7 +857,8 @@ def ah_view(snap: dict) -> dict:
         deals.append({"name": str(d.get("name") or f"Objet {item}"), "id": item, "kind": d.get("kind") or "flip",
                       "count": max(1, _i(d.get("count"), 1)), "buy": _i(d.get("buy")), "sell": _i(d.get("sell")),
                       "expected": _i(d.get("profit")), "roi": _f(d.get("roi")), "conf": _f(d.get("conf")),
-                      "atr": atr_price, **n,
+                      "atr": atr_price, **n, "sold": _f(d.get("sold")), "stop": _i(d.get("stop")),
+                      "max_qty": _i(d.get("maxQty")),
                       "ours": treeai_series(db, our_key, item) if item else [],
                       "atr_series": atr_series(adb, atr_key, item) if item else []})
     mine = []
@@ -886,7 +887,13 @@ def ah_view(snap: dict) -> dict:
         budget = (f"Or {money(gold.get('total'))} · réserve {money(gold.get('reserve'))} · "
                   f"immobilisé {money(gold.get('invested'))}" + (f" · budget restant {money(a['budgetLeft'])}"
                                                                  if a.get("budgetLeft") is not None else ""))
-    return {"deals": deals, "mine": mine, "mine_known": "owned" in a,
+    none: list[str] = []
+    if not deals and isinstance(a.get("none"), dict):
+        none = [auction.NONE_TEXT] + [str(x) for x in _list(a["none"].get("why"))][:4]
+    rules = _d(a.get("rules"))
+    rules_t = (f"Règles : jamais plus de {_i(rules.get('capGold'), 20)} % de ton or dans un objet, quantité ≤ ce qui "
+               f"s'est vendu en {_i(rules.get('qtyDays'), 3)} j, stop-loss −15 %.") if rules else ""
+    return {"deals": deals, "none": none, "rules": rules_t, "mine": mine, "mine_known": "owned" in a,
             "recent": [(str(e.get("item") or "?"), _i(e.get("money")) - _i(e.get("cut")), str(e.get("day") or ""))
                        for e in recent],
             "realized": realized, "info": " · ".join(info), "budget": budget,

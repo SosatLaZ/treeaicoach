@@ -11,6 +11,10 @@
 --    image (coroutine) ; infos d'objet manquantes = résolues plus tard (jamais d'attente) ; mini-scan ciblé
 --    (liste d'achats / de ventes) au rythme du limiteur Blizzard ; lecture passive de ce que le joueur
 --    parcourt (parcours, recherche, pages).
+--  * liquidité (F.liquidity) : un achat-revente n'est proposé que s'il y a la PREUVE que l'objet se vend
+--    (ventes mesurées entre scans, plusieurs jours, prix stable, plusieurs vendeurs, Auctionator d'accord) ;
+--    sinon « Aucun achat-revente sûr pour l'instant » + pourquoi. Règles dures : ≤ capGold % de l'or par
+--    objet, quantité ≤ ventes de qtyDays jours, stop-loss −15 %. Seuils : research/ah2.md.
 --  * prix : historique par objet (≤ 14 jours) → marché (médiane robuste), volatilité, volume/jour,
 --    confiance ; Auctionator.API.v1 (callerID « TreeAI », lecture seule) en secours / quand plus frais.
 --  * frais exacts (règle Classic, miroir de treeaicoach/wow/auction.py) : commission 5 % / 15 % neutre ;
@@ -29,8 +33,8 @@ local M = T:RegisterModule("Auction", {
   title = "Hôtel des ventes",
   defaults = { enabled = true, minMargin = 20, minProfit = 20, budget = 0, hours = 24, maxItems = 1500,
                house = "auto", window = true, tips = true, keepGold = 0, mountGold = 0, autoReserve = true,
-               capShare = 35, api = "auto" },
-  charDefaults = { ledger = {}, seen = {}, spent = {}, deposits = {} },
+               capGold = 20, qtyDays = 3, api = "auto" },
+  charDefaults = { ledger = {}, seen = {}, spent = {}, deposits = {}, flips = {} },
   options = {
     { key = "window", type = "toggle", label = "Fenêtre d'aide à l'ouverture de l'HV" },
     { key = "tips", type = "toggle", label = "Annoncer les affaires dans le panneau" },
@@ -41,7 +45,8 @@ local M = T:RegisterModule("Auction", {
     { key = "keepGold", type = "range", label = "Or à garder quoi qu'il arrive (po)", min = 0, max = 2000, step = 5 },
     { key = "autoReserve", type = "toggle", label = "Réserver l'entraînement et les réparations (selon le niveau)" },
     { key = "mountGold", type = "range", label = "Réserve monture (po)", min = 0, max = 1000, step = 10 },
-    { key = "capShare", type = "range", label = "Part max du budget sur un même objet (%)", min = 10, max = 100, step = 5 },
+    { key = "capGold", type = "range", label = "Part max de ton or dans un même objet (%)", min = 5, max = 50, step = 5 },
+    { key = "qtyDays", type = "range", label = "Acheter au plus ce qui s'est vendu en (jours)", min = 1, max = 7, step = 1 },
     { key = "maxItems", type = "range", label = "Objets suivis au maximum", min = 300, max = 5000, step = 100 },
   },
 })
@@ -154,15 +159,20 @@ function F.thin(units)
 end
 
 -- historique : rec.h = { jour, min, med, qté, nScans, disparus, heures, jour, ... } (pas de 7)
+-- rec.sl = { jour, vendeurs, jour, vendeurs, ... } (vendeurs distincts, ou niveaux de prix distincts si inconnus)
 local function points(rec)
   local out, h = {}, rec and rec.h or {}
+  local sel, sl = {}, rec and rec.sl
+  if sl then for i = 1, #sl - 1, 2 do sel[sl[i]] = sl[i + 1] end end
   for i = 1, #h - STRIDE + 1, STRIDE do
     if n0(h[i + 2]) > 0 then
-      out[#out + 1] = { day = h[i], min = h[i + 1], med = h[i + 2], qty = h[i + 3], n = h[i + 4], gone = h[i + 5], hrs = h[i + 6] }
+      out[#out + 1] = { day = h[i], min = h[i + 1], med = h[i + 2], qty = h[i + 3], n = h[i + 4], gone = h[i + 5], hrs = h[i + 6],
+        sel = sel[h[i]] or 0 }
     end
   end
   return out
 end
+M.Points = points
 function F.statsFromPoints(ds, ageDays)
   if #ds == 0 then return nil end
   local meds = {}
@@ -298,7 +308,7 @@ end
 
 -- répartition de l'or : glouton par profit ajusté (confiance × P(vente)) / prix, plafond par objet
 -- (diversification), reventes au marchand (sans risque) hors plafond. Renvoie plan, dépense, gain attendu.
-function F.allocate(deals, budget, capShare, maxPer)
+function F.allocate(deals, budget, capShare, maxPer, capAbs)
   budget = max(0, n0(budget))
   local list = {}
   for _, d in ipairs(deals or {}) do
@@ -310,7 +320,7 @@ function F.allocate(deals, budget, capShare, maxPer)
     return a.adj > b.adj
   end)
   local left, per, perN, out, gain = budget, {}, {}, {}, 0
-  local cap = max(1, floor(budget * (capShare or 0.35)))
+  local cap = capAbs or max(1, floor(budget * (capShare or 0.35)))
   for _, d in ipairs(list) do
     local id = d.id or 0
     local lim = d.kind == "vendor" and budget or cap
@@ -326,6 +336,189 @@ end
 function F.relistLoss(dep, p)
   p = clamp(n0(p), 0.05, 1)
   return floor(n0(dep) * (1 - p) / p + 0.5)
+end
+
+
+-- ------------------------------------------------------------------ liquidité : « est-ce que ça se vend ? »
+-- Miroir exact de auction.py (liquidity / safe_flip / sold_between…) ; seuils expliqués dans research/ah2.md.
+local LIQ = { minDays = 3, minDaysDemand = 2, minScans = 4, minHours = 12, minSold = 1.0, minSoldSingle = 0.5,
+  minSellers = 3, maxVol = 0.30, atrGap = 0.35, staleDays = 3, minConf = 0.70, maxTts = 3.0, minRoi = 0.15,
+  qtyDays = 3, stopPct = 15, capPct = 20 }
+F.LIQ = LIQ
+F.NONE_TEXT = "Aucun achat-revente sûr pour l'instant"
+local REASON_LABEL = {
+  nohist = "jamais vu en scan", rare = "objet rare, presque jamais vendu", short = "historique trop court",
+  scans = "trop peu de scans", unmeasured = "ventes pas encore mesurées", slow = "se vend trop peu",
+  unstable = "prix instable", falling = "prix en chute", sellers = "trop peu de vendeurs",
+  atr = "Auctionator pas d'accord", stale = "données trop vieilles", conf = "confiance trop basse",
+  notcheap = "pas assez sous le marché", stack = "pile plus grosse que ce qui se vend",
+  tts = "trop long à revendre", margin = "marge trop faible après commission et dépôt",
+}
+F.REASON_LABEL = REASON_LABEL
+local function dec(x) if x == nil then return "0" end return (("%.1f"):format(x):gsub("%.", ",")) end
+
+function F.demand(classID, quality, stack, ilvl, minLevel, level)
+  local c, q, lvl = tonumber(classID) or -1, tonumber(quality) or 1, n0(level)
+  if c == 0 then return "consommable", 0.10 end
+  if c == 1 then return "sac", 0.10 end
+  if c == 6 then return "munitions", 0.10 end
+  if c == 7 then return "artisanat", (lvl <= 0 or n0(ilvl) <= lvl + 20) and 0.10 or 0.03 end
+  if c == 5 then return "composant", 0.05 end
+  if c == 2 or c == 4 then
+    if q == 2 and lvl > 0 and n0(minLevel) >= lvl - 5 and n0(minLevel) <= lvl + 10 then return "équipement de leveling", 0.05 end
+    return "équipement", 0
+  end
+  return "autre", 0
+end
+
+local function sigKey(k)
+  local a, b = tostring(k):match("^(%-?%d+):(%-?%d+)$")
+  return n0(a), n0(b)
+end
+-- unités VENDUES entre deux scans : disparues − remises en vente moins cher (même taille de pile)
+function F.soldBetween(prev, cur)
+  prev, cur = prev or {}, cur or {}
+  local gone, dis, new = 0, {}, {}
+  for k, q in pairs(prev) do
+    local still = n0(cur[k])
+    if still < n0(q) then
+      local u, c = sigKey(k)
+      dis[#dis + 1] = { u, c, n0(q) - still }
+      gone = gone + n0(q) - still
+    end
+  end
+  for k, q in pairs(cur) do
+    local inc = n0(q) - n0(prev[k])
+    if inc > 0 then local u, c = sigKey(k) new[#new + 1] = { u, c, inc } end
+  end
+  table.sort(dis, function(a, b) if a[2] ~= b[2] then return a[2] < b[2] end return a[1] > b[1] end)
+  table.sort(new, function(a, b) if a[1] ~= b[1] then return a[1] < b[1] end return a[2] < b[2] end)
+  local matched = 0
+  for _, nw in ipairs(new) do
+    for _, e in ipairs(dis) do
+      if nw[3] <= 0 then break end
+      if e[2] == nw[2] and e[1] > nw[1] and e[3] > 0 then
+        local m = min(e[3], nw[3])
+        e[3], nw[3], matched = e[3] - m, nw[3] - m, matched + m
+      end
+    end
+  end
+  return gone - matched
+end
+
+function F.marketOf(ds)
+  local meds = {}
+  for i, d in ipairs(ds) do meds[i] = d.med end
+  return F.median(meds)
+end
+function F.volOf(ds)
+  if #ds == 0 then return 0.5 end
+  if #ds < 3 then
+    local l = ds[#ds]
+    return r4(max(0.10, (l.med - l.min) / l.med))
+  end
+  local mv = F.marketOf(ds)
+  local dev = {}
+  for i, d in ipairs(ds) do dev[i] = abs(d.med - mv) end
+  return r4(1.4826 * (F.median(dev) or 0) / max(1, mv))
+end
+function F.volumeOf(ds)
+  local gone, hrs = 0, 0
+  for _, d in ipairs(ds) do gone, hrs = gone + n0(d.gone), hrs + n0(d.hrs) end
+  if hrs <= 0 then return nil end
+  return floor(gone / hrs * 24 * SOLD_SHARE * 100 + 0.5) / 100
+end
+
+function F.liquidity(ds, stack, quality, prior, atrPrice, ageDays)
+  ds = ds or {}
+  local res = { ok = false, conf = 0, reasons = {}, market = 0, vol = 0.5, sold = nil, days = #ds, scans = 0, hours = 0, sellers = 0, gone = 0 }
+  local R = res.reasons
+  local function why(code, text) R[#R + 1] = { code = code, text = text } end
+  if #ds == 0 then why("nohist", "jamais vu dans un scan TreeAI") return res end
+  local nd, scans, hrs, gone, sellers = #ds, 0, 0, 0, 0
+  for _, d in ipairs(ds) do
+    scans, hrs, gone = scans + max(1, n0(d.n)), hrs + n0(d.hrs), gone + n0(d.gone)
+    sellers = max(sellers, n0(d.sel))
+  end
+  local sold, mv, vol = F.volumeOf(ds), F.marketOf(ds) or 0, F.volOf(ds)
+  local single = n0(stack or 1) <= 1
+  local p = n0(prior)
+  res.market, res.vol, res.sold, res.scans, res.hours, res.sellers, res.gone = mv, vol, sold, scans, hrs, sellers, gone
+  if single and (tonumber(quality) or 1) >= 2 and (gone < 2 or nd <= 1) then why("rare", "objet rare : moins de 2 ventes vues") end
+  local need = p >= 0.10 and LIQ.minDaysDemand or LIQ.minDays
+  if nd < need then why("short", ("historique trop court (%d j sur %d)"):format(nd, need)) end
+  if scans < LIQ.minScans then why("scans", ("trop peu de scans (%d sur %d)"):format(scans, LIQ.minScans)) end
+  local minSold = single and LIQ.minSoldSingle or LIQ.minSold
+  if hrs < LIQ.minHours then why("unmeasured", "ventes pas encore mesurées (il faut des scans espacés de quelques heures)")
+  elseif sold == nil or sold < minSold then why("slow", ("se vend peu (%s par jour)"):format(dec(sold))) end
+  if vol > LIQ.maxVol then why("unstable", ("prix instable (±%d %%)"):format(floor(vol * 100 + 0.5))) end
+  if mv > 0 and ds[#ds].med < mv * (1 - LIQ.maxVol) then why("falling", "prix en chute") end
+  if sellers > 0 and sellers < LIQ.minSellers then why("sellers", ("trop peu de vendeurs (%d)"):format(sellers)) end
+  local av, atrOk = n0(atrPrice), false
+  if av > 0 and mv > 0 then
+    atrOk = abs(av - mv) / mv <= LIQ.atrGap
+    if not atrOk then why("atr", ("Auctionator pas d'accord (%s contre %s)"):format(money(av), money(mv))) end
+  end
+  local c = 0.25 * min(1, nd / 5) + 0.15 * min(1, scans / 8) + 0.25 * min(1, n0(sold) / (3 * minSold))
+    + 0.20 * (1 - min(1, vol / 0.4)) + (sellers > 0 and 0.15 * min(1, sellers / 5) or 0.075) + p + (atrOk and 0.05 or 0)
+  local age = n0(ageDays)
+  if age > LIQ.staleDays then c = c * 0.5 why("stale", ("données vieilles de %d j"):format(floor(age))) end
+  c = floor(clamp(c, 0, 1) * 100 + 0.5) / 100
+  res.conf = c
+  if #R == 0 and c < LIQ.minConf then why("conf", ("confiance trop basse (%d %%)"):format(floor(c * 100 + 0.5))) end
+  res.ok = #R == 0
+  return res
+end
+
+function F.maxQty(sold, days, held)
+  local v = tonumber(sold)
+  if not v or v <= 0 then return 0 end
+  return max(0, floor(v * (days or LIQ.qtyDays)) - max(0, n0(held)))
+end
+function F.stopLoss(buyUnit, vendor, neutral)
+  local b = max(0, floor(n0(buyUnit)))
+  local stop = max(max(0, n0(vendor)), floor(b * (100 - LIQ.stopPct) / 100))
+  return { unit = stop, loss = max(0, b - F.net(stop, neutral)) }
+end
+function F.itemCap(total, pct, budget)
+  local cap = floor(max(0, n0(total)) * n0(pct or LIQ.capPct) / 100)
+  if budget == nil then return cap end
+  return min(cap, max(0, n0(budget)))
+end
+-- renvoie deal, nil si l'achat est SÛR ; sinon nil, {code, text}
+function F.safeFlip(buyout, count, liq, vendor, ahead, held, neutral, hrs, minMargin, minProfit)
+  if not (liq and liq.ok) then
+    local r = liq and liq.reasons and liq.reasons[1]
+    return nil, r or { code = "nohist", text = REASON_LABEL.nohist }
+  end
+  count, buyout = max(1, n0(count)), n0(buyout)
+  local mv = n0(liq.market)
+  local unit = floor(buyout / count)
+  if mv <= 0 or r4(1 - unit / mv) < n0(minMargin or 0.2) then
+    return nil, { code = "notcheap", text = ("pas assez sous le marché (%s/u)"):format(money(mv)) }
+  end
+  local maxq = F.maxQty(liq.sold, nil, held)
+  if count > maxq then
+    return nil, { code = "stack", text = ("pile de %d : il s'en vend ~%d en %d j"):format(count, maxq, LIQ.qtyDays) }
+  end
+  local d = F.flip(buyout, count, { market = mv, vol = liq.vol, volume = liq.sold, conf = liq.conf }, vendor, ahead, neutral, hrs)
+  if d.days == nil or d.days > LIQ.maxTts then
+    return nil, { code = "tts", text = ("trop long à revendre (~%s j)"):format(dec(d.days)) }
+  end
+  if d.profit < n0(minProfit or 5000) or n0(d.roi) < LIQ.minRoi then
+    return nil, { code = "margin", text = ("marge trop faible (%s net)"):format(money(d.profit)) }
+  end
+  d.safe, d.maxQty, d.sold, d.stop = true, maxq, liq.sold, F.stopLoss(unit, vendor, neutral)
+  return d
+end
+function F.whyNone(rejects, candidates)
+  if n0(candidates) <= 0 then return { "Aucune annonce assez sous le prix du marché parmi les objets suivis." } end
+  local top = {}
+  for k, v in pairs(rejects or {}) do if n0(v) > 0 then top[#top + 1] = { k, n0(v) } end end
+  table.sort(top, function(a, b) if a[2] ~= b[2] then return a[2] > b[2] end return a[1] < b[1] end)
+  local out = { ("%d affaire(s) apparente(s) écartée(s) :"):format(n0(candidates)) }
+  for i = 1, min(3, #top) do out[#out + 1] = ("%s (%d)"):format(REASON_LABEL[top[i][1]] or top[i][1], top[i][2]) end
+  return out
 end
 
 -- ------------------------------------------------------------------ état / API HV
@@ -488,6 +681,22 @@ local function addPoint(rec, day, mn, med, qty, gone, hrs)
   end
 end
 
+local function addSel(rec, day, n)
+  if n0(n) <= 0 then return end
+  rec.sl = rec.sl or {}
+  local sl = rec.sl
+  if sl[#sl - 1] == day then sl[#sl] = max(sl[#sl], n) else sl[#sl + 1] = day sl[#sl + 1] = n end
+  while #sl >= 2 and (sl[1] <= day - MAX_DAYS or #sl > MAX_DAYS * 2) do table.remove(sl, 1) table.remove(sl, 1) end
+end
+-- vendeurs distincts vus (noms connus : ancienne API / recherche) sinon niveaux de prix distincts (scan complet)
+local function sellersOf(it)
+  local n, l = 0, 0
+  for _ in pairs(it.owners or {}) do n = n + 1 end
+  if n > 0 then return n end
+  for _ in pairs(it.levels or {}) do l = l + 1 end
+  return l
+end
+
 function M.Prune()
   local r = M.RealmData()
   if not r then return end
@@ -558,10 +767,12 @@ end
 local function addRow(s, i, id, count, buy, owner, auctionID)
   if not (id and count > 0 and buy > 0) then return end
   local it = s.items[id]
-  if not it then it = { units = {}, listings = {}, qty = 0, sig = {} } s.items[id] = it end
+  if not it then it = { units = {}, listings = {}, qty = 0, sig = {}, owners = {}, levels = {} } s.items[id] = it end
   local unit = floor(buy / count)
   local isMine = owner ~= nil and (owner == M.meName or owner == "player")
   if not isMine then
+    if type(owner) == "string" and owner ~= "" then it.owners[owner] = true end
+    it.levels[unit] = true
     it.units[#it.units + 1] = unit
     it.listings[#it.listings + 1] = { index = i, unit = unit, count = count, buy = buy, owner = owner, auctionID = auctionID }
     it.qty = it.qty + count
@@ -611,14 +822,9 @@ function M.FinishScan(j)
       local rec = r.items[id]
       if not rec then rec = { h = {} } r.items[id] = rec end
       if n0(rec.v) <= 0 then rec.v = vendorPrice(id) end
-      local gone = 0
-      if prev and prev.items[id] then
-        for k, q in pairs(prev.items[id]) do
-          local still = it.sig[k] or 0
-          if still < q then gone = gone + (q - still) end
-        end
-      end
+      local gone = (prev and prev.items[id]) and max(0, F.soldBetween(prev.items[id], it.sig)) or 0
       addPoint(rec, day, it.units[1], F.lowMedian(it.units), it.qty, gone, prev and floor(hrs * 100 + 0.5) / 100 or 0)
+      addSel(rec, day, sellersOf(it))
       rec.last = t
     end
     slice(j)
@@ -683,6 +889,7 @@ function M.ApplyItemListings(id, rows)
     if not rec then rec = { h = {} } r.items[id] = rec end
     if n0(rec.v) <= 0 then rec.v = vendorPrice(id) end
     addPoint(rec, today(), it.units[1], F.lowMedian(it.units), it.qty, 0, 0)
+    addSel(rec, today(), sellersOf(it))
     rec.last = now()
   end
   return it
@@ -702,24 +909,59 @@ function M.RiskText(d)
   return (r < 0.35 and "faible") or (r < 0.65 and "moyen") or "élevé"
 end
 
+-- liquidité d'un objet à partir de NOTRE historique (Auctionator seul ne prouve pas que ça se vend)
+function M.Liq(id)
+  local r = M.RealmData()
+  local rec = r and r.items[id]
+  local _, _, q, ilvl, minL, _, _, stack, _, _, _, classID = M.ItemInfo(id)
+  local label, prior = F.demand(classID, q, stack, ilvl, minL, try(_G.UnitLevel, "player"))
+  local ageDays = rec and (now() - n0(rec.last)) / 86400 or 0
+  local liq = F.liquidity(rec and points(rec) or {}, stack or 20, q or 1, prior, (M.AtrPrice(id)), ageDays)
+  liq.class = label
+  M.liqCache[id] = liq
+  return liq
+end
+M.liqCache = {}
+
+local function held(id)
+  local n = n0(try(_G.GetItemCount, id))
+  for _, a in ipairs(M.owned or {}) do if a.id == id and a.state ~= "cancelled" then n = n + n0(a.count) end end
+  return n
+end
+
+-- seulement les achats-reventes SÛRS (preuves de ventes) + les reventes au marchand (sans risque)
 function M.FindDeals(items, j)
   local neutral, hrs = M.IsNeutral(), hours()
-  local all, thin = {}, {}
+  local minMargin, minProfit = n0(cfg("minMargin", 20)) / 100, n0(cfg("minProfit", 20)) * 100
+  local all, thin, rejects, cand = {}, {}, {}, 0
+  LIQ.qtyDays = max(1, n0(cfg("qtyDays", 3)))
   for id, it in pairs(items or M.cur) do
     if #it.listings > 0 then
       local vendor = vendorPrice(id)
       local st = M.Stats(id)
+      local liq
       for li = 1, min(3, #it.listings) do
         local l = it.listings[li]
         local d = F.vendorFlip(l.buy, l.count, vendor)
-        if not d and st and st.market and st.market > 0 then
-          local target = floor(st.market * (1 - 0.5 * (st.vol or 0)))
+        if d then
+          d.safe = true
+        elseif st and st.market and st.market > 0 and floor(l.buy / max(1, l.count)) <= st.market * (1 - minMargin) then
+          cand = cand + 1                          -- affaire apparente : a-t-on la preuve que ça se revend ?
+          liq = liq or M.Liq(id)
+          local target = floor(n0(liq.market) * (1 - 0.5 * n0(liq.vol)))
           local ahead = 0
           for _, o in ipairs(it.listings) do if o ~= l and o.unit < target then ahead = ahead + o.count end end
-          d = F.flip(l.buy, l.count, st, vendor, ahead, neutral, hrs)
-          d.thin = F.thin(it.units)
-          d.relist = F.relistLoss(d.deposit, d.p)   -- dépôt perdu attendu si on reposte jusqu'à la vente
-          d.market, d.src = st.market, st.src
+          local why
+          d, why = F.safeFlip(l.buy, l.count, liq, vendor, ahead, held(id), neutral, hrs, minMargin, minProfit)
+          if d then
+            d.thin = F.thin(it.units)
+            d.relist = F.relistLoss(d.deposit, d.p)
+            d.market, d.src, d.class = liq.market, "TreeAI", liq.class
+          else
+            local code = why and why.code or "nohist"
+            rejects[code] = (rejects[code] or 0) + 1
+            M.lastReject = { id = id, why = why }
+          end
         end
         if d then
           d.id, d.index, d.owner, d.auctionID, d.src = id, l.index, l.owner, l.auctionID, d.src or M.lastSrc
@@ -732,26 +974,22 @@ function M.FindDeals(items, j)
     slice(j)
   end
   local budget = M.Budget()
-  M.deals = F.rank(all, n0(cfg("minMargin", 20)) / 100, n0(cfg("minProfit", 20)) * 100, budget)
+  M.deals = F.rank(all, minMargin, minProfit, budget)
   for i = #M.deals, 41, -1 do M.deals[i] = nil end
-  M.thinList = thin
+  M.thinList, M.rejects, M.candidates = thin, rejects, cand
+  M.none = #M.deals == 0 and { text = F.NONE_TEXT, why = F.whyNone(rejects, cand) } or nil
   M.Plan()
   local d = M.deals[1]
   if d and cfg("tips", true) and M.Suggest then
-    local fresh = d.id ~= M._dealSound   -- son « bonne affaire » seulement pour une nouvelle meilleure affaire
+    local fresh = d.id ~= M._dealSound   -- son « bonne affaire » seulement pour une nouvelle meilleure affaire sûre
     M._dealSound = d.id
-    M:Suggest("deals", ("HV : %d affaire(s), meilleure %s +%s — /tai hv"):format(#M.deals, itemName(d.id), money(d.profit)), 2,
+    M:Suggest("deals", ("HV : %d achat(s)-revente(s) sûr(s), meilleur %s +%s net"):format(#M.deals, itemName(d.id), money(d.profit)), 2,
       { ttl = 300, sound = fresh or nil, soundKind = "ah" })
+  elseif not d and M.Clear then
+    M._dealSound = nil
+    M:Clear("deals")
   end
-  if T and T.SetTabLines then  -- « HV » tab of the panel: best deals, click = deal window (buy there, 1 click = 1 action)
-    local lines = {}
-    for i = 1, math.min(#M.deals, 8) do
-      local x = M.deals[i]
-      lines[#lines + 1] = { text = ("%s x%d : +%s"):format(itemName(x.id), x.count or 1, money(x.profit)), prio = i == 1 and 2 or 1,
-        tooltip = "Clic : fenêtre des affaires (l'achat se fait là, un clic par achat).", onClick = function() M.ShowWindow() end }
-    end
-    pcall(T.SetTabLines, T, "hv", lines, "Auction")
-  end
+  M.tabDirty = true
   return M.deals
 end
 
@@ -781,7 +1019,8 @@ function M.Gold()
 end
 function M.Plan()
   local g = M.Gold()
-  local plan, spend, gain = F.allocate(M.deals, g.budget, n0(cfg("capShare", 35)) / 100, 4)
+  -- règle dure : jamais plus de capGold % de TOUT ton or dans un même objet (reventes au marchand exclues)
+  local plan, spend, gain = F.allocate(M.deals, g.budget, nil, 4, max(1, F.itemCap(g.total, cfg("capGold", 20), g.budget)))
   M.plan, M.planSpend, M.planGain = plan, spend, gain
   return plan, spend, gain
 end
@@ -956,7 +1195,12 @@ function M.Buy(d)
     local k = dateKey()
     M.char.spent = M.char.spent or {}
     M.char.spent[k] = n0(M.char.spent[k]) + n0(paid)
-    say(("Acheté : %s x%d pour %s (profit attendu %s)."):format(itemName(d.id), d.count, money(paid), money(d.profit)))
+    if d.kind == "flip" and d.stop then   -- pour le stop-loss des ventes suivantes
+      M.char.flips = M.char.flips or {}
+      M.char.flips[d.id] = { unit = floor(n0(paid) / max(1, d.count)), qty = d.count, t = now(), stop = d.stop.unit }
+    end
+    local stopT = d.stop and (" Stop-loss : sous %s/u, revends (perte max %s/u)."):format(money(d.stop.unit), money(d.stop.loss)) or ""
+    say(("Acheté : %s x%d pour %s (profit attendu %s).%s"):format(itemName(d.id), d.count, money(paid), money(d.profit), stopT))
   end
   M.Refresh()
   return ok
@@ -1206,12 +1450,18 @@ function M.CheckOwned()
     else
       a.advice = low and "le moins cher : garder" or "pas de concurrent connu"
     end
+    local fl = a.id and M.char and M.char.flips and M.char.flips[a.id]
+    local mk = a.id and M.liqCache[a.id] and M.liqCache[a.id].market
+    if fl and mk and mk > 0 and mk < n0(fl.stop) then
+      a.stopHit = true
+      a.advice = ("stop-loss : marché %s < %s, brade ou vends au marchand"):format(money(mk), money(fl.stop))
+    end
     out[#out + 1] = a
   end
   M.owned = out
   local n = 0
   for _, a in ipairs(out) do if a.undercut then n = n + 1 end end
-  if n > 0 and M.Suggest then M:Suggest("undercut", ("HV : %d de tes enchères sont sapées — /tai hv"):format(n), 2, { ttl = 300 }) end
+  if n > 0 and M.Suggest then M:Suggest("undercut", ("HV : %d de tes enchères sont battues (bouton « Annuler les battues » à l'HV)"):format(n), 2, { ttl = 300 }) end
   return out
 end
 
@@ -1248,6 +1498,8 @@ function M.PostPrice(id, count)
   local s = F.suggestPost(count, vendorPrice(id), M.Stats(id), comps(id), M.IsNeutral(), hours())
   s.id = id
   if s.unit and s.p then s.relist = F.relistLoss(s.deposit, s.p) end
+  local fl = M.char and M.char.flips and M.char.flips[id]
+  if fl then s.boughtUnit, s.stop = fl.unit, fl.stop end
   return s
 end
 
@@ -1405,6 +1657,78 @@ function M.Next()
   return ok
 end
 
+-- ------------------------------------------------------------------ boutons rapides (1 clic = 1 action, dans le OnClick)
+function M.BuyHead()
+  for _, d in ipairs(M.plan or {}) do if d.state ~= "bought" and d.state ~= "gone" then return d end end
+end
+function M.PostHead()
+  if M.ahOpen then M.postRows = M.postRows or M.PostList() end
+  for _, p in ipairs(M.postRows or {}) do if p.state ~= "posted" and p.state ~= "skip" then return p end end
+end
+function M.CancelHead()
+  for _, a in ipairs(M.owned or {}) do if a.undercut and a.worth and a.state ~= "cancelled" then return a end end
+end
+local function left(list, done)
+  local n = 0
+  for _, e in ipairs(list or {}) do if not done(e) then n = n + 1 end end
+  return n
+end
+function M.Counts()
+  return left(M.plan, function(d) return d.state == "bought" or d.state == "gone" end),
+    left(M.postRows, function(p) return p.state == "posted" or p.state == "skip" end),
+    left(M.owned, function(a) return not (a.undercut and a.worth) or a.state == "cancelled" end)
+end
+-- « Acheter la meilleure offre » : la meilleure affaire sûre du plan (moderne : vérifier → acheter → confirmer)
+function M.BuyBest()
+  if not M.ahOpen then say("Ouvre l'hôtel des ventes d'abord.") return false end
+  local d = M.BuyHead()
+  if not d then say(F.NONE_TEXT .. ".") M.Refresh() return false end
+  local ok = M.Buy(d)
+  M.Refresh()
+  return ok
+end
+-- « Remettre en vente » : la pile suivante des sacs, au prix « 1 pc sous le moins cher » (jamais sous le plancher)
+function M.RepostNext()
+  if not M.ahOpen then say("Ouvre l'hôtel des ventes d'abord.") return false end
+  local p = M.PostHead()
+  if not p then M.postRows = nil p = M.PostHead() end
+  if not p then say("Rien à remettre en vente (objets annulés : récupère-les d'abord au courrier).") M.Refresh() return false end
+  local ok = M.Post(p)
+  M.Refresh()
+  return ok
+end
+-- « Annuler les enchères battues » : une annulation par clic, seulement si le dépôt perdu vaut le coup
+function M.CancelNext()
+  if not M.ahOpen then say("Ouvre l'hôtel des ventes d'abord.") return false end
+  local a = M.CancelHead()
+  if not a then say("Aucune enchère battue à annuler.") M.Refresh() return false end
+  local ok = M.Cancel(a)
+  M.Refresh()
+  return ok
+end
+function M.ActionLabels()
+  local nb, np, nc = M.Counts()
+  local d = M.BuyHead()
+  local buy, buyOn = ("Acheter la meilleure offre (%d)"):format(nb), d ~= nil
+  if d and d.state == "ready" then buy = ("Acheter maintenant (%d)"):format(nb)
+  elseif d and d.state == "confirm" then buy = "Confirmer l'achat"
+  elseif d and (d.state == "search" or d.state == "starting") then buy, buyOn = "Vérification du prix…", false end
+  local p = M.PostHead()
+  local post = ("Remettre en vente (%d)"):format(np)
+  if p and p.state == "check" then post = "Vérification du prix…" end
+  local hint
+  if d then
+    hint = ("Prochain achat : %s x%d pour %s → +%s net%s"):format(itemName(d.id), d.count, money(d.buyNow or d.buy), money(d.profit),
+      d.stop and (" · stop-loss " .. money(d.stop.unit) .. "/u") or (d.kind == "vendor" and " · revente au marchand" or ""))
+  elseif p then
+    hint = ("Prochaine vente : %s x%d à %s/u (dépôt %s)"):format(itemName(p.id), p.count, money(p.unit), money(p.deposit))
+  else
+    hint = F.NONE_TEXT .. "."
+  end
+  return { buy = buy, buyOn = buyOn and M.ahOpen, post = post, postOn = p ~= nil and p.state ~= "check" and M.ahOpen,
+    cancel = ("Annuler les battues (%d)"):format(nc), cancelOn = nc > 0 and M.ahOpen, hint = hint }
+end
+
 -- ------------------------------------------------------------------ journal (courrier de l'HV)
 local function toPattern(fmt)
   if type(fmt) ~= "string" or not fmt:find("%%s") then return nil end
@@ -1483,9 +1807,9 @@ function M.DealText(d)
   if d.kind == "vendor" then
     return ("%s : %s → marchand %s = +%s garanti"):format(lbl, money(d.buy), money(d.sell), money(d.profit))
   end
-  return ("%s : %s (−%d %%) → revendre %s = +%s net (commission + dépôt %s inclus), ROI %d %%, conf. %d %%, risque %s%s"):format(lbl,
-    money(d.buy), floor(d.discount * 100 + 0.5), money(d.sell), money(d.profit), money(d.deposit), floor((d.roi or 0) * 100 + 0.5),
-    floor(d.conf * 100 + 0.5), M.RiskText(d), d.thin and " ⚠ marché mince" or "")
+  return ("%s : acheter %s (−%d %%) → revendre %s = +%s net (commission + dépôt %s inclus) · se vend ~%s/jour · conf. %d %% · stop-loss %s/u"):format(lbl,
+    money(d.buy), floor(d.discount * 100 + 0.5), money(d.sell), money(d.profit), money(d.deposit), dec(d.sold),
+    floor(d.conf * 100 + 0.5), money(d.stop and d.stop.unit or 0))
 end
 
 function M.SellText(s)
@@ -1497,6 +1821,7 @@ function M.SellText(s)
   local t = ("%s x%d : %s/u (dépôt %s, net %s, marchand %s)"):format(name, s.count, money(s.unit), money(s.deposit), money(s.net), money(s.vendor))
   if s.relist and s.relist > 0 then t = t .. (" — si invendu : −%s par remise en vente"):format(money(s.deposit)) end
   if s.split then t = t .. (" — piles de %d"):format(s.split) end
+  if s.boughtUnit then t = t .. (" — acheté %s/u, stop-loss %s/u"):format(money(s.boughtUnit), money(s.stop)) end
   return t
 end
 
@@ -1527,8 +1852,8 @@ function M.BilanLines()
     money(g.parts.keep), money(g.parts.train), money(g.parts.mount))
   L[#L + 1] = ("Budget de revente %s%s · dépensé aujourd'hui %s"):format(money(g.budget), g.cap > 0 and (" (plafond/jour " .. money(g.cap) .. ")") or "", money(g.spent))
   L[#L + 1] = ("Argent immobilisé %s (en vente %s, acheté non revendu %s)"):format(money(g.invested), money(g.listed), money(g.held))
-  L[#L + 1] = ("Plan : %d achat(s) pour %s → profit attendu %s (max %d %% du budget par objet)"):format(#(M.plan or {}),
-    money(M.planSpend), money(M.planGain), n0(cfg("capShare", 35)))
+  L[#L + 1] = ("Plan : %d achat(s) pour %s → profit attendu %s (max %d %% de ton or par objet, quantité ≤ ventes de %d j)"):format(#(M.plan or {}),
+    money(M.planSpend), money(M.planGain), n0(cfg("capGold", 20)), n0(cfg("qtyDays", 3)))
   local deps = M.char and M.char.deposits and M.char.deposits[dateKey()]
   L[#L + 1] = ("Profit réalisé : aujourd'hui %s, 7 j %s, total %s · dépôts payés aujourd'hui %s"):format(money(r.today), money(r.week), money(r.total), money(deps))
   for i, d in ipairs(M.plan or {}) do
@@ -1563,7 +1888,10 @@ function M.Report(what)
   local age = M.lastFull and ceil((now() - M.lastFull) / 60)
   P(("HV %s · dernier scan complet : %s · budget de revente %s (réserve %s)"):format(M.IsNeutral() and "neutre (15 %)" or "de faction (5 %)",
     age and ("il y a " .. age .. " min") or "jamais", money(g.budget), money(g.reserve)))
-  if #M.deals == 0 then P("Aucune affaire pour l'instant : ouvre l'HV, « Scan complet », ou parcours des pages.") end
+  if #M.deals == 0 then
+    P(F.NONE_TEXT .. ".")
+    for _, w in ipairs((M.none and M.none.why) or { "Ouvre l'HV et fais un scan complet (plusieurs scans espacés sur 3 jours)." }) do P("  " .. w) end
+  end
   for i = 1, min(6, #M.deals) do P(i .. ". " .. M.DealText(M.deals[i])) end
   local nb = 0
   for _, a in ipairs(M.owned) do if a.undercut then nb = nb + 1 end end
@@ -1623,14 +1951,21 @@ end
 local ROWS = 12
 M.tab, M.page = "deals", 1
 local COLS = {
-  deals = { { "Objet", 160 }, { "Prix", 70 }, { "Marché/u", 70 }, { "Profit net", 70 }, { "Risque", 95 }, { "Vente", 45 } },
+  deals = { { "Objet", 150 }, { "Prix", 62 }, { "Marché/u", 62 }, { "Net", 62 }, { "Ventes/j", 50 }, { "Conf.", 38 }, { "Stop/u", 62 } },
   sell = { { "Objet", 160 }, { "Qté", 30 }, { "Prix/u", 65 }, { "Dépôt", 60 }, { "Net", 70 }, { "Marchand", 65 }, { "Durée", 40 } },
   owned = { { "Objet", 160 }, { "Mon prix/u", 70 }, { "Plus bas", 65 }, { "État", 60 }, { "Conseil", 165 } },
   bilan = { { "", 600 } },
 }
 
 local function rowsFor(tab)
-  if tab == "deals" then return M.deals
+  if tab == "deals" then
+    if #M.deals > 0 then return M.deals end
+    local out = { { text = F.NONE_TEXT .. "." } }
+    for _, w in ipairs((M.none and M.none.why) or { "Pas encore de scan dans cette session : clique « Scan complet »." }) do out[#out + 1] = { text = "  " .. w } end
+    out[#out + 1] = { text = ("Règle : un objet n'est proposé que s'il se vend vraiment (≥ %d jours de scans, ≥ %s vente/jour, prix stable ±%d %%, ≥ %d vendeurs)."):format(
+      LIQ.minDays, dec(LIQ.minSold), floor(LIQ.maxVol * 100), LIQ.minSellers) }
+    out[#out + 1] = { text = "Astuce : un scan complet toutes les quelques heures (bouton « Scan complet ») mesure les ventes." }
+    return out
   elseif tab == "sell" then M.postRows = M.postRows or M.PostList() return M.postRows
   elseif tab == "owned" then return M.owned
   end
@@ -1640,11 +1975,12 @@ local function rowsFor(tab)
 end
 
 local function cells(tab, e)
+  if e.text then return { e.text } end
   if tab == "deals" then
     local name = itemName(e.id) .. (e.count > 1 and (" x" .. e.count) or "")
-    if e.kind == "vendor" then return { name, money(e.buy), "marchand", "+" .. money(e.profit), "aucun", "0 j" } end
-    return { name, money(e.buy), money(e.market or e.sellUnit), "+" .. money(e.profit),
-      M.RiskText(e) .. " · " .. money(e.deposit) .. "/cycle", e.days and (e.days .. " j") or "?" }
+    if e.kind == "vendor" then return { name, money(e.buy), "marchand", "+" .. money(e.profit), "-", "100 %", "-" } end
+    return { name, money(e.buy), money(e.market or e.sellUnit), "+" .. money(e.profit), dec(e.sold),
+      floor(n0(e.conf) * 100 + 0.5) .. " %", e.stop and money(e.stop.unit) or "-" }
   elseif tab == "sell" then
     return { itemName(e.id), tostring(e.count), money(e.unit), money(e.deposit), money(e.net), money(e.vendor), hours() .. " h" }
   elseif tab == "owned" then
@@ -1655,6 +1991,7 @@ local function cells(tab, e)
 end
 
 local function buttonLabel(tab, e)
+  if e.text then return nil end
   if tab == "deals" then
     if e.state == "bought" then return "Acheté", false end
     if e.state == "gone" then return "Disparu", M.Flavor() == "modern" end
@@ -1686,7 +2023,7 @@ function M.CreateWindow()
   local parent = _G.UIParent
   local f = _G.CreateFrame("Frame", nil, parent, _G.BackdropTemplateMixin and "BackdropTemplate" or nil)
   M.win = f
-  f:SetSize(640, 420)
+  f:SetSize(640, 470)
   f:SetFrameStrata("HIGH")
   f:EnableMouse(true)
   f:SetMovable(true)
@@ -1753,7 +2090,7 @@ function M.CreateWindow()
     f.rows[i] = row
   end
   local prev = mkButton(f, 24, 20, "<")
-  prev:SetPoint("BOTTOMLEFT", 10, 10)
+  prev:SetPoint("BOTTOMLEFT", 10, 40)
   prev:SetScript("OnClick", function() M.page = max(1, M.page - 1) M.Refresh() end)
   local nxt = mkButton(f, 24, 20, ">")
   nxt:SetPoint("LEFT", prev, "RIGHT", 4, 0)
@@ -1762,10 +2099,36 @@ function M.CreateWindow()
   f.status:SetPoint("LEFT", nxt, "RIGHT", 8, 0)
   if f.status.SetWidth then f.status:SetWidth(300) end
   if f.status.SetJustifyH then f.status:SetJustifyH("LEFT") end
-  -- le gros bouton : chaque clic = exactement UNE action (acheter / poster / annuler) puis on avance
-  local go = mkButton(f, 250, 26, "Suivant")
+  f.hint = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  f.hint:SetPoint("BOTTOMLEFT", 10, 66)
+  if f.hint.SetWidth then f.hint:SetWidth(620) end
+  if f.hint.SetJustifyH then f.hint:SetJustifyH("LEFT") end
+  -- barre d'actions rapides : chaque clic = exactement UNE action protégée (achat / mise en vente / annulation)
+  local function quick(w, text, fn, tip)
+    local b = mkButton(f, w, 24, text)
+    b:SetScript("OnClick", fn)
+    if b.SetScript and _G.GameTooltip then
+      b:SetScript("OnEnter", function(self)
+        local GT = _G.GameTooltip
+        GT:SetOwner(self, "ANCHOR_TOP")
+        GT:SetText(tip, 1, 1, 1, 1, true)
+        GT:Show()
+      end)
+      b:SetScript("OnLeave", function() _G.GameTooltip:Hide() end)
+    end
+    return b
+  end
+  f.buyBtn = quick(180, "Acheter la meilleure offre", function() M.BuyBest() end,
+    "Achète la meilleure affaire SÛRE du plan, un clic à la fois (prix revérifié juste avant).")
+  f.buyBtn:SetPoint("BOTTOMLEFT", 10, 8)
+  f.postBtn = quick(150, "Remettre en vente", function() M.RepostNext() end,
+    "Met en vente la pile suivante de tes sacs, 1 pc sous le moins cher (jamais sous le plancher ni ton stop-loss).")
+  f.postBtn:SetPoint("LEFT", f.buyBtn, "RIGHT", 5, 0)
+  f.cancelBtn = quick(150, "Annuler les battues", function() M.CancelNext() end,
+    "Annule tes enchères battues quand le dépôt perdu vaut le coup ; récupère-les au courrier puis « Remettre en vente ».")
+  f.cancelBtn:SetPoint("LEFT", f.postBtn, "RIGHT", 5, 0)
+  local go = quick(125, "Suivant", function() M.Next() end, "Fait l'étape suivante, quelle qu'elle soit (acheter, annuler, poster).")
   go:SetPoint("BOTTOMRIGHT", -10, 8)
-  go:SetScript("OnClick", function() M.Next() end)
   f.nextBtn = go
   local acc = 0
   f:SetScript("OnUpdate", function(_, el)   -- affichage seulement (compte à rebours, progression)
@@ -1798,19 +2161,47 @@ function M.RefreshStatus()
   local g = M.Gold()
   local age = M.lastScan and mmss(now() - M.lastScan.t) or "jamais"
   f.status:SetText(("Page %d/%d · budget %s · scan %s"):format(M.page, M.pages or 1, money(g.budget), age))
-  local lbl, en = M.NextLabel()
-  f.nextBtn:SetText(lbl)
+  local _, en = M.NextLabel()
+  f.nextBtn:SetText("Suivant")
   if f.nextBtn.SetEnabled then f.nextBtn:SetEnabled((en and M.ahOpen) and true or false) end
+  local q = M.ActionLabels()
+  local function set(b, text, on) if b then b:SetText(text) if b.SetEnabled then b:SetEnabled(on and true or false) end end end
+  set(f.buyBtn, q.buy, q.buyOn)
+  set(f.postBtn, q.post, q.postOn)
+  set(f.cancelBtn, q.cancel, q.cancelOn)
+  if f.hint then f.hint:SetText(q.hint) end
 end
 
 local lastTab = 0
+function M.TabLines()
+  local g = M.Gold()
+  local open = function() M.ShowWindow() end
+  local tip = "Clic : fenêtre de l'HV (achats, mises en vente et annulations : un clic par action)."
+  local lines = { { text = ("Budget HV %s · %d achat(s)-revente(s) sûr(s) · plan +%s"):format(money(g.budget), #M.deals, money(M.planGain)),
+    prio = 2, onClick = open, tooltip = tip } }
+  for i = 1, min(5, #M.deals) do
+    local d = M.deals[i]
+    local lbl = itemName(d.id) .. (d.count > 1 and (" x" .. d.count) or "")
+    local t = d.kind == "vendor" and ("%s : acheter %s → marchand %s, +%s sûr"):format(lbl, money(d.buy), money(d.sell), money(d.profit))
+      or ("%s : acheter %s → revendre %s, +%s net · se vend ~%s/jour · stop-loss %s/u"):format(lbl, money(d.buy), money(d.sell),
+        money(d.profit), dec(d.sold), money(d.stop and d.stop.unit or 0))
+    lines[#lines + 1] = { text = t, prio = i == 1 and 2 or 1, onClick = open, tooltip = tip }
+  end
+  if #M.deals == 0 then
+    lines[#lines + 1] = { text = F.NONE_TEXT .. ".", prio = 1, onClick = open, tooltip = tip }
+    for _, w in ipairs((M.none and M.none.why) or { "Ouvre l'HV et fais un scan complet (plusieurs scans espacés sur 3 jours)." }) do
+      lines[#lines + 1] = { text = w, prio = 1 }
+    end
+  end
+  local nc = 0
+  for _, a in ipairs(M.owned or {}) do if a.undercut and a.worth and a.state ~= "cancelled" then nc = nc + 1 end end
+  if nc > 0 then lines[#lines + 1] = { text = ("%d enchère(s) battue(s) à annuler (bouton « Annuler les battues » à l'HV)."):format(nc), prio = 1 } end
+  return lines
+end
 function M.Refresh()
-  if T.SetTabLines and clock() - lastTab > 0.5 then   -- onglet « HV » du panneau principal (≤ 2/s)
-    lastTab = clock()
-    local g = M.Gold()
-    local lines = { { text = ("Budget HV %s · %d affaire(s) · plan +%s"):format(money(g.budget), #M.deals, money(M.planGain)), prio = 2 } }
-    for i = 1, min(3, #M.deals) do lines[#lines + 1] = { text = M.DealText(M.deals[i]), prio = 2 } end
-    pcall(T.SetTabLines, T, "hv", lines)
+  if T.SetTabLines and (clock() - lastTab > 0.5 or M.tabDirty) then   -- onglet « HV » du panneau principal (≤ 2/s)
+    lastTab, M.tabDirty = clock(), nil
+    pcall(T.SetTabLines, T, "hv", M.TabLines(), "Auction")
   end
   local f = M.win
   if not (f and f.rows) then return end
@@ -1834,6 +2225,7 @@ function M.Refresh()
       local cx = 0
       for c = 1, 7 do
         local fs, col = row.cells[c], cols[c]
+        if e.text then col = c == 1 and { "", 600 } or nil end
         if col then
           fs:ClearAllPoints() fs:SetPoint("LEFT", row, "LEFT", cx, 0) fs:SetWidth(col[2]) fs:SetText(cv[c] or "") fs:Show()
           cx = cx + col[2] + 4
@@ -1884,7 +2276,8 @@ function M.WriteSummary()
     local d = M.deals[i]
     deals[i] = { name = itemName(d.id), id = d.id, kind = d.kind, count = d.count, buy = d.buy, sell = d.sell,
       profit = d.profit, roi = d.roi and floor(d.roi * 100 + 0.5) / 100, conf = d.conf, days = d.days,
-      deposit = d.deposit, relist = d.relist, risk = d.risk }
+      deposit = d.deposit, relist = d.relist, risk = d.risk, sold = d.sold, maxQty = d.maxQty,
+      stop = d.stop and d.stop.unit or nil, class = d.class }
   end
   local sell = {}
   for i, a in ipairs(M.sell or {}) do
@@ -1909,7 +2302,8 @@ function M.WriteSummary()
   local rd = M.RealmData()
   s.auction = { updated = now(), neutral = M.IsNeutral(), flavor = M.Flavor(),
     scanAge = M.lastFull and (now() - M.lastFull) or nil, tracked = rd and rd.n or 0,
-    deals = deals, sell = sell, thin = thin, owned = owned, budget = g.cap > 0 and g.cap or nil, budgetLeft = g.budget, spentToday = g.spent,
+    deals = deals, sell = sell, thin = thin, owned = owned, none = M.none and { why = M.none.why } or nil,
+    rules = { capGold = n0(cfg("capGold", 20)), qtyDays = n0(cfg("qtyDays", 3)), minDays = LIQ.minDays, minConf = LIQ.minConf }, budget = g.cap > 0 and g.cap or nil, budgetLeft = g.budget, spentToday = g.spent,
     gold = { total = g.total, reserve = g.reserve, invested = g.invested, plan = #(M.plan or {}), planGain = M.planGain },
     lastScan = M.lastScan and { src = M.lastScan.src, rows = M.lastScan.rows, speed = M.lastScan.speed } or nil,
     realized = { today = r.today, week = r.week, total = r.total, top = top } }
@@ -1924,6 +2318,8 @@ function M:OnInit()
     local old = dateKey(now() - 14 * 86400)
     for k in pairs(M.char.spent) do if k < old then M.char.spent[k] = nil end end
     for k in pairs(M.char.deposits) do if k < old then M.char.deposits[k] = nil end end
+    M.char.flips = M.char.flips or {}
+    for k, v in pairs(M.char.flips) do if type(v) ~= "table" or now() - n0(v.t) > 14 * 86400 then M.char.flips[k] = nil end end
   end
 end
 

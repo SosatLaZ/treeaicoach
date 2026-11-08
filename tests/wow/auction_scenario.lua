@@ -56,7 +56,7 @@ return function(M, ctx)
     M.ah.list = market()
     fullScan()
     M.serverTime = M.serverTime + 6 * 3600
-    table.remove(M.ah.list, 1) table.remove(M.ah.list, 1)  -- 40 lin sold
+    for _ = 1, 4 do table.remove(M.ah.list, 1) end  -- 80 lin sold in 6 h (a liquid market)
     fullScan()
     M.serverTime = M.serverTime + 18 * 3600
   end

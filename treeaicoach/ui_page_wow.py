@@ -454,6 +454,10 @@ def tab_blocks(key: str, live_snap: dict) -> list[dict]:
             else:
                 desc = (f"acheter {live.money(d['buy'])} → revendre {live.money(d['sell'])} · commission "
                         f"{live.money(d['cut'])} · dépôt {live.money(d['deposit'])} (perdu si invendu)")
+                if d.get("sold") is not None:
+                    desc += f" · se vend ~{d['sold']:.1f}/jour".replace(".", ",")
+                if d.get("stop"):
+                    desc += f" · stop-loss {live.money(d['stop'])}/u"
                 if d["atr"]:
                     desc += f" · Auctionator {live.money(d['atr'] * d['count'])}"
             series = []
@@ -462,8 +466,12 @@ def tab_blocks(key: str, live_snap: dict) -> list[dict]:
             if d["atr_series"]:
                 series.append((list(d["atr_series"]), "warning"))
             rows.append(_row(label, desc, f"+{live.money(d['net'])} net", spark=series or None))
+        if not rows and v.get("none"):
+            block("Achat-revente", [_row(v["none"][0], " · ".join(v["none"][1:]))],
+                  "Seuls les objets qui se vendent vraiment sont proposés (ventes mesurées sur plusieurs jours).")
         block("Meilleures affaires", rows,
-              "Net = vente − commission − achat. Courbes : prix TreeAI (bleu), Auctionator (jaune).")
+              " ".join(x for x in ("Net = vente − commission − achat. Courbes : prix TreeAI (bleu), Auctionator (jaune).",
+                                   v.get("rules", "")) if x))
         mine = [_row(m["name"] + (f" x{m['count']}" if m["count"] > 1 else ""),
                      (f"plus bas {live.money(m['lowest'])} · " if m["lowest"] else "") + m["advice"],
                      f"{live.money(m['unit'])}/u") for m in v["mine"]]
