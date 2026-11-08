@@ -1,7 +1,7 @@
-"""CLEAN 4.0: Modules/Edge2.lua — « Avantages » : 9 small legit advantages, each built on a FACT the game shows
-(contested camp from tapped nameplates, quest item bad luck from Stats' measured drop rates, unlooted corpses in solo,
-gathering tracking off, finished quests = next level, real quest timers, failed escort, useless breadcrumb quest,
-world-buff yell in a capital). Former Edge (« Coups d'avance ») merged in; guesses and duplicates removed.
+"""CLEAN 4.0 / ADVICE 4.0.1: Modules/Edge2.lua — « Avantages » : 7 small legit advantages, each built on a FACT the
+game shows (contested camp from tapped nameplates, quest item bad luck from Stats' measured drop rates, corpses the game
+still flags as lootable (CanLootUnit) in solo, gathering tracking off, failed escort, useless breadcrumb quest,
+world-buff yell in a capital). « Finished quests = next level » moved to « Conseils pro » (Coach.lua). Former Edge (« Coups d'avance ») merged in; guesses and duplicates removed.
 Each one = one verb-first line (no « ? »), hidden unless useful, togglable, routed to the « Avantages » tab, never
 automation, never chat, ≤ 80 kinstr/min in session_sim."""
 import re
@@ -33,10 +33,11 @@ def test_edge_module_removed():
     assert not (ADDON / "Modules" / "Edge.lua").exists()
 
 
-def test_8_features_each_togglable_and_used():
+def test_7_features_each_togglable_and_used():
     keys = re.findall(r'^\s*\{ "(\w+)", "[^"]+", "(?:Farm|Quêtes|Ville)" \},$', SRC, re.M)
-    assert len(keys) == 8 and len(set(keys)) == 8
+    assert len(keys) == 7 and len(set(keys)) == 7
     assert "questTimer" not in keys  # 4.0 QA: the timed-quest countdown has one owner, Quests
+    assert "turninLevel" not in keys  # 4.0.1: moved to « Conseils pro » (Coach.lua)
     for k in keys:
         assert f'say("{k}"' in SRC, f"{k}: no line"
         assert f'drop("{k}")' in SRC or f'opt("{k}")' in SRC, f"{k}: never hidden / never checks its option"
@@ -52,7 +53,7 @@ def test_no_guesses_no_duplicates_left():
 def test_lines_start_with_a_verb_and_have_no_unknowns():
     texts = re.findall(r'say\("\w+", (?:fmt\()?"([^"]+)"', SRC)
     texts += re.findall(r'(?:text = (?:\w+(?:\.\w+)? and )?|^\s+or )fmt\("([^"]+)"', SRC, re.M)
-    assert len(texts) >= 9
+    assert len(texts) >= 7
     verbs = ("Change", "Tue", "Vérifie", "Fouille", "Rends", "Finis", "Abandonne", "Active", "Reste")
     for t in texts:
         assert t.startswith(verbs), t

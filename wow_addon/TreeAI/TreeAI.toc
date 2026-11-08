@@ -76,4 +76,5 @@ Modules\QuickTravel.lua
 Modules\Shortcuts.lua
 Modules\Window.lua
 Modules\WindowPages.lua
+Modules\Coach.lua
 Modules\Tour.lua
