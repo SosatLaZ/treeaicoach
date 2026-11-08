@@ -90,4 +90,5 @@ Modules\Addons.lua
 Modules\Brain.lua
 Modules\BrainPage.lua
 Modules\ProfLevel.lua
+Modules\GroupGear.lua
 Modules\Tour.lua

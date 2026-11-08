@@ -1492,6 +1492,7 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Edge2 = { lite = false, desc = "Avantages : camp disputé, objet qui ne tombe pas, corps à fouiller…" },
   Coach = { lite = true, desc = "Conseils pro : le bon geste au bon moment (repos, familier, munitions, XP…), un à la fois" },   -- (ADVICE) sûr : Coach.lua s'y inscrit
   Tour = { lite = true, desc = "Visite guidée et astuces (une fois chacune)" },   -- (ONBOARD) sûr : Tour.lua s'y inscrit
+  GroupGear = { lite = true, gate = "group", desc = "Équipement du groupe : ce que portent tes amis, échanges conseillés, à qui sert un butin" },   -- (4.1 GEARTRADE) sûr : GroupGear.lua s'y inscrit
   -- (REPLACE 4.0.1) sans autres addons
   QuestPins = { lite = true, desc = "Icônes de quêtes : « ! » à prendre, « ? » à rendre, zones d'objectifs (carte + minimap)" },
   Watch = { lite = false, desc = "Suivi TreeAI : quêtes du trajet, distance, direction et durée en direct, à côté du suivi du jeu" },

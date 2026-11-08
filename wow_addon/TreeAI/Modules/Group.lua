@@ -1993,6 +1993,8 @@ local function inspectFrameOpen()
 end
 
 function M:TryInspect(t)
+  local GG = T.GroupGear   -- (4.1 GEARTRADE) un seul inspecteur : « Équipement du groupe » (il remplit gearCache)
+  if type(GG) == "table" and type(GG.OwnsInspect) == "function" and GG.OwnsInspect() then return end
   if not self.db.gear or inspectFrameOpen() or type(NotifyInspect) ~= "function" then return end
   local p = S.pendingInspect
   if p and t - p.t > INSPECT_TIMEOUT then   -- pas de réponse : ce membre plus tard

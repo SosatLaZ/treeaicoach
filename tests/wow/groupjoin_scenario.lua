@@ -337,7 +337,8 @@ return function(M, ctx)
     local msg = tostring(s.msg)
     check(#msg <= 255 and (s.channel == "PARTY" or msg:find("~SELFTEST~", 1, true)), "message ≤ 255 B en PARTY : " .. msg:sub(1, 60))
     check(not msg:match("^1~(%u+)~") or msg:match("^1~(%u+)~") == "GRP" or msg:match("^1~(%u+)~") == "HELLO"
-      or msg:match("^1~(%u+)~") == "PLN" or msg:find("~SELFTEST~", 1, true), "un seul type de message de groupe : " .. msg:sub(1, 30))
+      or msg:match("^1~(%u+)~") == "PLN" or msg:find("~SELFTEST~", 1, true)
+      or (msg:match("^1~(GG[EBQ])~") ~= nil), "un seul type de message de groupe (+ équipement GGE / GGB / GGQ) : " .. msg:sub(1, 30))
     if msg:find("^1~GRP~") then grpMsgs = grpMsgs + 1 end
   end
   check(grpMsgs > 0, "le groupe parle par GRP (" .. grpMsgs .. " messages)")
