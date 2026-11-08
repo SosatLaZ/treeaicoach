@@ -220,6 +220,7 @@ function H.Entries()
     act(function() if T.SetEditMode then T:SetEditMode(not T:IsEditMode()) end end), T.SetEditMode and true or false)
   add("reglages", "reset", "Réinitialiser l'interface", "Interface\\Buttons\\UI-RefreshButton", "Clic : tout remettre à sa place automatique",
     act(function() if T.ResetInterface then T:ResetInterface() end end), T.ResetInterface and true or false)
+  if T.Tour and T.Tour.HubEntry then out[#out + 1] = T.Tour.HubEntry() end   -- (ONBOARD) « Visite guidée »
   return out
 end
 

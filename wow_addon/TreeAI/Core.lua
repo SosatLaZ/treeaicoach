@@ -1276,6 +1276,7 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   MinimapPins = { lite = true, desc = "Points sur la minimap (ce que Questie ne montre pas)" },
   Edge = { lite = false, desc = "Astuces avancées (petits avantages)" },
   Edge2 = { lite = false, desc = "Avantages : repop, patrouilles, XP/h par monstre, repos, maître de classe…" },
+  Tour = { lite = true, desc = "Visite guidée et astuces (une fois chacune)" },   -- (ONBOARD) sûr : Tour.lua s'y inscrit
 }
 
 TreeAI.MODULE_PROFILES = { sur = true, essentiel = true, tout = true }

@@ -45,7 +45,7 @@ local BUDGET = {
   kinstrStatsMin = 60,           -- Stats hub (Modules/Stats.lua): event-driven, nearly free
   kinstrModuleMin = { Team = 80, PathDraw = 60, Edge2 = 80, Finder = 60, Quick = 80, QuickFight = 80, Macros = 80, QuickTravel = 80, Auction = 80, Compass = 90, NavTime = 80, Horizon = 80, ZonePlan = 80, PvPMark = 40,
     -- QUESTQA: the quest-tracking chain, each under the round-7 module budget
-    Route = 80, Planner = 80, Quests = 80, Tracker = 80, Todo = 80, Export = 80, Detect = 80, Speed = 80 },   -- per-module caps (avg kinstr / minute)
+    Route = 80, Planner = 80, Quests = 80, Tracker = 80, Todo = 80, Export = 80, Detect = 80, Speed = 80, Tour = 10 },   -- per-module caps (avg kinstr / minute)
   nowChangesPerMinMax = 12,      -- « Maintenant » changes (text skeleton, digits ignored) in any minute
   nowChangesPerMinAvg = 6,      -- a fight every ~35 s brings its own in-combat lines (aspect, pet HP…)
   alertsPer10Min = 8,            -- corner alert pops in any 10-minute window
