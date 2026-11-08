@@ -1432,10 +1432,12 @@ TreeAI.SAFE_MODULES = TreeAI.SAFE_MODULES or {
   QuestPins = true, Addons = true,   -- (4.0.5) Watch retiré : le suivi du jeu reste le suivi
   -- (4.1) demandés par le joueur : métiers (montée, session métier) et « Courses en ville » (rien sans un clic)
   Prof = true, CityRun = true,
+  -- (4.1) le joueur joue toujours en groupe : la page Groupe (amis, rejoindre, intention) allumée en mode sûr
+  Group = true,
 }
 -- (4.0.1) entrés dans le mode sûr après la 4.0 : allumés une fois chez les joueurs en mode sûr (voir _ApplyProfileOnce)
 -- (4.1) Prof + CityRun : allumés une fois (SAFE_V 4) chez les joueurs en mode sûr, sauf s'ils les ont coupés eux-mêmes
-TreeAI.SAFE_ADDED = { ZonePlan = 1, PathDraw = 1, Highlight = 1, Prof = 4, CityRun = 4 }
+TreeAI.SAFE_ADDED = { ZonePlan = 1, PathDraw = 1, Highlight = 1, Prof = 4, CityRun = 4, Group = 4 }
 TreeAI.SAFE_V = 4
 -- (4.0.5) sortis du mode sûr : coupés UNE fois chez tout le monde (le Suivi TreeAI cachait le suivi du jeu)
 -- (4.1 LAYOUT) valeur = version qui les coupe : à l'écran il ne reste que les boutons rapides, la boussole et la

@@ -1020,6 +1020,7 @@ local mini, textOff, anim = false, false, false
 local moving, turning = false, false
 local acc, textAcc, fullAcc, still = 0, 0, 0, 0
 local lastPy, lastPx
+local glancePos   -- (défini plus bas, avant SetAnim)
 local function paint(rel)
   if rel == lastR then return end
   lastR = rel
@@ -1137,6 +1138,16 @@ local function traceRate()
   NTr.Log("marche", ("%s en mouvement : flèche %d Hz, texte %d Hz%s"):format(NTr.Sec(dur), floor(animN / dur + 0.5),
     floor(textN / dur + 0.5), textOff and " (combat : flèche seule)" or ""))
 end
+-- (ZONEFIX) la position telle que le coup d'œil la lit (UnitPosition, sinon la carte) et l'orientation
+glancePos = function()
+  local py, px = try(_G.UnitPosition, "player")
+  py, px = _ns(py), _ns(px)
+  if not py then                                     -- client sans UnitPosition : la position sur la carte
+    local me = M.Player()
+    if me then py, px = me.x * 100000 + me.mapID, me.y end
+  end
+  return py, px, _ns(try(_G.GetPlayerFacing))
+end
 function M.SetAnim(on)
   if not frame then return false end
   if on and frame:IsShown() and not mini then
@@ -1149,6 +1160,11 @@ function M.SetAnim(on)
   elseif not on and anim then
     anim = false
     frame:SetScript("OnUpdate", nil)
+    -- (4.1 INTEG) arrêt de l'animation = l'endroit où tu t'es arrêté : le coup d'œil suivant ne croit pas « tu as
+    -- bougé » (sans UnitPosition, le pas d'animation ne tient pas cette position à jour) et ne relance rien au repos
+    local py, px, f = glancePos()
+    if py then lastPy, lastPx = py, px end
+    if f then lastFacing = f end
     traceRate()
   end
   return anim
@@ -1452,13 +1468,7 @@ end
 --- (ZONEFIX) coup d'œil d'une seconde quand rien n'anime la flèche : as-tu bougé / tourné depuis ?
 function M.Glance()
   if not (frame and frame:IsShown()) or anim or mini then return false end
-  local py, px = try(_G.UnitPosition, "player")
-  py, px = _ns(py), _ns(px)
-  if not py then                                     -- client sans UnitPosition : la position sur la carte
-    local me = M.Player()
-    if me then py, px = me.x * 100000 + me.mapID, me.y end
-  end
-  local f = _ns(try(_G.GetPlayerFacing))
+  local py, px, f = glancePos()
   if (py and (py ~= lastPy or px ~= lastPx)) or (f and f ~= lastFacing) then
     -- (ZONEFIX) l'orientation vue ici aussi : à l'arrivée (flèche cachée), le pas d'animation ne la relit pas, et
     -- un coup d'œil croyait « tu as tourné » à chaque seconde (calcul complet + animation pour rien)
