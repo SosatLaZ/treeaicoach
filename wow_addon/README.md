@@ -553,7 +553,7 @@ propriétaire** : les autres modules lui passent leurs chiffres pour l'infobulle
 Propriétaires (CHECKUP) : réparation = `Inventory:inv_repair` (coût estimé d'`Economy.RepairEstimate` en
 infobulle ; les lignes réparation d'Economy se taisent alors) · nourrir le familier = `Hunter:hungry` (DPS gagné
 de `Fight.PetDPS`/`MoodLoss` en infobulle, clic = met à jour « TAI Nourrir » ; `Fight:mood` seulement sans le
-module Chasseur) · aspect = `Hunter:aspect` (le relevé HunterPro passe en infobulle) · apprivoiser = `Boost:pet`
+module Chasseur) · aspect = `Hunter:aspect` (le relevé HunterPro passe en infobulle) · apprivoiser = `Finder:now` / onglet « Chercher » pour un chasseur (FINDER ; avant : `Boost:pet`)
 (HunterPro se tait alors) · touches = onglet **« Touches »** (`binds`, module Binds : bouton « Lier le suivant »,
 3 étapes, conflits groupés, listes en infobulle ; plus de ligne « macros pas créées » si `Macros:ready` est là ;
 jamais de ligne « course automatique ») · classement XP/min = 1 ligne « Meilleure quête » de Pro (top 5 en
@@ -1117,3 +1117,32 @@ Uniquement des événements + une minuterie de 60 s (aucun OnUpdate, ≤ 60 kins
   message ou la pile cite `AddOns/TreeAI/` (→ `T:RecordError`, module = fichier fautif).
 - Côté appli : `treeaicoach/wow/errlog.py` écrit `TreeAI-erreurs.txt` (UTF-8, français) dans
   `%APPDATA%\TreeAICoach` (+ copie dans `exports\` s'il existe) dès que la sauvegarde contient `diag` et a changé.
+## Chercher un truc qui change tout : module `Finder` (agent FINDER, `Modules/Finder.lua`, `Data/Pets.lua`)
+* **Meilleur familier maintenant** (chasseur) : bêtes apprivoisables (niveau ≤ le tien, zone sans gardes ennemis),
+  classées par un **gain** lisible : rangs de technique gagnés (Morsure / Griffe 8 pts par rang, Hurlement furieux 7
+  (+3 à 3+ joueurs), Souffle de foudre 6…, comparés au grimoire de ton familier), famille (dégâts / armure / PV de
+  l'époque, tables client, comparés à ton familier), vitesse d'attaque (`(2,0 − s) × 12`), niveau (−2 / niveau sous
+  toi), rare (+3), trajet (−0,8 / min, modèle de Route : vols, bateaux, zeppelins, foyer). Top 3 dans l'onglet,
+  « pourquoi » en infobulle (« Lion… : Griffe rang 4, attaque 1,5 s, 6 min de trajet », régime, rang probable à
+  vérifier avec « Connaissance des bêtes »).
+* `Data/Pets.lua` (généré par `tools/wow_build_pets.py`) : familles, techniques + niveaux des rangs, modificateurs =
+  tables client Forever (fiables) ; bêtes = liste Classic écrite à la main (**approximative**), revérifiée en jeu
+  dans QuestieDB (lecture seule : niveaux par id de PNJ — écart > 5 = écartée — et apparitions) ; les bêtes que tu
+  cibles / survoles hors combat sont retenues (`db.seen`, 60 max) et passent avant la liste.
+* **Recherche** : onglet « Chercher » (menu Plus, boutons « Chercher » / « Actualiser »), fenêtre
+  `TreeAIFinderFrame` (mots + catégories), `/tai cherche [familier|rare|équipement|maître|vol|marchand|trésor|quête|donjon|texte]`.
+  Sources : `Detect` (rares, trésors, marchand, maître), `Gear.plan` (meilleure amélioration par emplacement,
+  pas les sacs), `Leveling:lvl_train`, maîtres d'armes (Classic ≈) pour une compétence d'arme non apprise,
+  points de vol non appris (`Data/Travel` + `Route.KnownTaxi`), `Pro.ranked` (quêtes clé), `Data/Dungeons` (niveau
+  du groupe, bouton « Prévoir »). Résultat = `{ key, cat, title, score, why = { {pts, texte} }, map, x, y (%), sec, yd }`.
+* **Ajouter au trajet** (`Finder:AddToRoute(r)`, clic, hors combat) : arrêt `{ k, label, map, x, y, finder = key }`
+  gardé dans `char.stops` (8 max) et inséré au plus court (`Planner.Engine.Insert`) par `Planner:Evaluate`
+  (`Finder.Inject`) ; fait quand tu y arrives (≤ 40 m, `Finder.StopDone`) ; Route le montre et, s'il suit Shortest
+  Path Forever, renvoie le trajet. Sans trajet : la boussole guide et l'arrêt rejoint le prochain trajet.
+  **Y aller** = `Compass.SetTarget`.
+* **Maintenant** : au plus une ligne `Finder:now`, seulement si un résultat ≥ 15 pts est à ≤ `nearMin` min
+  (« Apprivoise X à 300 m : Morsure 3 »). Propriétaire unique d'« apprivoiser » : `Finder.OwnsPet()` → `Boost:pet`
+  et la ligne familier de HunterPro se taisent.
+* Perf : événements (cible, survol, niveau, zone) + relevé toutes les 30 s hors combat (calcul ≤ 1 / 25 s, à la
+  demande sinon) ; QuestieDB lu une fois par PNJ et par session. Budget session_sim `Finder = 60` kinstr/min (mesuré
+  ~11). Rien d'automatique, aucune fonction protégée. Test : `tests/wow/finder_scenario.lua`, `tests/wow/test_finder.py`.
