@@ -172,8 +172,11 @@ return function(M, ctx)
   M.LeaveCombat()
 
   -- SPF guides: world map kept, minimap trail off unless the option says so
-  local oldSPF = R.SPF
+  -- (3.9.9) Core decides: SPF guides only when the player opted in (« Guidage : Suivi Forever ») and SPF is loaded
+  local oldSPF, oldG = R.SPF, rawget(_G, "ShortestPathForever")
   R.SPF, R.following = function() return { NavigateRoute = function() end } end, true
+  rawset(_G, "ShortestPathForever", { API = { NavigateRoute = function() end } })
+  TreeAI:SetGuideMode("auto")
   M.Advance(1.2, 0.2)
   check(PD.dotsShown == 0 and PD.segments == 3, "SPF guiding: minimap trail off, world map still drawn")
   PD.db.minimapSPF = true
@@ -182,6 +185,8 @@ return function(M, ctx)
   check(PD.dotsShown > 0, "option « garder la traînée » → trail back with SPF")
   PD.db.minimapSPF = false
   R.SPF, R.following = oldSPF, nil
+  rawset(_G, "ShortestPathForever", oldG)
+  TreeAI:SetGuideMode("treeai")
 
   -- route cleared → everything hidden, pool kept
   P.steps, P.cursor = nil, nil

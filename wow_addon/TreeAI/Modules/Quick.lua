@@ -357,14 +357,14 @@ function M.SellAndRepair(doSell, doRepair)
           if not it then break end
           if useSlot(it.bag, it.slot) then M.stats.sold = M.stats.sold + 1 end
         end
-        if list[i + 1] then after(0.3, batch) else M.Layout() end
+        if list[i + 1] then after(0.3, batch) else M.Soon() end
       end
       batch()
       parts[#parts + 1] = fmt("Vendu : %d gris (%s)", #list, Fmoney(value))
     end
   end
   if #parts > 0 then say(table.concat(parts, " · ")) end
-  M.Layout()
+  M.Soon()   -- (3.9.9) un seul relayout groupé (0,2 s), pas deux dans l'image de l'ouverture du marchand
 end
 
 local function inbox()
@@ -827,7 +827,9 @@ local function hookQuests()
 end
 
 function M:OnEnable()
-  hookQuests()
+  -- (3.9.9) relayout quand le journal a vraiment changé (QUESTS_UPDATED : signature zone + progression, ou 15 s),
+  -- pas à chaque relecture de Quêtes (UpdateButton tourne à chaque QUEST_LOG_UPDATE)
+  if self.On then self:On("QUESTS_UPDATED", function() if M._active then soon() end end) else hookQuests() end
   local function ev(e, fn) self:RegisterEvent(e, function(_, _, ...) fn(...) end) end
   ev("QUEST_DETAIL", M.OnQuestDetail)
   ev("QUEST_PROGRESS", M.OnQuestProgress)

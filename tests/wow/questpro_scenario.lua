@@ -297,7 +297,6 @@ return function(M, ctx)
   rawset(_G, "ShortestPathForever", { API = API })
   if TreeAI.SetGuideMode then TreeAI:SetGuideMode("auto") end   -- (3.9.8) SPF is opt-in: this part tests the opt-in
   C.ResetSPF()
-  T.settings.guide = "spf"   -- (NAV) SPF is an explicit opt-in: TreeAI guides alone by default
   C.SetQuestTarget(1003)
   local st2 = C.Compute()
   check(st2.spf and st2.eta == "1 min 35" and spf.est > 0, "ETA from Shortest Path Estimate: " .. tostring(st2.eta))

@@ -22,7 +22,7 @@ T.MODULE_INFO.QuickFight = T.MODULE_INFO.QuickFight
   or { lite = true, combat = true, desc = "Raccourcis : boutons entre les combats (manger, familier, aspect, pull)" }
 
 local M = T:RegisterModule("QuickFight", {
-  title = "Raccourcis",
+  title = "Raccourcis de combat",
   defaults = {
     enabled = true, bar = true, scale = 100, timer = true, ready = true,
     eat = true, bandage = true, hp = 70, mana = 60,
@@ -77,8 +77,24 @@ local S = {
 }
 M.SPELLS = S
 
-local function spellName(id) local f = API().SpellName return f and f(id) or nil end
-local function spellIcon(id) local f = API().SpellIcon return f and f(id) or nil end
+-- (3.9.9) noms / icônes de sorts mis en cache (fixes pour un id ; rien n'est gardé tant que le client répond nil)
+local nameCache, iconCache = {}, {}
+local function spellName(id)
+  local v = nameCache[id]
+  if v ~= nil then return v end
+  local f = API().SpellName
+  v = f and f(id) or nil
+  if type(v) == "string" then nameCache[id] = v end
+  return v
+end
+local function spellIcon(id)
+  local v = iconCache[id]
+  if v ~= nil then return v end
+  local f = API().SpellIcon
+  v = f and f(id) or nil
+  if v ~= nil then iconCache[id] = v end
+  return v
+end
 local function knows(id)
   local H = T.modules and T.modules.Hunter
   if H and type(H.knows) == "function" then return H.knows(id) and true or false end
@@ -487,7 +503,7 @@ local function createBar()
   label:SetJustifyH("LEFT")
   placeBar()
   if T.RegisterMovable then
-    T:RegisterMovable(f, "quick", "Raccourcis", {
+    T:RegisterMovable(f, "quickfight", "Raccourcis de combat", {
       onMoved = function(point, x, y) db().pos = { point, point, floor(x or 0), floor(y or 0) } end,
       onReset = function() db().pos = nil placeBar() end,
     })

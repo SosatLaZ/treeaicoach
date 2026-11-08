@@ -122,6 +122,7 @@ return function(M, ctx)
     NavigateRoute = function(owner, stops) if owner == "TreeAI" then sent[#sent + 1] = stops return true end return false end,
     CurrentStop = function() return 1 end, Ended = function() return nil end, Cancel = function() return true end,
     Active = function() return true end, Subscribe = function() return function() end end } })
+  if T.SetGuideMode then T:SetGuideMode("auto") end   -- (3.9.9) SPF is opt-in: this part tests the hand-off
   if T.Compass and T.Compass.ResetSPF then T.Compass.ResetSPF() end
   local steps = {
     { k = "pick", q = 501, map = 1424, x = 60, y = 40, label = "Prendre « Test »" },
@@ -181,6 +182,7 @@ return function(M, ctx)
   rawset(_G, "C_VignetteInfo", oldVig)
   rawset(_G, "QuestieLoader", nil)
   rawset(_G, "ShortestPathForever", nil)
+  if T.SetGuideMode then T:SetGuideMode("treeai") end
   if T.Compass and T.Compass.ResetSPF then T.Compass.ResetSPF() end
   for k in pairs(F._spots) do F._spots[k] = nil end
 end

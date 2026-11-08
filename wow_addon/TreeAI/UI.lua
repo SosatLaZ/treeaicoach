@@ -604,7 +604,20 @@ local function urgentCount(list)
   for _, e in ipairs(list) do if (e.prio or 1) >= 3 and not e.control then n = n + 1 end end
   return n
 end
+local badgeMemo = {}   -- (3.9.9) id -> { at, a, b, c, d } : pastilles relues au plus toutes les 2 s (sauf « Maintenant »)
+local badgeCompute
 local function badgeOf(id)
+  if id == "now" then return badgeCompute(id) end
+  local t = (_G.GetTime and _G.GetTime()) or 0
+  local m = badgeMemo[id]
+  if m and t - m.at < 2 and t >= m.at then return m[1], m[2], m[3], m[4] end
+  local a, b, c, d = badgeCompute(id)
+  m = m or {}
+  m.at, m[1], m[2], m[3], m[4] = t, a, b, c, d
+  badgeMemo[id] = m
+  return a, b, c, d
+end
+function badgeCompute(id)
   if id == MORE then
     local n = 0
     for _, t in ipairs(TreeAI:GetTabs()) do
