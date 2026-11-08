@@ -192,7 +192,8 @@ def _sub_tokens(cls: str, s: str, known: set[int], items: set[str]) -> tuple[str
     return s, ok
 
 
-def simulate(cls: str, body: str, known: set[int], items: set[str] | None = None) -> str | None:
+def simulate(cls: str, body: str, known: set[int], items: set[str] | None = None,
+             consumable: bool = True) -> str | None:
     """Python port of Modules/Macros.lua renderVariant (without the size cut, linted instead)."""
     items = set(consumables.CATEGORIES) | {"trinket"} if items is None else items
     req, cats = required(cls, body)
@@ -228,7 +229,7 @@ def simulate(cls: str, body: str, known: set[int], items: set[str] | None = None
     text = "\n".join(out)
     if not text or text == "#showtooltip":
         return None
-    if "{item:" in body and "item:" not in text:
+    if consumable and "{item:" in body and "item:" not in text:
         return None
     return text
 
@@ -240,7 +241,7 @@ def simulate_macro(cls: str, m: Macro, spec: str, level: int, items: set[str] | 
             tok = tokenize(cls, v)
         except TemplateError:
             return None
-        body = simulate(cls, tok, known, items)
+        body = simulate(cls, tok, known, items, m.kind == "consumable")
         if body is not None:
             return body
     return None
@@ -276,9 +277,63 @@ def _first_unmodded(lines: list[str], cast_lines: list[int]) -> int | None:
     return None
 
 
+# Spells that switch OFF when cast while active: always « ! » (or a guard such as [nostealth] / [noform]).
+TOGGLES = {"auto_shot", "wand", "aspect_monkey", "aspect_hawk", "aspect_cheetah", "aspect_pack",
+           "trueshot_aura", "bear", "dire_bear", "cat", "moonkin", "travel", "aquatic", "shadowform",
+           "stealth", "prowl"}
+_GUARDS = ("noform", "nostealth", "nostance")
+_TAIL_OK = re.compile(r"^(?:!?\{\d+\}|\{item:[a-z_]+\}|\{slot:1[34]\}|item:\d+|\d+)$")
+
+
+def _key_of(cls: str, sid: int) -> str:
+    hit = _table(cls).get(sid)
+    return hit[0] if hit else ""
+
+
+def lint_spells(cls: str, name: str, body: str) -> list[str]:
+    """Spell-level rules: no spell typed in clear (only base tokens), toggles protected by « ! »,
+    spam-safe /castsequence (reset rule, no Feign Death + reset=combat)."""
+    errs: list[str] = []
+    for i, raw in enumerate(body.split("\n"), 1):
+        line = raw[1:] if raw.startswith("?") else raw
+        cmd, _, rest = line.partition(" ")
+        cmd = cmd.lower()
+        if cmd not in _CASTS and cmd not in ("/use", "/equip"):
+            continue
+        where = f"{name} l.{i}"
+        for clause in rest.split(";"):
+            c = clause.strip().lstrip("?")
+            conds = " ".join(re.findall(r"\[([^\]]*)\]", c))
+            tail = re.sub(r"\[[^\]]*\]", "", c).strip()
+            if cmd == "/castsequence":
+                reset = re.match(r"^reset=(\S+)\s+", tail)
+                steps = [t.strip() for t in tail[reset.end():].split(",")] if reset else [
+                    t.strip() for t in tail.split(",")]
+                ids = [int(x) for x in _ID.findall(tail)]
+                if not reset and len(steps) > 1:
+                    errs.append(f"{where} : /castsequence sans reset= : bloquée si un sort échoue")
+                if reset and "combat" in reset.group(1).split("/") and any(
+                        _key_of(cls, x) == "feign_death" for x in ids):
+                    errs.append(f"{where} : Feindre la mort fait sortir du combat : reset=combat relance "
+                                "la séquence au début")
+            else:
+                steps = [tail]
+            for st in steps:
+                if not st:
+                    continue
+                if not _TAIL_OK.match(st):
+                    errs.append(f"{where} : « {st} » n'est pas un sort / objet de la base (jeton attendu)")
+                    continue
+                m = _ID.search(st)
+                if m and _key_of(cls, int(m.group(1))) in TOGGLES and cmd == "/cast" and not st.startswith("!") \
+                        and not any(g in conds for g in _GUARDS):
+                    errs.append(f"{where} : {_key_of(cls, int(m.group(1)))} se coupe si on rappuie : « ! » requis")
+    return errs
+
+
 def lint_rules(cls: str, name: str, body: str) -> list[str]:
     """One GCD action per press, correct #showtooltip, trinkets optional, /stopcasting placement."""
-    errs: list[str] = []
+    errs: list[str] = lint_spells(cls, name, body)
     lines = body.split("\n")
     first = lines[0]
     gcd_lines, cast_lines = [], []
@@ -404,7 +459,7 @@ def build_class(cls: str) -> list[dict]:
             spells, items = required(cls, body)
             variants.append({"b": body, "r": spells, "it": items})
         out.append({"n": m.name, "d": m.desc, "k": m.key, "i": m.icon, "def": m.default,
-                    "c": m.kind, "s": list(m.specs), "x": m.ctx, "w": m.why,
+                    "c": m.kind, "s": list(m.specs), "x": m.ctx, "w": m.why, "o": m.place,
                     "l": 1 if m.kind == "consumable" else macro_level(cls, m), "v": variants})
     return out
 
@@ -435,7 +490,8 @@ def export_lua(version: str = "2") -> str:
         "-- GENERATED by tools/wow_build_macros.py from treeaicoach/wow/macros/ - do not edit.",
         "-- Spell tokens {ID} -> client name (FR fallback below); {item:cat} -> best item in bags;",
         "-- {slot:13} -> trinket slot with a use effect; '?' = optional line/clause.",
-        "-- Per macro: n name, d desc, k key, s specs, x ctx (solo/groupe), w why, l level, v variants.",
+        "-- Per macro: n name, d desc, k key, s specs, x ctx (solo/groupe), w why, o where (bar slot),",
+        "-- l level, v variants. D.forms: druid canonical form index -> spell IDs (remapped in game).",
         "if type(TreeAI) ~= \"table\" then return end",
         "TreeAI.Data = TreeAI.Data or {}",
         "local D = {}",
@@ -467,6 +523,12 @@ def export_lua(version: str = "2") -> str:
                          for i, n, r in SPECS[cls])
         out.append(f"  {cls} = {{{rows}}},")
     out.append("}")
+    # [form:N] of the templates = Classic order (1 bear, 2 aquatic, 3 cat, 4 travel, 5 moonkin); a druid
+    # who skipped a form has them shifted: the addon rewrites N from GetShapeshiftFormInfo at render time.
+    dru = SPELLS["DRUID"]
+    forms = [[dru["bear"][0], dru["dire_bear"][0]], [dru["aquatic"][0]], [dru["cat"][0]], [dru["travel"][0]],
+             [dru["moonkin"][0]]]
+    out.append("D.forms = {DRUID = " + _lua_val(forms) + "}")
     out.append("D.leveling = {" + ", ".join(f"{c}={_lua_str(LEVELING_SPEC[c])}" for c in CLASSES) + "}")
     out.append("D.classes = {}")
     for cls in CLASSES:
@@ -475,7 +537,8 @@ def export_lua(version: str = "2") -> str:
             out.append("  {n=%s, d=%s, k=%s, i=%s, def=%s, c=%s, s=%s, x=%s, l=%d," % (
                 _lua_str(m["n"]), _lua_str(m["d"]), _lua_str(m["k"]), _lua_str(m["i"]),
                 _lua_val(m["def"]), _lua_str(m["c"]), _lua_val(m["s"]), _lua_str(m["x"]), m["l"]))
-            out.append("   w=%s, v={" % _lua_str(m["w"]))
+            out.append("   w=%s," % _lua_str(m["w"]))
+            out.append("   o=%s, v={" % _lua_str(m["o"]))
             for v in m["v"]:
                 out.append(f"    {{b={_lua_str(v['b'])}, r={_lua_val(v['r'])}, it={_lua_val(v['it'])}}},")
             out.append("  }},")

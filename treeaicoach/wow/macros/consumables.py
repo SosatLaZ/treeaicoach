@@ -51,19 +51,19 @@ MANA_POTION = [
     (13443, 41, 1100, ""), (13444, 49, 1500, ""),
 ]
 
-HEALTHSTONE = [
+HEALTHSTONE = [   # req = required level of the stone (ItemSparse.RequiredLevel), not the warlock's
     (5512, 1, 100, ""), (19004, 1, 110, ""), (19005, 1, 120, ""),
-    (5511, 1, 250, ""), (19006, 1, 275, ""), (19007, 1, 300, ""),
-    (5509, 1, 500, ""), (19008, 1, 550, ""), (19009, 1, 600, ""),
-    (5510, 1, 800, ""), (19010, 1, 880, ""), (19011, 1, 960, ""),
-    (9421, 1, 1200, ""), (19012, 1, 1320, ""), (19013, 1, 1440, ""),
+    (5511, 12, 250, ""), (19006, 12, 275, ""), (19007, 12, 300, ""),
+    (5509, 24, 500, ""), (19008, 24, 550, ""), (19009, 24, 600, ""),
+    (5510, 36, 800, ""), (19010, 36, 880, ""), (19011, 36, 960, ""),
+    (9421, 48, 1200, ""), (19012, 48, 1320, ""), (19013, 48, 1440, ""),
 ]
 
-# req = First Aid skill
+# req = First Aid skill needed to USE the bandage (ItemSparse.RequiredSkillRank), not to craft it
 BANDAGE = [
-    (1251, 1, 66, ""), (2581, 40, 114, ""), (3530, 80, 161, ""), (3531, 115, 301, ""),
-    (6450, 150, 400, ""), (6451, 180, 640, ""), (8544, 210, 800, ""), (8545, 240, 1104, ""),
-    (14529, 260, 1360, ""), (14530, 290, 2000, ""),
+    (1251, 1, 66, ""), (2581, 20, 114, ""), (3530, 50, 161, ""), (3531, 75, 301, ""),
+    (6450, 100, 400, ""), (6451, 125, 640, ""), (8544, 150, 800, ""), (8545, 175, 1104, ""),
+    (14529, 200, 1360, ""), (14530, 225, 2000, ""),
 ]
 
 AMMO = [
@@ -74,7 +74,7 @@ AMMO = [
     (15997, 52, 6, "bullet"),
 ]
 
-MANA_GEM = [(5514, 1, 400, ""), (5513, 1, 600, ""), (8007, 1, 900, ""), (8008, 1, 1200, "")]
+MANA_GEM = [(5514, 23, 400, ""), (5513, 38, 600, ""), (8007, 48, 900, ""), (8008, 58, 1200, "")]
 
 # Rogue poisons: instant (main hand) and deadly (off hand), crippling as a fallback.
 POISON_MH = [
@@ -86,10 +86,16 @@ POISON_OH = [
     (20844, 60, 14, ""), (3775, 20, 1, ""),
 ]
 
+HEARTHSTONE = [(6948, 1, 1, "")]
+
+# Mounts: no fixed list (racial / faction / event mounts vary); chosen in game among the bag items whose
+# GetItemInfo class/subclass is Miscellaneous/Mount and whose required level is met.
+MOUNT: list[tuple[int, int, int, str]] = []
+
 CATEGORIES = {
     "food": FOOD, "water": WATER, "hpot": HEALING_POTION, "mpot": MANA_POTION,
     "hs": HEALTHSTONE, "bandage": BANDAGE, "ammo": AMMO, "managem": MANA_GEM,
-    "poison_mh": POISON_MH, "poison_oh": POISON_OH,
+    "poison_mh": POISON_MH, "poison_oh": POISON_OH, "hearth": HEARTHSTONE, "mount": MOUNT,
     # pet food reuses FOOD (diet tags), chosen in game for the pet's diet and level
     "petfood": FOOD,
 }

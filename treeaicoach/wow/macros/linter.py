@@ -34,12 +34,23 @@ UNITS = {"player", "target", "mouseover", "pet", "pettarget", "targettarget", "n
          "party1", "party2", "party3", "party4", "party1target", "party2target", "party3target",
          "party4target", "mouseovertarget", "focus"}
 MODS = {"shift", "ctrl", "alt"}
+RESET = {"combat", "target", "shift", "alt", "ctrl"}
+# conditions that cannot both hold in one [group]
+OPPOSITE = (("harm", "help"), ("dead", "nodead"), ("combat", "nocombat"), ("exists", "noexists"),
+            ("stealth", "nostealth"), ("mounted", "nomounted"), ("pet", "nopet"))
 
 _TOKEN_LEFT = re.compile(r"\{[^}]*\}")
 
 
 def _check_conditions(group: str) -> list[str]:
     errs = []
+    parts = [c.strip().lower() for c in group.split(",") if c.strip()]
+    for a, b in OPPOSITE:
+        if a in parts and b in parts:
+            errs.append(f"conditions contradictoires [{a},{b}]")
+    if ("@mouseover" in parts or "target=mouseover" in parts) and not (
+            {"harm", "help", "exists", "dead", "nodead"} & set(parts)):
+        errs.append("@mouseover sans harm/help/exists : vise le vide quand rien n'est survolé")
     for raw in group.split(","):
         c = raw.strip()
         if not c:
@@ -114,13 +125,28 @@ def _lint(name: str, body: str) -> list[str]:
             continue
         if cmd not in CONDITIONAL:
             continue
-        for clause in rest.split(";"):
-            for group in re.findall(r"\[([^\]]*)\]", clause):
+        clauses = rest.split(";")
+        for ci, clause in enumerate(clauses):
+            groups = re.findall(r"\[([^\]]*)\]", clause)
+            for group in groups:
                 errs.extend(f"{where} : {e}" for e in _check_conditions(group))
+            if re.search(r"\]\s*[^\s\[!].*\[", clause):
+                errs.append(f"{where} : conditions après le nom du sort")
             tail = re.sub(r"\[[^\]]*\]", "", clause).strip()
+            # a clause that always matches (no condition, or an empty [] group) hides the clauses after it
+            if ci < len(clauses) - 1 and cmd in ("/cast", "/use", "/castsequence") and (
+                    not groups or any(not g.strip() for g in groups)):
+                errs.append(f"{where} : clause {ci + 1} toujours vraie, la suite n'est jamais lue")
+            if "!" in tail and not re.match(r"^(reset=\S+\s+)?!\S", tail):
+                errs.append(f"{where} : « ! » doit précéder le nom du sort")
             if cmd == "/castsequence" and tail:
                 if tail.startswith("reset=") and " " not in tail:
                     errs.append(f"{where} : /castsequence sans sorts")
+                m = re.match(r"^reset=(\S+)", tail)
+                if m:
+                    for part in m.group(1).split("/"):
+                        if not (part.isdigit() or part.lower() in RESET):
+                            errs.append(f"{where} : reset={m.group(1)} invalide ({part})")
         if cmd in ("/cast", "/use", "/castsequence"):
             # every clause needs a target spell/item
             for clause in rest.split(";"):

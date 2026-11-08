@@ -141,15 +141,27 @@ local function suggestReady(text, names)
     if _G.IsShiftKeyDown and _G.IsShiftKeyDown() then M:TogglePanel() return end
     M._pending = false
     if M.Clear then M:Clear("ready") end
+    -- nouvelles macros (sort appris) : on les crée ; sinon simple mise à jour des macros installées
     if M:IsBlocked() then M:ShowCopy(M:PlanList(false))
-    elseif char().setup then M:Refresh(false) else M:Install(false) end
+    elseif char().setup and not (names and #names > 0) then M:Refresh(false) else M:Install(false) end
   end })
 end
 M._SuggestReady = suggestReady
 
+-- Pas de chat (règle TreeAI) : les messages vont dans la ligne d'état du panneau (M._log, 20 derniers).
 local function say(...)
-  if M.Print then M:Print(...) elseif _G.print then _G.print("TreeAI Macros:", ...) end
+  local parts = {}
+  for i = 1, select("#", ...) do parts[#parts + 1] = tostring((select(i, ...))) end
+  local msg = tconcat(parts, " ")
+  local log = M._log or {}
+  M._log = log
+  log[#log + 1] = msg
+  if #log > 20 then table.remove(log, 1) end
+  M.lastMsg = msg
+  local f = M.panel
+  if f and f.status then f.status:SetText(msg) end
 end
+M._Say = say
 
 ---------------------------------------------------------------------------
 -- Sorts : nom localisé (ID -> GetSpellInfo, repli nom FR) + connu ?
@@ -280,12 +292,23 @@ local function newContext()
   local D = data() or {}
   local items = D.items or {}
   -- Préfère les listes générées depuis le client (Data/Consumables.lua) quand elles existent.
+  -- Les niveaux requis de Data/Macros.lua (bandage = Secourisme requis pour UTILISER, pierre de soins =
+  -- niveau de la pierre) restent prioritaires quand la liste client les met à 1.
   local C = T.Data and T.Data.Consumables
   if type(C) == "table" then
     local merged = {}
     for k, v in pairs(items) do merged[k] = v end
     for k, v in pairs(C) do
-      if type(v) == "table" and #v > 0 then merged[k] = v end
+      if type(v) == "table" and #v > 0 then
+        local reqOf = {}
+        for _, row in ipairs(items[k] or {}) do reqOf[row[1]] = row[2] end
+        local rows = {}
+        for i, row in ipairs(v) do
+          local r = reqOf[row[1]]
+          if r and r > (row[2] or 0) then rows[i] = { row[1], r, row[3], row[4] } else rows[i] = row end
+        end
+        merged[k] = rows
+      end
     end
     items = merged
   end
@@ -356,6 +379,21 @@ local function newContext()
   function pick.ammo()
     local want = rangedAmmoType()
     return (bestOf(items.ammo, function(req, tag) return req <= level and (not want or tag == want) end))
+  end
+  function pick.hearth() return (bestOf(items.hearth, byLevel)) end
+  -- monture : objet du sac de classe « Divers / Monture » (15/5) dont le niveau requis est atteint
+  function pick.mount()
+    local best, bestLvl
+    for id in pairs(counts) do
+      local r = { itemInfo(id) }
+      if r[12] == 15 and r[13] == 5 then
+        local lvl = tonumber(r[5]) or 1
+        if lvl <= level and (not bestLvl or lvl > bestLvl or (lvl == bestLvl and id < best)) then
+          best, bestLvl = id, lvl
+        end
+      end
+    end
+    return best
   end
   function pick.petfood()
     local H = T.GetModule and T:GetModule("Hunter")
@@ -447,7 +485,41 @@ function M.ValidBody(body)
   return true
 end
 
-local function renderVariant(v, ctx)
+-- [form:N] des modèles = ordre Classic (1 ours, 2 aquatique, 3 félin, 4 voyage, 5 sélénien). Un druide à qui
+-- il manque une forme a les suivantes décalées : on réécrit N d'après GetShapeshiftFormInfo (sorts réels).
+local function formMap()
+  local D = data()
+  local want = D and D.forms and D.forms[playerClass() or ""]
+  local n = tonumber((try(_G.GetNumShapeshiftForms))) or 0
+  if not want or n <= 0 then return nil end
+  local byId = {}
+  for i = 1, n do
+    local r = { try(_G.GetShapeshiftFormInfo, i) }
+    local sid = tonumber(r[4]) or tonumber(r[5])
+    if sid then byId[sid] = i end
+  end
+  local map, changed = {}, false
+  for c, ids in ipairs(want) do
+    local idx
+    for _, sid in ipairs(ids) do idx = idx or byId[sid] end
+    map[c] = idx or 9          -- forme inconnue : 9 n'existe pas -> [form:9] faux, [noform:9] vrai
+    if map[c] ~= c then changed = true end
+  end
+  return changed and map or nil
+end
+M.FormMap = formMap
+
+local function remapForms(body, map)
+  if not map then return body end
+  return (body:gsub("(form:)([%d/]+)", function(k, list)
+    local out = {}
+    for d in list:gmatch("%d+") do out[#out + 1] = tostring(map[tonumber(d)] or d) end
+    return k .. tconcat(out, "/")
+  end))
+end
+M.RemapForms = remapForms
+
+local function renderVariant(v, ctx, consumable)
   for _, sid in ipairs(v.r or {}) do
     local name, known = resolveSpell(sid)
     if not (name and known) then return nil end
@@ -484,10 +556,13 @@ local function renderVariant(v, ctx)
     end
   end
   local body = tconcat(out, "\n")
+  if ctx.forms == nil then ctx.forms = formMap() or false end
+  if ctx.forms then body = remapForms(body, ctx.forms) end
   if not M.ValidBody(body) then return nil end
   if body == "#showtooltip" then return nil end
-  -- une macro de consommables sans aucun objet trouvé ne sert à rien
-  if (v.b or ""):find("{item:", 1, true) and not body:find("item:%d") then return nil end
+  -- une macro de consommables sans aucun objet trouvé ne sert à rien (une macro de sorts garde ses sorts
+  -- quand sa ligne d'objet optionnelle disparaît : TAI Familier sans nourriture garde Appel / Guérison)
+  if consumable and (v.b or ""):find("{item:", 1, true) and not body:find("item:%d") then return nil end
   return body
 end
 M.RenderVariant = renderVariant
@@ -495,7 +570,7 @@ M.RenderVariant = renderVariant
 function M:Render(def, ctx)
   ctx = ctx or newContext()
   for _, v in ipairs(def.v or {}) do
-    local body = renderVariant(v, ctx)
+    local body = renderVariant(v, ctx, def.c == "consumable")
     if body then return body end
   end
   if def.c == "consumable" then
@@ -825,15 +900,15 @@ function M:Install(all, force)
       suggest("ready", ("Plus de place pour %d macro(s) : clique pour les copier-coller"):format(full), 2,
         { ttl = 0, onClick = function() M:ShowCopy(M._copyList) end })
     elseif fail > 0 then
-      say(("%d macro(s) refusée(s) par le jeu (%s) : bouton « Diagnostic » dans /tai macros."):format(fail,
+      say(("%d macro(s) refusée(s) par le jeu (%s) : bouton « Diagnostic »."):format(fail,
         tostring(self.lastError or "?")))
     end
     if user > 0 then
-      say(("%d macro(s) modifiée(s) à la main laissée(s) telle(s) (/tai macros forcer)."):format(user))
+      say(("%d macro(s) modifiée(s) à la main gardée(s) telle(s) (Maj+clic sur « Installer » pour écraser)."):format(user))
     end
     if full == 0 and n > 0 then
       local hints = keyHints(defs)
-      say("Glisse-les sur ta barre : /tai macros > choisis une macro > « Prendre (barre) »." ..
+      say("Pose-les sur ta barre : « Glisser sur la barre » (ou fais glisser une ligne de la liste)." ..
         (hints ~= "" and (" Touches conseillées : " .. hints) or ""))
       suggest("ready", ("%d macro(s) TAI prête(s) — clique pour les glisser sur ta barre"):format(n + same0), 1,
         { ttl = 300, onClick = function() M:OpenPanel() end })
@@ -850,7 +925,7 @@ function M:InstallOne(def, force)
   local body = self:Render(def)
   if not body then
     local miss = self:Missing(def)
-    say(def.n .. " : sort inconnu" .. (#miss > 0 and (" (" .. tconcat(miss, ", ") .. ")") or "") .. ".")
+    say(def.n .. " : sort pas encore appris" .. (#miss > 0 and (" (" .. tconcat(miss, ", ") .. ")") or "") .. ".")
     return "later"
   end
   if self:IsBlocked() and not force then self:ShowCopy({ { def = def, body = body } }); return "blocked" end
@@ -878,7 +953,7 @@ end
 
 -- Diagnostic : par macro OK / X + raison, écrit dans TreeAIDB.diag.macros (lu par l'app TreeAI / l'autotest).
 local REASON = {
-  installed = "installée", same = "installée", user = "modifiée par toi (gardée)", later = "sort inconnu",
+  installed = "installée", same = "installée", user = "modifiée par toi (gardée)", later = "sort pas encore appris",
   full = "emplacement plein", blocked = "bloqué par le jeu", ready = "prête, pas encore installée",
   invalid = "texte refusé",
 }
@@ -927,11 +1002,10 @@ function M:Diagnose(show)
   end
   self.lastDiag = rep
   if show then
-    say(("Diagnostic macros : %d OK, %d à voir — mode %s — emplacements perso %d/%d, compte %d/%d."):format(okN, koN,
-      rep.mode, c, maxC, g, maxG))
-    for _, it in ipairs(items) do
-      say(("%s %s : %s%s"):format(it.ok and "|TInterface\\RaidFrame\\ReadyCheck-Ready:0|t" or "|TInterface\\RaidFrame\\ReadyCheck-NotReady:0|t", it.n, it.reason, it.detail and (" (" .. it.detail .. ")") or ""))
-    end
+    -- affiché dans le panneau (OK / X + raison par macro), pas dans le chat
+    say(("Diagnostic : %d OK, %d à voir (mode %s)."):format(okN, koN, rep.mode))
+    self._view = "diag"
+    self:OpenPanel()
   end
   return rep
 end
@@ -1128,16 +1202,36 @@ function M:List()
 end
 
 ---------------------------------------------------------------------------
--- Panneau : liste (gauche) + aperçu, « pourquoi » et boutons (droite)
+-- Panneau (TIDY) : liste groupée par état à gauche (icône, nom, touche · niveau), fiche à droite empilée
+-- par un seul moteur (icône + nom, « À quoi ça sert », « Où la mettre », texte, « Pourquoi »), grille de
+-- boutons de même largeur en bas, ligne d'état à gauche. Diagnostic : la fiche devient la liste OK / X.
 ---------------------------------------------------------------------------
-local ROWS, ROW_H, W, H = 20, 17, 660, 430
+local W, H, LIST_W, ROW_H, ROWS = 720, 486, 282, 19, 21
+local PAD, GAP, BTN_H = 10, 6, 22
 local STATUS_COLOR = { installed = "|cff40ff40", user = "|cffffa040", ready = "|cffffffff", later = "|cff808080" }
+local GROUP_TXT = { installed = "Installées", user = "Installées", ready = "Prêtes à installer", later = "Plus tard" }
+local OK_ICON = "|TInterface\\RaidFrame\\ReadyCheck-Ready:14|t"
+local KO_ICON = "|TInterface\\RaidFrame\\ReadyCheck-NotReady:14|t"
+local QM = "Interface\\Icons\\INV_Misc_QuestionMark"
 
 local function button(parent, text, w)
   local b = _G.CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-  b:SetSize(w or 120, 20)
+  b:SetSize(w or 120, BTN_H)
   b:SetText(text)
   return b
+end
+
+local function tip(b, title, lines)
+  if not (b and b.SetScript) then return end
+  b:SetScript("OnEnter", function(self)
+    local tt = _G.GameTooltip
+    if not tt then return end
+    tt:SetOwner(self, "ANCHOR_TOP")
+    tt:SetText(title)
+    for _, l in ipairs(lines or {}) do tt:AddLine(l, 1, 1, 1, true) end
+    tt:Show()
+  end)
+  b:SetScript("OnLeave", function() if _G.GameTooltip then _G.GameTooltip:Hide() end end)
 end
 
 local function cycleSpec()
@@ -1158,6 +1252,93 @@ local function cycleCtx()
   char().ctx = (cur == nil and "solo") or (cur == "solo" and "groupe") or nil
 end
 
+-- icône d'une macro : 1er sort de la variante rendue, sinon 1er objet, sinon l'icône conseillée
+local function iconOf(def, ctx)
+  for _, v in ipairs(def.v or {}) do
+    local b = v.b or ""
+    local sid = tonumber(b:match("{(%d+)}"))
+    if sid then
+      local C = _G.C_Spell
+      local ic = (C and C.GetSpellTexture and try(C.GetSpellTexture, sid)) or try(_G.GetSpellTexture, sid)
+      if ic then return ic end
+    end
+    local cat = b:match("{item:([%a_]+)}")
+    local id = cat and ctx and ctx.item(cat)
+    if id then
+      local CI = _G.C_Item
+      local ic = (CI and CI.GetItemIconByID and try(CI.GetItemIconByID, id)) or try(_G.GetItemIcon, id)
+      if ic then return ic end
+    end
+  end
+  if def.i and def.i:lower() ~= "inv_misc_questionmark" then return "Interface\\Icons\\" .. def.i end
+  return QM
+end
+M.IconOf = iconOf
+
+-- la macro est-elle déjà posée sur une barre ? (GetActionInfo 1..120, lu seulement panneau ouvert)
+local function onBars(idx)
+  if not idx or type(_G.GetActionInfo) ~= "function" then return false end
+  for slot = 1, 120 do
+    local t, id = try(_G.GetActionInfo, slot)
+    if t == "macro" and id == idx then return true end
+  end
+  return false
+end
+M.OnBars = onBars
+
+-- prochaine macro TAI installée qui n'est sur aucune barre (flux « Glisser sur la barre »)
+function M:NextToPlace()
+  local sel = self:SelectedDef()
+  local selIdx = sel and macroIndex(sel.n)
+  if selIdx and not onBars(selIdx) then return sel, selIdx end
+  for _, def in ipairs(self:Defs()) do
+    local idx = char().installed[def.n] and macroIndex(def.n)
+    if idx and not onBars(idx) then return def, idx end
+  end
+  return nil
+end
+
+-- « Glisser sur la barre » : installe si besoin, puis met la macro sur le curseur (pose-la d'un clic)
+function M:PickToBar(def)
+  if inCombat() then say("Impossible en combat : refais-le après."); return end
+  def = def or select(1, self:NextToPlace()) or self:SelectedDef()
+  if not def then say("Toutes tes macros TAI sont déjà sur tes barres."); return end
+  local idx = macroIndex(def.n)
+  if not idx then
+    userDo(M.InstallOne, M, def, false)
+    return
+  end
+  try(_G.PickupMacro, idx)
+  say(def.n .. " est sur ton curseur : clique sur une case de ta barre pour la poser (clic droit : annuler).")
+end
+
+local function strH(fs)
+  if not (fs and fs.GetStringHeight) then return nil end
+  return tonumber((try(fs.GetStringHeight, fs)))
+end
+
+-- empileur vertical (TIDY règle 2/5) : chaque élément sous le précédent, hauteur mesurée
+local function stack(f, items, x, top, width)
+  local y = top
+  f._rects = {}
+  for _, it in ipairs(items) do
+    local w = it.frame
+    if w and (not w.IsShown or w:IsShown()) then
+      w:ClearAllPoints()
+      w:SetPoint("TOPLEFT", f, "TOPLEFT", x + (it.dx or 0), -y)
+      local h = it.h
+      if not h and w.GetStringHeight then
+        w:SetWidth(width - (it.dx or 0))
+        h = math.max(it.min or 12, strH(w) or 12)
+      end
+      h = h or 14
+      f._rects[#f._rects + 1] = { y = y, h = h, name = it.name }
+      y = y + h + (it.gap or GAP)
+    end
+  end
+  return y
+end
+
 function M:TogglePanel()
   if self.panel then
     if self.panel:IsShown() then self.panel:Hide() else self:FillPanel(); self.panel:Show() end
@@ -1175,36 +1356,53 @@ function M:TogglePanel()
     f:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
       edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 12,
       insets = { left = 3, right = 3, top = 3, bottom = 3 } })
-    f:SetBackdropColor(0, 0, 0, 0.9)
+    f:SetBackdropColor(0, 0, 0, 0.92)
   end
   local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  title:SetPoint("TOPLEFT", 10, -8)
+  title:SetPoint("TOPLEFT", PAD, -10)
   title:SetText("Macros TreeAI")
-  if TreeAI.Theme then TreeAI.Theme:Skin(f, "window"); TreeAI.Theme:Font(title, "M", "gold") end  -- thème commun
+  if T.Theme then T.Theme:Skin(f, "window"); T.Theme:Font(title, "M", "gold") end  -- thème commun
   local close = _G.CreateFrame("Button", nil, f, "UIPanelCloseButton")
   close:SetPoint("TOPRIGHT", 2, 2)
-  if TreeAI.Theme and TreeAI.Theme.Window then TreeAI.Theme:Window(f, { id = "macros", header = false }) end  -- Échap, fondu
+  if T.Theme and T.Theme.Window then pcall(T.Theme.Window, T.Theme, f, { id = "macros", header = false }) end
 
-  f.specBtn = button(f, "Spé", 170); f.specBtn:SetPoint("TOPLEFT", 120, -6)
+  f.specBtn = button(f, "Spé", 190); f.specBtn:SetPoint("TOPLEFT", 130, -6)
   f.specBtn:SetScript("OnClick", function() cycleSpec(); M:FillPanel() end)
-  f.ctxBtn = button(f, "Contexte", 130); f.ctxBtn:SetPoint("LEFT", f.specBtn, "RIGHT", 6, 0)
+  tip(f.specBtn, "Spécialisation", { "Clic : choisir la spé des macros (auto = d'après tes talents)." })
+  f.ctxBtn = button(f, "Contexte", 140); f.ctxBtn:SetPoint("LEFT", f.specBtn, "RIGHT", GAP, 0)
   f.ctxBtn:SetScript("OnClick", function() cycleCtx(); M:FillPanel() end)
+  tip(f.ctxBtn, "Solo / groupe", { "Le jeu conseillé change un peu en groupe (provocation, soins au survol…)." })
 
-  -- liste
+  -- liste (gauche) : en-têtes de groupe + lignes (icône, nom, touche · niveau) ; molette = défiler
+  local list = _G.CreateFrame("Frame", nil, f, _G.BackdropTemplateMixin and "BackdropTemplate" or nil)
+  list:SetPoint("TOPLEFT", PAD, -34); list:SetSize(LIST_W, ROWS * ROW_H + 6)
+  if list.SetBackdrop then
+    list:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background" })
+    list:SetBackdropColor(0.06, 0.06, 0.08, 0.9)
+  end
+  f.list = list
   f.offset = 0
   f.rows = {}
   for i = 1, ROWS do
-    local row = _G.CreateFrame("Button", nil, f)
-    row:SetSize(250, ROW_H - 1)
-    row:SetPoint("TOPLEFT", 10, -32 - (i - 1) * ROW_H)
+    local row = _G.CreateFrame("Button", nil, list)
+    row:SetSize(LIST_W - 8, ROW_H - 1)
+    row:SetPoint("TOPLEFT", 4, -3 - (i - 1) * ROW_H)
+    row.icon = row:CreateTexture(nil, "ARTWORK")
+    row.icon:SetSize(16, 16); row.icon:SetPoint("LEFT", 2, 0)
     row.text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    row.text:SetAllPoints(); row.text:SetJustifyH("LEFT")
+    row.text:SetPoint("LEFT", 22, 0); row.text:SetWidth(LIST_W - 100); row.text:SetJustifyH("LEFT")
+    row.right = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    row.right:SetPoint("RIGHT", -4, 0); row.right:SetWidth(70); row.right:SetJustifyH("RIGHT")
     row.hl = row:CreateTexture(nil, "BACKGROUND")
     row.hl:SetAllPoints()
     if row.hl.SetColorTexture then row.hl:SetColorTexture(0.2, 0.6, 0.3, 0.35)
     else row.hl:SetTexture("Interface\\Buttons\\WHITE8X8"); row.hl:SetVertexColor(0.2, 0.6, 0.3, 0.35) end
     row.hl:Hide()
-    row:SetScript("OnClick", function(b) if b.def then M.selected = b.def.n; M:FillPanel() end end)
+    row:SetScript("OnClick", function(b)
+      if b.def then M.selected = b.def.n; M._view = nil; M:FillPanel() end
+    end)
+    if row.RegisterForDrag then row:RegisterForDrag("LeftButton") end
+    row:SetScript("OnDragStart", function(b) if b.def then M.selected = b.def.n; M:PickToBar(b.def); M:FillPanel() end end)
     f.rows[i] = row
   end
   f:EnableMouseWheel(true)
@@ -1212,69 +1410,83 @@ function M:TogglePanel()
     f.offset = math.max(0, (f.offset or 0) - delta * 3)
     M:FillPanel()
   end)
+  f.status = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  f.status:SetPoint("TOPLEFT", list, "BOTTOMLEFT", 2, -8); f.status:SetWidth(LIST_W - 4)
+  f.status:SetJustifyH("LEFT"); f.status:SetJustifyV("TOP")
+  f.status:SetText(M.lastMsg or "Rien n'est créé sans ton clic ; une macro modifiée à la main n'est jamais écrasée.")
 
-  -- détail
-  local x = 272
-  f.name = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-  f.name:SetPoint("TOPLEFT", x, -34)
-  f.meta = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  f.meta:SetPoint("TOPLEFT", x, -56); f.meta:SetWidth(W - x - 14); f.meta:SetJustifyH("LEFT")
-  f.desc = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-  f.desc:SetPoint("TOPLEFT", x, -74); f.desc:SetWidth(W - x - 14); f.desc:SetJustifyH("LEFT")
-  local box = _G.CreateFrame("Frame", nil, f, _G.BackdropTemplateMixin and "BackdropTemplate" or nil)
-  box:SetPoint("TOPLEFT", x - 4, -104); box:SetSize(W - x - 6, 120)
-  if box.SetBackdrop then
-    box:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background" })
-    box:SetBackdropColor(0.08, 0.08, 0.1, 0.95)
+  -- fiche (droite) : éléments empilés par stack() dans FillPanel
+  local x = PAD + LIST_W + 14
+  local cw = W - x - PAD
+  f.x, f.cw = x, cw
+  f.icon = f:CreateTexture(nil, "ARTWORK"); f.icon:SetSize(36, 36)
+  f.name = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge"); f.name:SetJustifyH("LEFT")
+  f.desc = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); f.desc:SetJustifyH("LEFT")
+  f.where = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); f.where:SetJustifyH("LEFT")
+  f.meta = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall"); f.meta:SetJustifyH("LEFT")
+  f.box = _G.CreateFrame("Frame", nil, f, _G.BackdropTemplateMixin and "BackdropTemplate" or nil)
+  if f.box.SetBackdrop then
+    f.box:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background" })
+    f.box:SetBackdropColor(0.08, 0.08, 0.1, 0.95)
   end
-  f.body = box:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  f.body:SetPoint("TOPLEFT", 6, -6); f.body:SetWidth(W - x - 20)
+  f.body = f.box:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  f.body:SetPoint("TOPLEFT", 6, -6); f.body:SetWidth(cw - 12)
   f.body:SetJustifyH("LEFT"); f.body:SetJustifyV("TOP")
-  f.whyT = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  f.whyT:SetPoint("TOPLEFT", x, -232); f.whyT:SetText("Pourquoi")
+  f.whyT = f:CreateFontString(nil, "OVERLAY", "GameFontNormal"); f.whyT:SetText("Pourquoi elle est faite ainsi")
   f.why = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  f.why:SetPoint("TOPLEFT", x, -248); f.why:SetWidth(W - x - 14)
   f.why:SetJustifyH("LEFT"); f.why:SetJustifyV("TOP")
 
-  f.one = button(f, "Installer cette macro", 160); f.one:SetPoint("BOTTOMLEFT", x, 34)
+  -- grille de boutons (TIDY règle 6) : 3 colonnes de même largeur, 3 rangées, le dangereux en dernier
+  local bw = math.floor((cw - 2 * GAP) / 3)
+  local function cell(b, col, rowN)
+    b:SetWidth(bw)
+    b:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", x + (col - 1) * (bw + GAP), PAD + (3 - rowN) * (BTN_H + GAP))
+  end
+  f.all = button(f, "Installer tout"); cell(f.all, 1, 1)
+  f.all:SetScript("OnClick", function() M._view = nil; userDo(M.Install, M, false); after(0.3, function() M:FillPanel() end) end)
+  tip(f.all, "Installer tout", { "Crée ou met à jour le jeu conseillé pour ta spé et ton contexte.",
+    "Les « options » s'installent une par une." })
+  f.one = button(f, "Installer"); cell(f.one, 2, 1)
   f.one:SetScript("OnClick", function()
     local def = M:SelectedDef()
     if def then
       local force = _G.IsShiftKeyDown and _G.IsShiftKeyDown()
+      M._view = nil
       userDo(M.InstallOne, M, def, force)
       M:FillPanel()
     end
   end)
-  f.pick = button(f, "Prendre (barre)", 120); f.pick:SetPoint("LEFT", f.one, "RIGHT", 6, 0)
-  f.pick:SetScript("OnClick", function()
-    local def = M:SelectedDef()
-    local idx = def and macroIndex(def.n)
-    if inCombat() then say("Impossible en combat.")
-    elseif idx then try(_G.PickupMacro, idx); say(def.n .. " sur ton curseur : glisse-la sur ta barre.")
-    elseif def then say(def.n .. " n'est pas encore créée : « Installer cette macro » d'abord.") end
-  end)
-  f.all = button(f, "Tout installer (ma spé)", 180); f.all:SetPoint("BOTTOMLEFT", x, 8)
-  f.all:SetScript("OnClick", function()
-    userDo(M.Install, M, false)
-    after(0.3, function() M:FillPanel() end)
-  end)
-  f.upd = button(f, "Mettre à jour", 110); f.upd:SetPoint("LEFT", f.all, "RIGHT", 6, 0)
+  tip(f.one, "Installer cette macro", { "Elle arrive sur ton curseur : clique une case de ta barre.",
+    "Maj+clic : écrase ta version modifiée." })
+  f.pick = button(f, "Glisser sur la barre"); cell(f.pick, 3, 1)
+  f.pick:SetScript("OnClick", function() M:PickToBar(); M:FillPanel() end)
+  tip(f.pick, "Glisser sur la barre", { "Met sur ton curseur la prochaine macro TAI qui n'est sur aucune barre.",
+    "Astuce : tu peux aussi faire glisser une ligne de la liste." })
+  f.upd = button(f, "Mettre à jour"); cell(f.upd, 1, 2)
   f.upd:SetScript("OnClick", function() userDo(M.Refresh, M, false); after(0.3, function() M:FillPanel() end) end)
-  f.del = button(f, "Retirer", 80); f.del:SetPoint("LEFT", f.upd, "RIGHT", 6, 0)
-  f.del:SetScript("OnClick", function() userDo(M.Remove, M); after(0.3, function() M:FillPanel() end) end)
-  f.diag = button(f, "Diagnostic macros", 140); f.diag:SetPoint("BOTTOMLEFT", x, 60)
-  f.diag:SetScript("OnClick", function() M:Diagnose(true); M:FillPanel() end)
-  f.copyB = button(f, "Copier-coller (à la main)", 180); f.copyB:SetPoint("LEFT", f.diag, "RIGHT", 6, 0)
+  tip(f.upd, "Mettre à jour", { "Réécrit les macros installées (nouveaux sorts, meilleurs objets du sac)." })
+  f.diag = button(f, "Diagnostic"); cell(f.diag, 2, 2)
+  f.diag:SetScript("OnClick", function()
+    if M._view == "diag" then M._view = nil; M:FillPanel() else M:Diagnose(true) end
+  end)
+  tip(f.diag, "Diagnostic macros", { "Chaque macro : installée ou non, et pourquoi." })
+  f.copyB = button(f, "Copier-coller"); cell(f.copyB, 3, 2)
   f.copyB:SetScript("OnClick", function() M:ShowCopy(M:PlanList(false)) end)
-  f.hint = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-  f.hint:SetPoint("BOTTOMLEFT", 10, 10); f.hint:SetWidth(250); f.hint:SetJustifyH("LEFT")
-  f.hint:SetText("Rien n'est créé sans ton clic. Une macro modifiée à la main n'est jamais écrasée. Si le jeu bloque la création : « Copier-coller ».")
+  tip(f.copyB, "Copier-coller", { "Si le jeu bloque la création automatique : le texte de chaque macro à copier." })
+  f.openB = button(f, "Ouvrir les macros"); cell(f.openB, 1, 3)
+  f.openB:SetScript("OnClick", function() openMacroUI() end)
+  f.del = button(f, "Retirer les macros TAI"); cell(f.del, 2, 3)
+  f.del:SetWidth(2 * bw + GAP)
+  f.del:SetScript("OnClick", function() userDo(M.Remove, M); after(0.3, function() M:FillPanel() end) end)
+  tip(f.del, "Retirer", { "Supprime les macros TAI non modifiées (les tiennes ne sont jamais touchées)." })
+  f.contentBottom = PAD + 3 * (BTN_H + GAP) + 4   -- la fiche s'arrête au-dessus de la grille
   self.panel = f
   self:FillPanel()
 end
 
 function M:OpenPanel()
   if self.panel and self.panel:IsShown() then self:FillPanel() return end
+  if self.panel then self:FillPanel(); self.panel:Show() return end
   self:TogglePanel()
 end
 
@@ -1285,37 +1497,83 @@ function M:SelectedDef()
   return nil
 end
 
+-- lignes de la liste : en-tête par groupe (Installées / Prêtes / Plus tard), triées par niveau
+function M:PanelRows(ctx)
+  local groups = { installed = {}, ready = {}, later = {} }
+  for _, def in ipairs(self:Defs()) do
+    local st = self:Status(def, ctx)
+    local g = (st == "user") and "installed" or st
+    local list = groups[g] or groups.later
+    list[#list + 1] = { def = def, st = st }
+  end
+  local out = {}
+  for _, g in ipairs({ "installed", "ready", "later" }) do
+    local list = groups[g]
+    if #list > 0 then
+      tsort(list, function(a, b)
+        local da, db_ = self:IsDefault(a.def), self:IsDefault(b.def)
+        if da ~= db_ then return da end
+        if (a.def.l or 1) ~= (b.def.l or 1) then return (a.def.l or 1) < (b.def.l or 1) end
+        return a.def.n < b.def.n
+      end)
+      out[#out + 1] = { header = ("%s (%d)"):format(GROUP_TXT[g], #list) }
+      for _, r in ipairs(list) do out[#out + 1] = r end
+    end
+  end
+  return out
+end
+
+local function fillDiag(f, rep)
+  local lines = {}
+  for _, it in ipairs(rep.items or {}) do
+    lines[#lines + 1] = ("%s %s : %s%s"):format(it.ok and OK_ICON or KO_ICON, it.n:sub(#PREFIX + 1), it.reason,
+      it.detail and (" (" .. it.detail .. ")") or "")
+  end
+  f.icon:SetTexture("Interface\\RaidFrame\\ReadyCheck-Ready")
+  f.name:SetText("Diagnostic macros")
+  f.desc:SetText(("%d installée(s), %d à voir — mode %s."):format(rep.ok or 0, rep.ko or 0, rep.mode or "auto"))
+  local s = rep.slots or {}
+  f.where:SetText(("Emplacements : perso %d/%d, compte %d/%d."):format(s.char or 0, s.charMax or 0,
+    s.account or 0, s.accountMax or 0))
+  f.meta:SetText(rep.lastError and ("Dernière erreur du jeu : " .. tostring(rep.lastError)) or "")
+  f.body:SetText(#lines > 0 and tconcat(lines, "\n") or "Aucune macro conseillée pour l'instant.")
+  f.whyT:SetText("Que faire")
+  f.why:SetText((rep.mode == "copier-coller")
+    and "Le jeu bloque la création automatique : « Copier-coller » donne le texte de chaque macro."
+    or "« Installer tout » crée celles qui manquent ; « pas encore appris » : elle arrivera avec ton prochain sort.")
+end
+
 function M:FillPanel()
   local f = self.panel
   if not f then return end
   local ctx = newContext()
-  local defs = self:Defs()
   local spec, autoSpec = self:Spec()
   local where, autoCtx = self:Context()
   f.specBtn:SetText("Spé : " .. self:SpecName(spec) .. (autoSpec and " (auto)" or ""))
   f.ctxBtn:SetText((where == "groupe" and "Groupe" or "Solo") .. (autoCtx and " (auto)" or ""))
-  -- tri : installées / dispo d'abord, puis par niveau
-  local rows = {}
-  for _, def in ipairs(defs) do
-    rows[#rows + 1] = { def = def, st = self:Status(def, ctx) }
-  end
-  local rank = { installed = 1, user = 1, ready = 2, later = 3 }
-  tsort(rows, function(a, b)
-    if rank[a.st] ~= rank[b.st] then return rank[a.st] < rank[b.st] end
-    if (a.def.l or 1) ~= (b.def.l or 1) then return (a.def.l or 1) < (b.def.l or 1) end
-    return a.def.n < b.def.n
-  end)
+  local rows = self:PanelRows(ctx)
   f.offset = math.min(f.offset or 0, math.max(0, #rows - ROWS))
-  if not self.selected and rows[1] then self.selected = rows[1].def.n end
+  if not self:SelectedDef() then
+    self.selected = nil
+    for _, r in ipairs(rows) do if r.def then self.selected = r.def.n; break end end
+  end
   for i = 1, ROWS do
     local row, r = f.rows[i], rows[i + f.offset]
-    if r then
+    if r and r.header then
+      row.def = nil
+      row.icon:Hide()
+      row.text:SetText("|cffffd100" .. r.header .. "|r")
+      row.right:SetText("")
+      row.hl:Hide()
+      row:Show()
+    elseif r then
       local def = r.def
-      local tag = self:IsDefault(def) and "" or " |cff808080(option)|r"
-      local lvl = (r.st == "later" and def.l and def.l <= 60) and (" |cff808080niv." .. def.l .. "|r") or ""
       row.def = def
-      row.text:SetText(("%s%s|r  [%s]%s%s"):format(STATUS_COLOR[r.st] or "", def.n:sub(#PREFIX + 1),
-        def.k or "-", lvl, tag))
+      row.icon:SetTexture(iconOf(def, ctx)); row.icon:Show()
+      local opt = self:IsDefault(def) and "" or " |cff808080(option)|r"
+      row.text:SetText(("%s%s|r%s"):format(STATUS_COLOR[r.st] or "", def.n:sub(#PREFIX + 1), opt))
+      local key = (def.k and def.k ~= "-") and def.k or ""
+      row.right:SetText((r.st == "later" and def.l and def.l <= 60) and ("niv. " .. def.l) or key)
       if def.n == self.selected then row.hl:Show() else row.hl:Hide() end
       row:Show()
     else
@@ -1323,26 +1581,64 @@ function M:FillPanel()
       row:Hide()
     end
   end
-  local def = self:SelectedDef()
-  if not def then return end
-  local st, cur = self:Status(def, ctx)
-  local body = self:Render(def, ctx)
-  f.name:SetText(def.n)
-  local ctxTxt = (def.x == "groupe" and "groupe") or (def.x == "solo" and "solo") or "solo + groupe"
-  f.meta:SetText(("Touche conseillée : %s   |   niveau %s   |   %s   |   %s%s|r"):format(
-    def.k or "-", tostring(def.l or 1), ctxTxt, STATUS_COLOR[st] or "", STATUS_TXT[st] or ""))
-  f.desc:SetText(def.d or "")
-  if st == "user" and cur then
-    f.body:SetText("|cffffa040Ta version (gardée) :|r\n" .. cur .. (body and ("\n|cff40ff40TreeAI propose :|r\n" .. body) or ""))
-  elseif body then
-    f.body:SetText(body .. ("\n|cff808080%d / 255 caractères|r"):format(#body))
+  f.status:SetText(self.lastMsg or "Rien n'est créé sans ton clic ; une macro modifiée à la main n'est jamais écrasée.")
+
+  if self._view == "diag" and self.lastDiag then
+    fillDiag(f, self.lastDiag)
   else
-    local miss = self:Missing(def)
-    f.body:SetText("|cff808080Pas encore disponible" .. (#miss > 0 and (" : il te manque " .. tconcat(miss, ", ")) or "") .. ".|r")
+    local def = self:SelectedDef()
+    if not def then return end
+    local st, cur = self:Status(def, ctx)
+    local body = self:Render(def, ctx)
+    f.icon:SetTexture(iconOf(def, ctx))
+    f.name:SetText(def.n)
+    f.desc:SetText(def.d or "")
+    f.where:SetText("|cffffd100Où la mettre :|r " .. (def.o or ""))
+    local ctxTxt = (def.x == "groupe" and "groupe") or (def.x == "solo" and "solo") or "solo + groupe"
+    local idx = (st == "installed" or st == "user") and macroIndex(def.n)
+    local placed = idx and (onBars(idx) and " · sur ta barre" or " · pas encore sur une barre") or ""
+    f.meta:SetText(("%s%s|r%s · niveau %s · %s · touche conseillée %s"):format(STATUS_COLOR[st] or "",
+      STATUS_TXT[st] or "", placed, tostring(def.l or 1), ctxTxt, def.k or "-"))
+    if st == "user" and cur then
+      f.body:SetText("|cffffa040Ta version (gardée) :|r\n" .. cur .. (body and ("\n|cff40ff40TreeAI propose :|r\n" .. body) or ""))
+    elseif body then
+      f.body:SetText(body .. ("\n|cff808080%d / 255 caractères|r"):format(#body))
+    else
+      local miss = self:Missing(def)
+      f.body:SetText("|cff808080Pas encore disponible" .. (#miss > 0 and (" : il te manque " .. tconcat(miss, ", ")) or "") .. ".|r")
+    end
+    f.whyT:SetText("Pourquoi elle est faite ainsi")
+    f.why:SetText(def.w or "")
+    f.one:SetText((st == "installed" and "Mettre à jour") or (st == "user" and "Maj+clic : écraser") or "Installer")
   end
-  f.why:SetText(def.w or "")
-  f.one:SetText((st == "installed" and "Mettre à jour") or (st == "user" and "Maj+clic : écraser") or "Installer cette macro")
+  -- empilement de la fiche (hauteurs mesurées), la boîte de texte prend la place restante utile
+  f.box:SetWidth(f.cw)
+  local bodyH = math.max(40, math.min(170, (strH(f.body) or 60) + 14))
+  if self._view == "diag" then bodyH = math.max(bodyH, 200) end
+  f.box:SetHeight(bodyH)
+  local top = 36
+  f.icon:ClearAllPoints(); f.icon:SetPoint("TOPLEFT", f, "TOPLEFT", f.x, -top)
+  local function lay(h)
+    return stack(f, {
+      { frame = f.name, name = "name", dx = 44, gap = 2 },
+      { frame = f.desc, name = "desc", dx = 44, min = 22 },
+      { frame = f.where, name = "where" },
+      { frame = f.meta, name = "meta" },
+      { frame = f.box, name = "box", h = h, gap = 10 },
+      { frame = f.whyT, name = "whyT", gap = 2 },
+      { frame = f.why, name = "why" },
+    }, f.x, top, f.cw)
+  end
+  local bottom = lay(bodyH)
+  local over = bottom - (H - f.contentBottom)
+  if over > 0 then   -- jamais sous la grille de boutons : la boîte de texte rétrécit
+    bodyH = math.max(40, bodyH - over)
+    f.box:SetHeight(bodyH)
+    lay(bodyH)
+  end
+  f.box:SetWidth(f.cw)
 end
+M.Stack = stack
 
 ---------------------------------------------------------------------------
 -- Événements
