@@ -54,7 +54,7 @@ return function(M, ctx)
   -- immediate second click: Blizzard's 15-min account throttle → countdown, nothing sent
   A.win.scanBtn:Click()
   ctx.check(#M.ah.queries == q0 and (M.ah.replicateRefused or 0) == 0, "no ReplicateItems inside the 15-min window")
-  ctx.check(ctx.out("Scan complet dans 1[45]:%d%d"), "countdown shown")
+  ctx.check(A.Said("Scan complet dans 1[45]:%d%d"), "countdown shown (panel status, not chat)")
   ctx.check(A.FullCooldown() > 800, "cooldown tracked")
 
   -- 20 min later Auctionator does the account's full scan: we read it too (no call of our own)
@@ -142,7 +142,7 @@ return function(M, ctx)
     for _, x in ipairs(M.ah.list) do if x.id == 2592 then x.buyout = 150 * 20 end end
     A.ApplyItemListings(2592, { { count = 20, buy = 150 * 20 } })
     local np = #M.ah.posts
-    A.win.nextBtn:Click()
+    M.Hw(A.Next)                                           -- the queue's one-action step (the panel key rebuilds the queue)
     ctx.check(#M.ah.posts == np and e.p.state == "skip", "price moved → post skipped")
   end
 

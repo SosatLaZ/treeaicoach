@@ -78,8 +78,8 @@ def test_flip_and_vendor_flip_and_ranking():
     assert A.evaluate_vendor_flip(80, 2, 40) is None
     small = A.evaluate_flip(9000, 1, 10000, 0.1, 6, 0.8)   # 10 % discount: filtered
     ranked = A.rank_deals([small, f, v], min_margin=0.2, min_profit=1000)
-    assert ranked == [f, v] or ranked == [v, f]
-    assert ranked[0]["score"] >= ranked[1]["score"]
+    assert ranked == [f]                                    # (4.1) +30 pc at the vendor < min_net(…): not a deal
+    assert {d["kind"] for d in A.rank_deals([f, A.evaluate_vendor_flip(300, 1, 500)], min_margin=0.2, min_profit=100)} == {"flip", "vendor"}
     assert A.rank_deals([f], budget=5000) == []
 
 
@@ -130,7 +130,7 @@ def test_reader():
     assert ctx["dernier_scan"] == "il y a 10 min" and ctx["marches_minces"] == ["Lame runique"]
     assert A.answer_lines(db)[0].startswith("À acheter — Lin")
     assert A.auction_context({}) == {} and A.auction_context(None) == {}
-    assert "« Scan complet »" in A.answer_lines({})[0]                # the 4.0 AH window's button
+    assert "« Scanner »" in A.answer_lines({})[0]                     # the 4.1 AH panel button
     assert A.money_text(12345) == "1 po 23 pa 45 pc" and A.money_text(0) == "0 pc"
 
 
@@ -343,6 +343,72 @@ def test_lua_rafale_scenario(flavor):
     """Mode rafale: one press = at most one protected call (strict mock), pauses on partial scan / reserve."""
     r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--flavor", flavor, "--scenario",
                         "tests/wow/auction_rafale_scenario.lua", str(ADDON)],
+                       cwd=ROOT, capture_output=True, text=True, timeout=180)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "RESULT ok" in r.stdout and "violations=0" in r.stdout
+
+
+# ------------------------------------------------------------------ 4.1 AHPROFIT: honest profit engine (mirrored in Lua)
+def test_min_net_threshold():
+    assert A.min_net(0) == 100 and A.min_net(500) == 100           # 1 pa floor
+    assert A.min_net(1000) == 150 and A.min_net(1001) == 151       # 15 % of the stake, rounded up
+    assert A.min_net(1000, 500) == 500                              # player's own minimum
+    ranked = A.rank_deals([A.evaluate_vendor_flip(50, 2, 40)])     # +30 pc at the vendor: not worth a click
+    assert ranked == []
+    assert A.rank_deals([A.evaluate_vendor_flip(300, 1, 500)])[0]["profit"] == 200
+
+
+def test_flip_accepted_and_rejected_by_threshold():
+    q = A.liquidity(LIQUID)                                         # market 100, ~48 sold / day
+    d, why = A.safe_flip(60 * 20, 20, q)                           # default threshold (1 pa / 15 %)
+    assert why is None and d["profit"] >= A.min_net(1200)
+    d, why = A.safe_flip(85 * 20, 20, q)                           # 15 % under market: net < 15 % of the stake
+    assert d is None and why["code"] == "margin" and "il faut" in why["text"]
+    d, why = A.safe_flip(60 * 20, 20, A.liquidity(_hist([100] * 5, gone=0, hrs=12)))
+    assert d is None and why["code"] == "slow"                      # cheap but never sells: refused
+
+
+def test_undercut_and_ev_and_post_quantity():
+    assert A.undercut(1000) == 999 and A.undercut(1000, 5) == 950 and A.undercut(10, 5) == 9
+    s = A.suggest_post(5, 20, 1000, 0.1, 10, [(950, 5), (980, 5)], undercut_pct=2)
+    assert s["unit"] == 931 and s["reason"] == "2 % sous le moins cher"
+    # wool that never sells (volume measured 0): the honest expectation says vendor
+    dead = A.suggest_post(20, 33, 306, 0.05, 0.0, [(306, 20)])
+    assert dead["better"] == "vendor" and dead["ev"] < dead["vendor"] < dead["net"]
+    assert A.post_quantity(20, 3, 24) == 3 and A.post_quantity(20, 3, 48) == 6
+    assert A.post_quantity(20, 3, 24, listed=2) == 1 and A.post_quantity(20, 3, 24, listed=5) == 0
+    assert A.post_quantity(20, None) == 20 and A.post_quantity(20, 48, 24, split=5) == 5
+    assert A.daily_volume([[1, 90, 100, 5, 2, 0, 0.5]]) is None     # 30 min of scans: unknown, not « 0 / day »
+
+
+def test_vendor_to_ah_and_craft_profit():
+    q = A.liquidity(LIQUID)                                         # resale 100 × (1 − ½σ)
+    v = A.vendor_to_ah(40, q, vendor_sell=10)
+    assert v["count"] == 144 and v["buyUnit"] == 40 and v["profit"] >= A.min_net(40 * 144)
+    assert A.vendor_to_ah(95, q, vendor_sell=10) is None            # no margin after the 5 % cut
+    assert A.vendor_to_ah(40, {"ok": False}) is None                # no sales evidence: nothing
+    assert A.craft_profit(50, 1, q, vendor_sell=10) is None         # one item: +~44 pc < 1 pa → refused
+    c3 = A.craft_profit(100, 3, q, vendor_sell=10)
+    assert c3 and c3["count"] == 3 and c3["profit"] >= A.min_net(100)
+
+
+def test_reader_lists_crafts_and_vendor_flips():
+    db = {"summary": {"auction": {"deals": [], "crafts": [{"name": "Bandage en laine", "cost": 30, "sell": 300, "profit": 230}],
+                                  "vendorFlips": [{"name": "Fil fin", "count": 10, "buyUnit": 9, "sellUnit": 40,
+                                                   "profit": 250, "lim": True}]}}}
+    ctx = A.auction_context(db)
+    assert ctx["a_fabriquer"][0] == "Bandage en laine : composants 30 pc, se vend 3 pa → +2 pa 30 pc net"
+    assert "quantité limitée" in ctx["marchand_vers_hv"][0]
+    assert any(line.startswith("À fabriquer — Bandage") for line in A.answer_lines(db))
+
+
+@needs_lua
+@pytest.mark.parametrize("flavor", ["modern", "legacy", "forever"])
+def test_lua_profit_scenario(flavor):
+    """4.1 AHPROFIT: py parity, evidence over days, thresholds, re-checked buys, one action per click, no combat,
+    nothing in chat, vendor → AH, crafts, bags, the window's HV page (3 numbers + 4 buttons + lists)."""
+    r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--flavor", flavor, "--scenario",
+                        "tests/wow/auction_profit_scenario.lua", str(ADDON)],
                        cwd=ROOT, capture_output=True, text=True, timeout=180)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "RESULT ok" in r.stdout and "violations=0" in r.stdout

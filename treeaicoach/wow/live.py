@@ -1312,7 +1312,7 @@ def ah_view(snap: dict) -> dict:
     none: list[str] = []
     if stale_deals:
         none = [auction.STALE_TEXT, ("scan trop ancien" if scan is not None else "aucun scan connu")
-                + " : ouvre l'HV, clique « Scan complet », puis /reload"]
+                + " : ouvre l'HV, clique « Scanner », puis /reload"]
     elif not deals and isinstance(a.get("none"), dict):
         none = [auction.NONE_TEXT] + [str(x) for x in _list(a["none"].get("why"))][:4]
     rules = _d(a.get("rules"))

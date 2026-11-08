@@ -319,7 +319,7 @@ EMPTY_TEXT = {
     "trajet": ("Pas encore de trajet", "Installe l'addon, connecte-toi puis tape /reload : tes quêtes et ton trajet "
                                        "arrivent ici."),
     "groupe": ("Tu joues seul", "Les cartes de tes amis apparaissent en groupe, quand ils ont TreeAI."),
-    "hv": ("Pas encore de données d'hôtel des ventes", "Ouvre l'HV, clique « Scan complet », puis /reload. "
+    "hv": ("Pas encore de données d'hôtel des ventes", "Ouvre l'HV, clique « Scanner », puis /reload. "
                                                        "Les prix d'Auctionator sont lus aussi."),
     "session": ("Pas encore de session", "Tape /chatlog en jeu : l'XP, l'or, les morts et le butin sont suivis "
                                          "en direct. Sinon, chaque /reload ajoute un point."),

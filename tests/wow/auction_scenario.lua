@@ -57,6 +57,7 @@ return function(M, ctx)
     fullScan()
     M.serverTime = M.serverTime + 6 * 3600
     for _ = 1, 4 do table.remove(M.ah.list, 1) end  -- 80 lin sold in 6 h (a liquid market)
+    table.remove(M.ah.list, 10)                      -- (4.1) and one wool stack: wool DOES sell (else: vendor, honestly)
     fullScan()
     M.serverTime = M.serverTime + 18 * 3600
   end
@@ -160,7 +161,7 @@ return function(M, ctx)
   local sell = A.SellAdvice()
   local wool
   for _, x in ipairs(sell) do if x.id == 2592 then wool = x end end
-  ctx.check(wool and wool.unit and wool.unit >= 300 and wool.better == "ah", "post price for wool: " .. tostring(wool and wool.unit))
+  ctx.check(wool and wool.unit and wool.unit >= 300 and wool.better == "ah", "post price for wool: " .. tostring(wool and wool.unit) .. " " .. tostring(wool and wool.better) .. " ev=" .. tostring(wool and wool.ev) .. " v=" .. tostring(wool and wool.vendor))
   ctx.check(wool and wool.deposit == 33 * 20 * 5 * 24 / 200, "wool deposit 396")
   ctx.check(A.SellText(wool):find("dépôt"), "sell text")
 

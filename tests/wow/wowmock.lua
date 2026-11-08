@@ -1960,6 +1960,7 @@ local function ahProtected(fn)
   M.hwCalls = M.hwCalls + 1
   if M.hwCalls > 1 then M.Violation("automation", fn .. ": more than one AH action in one click") return false end
   if not M.ah.open then M.Violation("api", fn .. " with the auction house closed") return false end
+  if M.inCombat then M.Violation("combat", fn .. " in combat (TreeAI never acts at the AH in combat)") return false end
   return true
 end
 local function ahInfo(a)
@@ -2869,7 +2870,7 @@ function M.ApplyForever(G)
     if not it then return nil end
     local d = M.items[it.id] or {}
     return { name = d.name, texture = 134400 + it.id, price = it.price or 0, stackCount = it.stack or 1,
-      numAvailable = -1, isPurchasable = true, isUsable = true, hasExtendedCost = false, currencyID = nil,
+      numAvailable = it.avail or -1, isPurchasable = true, isUsable = true, hasExtendedCost = false, currencyID = nil,
       spellID = nil, isQuestStartItem = false }
   end)
   stub(G.C_Minimap, "SetTracking", function(i, on) M.tracking = M.tracking or {} M.tracking[i] = on and true or false end)

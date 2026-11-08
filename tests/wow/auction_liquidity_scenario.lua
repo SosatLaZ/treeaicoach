@@ -137,7 +137,7 @@ return function(M, ctx)
   do local g = A.Gold() ctx.check(#A.plan == 1 and A.plan[1] == lin, ("cap 20 %%: planned %d total %s budget %s adj %s buy %s state %s"):format(#A.plan, g.total, g.budget, tostring(lin.adj), lin.buy, tostring(lin.state))) end
   A.BuildQueue()
   A.Refresh()
-  ctx.check(A.win.buyBtn:GetText():find("Acheter la meilleure offre %(1%)"), "buy button label: " .. tostring(A.win.buyBtn:GetText()))
+  ctx.check(A.win.buyBtn:GetText():find("^Acheter %(1%)"), "buy button label: " .. tostring(A.win.buyBtn:GetText()))
   ctx.check(A.win.hint:GetText():find("Prochaine action %(1/%d+%) : .*20 × Étoffe de lin"), "hint shows the next purchase: " .. A.win.hint:GetText())
 
   -- « Acheter la meilleure offre »: one protected call per click (modern: verify → buy/start → confirm)
