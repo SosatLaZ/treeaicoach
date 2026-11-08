@@ -1151,7 +1151,7 @@ function M.Install(flavor)
         local q = qAt(id)
         local out = {}
         for _, o in ipairs(q and q.objectives or {}) do
-          out[#out + 1] = { text = o.text, finished = o.done, numFulfilled = o.have, numRequired = o.need, type = "monster" }
+          out[#out + 1] = { text = o.text, finished = o.done, numFulfilled = o.have, numRequired = o.need, type = o.type or "monster" }
         end
         return out
       end,
@@ -1206,7 +1206,7 @@ function M.Install(flavor)
   G.GetQuestLogLeaderBoard = function(j, i)
     local q = M.quests[i or M.questSel or 1]
     local o = q and q.objectives and q.objectives[j]
-    if o then return o.text, "monster", o.done end
+    if o then return o.text, o.type or "monster", o.done end
   end
   G.SelectQuestLogEntry = function(i) M.questSel = i end
   G.GetQuestLogSelection = function() return M.questSel or 0 end

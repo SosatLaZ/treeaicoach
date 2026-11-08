@@ -375,7 +375,7 @@ function D.RefreshQuests()
   local first = Q.at < 0
   local diff = D.DiffQuests(Q.byId, byId)
   Q.byId, Q.list, Q.at = byId, list, now()
-  Q.objIndex = nil
+  Q.objIndex, Q.npcIdx = nil, nil
   if not first and diff.changed then
     for _, p in ipairs(diff.progress) do emit("progress", p) end
     emit("quests", diff)
@@ -389,28 +389,204 @@ D.QuestsSoon = questsSoon
 
 function D.Quests() if Q.at < 0 then D.RefreshQuests() end return Q.list, Q.byId end
 
--- index nom de monstre / objet (minuscules) -> objectif non fini (reconstruit à la demande)
+-- ------------------------------------------------------------------ vérité des données (agent DATA)
+-- Règle unique : un « tue X / ramasse Y / monstre de quête » ne vient QUE d'un objectif NON fini d'une quête
+-- présente dans le journal, retrouvée par son questID (jamais par son titre). Les noms ne servent qu'en repli,
+-- en correspondance EXACTE (après normalisation), et seulement pour les objectifs « monstre ».
+--- nom d'objectif / de monstre normalisé : « Ours gris tués : 3/5 » -> « ours gris »
+function D.Norm(s)
+  s = low(str(s) or "")
+  s = s:gsub("%d+%s*/%s*%d+", ""):gsub("^%s*%-%s*", ""):gsub("[%s:%.!]+$", ""):gsub("^%s+", "")
+  s = s:gsub("%s+tu[ée]+e?s?$", ""):gsub("%s+slain$", ""):gsub("%s+killed$", ""):gsub("%s+$", "")
+  return s
+end
+local MOBTYPE = { monster = true }
+-- index nom normalisé -> objectif « monstre » non fini (reconstruit à chaque relevé du journal)
 local function objIndex()
   if Q.objIndex then return Q.objIndex end
   local idx = {}
   for _, q in ipairs(Q.list) do
-    for _, o in ipairs(q.objectives) do
-      if not o.finished and o.name and #o.name >= 3 then
-        idx[#idx + 1] = { name = o.name, quest = q.title, questID = q.id, have = o.have, need = o.need, type = o.type }
+    if not q.complete then
+      for i, o in ipairs(q.objectives) do
+        local nm = D.Norm(o.name)
+        if not o.finished and #nm >= 3 then
+          local e = { name = nm, quest = q.title, questID = q.id, index = i, have = o.have, need = o.need, type = o.type }
+          local prev = idx[nm]
+          if not prev or ((e.need or 1) - (e.have or 0)) > ((prev.need or 1) - (prev.have or 0)) then idx[nm] = e end
+        end
       end
     end
   end
   Q.objIndex = idx
   return idx
 end
---- objectif non fini qui correspond à ce nom (monstre / objet), ou nil
-function D.ObjectiveFor(name)
-  name = low(str(name))
-  if name == "" then return nil end
-  for _, o in ipairs(objIndex()) do
-    if o.name == name or o.name:find(name, 1, true) or name:find(o.name, 1, true) then return o end
+--- objectif non fini dont le nom est EXACTEMENT ce monstre (types « monstre » ou inconnu), ou nil.
+--- kind = "any" accepte aussi les objectifs objet / objet du monde (morts par l'XP : non).
+function D.ObjectiveFor(name, kind)
+  local n = D.Norm(name)
+  if n == "" then return nil end
+  local o = objIndex()[n]
+  if not o then return nil end
+  if kind ~= "any" and o.type and not MOBTYPE[o.type] then return nil end
+  return o
+end
+--- quête du journal par ID (nil si absente) ; par titre seulement pour lire une infobulle (le titre seul)
+function D.InLog(qid) if Q.at < 0 then D.RefreshQuests() end return Q.byId[tonumber(qid) or -1] end
+function D.QuestByTitle(title)
+  title = str(title)
+  if not title then return nil end
+  if Q.at < 0 then D.RefreshQuests() end
+  local hit, n = nil, 0
+  for _, q in ipairs(Q.list) do if q.title == title then hit, n = q, n + 1 end end
+  return hit, n
+end
+
+-- Questie (lecture seule) : objectifs d'une quête du journal, dans l'ordre de Questie (créatures, objets du monde,
+-- objets, réputation, crédit de mort), associés aux objectifs du jeu : nom exact d'abord, puis rang si les
+-- comptes et les genres concordent. Une entrée sans association n'est JAMAIS montrée.
+local QZ = { obj = {}, n = 0 }
+local function questieDB()
+  local C = T.Compass
+  local db = type(C) == "table" and type(C.Questie) == "function" and try(C.Questie) or nil
+  return type(db) == "table" and type(db.QueryQuestSingle) == "function" and db or nil
+end
+D.QuestieDB = questieDB
+local KIND_OK = { monster = { monster = true, credit = true }, item = { item = true }, object = { object = true, item = true },
+  event = { credit = true, object = true, monster = true } }
+function D.QuestieObjectives(qid)
+  qid = tonumber(qid)
+  local db = qid and questieDB()
+  if not db then return nil end
+  local c = QZ.obj[qid]
+  if c then return c end
+  local objs = try(db.QueryQuestSingle, qid, "objectives")
+  local out = {}
+  if type(objs) == "table" then
+    local function nm(fn, id) return type(fn) == "function" and str(try(fn, id, "name")) or nil end
+    for _, e in ipairs(type(objs[1]) == "table" and objs[1] or {}) do
+      local id = type(e) == "table" and e[1] or e
+      if type(id) == "number" then
+        local npcName = nm(db.QueryNPCSingle, id)
+        out[#out + 1] = { kind = "monster", ids = { id }, name = (type(e) == "table" and str(e[2])) or npcName, alt = npcName }
+      end
+    end
+    for _, e in ipairs(type(objs[2]) == "table" and objs[2] or {}) do
+      local id = type(e) == "table" and e[1] or e
+      if type(id) == "number" then
+        out[#out + 1] = { kind = "object", obj = id, name = (type(e) == "table" and str(e[2])) or nm(db.QueryObjectSingle, id) }
+      end
+    end
+    for _, e in ipairs(type(objs[3]) == "table" and objs[3] or {}) do
+      local id = type(e) == "table" and e[1] or e
+      if type(id) == "number" then
+        out[#out + 1] = { kind = "item", item = id, name = nm(db.QueryItemSingle, id) or (T.API and T.API.ItemName and T.API.ItemName(id))
+          or (type(e) == "table" and str(e[2])) }
+      end
+    end
+    if type(objs[4]) == "table" and objs[4][1] then out[#out + 1] = { kind = "rep", name = nil } end
+    for _, e in ipairs(type(objs[5]) == "table" and objs[5] or {}) do
+      local ids = type(e) == "table" and e[1]
+      if type(ids) == "table" and type(ids[1]) == "number" then
+        local all = {}
+        for i, id in ipairs(ids) do if i <= 12 and type(id) == "number" then all[#all + 1] = id end end
+        if type(e[2]) == "number" then all[#all + 1] = e[2] end
+        local npcName = nm(db.QueryNPCSingle, type(e[2]) == "number" and e[2] or ids[1])
+        out[#out + 1] = { kind = "credit", ids = all, name = str(e[3]) or npcName, alt = npcName }
+      end
+    end
   end
+  QZ.n = QZ.n + 1
+  if QZ.n > 200 then QZ.obj, QZ.n = {}, 0 end
+  QZ.obj[qid] = out
+  return out
+end
+--- objectifs du jeu (liste {name|text, type, finished}) -> [rang du jeu] = entrée Questie (ou rien)
+function D.MapObjectives(qid, game)
+  local qz = D.QuestieObjectives(qid)
+  local map = {}
+  if not (qz and type(game) == "table") then return map end
+  local used = {}
+  local function compat(g, e) return not g.type or not KIND_OK[g.type] or KIND_OK[g.type][e.kind] or false end
+  for i, g in ipairs(game) do        -- 1. nom exact (normalisé), genre compatible
+    local gn = D.Norm(g.name or g.text)
+    for j, e in ipairs(qz) do
+      if not used[j] and gn ~= "" and (D.Norm(e.name) == gn or D.Norm(e.alt) == gn) and compat(g, e) then
+        map[i], used[j] = e, true break
+      end
+    end
+  end
+  local freeG, freeE = {}, {}
+  for i in ipairs(game) do if not map[i] then freeG[#freeG + 1] = i end end
+  for j in ipairs(qz) do if not used[j] then freeE[#freeE + 1] = j end end
+  if #game == #qz then                -- 2. même nombre : même rang (l'ordre de Questie suit celui du jeu)
+    for _, i in ipairs(freeG) do
+      if not used[i] and qz[i] and compat(game[i], qz[i]) then map[i], used[i] = qz[i], true end
+    end
+  elseif #freeG == 1 and #freeE == 1 and compat(game[freeG[1]], qz[freeE[1]]) and game[freeG[1]].type then
+    map[freeG[1]] = qz[freeE[1]]      -- 3. un seul de chaque côté, genre annoncé par le jeu et compatible
+  end
+  return map
+end
+
+-- monstre (ID de PNJ) -> objectif non fini qu'il sert : tué (créature / crédit) ou butin (objet, npcDrops Questie)
+local function npcIndex()
+  if Q.npcIdx then return Q.npcIdx end
+  local idx, db = {}, questieDB()
+  local budget = 600
+  local function put(npc, e)
+    local prev = idx[npc]
+    if not prev or (e.left or 0) > (prev.left or 0) then idx[npc] = e end
+  end
+  if db then
+    for _, q in ipairs(Q.list) do
+      if not q.complete and budget > 0 then
+        local map = D.MapObjectives(q.id, q.objectives)
+        for i, o in ipairs(q.objectives) do
+          local z = map[i]
+          if z and not o.finished then
+            local e = { quest = q.title, questID = q.id, index = i, obj = o.name, have = o.have, need = o.need,
+              left = math.max(0, (o.need or 1) - (o.have or 0)) }
+            if z.kind == "monster" or z.kind == "credit" then
+              for _, id in ipairs(z.ids or {}) do put(id, e) end
+            elseif z.kind == "item" and db.QueryItemSingle then
+              budget = budget - 1
+              local de = setmetatable({ item = z.item }, { __index = e })
+              for n, npc in ipairs(try(db.QueryItemSingle, z.item, "npcDrops") or {}) do
+                if n > 40 then break end
+                if type(npc) == "number" then put(npc, de) end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  Q.npcIdx = idx
+  return idx
+end
+--- objectif non fini d'une quête du journal que ce PNJ (ID) sert, ou nil : {quest, questID, index, obj, have, need, left, item?}
+function D.NpcObjective(npcID)
+  npcID = tonumber(npcID)
+  if not npcID then return nil end
+  if Q.at < 0 then D.RefreshQuests() end
+  return npcIndex()[npcID]
+end
+function D.NpcID(guid)
+  guid = str(guid)
+  if not guid then return nil end
+  local kind, id = guid:match("^(%a+)%-%d+%-%d+%-%d+%-%d+%-(%d+)")
+  if kind == "Creature" or kind == "Vehicle" then return tonumber(id) end
   return nil
+end
+--- signal du jeu : vrai / faux / nil (API absente, valeur secrète, ou jamais vue « vraie » cette session :
+--- une API qui répond toujours faux ne doit pas effacer les correspondances par ID)
+function D.GameRelated(unit)
+  local QL = G.C_QuestLog
+  if not (QL and QL.UnitIsRelatedToActiveQuest) then return nil end
+  local v = pub(try(QL.UnitIsRelatedToActiveQuest, unit))
+  if v then Q.relSeen = true return true end
+  if v == nil or not Q.relSeen then return nil end
+  return false
 end
 
 -- morts par le message d'XP (FR / EN) — compte de session par nom
@@ -438,21 +614,28 @@ end
 local P = { units = {}, at = -1e9 }
 D._p = P
 
---- infos de quête d'une unité, ou nil : {unit, name, guid, hostile, boss, related, quest, obj, have, need, left}
+--- infos de quête d'une unité, ou nil : {unit, name, guid, hostile, boss, related, quest, questID, obj, have, need, left, how}
+--- Ordre de confiance : signal du jeu (UnitIsRelatedToActiveQuest / UnitIsQuestBoss) > ID de PNJ d'un objectif
+--- non fini (Questie, par questID du journal) > nom EXACT d'un objectif « monstre » (seulement si le jeu ne dit pas non).
 function D.QuestUnit(a, b)
   local unit = type(a) == "string" and a or b
   if not (unit and on("questUnits")) or not try(G.UnitExists, unit) then return nil end
   if try(G.UnitIsPlayer, unit) or pub(try(G.UnitIsDead, unit)) then return nil end
-  local QL = G.C_QuestLog
-  local related = QL and QL.UnitIsRelatedToActiveQuest and pub(try(QL.UnitIsRelatedToActiveQuest, unit)) and true or false
+  local rel = D.GameRelated(unit)
   local boss = rawget(G, "UnitIsQuestBoss") and pub(try(G.UnitIsQuestBoss, unit)) and true or false
   local name = str(try(G.UnitName, unit))
-  local o = name and D.ObjectiveFor(name)
-  if not (related or boss or o) then return nil end
+  local guid = str(try(G.UnitGUID, unit))
+  local o, how = D.NpcObjective(D.NpcID(guid)), nil
+  if o then how = o.item and "drop" or "kill" end
+  if not o and name and rel ~= false then
+    o = D.ObjectiveFor(name)
+    if o then how = "kill" end
+  end
+  if not (rel or boss or o) then return nil end
   local hostile = pub(try(G.UnitCanAttack, "player", unit)) and true or false
-  local info = { unit = unit, name = name, guid = str(try(G.UnitGUID, unit)), hostile = hostile, boss = boss,
-    related = related, quest = o and o.quest, questID = o and o.questID, obj = o and o.name, have = o and o.have,
-    need = o and o.need }
+  local info = { unit = unit, name = name, guid = guid, hostile = hostile, boss = boss,
+    related = rel and true or false, quest = o and o.quest, questID = o and o.questID, obj = o and (o.obj or o.name),
+    have = o and o.have, need = o and o.need, how = how, item = o and o.item }
   info.left = (o and o.need and o.have) and math.max(0, o.need - o.have) or nil
   return info
 end
@@ -491,7 +674,8 @@ function D.QuestUnits()
   local out, perObj, left = {}, {}, 0
   for _, info in pairs(P.units) do
     out[#out + 1] = info
-    if info.obj and info.left and not perObj[info.obj] then perObj[info.obj] = true left = left + info.left end
+    local k = info.obj and (tostring(info.questID) .. ":" .. info.obj)
+    if k and info.left and not perObj[k] then perObj[k] = true left = left + info.left end
   end
   tsort(out, function(a, b)
     if (a.left or 0) ~= (b.left or 0) then return (a.left or 0) > (b.left or 0) end

@@ -419,6 +419,35 @@ local function starterName(db, id)
   return nil
 end
 
+-- DATA : sans db.IsDoable (LibQuestieDB, vieux Questie), on filtre nous-mêmes : faction / race (requiredRaces,
+-- masque 2^(raceID-1), 0 = toutes), classe (requiredClasses), déjà faite (IsQuestFlaggedCompleted), prérequis
+-- (preQuestSingle) faits, quête exclusive déjà faite (exclusiveTo). Sinon : quêtes de l'autre faction affichées.
+local function bit(mask, i)
+  mask = tonumber(mask) or 0
+  if mask <= 0 or not i or i < 1 then return true end
+  return math.floor(mask / 2 ^ (i - 1)) % 2 == 1
+end
+local function flagged(id)
+  local QL = _G.C_QuestLog
+  local f = (QL and QL.IsQuestFlaggedCompleted) or _G.IsQuestFlaggedCompleted
+  return f and try(f, id) and true or false
+end
+function M.Doable(db, id)
+  if db.IsDoable then return try(db.IsDoable, id) and true or false end
+  if flagged(id) then return false end
+  local _, _, raceID = try(_G.UnitRace, "player")
+  local _, _, classID = try(_G.UnitClass, "player")
+  if not bit(qq(db, id, "requiredRaces"), tonumber(raceID)) then return false end
+  if not bit(qq(db, id, "requiredClasses"), tonumber(classID)) then return false end
+  local pre = qq(db, id, "preQuestSingle")
+  for _, p in ipairs(type(pre) == "table" and pre or { pre }) do
+    if tonumber(p) and tonumber(p) > 0 and not flagged(tonumber(p)) then return false end
+  end
+  local ex = qq(db, id, "exclusiveTo")
+  for _, x in ipairs(type(ex) == "table" and ex or {}) do if tonumber(x) and flagged(tonumber(x)) then return false end end
+  return true
+end
+
 -- Quêtes disponibles (pas prises, faisables) dans la zone, + celles qui s'ouvrent au niveau suivant,
 -- + quêtes de donjon de ton niveau. Résultat mis en cache par (zone, niveau).
 local qCache = {}
@@ -447,17 +476,14 @@ function M.QuestieScan(force)
       local ql = tonumber(qq(db, id, "questLevel")) or rl
       if zname and low(zname) == zl then
         if rl == pl + 1 then
-          res.nextLevel[#res.nextLevel + 1] = { id = id, level = ql }
+          local _, _, raceID = try(_G.UnitRace, "player")
+          if bit(qq(db, id, "requiredRaces"), tonumber(raceID)) then res.nextLevel[#res.nextLevel + 1] = { id = id, level = ql } end
         elseif rl <= pl and ql > grey then
-          local ok = true
-          if db.IsDoable then ok = try(db.IsDoable, id) and true or false end
-          if ok then res.here[#res.here + 1] = { id = id, level = ql } end
+          if M.Doable(db, id) then res.here[#res.here + 1] = { id = id, level = ql } end
         end
       end
       if db.IsDungeonQuest and ql >= pl - 1 and ql <= pl + 8 and rl <= pl and try(db.IsDungeonQuest, id) then
-        local ok = true
-        if db.IsDoable then ok = try(db.IsDoable, id) and true or false end
-        if ok then res.dungeons[#res.dungeons + 1] = { id = id, level = ql, zone = zname } end
+        if M.Doable(db, id) then res.dungeons[#res.dungeons + 1] = { id = id, level = ql, zone = zname } end
       end
     end
   end
@@ -479,29 +505,29 @@ function M.QuestieScan(force)
   return res
 end
 
--- Qui lâche l'objet demandé (objectifs « objet » de la quête) : 2 noms max.
+-- Qui lâche l'objet demandé (objectifs « objet » NON finis de la quête du journal) : 2 noms max.
+local T2TYPE = { m = "monster", i = "item", o = "object", e = "event", r = "reputation" }
 function M.QuestieDrops(qid)
   local db = questieDB()
-  if not db then return nil end
-  local objs = qq(db, qid, "objectives")
-  local items = type(objs) == "table" and objs[3]
-  if type(items) ~= "table" then return nil end
+  local Dt = T.Detect
+  if not (db and db.QueryItemSingle and type(Dt) == "table" and type(Dt.MapObjectives) == "function") then return nil end
+  local q
+  for _, x in ipairs(M.lastList or {}) do if x.id == qid then q = x end end
+  if not q or q.complete then return nil end
+  local game = {}
+  for i, o in ipairs(q.obj or {}) do game[i] = { name = o.name, type = T2TYPE[o.t or ""] } end
+  local map = Dt.MapObjectives(qid, game)
   local out = {}
-  for _, it in ipairs(items) do
-    local itemID = type(it) == "table" and it[1] or it
-    if type(itemID) == "number" and db.QueryItemSingle then
-      local drops = try(db.QueryItemSingle, itemID, "npcDrops")
+  for i, o in ipairs(q.obj or {}) do
+    local z = map[i]
+    if z and z.kind == "item" and z.item and not o.finished then
       local names = {}
-      if type(drops) == "table" then
-        for _, npc in ipairs(drops) do
-          local nm = qn(db, npc, "name")
-          if nm then names[#names + 1] = nm end
-          if #names >= 2 then break end
-        end
+      for _, npc in ipairs(try(db.QueryItemSingle, z.item, "npcDrops") or {}) do
+        local nm = qn(db, npc, "name")
+        if nm then names[#names + 1] = nm end
+        if #names >= 2 then break end
       end
-      if #names > 0 then
-        out[#out + 1] = ((API.ItemName and API.ItemName(itemID)) or ("objet " .. itemID)) .. " : " .. table.concat(names, ", ")
-      end
+      if #names > 0 then out[#out + 1] = (o.name or ("objet " .. z.item)) .. " : " .. table.concat(names, ", ") end
     end
   end
   return (#out > 0) and table.concat(out, " ; ") or nil
@@ -521,7 +547,10 @@ function M.QuestieNext(qid)
   local name = qq(db, nx, "name")
   if not name then return nil end
   local giver = starterName(db, nx)
-  return ("Suite : « %s »%s"):format(name, giver and (" chez " .. giver) or ""), nx
+  -- DATA : niveau requis de la suite (Questie requiredLevel) quand tu ne l'as pas encore
+  local rl = tonumber(qq(db, nx, "requiredLevel"))
+  local lvl = (rl and rl > playerLevel()) and (" (dès le niv " .. rl .. ")") or ""
+  return ("Suite : « %s »%s%s"):format(name, giver and (" chez " .. giver) or "", lvl), nx
 end
 -- la quête est-elle dans le dernier relevé du journal ?
 function M.InLog(qid)
@@ -812,7 +841,7 @@ local function objectiveFor(name, mob)
       for _, o in ipairs(q.obj) do
         if not o.finished then
           local on = mob and mobName(o.name) or low(o.name)
-          if on == n or (#n >= 4 and on:find(n, 1, true) == 1) then return q, o end
+          if on == n then return q, o end   -- DATA : nom exact (« Ours » ne vaut plus « Ours gris vicieux »)
         end
       end
     end

@@ -43,7 +43,7 @@ return function(M, ctx)
   M.quests = {
     { header = ZONE },
     { title = "Sang de lion", level = 26, complete = false, xp = 2400,
-      objectives = { { text = "Sang de lion : 2/10", done = false, have = 2, need = 10 } } },
+      objectives = { { text = "Sang de lion : 2/10", done = false, have = 2, need = 10, type = "item" } } },
     { title = "Les ours de Hautebrande", level = 25, complete = false, xp = 2000,
       objectives = { { text = "Ours enragé tué : 7/8", done = false, have = 7, need = 8 } } },
     { title = "Le courrier", level = 24, complete = true, xp = 1500, objectives = {} },
@@ -116,7 +116,7 @@ return function(M, ctx)
   check(C.Current().questID == 1002, "SetQuestTarget")
 
   -- objective completes → auto-switch to the next target
-  M.quests[2].objectives[1] = { text = "Sang de lion : 10/10", done = true, have = 10, need = 10 }
+  M.quests[2].objectives[1] = { text = "Sang de lion : 10/10", done = true, have = 10, need = 10, type = "item" }
   M.quests[2].complete = true
   quests[1002].finishedBy = { { 9 } }
   Q.Update()
@@ -177,7 +177,7 @@ return function(M, ctx)
   TR.Update()
   check(sugg("Tu pars sans prendre : « Aide au fermier »"), "hub warning")
   -- tooltip text for a mob dropping a needed item (quest 1002 done → reopen it)
-  M.quests[2].objectives[1] = { text = "Sang de lion : 2/10", done = false, have = 2, need = 10 }
+  M.quests[2].objectives[1] = { text = "Sang de lion : 2/10", done = false, have = 2, need = 10, type = "item" }
   M.quests[2].complete = false
   Q.Update()
   TR.Update()

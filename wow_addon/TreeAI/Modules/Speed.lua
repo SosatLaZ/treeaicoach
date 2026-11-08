@@ -80,6 +80,33 @@ function E.DeathText(gain, sick)
 end
 function E.HearthText(gain) return fmt("Pierre de foyer maintenant : %s gagnées", E.Saved(gain)) end
 
+-- course au corps (agent DATA) : « Cadavre : 230 m au NE (≈ 40 s) »
+local DIRS = { "N", "NO", "O", "SO", "S", "SE", "E", "NE" }          -- cap 0 = nord, sens anti-horaire
+local ART = { N = "au", NO = "au", O = "à l'", SO = "au", S = "au", SE = "au", E = "à l'", NE = "au" }
+function E.Cardinal(bearing)
+  if not bearing then return nil end
+  return DIRS[floor(((bearing % (2 * math.pi)) + math.pi / 8) / (math.pi / 4)) % 8 + 1]
+end
+function E.Meters(yd)
+  local m = floor(yd * 0.9144 / 10 + 0.5) * 10
+  if m >= 1000 then return (fmt("%.1f km", m / 1000):gsub("%.", ",")) end
+  return m .. " m"
+end
+function E.Eta(sec)
+  sec = max(0, tonumber(sec) or 0)
+  if sec < 60 then return fmt("%d s", max(5, floor(sec / 5 + 0.5) * 5)) end
+  return fmt("%d min", floor(sec / 60 + 0.5))
+end
+function E.CorpseText(yd, bearing, speed)
+  speed = (tonumber(speed) or 7) > 0 and speed or 7
+  local d = E.Cardinal(bearing)
+  local where = d and (" " .. ART[d] .. (ART[d] == "à l'" and "" or " ") .. d) or ""
+  if yd < 15 then return "Cadavre : ici, relève-toi" end
+  return fmt("Cadavre : %s%s (≈ %s)", E.Meters(yd), where, E.Eta(yd / speed))
+end
+E.RES_RANGE = 38       -- yd : on peut se relever jusqu'à ~39 yd du corps
+E.SAFE_RANGE = 25      -- yd : ennemi plus près que ça du corps = relève-toi à l'écart
+
 -- ===================================================================== jeu
 local function Geo() return T.Geo end
 local function playerPos() local g = Geo() if g and g.Player then return g.Player() end end
@@ -122,25 +149,140 @@ local function hearthReady()
   return (s + (d or 0) - now()) <= 0
 end
 
-function S:CheckDeath(st, step, map, x, y)
-  if not (cfg("death") and st.ghost and step) then self:Clear("death") return end
+-- ===================================================================== course au corps (agent DATA)
+-- Fantôme : UNE ligne en tête de « Maintenant » (« Cadavre : 230 m au NE (≈ 40 s) »), la boussole vise le corps
+-- (contrat unique Compass:SetTarget, source "corpse" : le corps passe avant l'itinéraire), le choix gardien des
+-- esprits / corps (moteur ci-dessus) dans la même ligne, et l'endroit sûr pour se relever (barres de nom ennemies
+-- vues près du corps). Tout s'efface au retour à la vie (PLAYER_ALIVE vivant / PLAYER_UNGHOST).
+local function xyOf(v)
+  if type(v) ~= "table" then return nil end
+  if type(v.GetXY) == "function" then return try(v.GetXY, v) end
+  return v.x, v.y
+end
+--- position du corps en % (map, x, y) : C_DeathInfo sur la carte courante, puis sur celle de la mort ; sinon
+--- l'endroit noté à PLAYER_DEAD.
+function S:CorpsePos(map)
   local f = C("C_DeathInfo", "GetCorpseMapPosition")
-  local v = f and try(f, map)
-  local cx, cy
-  if type(v) == "table" then
-    if v.GetXY then cx, cy = try(v.GetXY, v) else cx, cy = v.x, v.y end
+  local d = self.dead
+  for _, m in ipairs({ map, d and d.map }) do
+    if f and m then
+      local cx, cy = xyOf(try(f, m))
+      if tonumber(cx) and tonumber(cy) and (cx > 0 or cy > 0) then return m, cx * 100, cy * 100 end
+    end
   end
-  if not (tonumber(cx) and tonumber(cy)) then self:Clear("death") return end
-  cx, cy = cx * 100, cy * 100
-  local dMC = dist(map, x, y, map, cx, cy)
-  local dCN = dist(map, cx, cy, step.map, step.x, step.y)
-  local dMN = dist(map, x, y, step.map, step.x, step.y)
-  if not (dMC and dCN and dMN) then self:Clear("death") return end
-  local lvl = try(G("UnitLevel"), "player") or 1
-  local choice, gain, sick = E.DeathChoice(lvl, dMC, dCN, dMN, runSpeed(), step.k == "obj" or step.k == "grind")
-  if choice == "spirit" and gain >= E.DEATH_MIN_GAIN then
-    self:Suggest("death", E.DeathText(gain, sick), 2, { ttl = 30, death = true, sound = false,
-      tooltip = "Ressuscite ici plutôt que courir au corps. Calcul : fantôme → étape suivante contre fantôme → corps → étape suivante, mal de résurrection compris." })
+  if d and d.map then return d.map, d.x, d.y end
+  return nil
+end
+local function bearing(m1, x1, y1, m2, x2, y2)
+  local g = Geo()
+  if g and g.World then
+    local a1, b1, c1 = g.World(m1, x1, y1)
+    local a2, b2, c2 = g.World(m2, x2, y2)
+    if a1 and a2 and c1 == c2 then return math.atan2(b2 - b1, a2 - a1) end
+  end
+  if m1 ~= m2 then return nil end
+  return math.atan2(-(x2 - x1) * 3, -(y2 - y1) * 2)   -- zone ~3000 × 2000 yd : direction juste
+end
+-- ennemis vivants visibles à ≤ ~25 yd (barres de nom ; API.Distance : UnitPosition ou portée d'interaction)
+function S:HostilesNear(range)
+  local NP, API = G("C_NamePlate"), T.API
+  local n = 0
+  if not (NP and NP.GetNamePlates and API and API.Distance) then return nil end
+  for _, p in ipairs(try(NP.GetNamePlates) or {}) do
+    local u = type(p) == "table" and (p.namePlateUnitToken or (type(p.UnitFrame) == "table" and p.UnitFrame.unit))
+    if type(u) == "string" and try(G("UnitCanAttack"), "player", u) and not try(G("UnitIsDead"), u)
+      and not try(G("UnitIsPlayer"), u) then
+      local d = API.Distance(u)
+      if d and d <= (range or E.SAFE_RANGE) + 3 then n = n + 1 end
+    end
+  end
+  return n
+end
+function S:OnDead()
+  local map, x, y = playerPos()
+  self.dead = map and { map = map, x = x, y = y, t = now(), foes = self:HostilesNear() } or nil
+end
+local function compass() local Cm = T.Compass return type(Cm) == "table" and Cm or nil end
+function S:AimCorpse(map, x, y)
+  local Cm = compass()
+  if not (Cm and type(Cm.SetTarget) == "function") then return end
+  local a = self.aim
+  if a and a.map == map and math.abs(a.x - x) < 0.05 and math.abs(a.y - y) < 0.05 then return end
+  local cur = Cm.char and Cm.char.custom
+  if not a then   -- point perso du joueur gardé, rendu au retour à la vie
+    self.prevCustom = (type(cur) == "table" and cur.source ~= "corpse") and cur or false
+  end
+  local ok = try(Cm.SetTarget, Cm, { mapID = map, x = x / 100, y = y / 100, label = "Ton cadavre", source = "corpse" })
+  if ok then self.aim = { map = map, x = x, y = y } end
+end
+function S:ReleaseCorpse()
+  self:Clear("corpse")
+  self:Clear("death")
+  self.dead = nil
+  local Cm = compass()
+  if self.aim and Cm and Cm.char then
+    local cur = Cm.char.custom
+    if type(cur) == "table" and cur.source == "corpse" then
+      if self.prevCustom then
+        Cm.char.custom = self.prevCustom
+        if type(Cm.Rebuild) == "function" then try(Cm.Rebuild) end
+        if type(Cm.Refresh) == "function" then try(Cm.Refresh) end
+      elseif type(Cm.ClearWaypoint) == "function" then try(Cm.ClearWaypoint) end
+    end
+    if type(Cm.Clear) == "function" then try(Cm.Clear, Cm, "target") end
+  end
+  self.aim, self.prevCustom = nil, nil
+end
+
+function S:CheckDeath(st, step, map, x, y)
+  if not st.ghost then
+    if self.aim or self.dead and not st.dead then self:ReleaseCorpse() end
+    self:Clear("corpse") self:Clear("death")
+    return
+  end
+  local cm, cx, cy = self:CorpsePos(map)
+  local dMC = cm and dist(map, x, y, cm, cx, cy)
+  if not dMC then self:Clear("corpse") self:Clear("death") return end
+  self:AimCorpse(cm, cx, cy)
+  local speed = runSpeed()
+  local text = E.CorpseText(dMC, bearing(map, x, y, cm, cx, cy), speed)
+  local tips = { "Clic : la boussole vise ton corps." }
+  -- gardien des esprits ou course au corps (selon l'étape suivante du trajet)
+  local advice
+  if cfg("death") and step then
+    local dCN = dist(cm, cx, cy, step.map, step.x, step.y)
+    local dMN = dist(map, x, y, step.map, step.x, step.y)
+    if dCN and dMN then
+      local lvl = try(G("UnitLevel"), "player") or 1
+      local choice, gain, sick = E.DeathChoice(lvl, dMC, dCN, dMN, speed, step.k == "obj" or step.k == "grind")
+      if choice == "spirit" and gain >= E.DEATH_MIN_GAIN then
+        advice = E.DeathText(gain, sick)
+        tips[#tips + 1] = advice .. " — fantôme → étape suivante contre fantôme → corps → étape suivante, mal de résurrection compris."
+      elseif sick > 0 then
+        tips[#tips + 1] = fmt("Cours au corps : le gardien des esprits coûte %d min de mal de résurrection.", floor(sick / 60 + 0.5))
+      end
+    end
+  end
+  -- endroit sûr : ennemis vus près du corps (barres de nom quand tu y es, sinon au moment de la mort)
+  if dMC <= E.RES_RANGE + 10 then
+    local foes = self:HostilesNear()
+    if foes and foes > 0 then
+      text = text .. fmt(" · %d ennemi%s tout près : relève-toi à l'écart", foes, foes > 1 and "s" or "")
+    elseif foes == 0 and dMC >= 15 then
+      text = text .. " · coin sûr : relève-toi"
+    end
+  elseif self.dead and (self.dead.foes or 0) > 0 then
+    tips[#tips + 1] = fmt("%d ennemi%s près du corps à ta mort : relève-toi en bordure (jusqu'à ~35 m du corps).",
+      self.dead.foes, self.dead.foes > 1 and "s" or "")
+  end
+  if advice then text = text .. " — mieux : gardien des esprits" end
+  local aim = self.aim
+  self:Suggest("corpse", text, 2, { ttl = 8, death = true, sound = false, cooldown = 600, topic = "corpse",
+    tooltip = table.concat(tips, "\n"),
+    onClick = function() if aim then S.aim = nil S:AimCorpse(aim.map, aim.x, aim.y) end end })
+  if advice then
+    self:Suggest("death", advice, 2, { ttl = 30, death = true, sound = false, tab = "info",
+      tooltip = "Ressuscite au gardien des esprits plutôt que courir au corps." })
   else
     self:Clear("death")
   end
@@ -164,11 +306,15 @@ function S:CheckHearth(st, step, map, x, y)
 end
 
 function S:Tick()
-  if T.InCombat and T:InCombat() then return end
   local st = (T.PlayerState and T:PlayerState()) or {}
+  if T.InCombat and T:InCombat() and not st.ghost then return end
   local map, x, y = playerPos()
   local step = nextStep()
-  if not (map and x and y) then self:Clear("death"); self:Clear("hearth") return end
+  if not (map and x and y) then
+    self:Clear("hearth")
+    if not st.ghost then self:CheckDeath(st, nil) end
+    return
+  end
   self:CheckDeath(st, step, map, x, y)
   self:CheckHearth(st, step, map, x, y)
 end
@@ -187,9 +333,21 @@ function S:OnEnable()
   self:RegisterEvent("ZONE_CHANGED_NEW_AREA", arrived)
   self:RegisterEvent("PLAYER_ENTERING_WORLD", arrived)
   self:RegisterEvent("ZONE_CHANGED", arrived)
-  self.ticker = T:NewTicker(3, function() S:Tick() end)
+  -- course au corps : la ligne apparaît dès la libération, s'efface dès le retour à la vie
+  self:RegisterEvent("PLAYER_DEAD", function() S:OnDead() end)
+  local function state()
+    if T.InvalidatePlayerState then T:InvalidatePlayerState() end
+    if not try(G("UnitIsDeadOrGhost"), "player") then S:ReleaseCorpse() else S:Tick() end
+  end
+  self:RegisterEvent("PLAYER_ALIVE", state)
+  self:RegisterEvent("PLAYER_UNGHOST", state)
+  self.ticker = T:NewTicker(1, function()
+    local ps = T.PlayerState and T:PlayerState()
+    if (ps and ps.ghost) or S.aim or now() - (S._tickAt or -1e9) >= 3 then S._tickAt = now() S:Tick() end
+  end)
 end
 function S:OnDisable()
   if self.ticker then self.ticker:Cancel() end
-  self:Clear("death"); self:Clear("hearth")
+  self:ReleaseCorpse()
+  self:Clear("hearth")
 end

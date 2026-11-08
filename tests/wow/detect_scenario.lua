@@ -105,7 +105,12 @@ return function(M, ctx)
   local QL = rawget(_G, "C_QuestLog") or {}
   rawset(_G, "C_QuestLog", QL)
   local oldRel = QL.UnitIsRelatedToActiveQuest
-  QL.UnitIsRelatedToActiveQuest = function(u) return u == "nameplate2" end
+  -- the game's own signal wins: nameplate1 (bear) and nameplate2 (boar) are related; a same-named bear the
+  -- game says is NOT related (nameplate4, once the API has proven it answers « true ») gets no badge (DATA)
+  QL.UnitIsRelatedToActiveQuest = function(u)
+    local bear = M.quests[2] and M.quests[2].id == 2002 and not M.quests[2].objectives[1].done
+    return u == "nameplate2" or (u == "nameplate1" and bear)
+  end
   M.units.nameplate1 = { name = "Ours enragé", guid = "Creature-0-0-0-0-3001-1", hostile = true, level = 25 }
   M.units.nameplate2 = { name = "Sanglier balafré", guid = "Creature-0-0-0-0-3010-1", hostile = true, level = 25 }
   M.units.nameplate3 = { name = "Lapin", guid = "Creature-0-0-0-0-721-2", hostile = false, level = 1 }
@@ -119,6 +124,11 @@ return function(M, ctx)
   local q2 = D:QuestUnit("nameplate2")
   ctx.check(q2 and q2.related and not q2.quest, "UnitIsRelatedToActiveQuest unit (no name match)")
   ctx.check(D:QuestUnit("nameplate3") == nil, "unrelated critter ignored")
+  M.units.nameplate4 = { name = "Ours enragé", guid = "Creature-0-0-0-0-3099-1", hostile = true, level = 25 }
+  ctx.check(D:QuestUnit("nameplate4") == nil, "DATA: game says unrelated -> no name-match badge")
+  M.units.nameplate4 = { name = "Ours", guid = "Creature-0-0-0-0-3098-1", hostile = true, level = 25 }
+  ctx.check(D.ObjectiveFor("Ours") == nil and D.ObjectiveFor("Ours enragé") ~= nil, "DATA: exact names only (« Ours » ≠ « Ours enragé »)")
+  M.units.nameplate4 = nil
   ctx.check(count("questunits") >= 1, "questunits event")
   if H and H.UpdatePlate then
     H.db.plates = true

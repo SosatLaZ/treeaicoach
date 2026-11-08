@@ -1166,6 +1166,9 @@ function R.CorpseText(meters, level)
 end
 function R.CorpseLine()
   if not (R.char and try(_G.UnitIsGhost, "player")) then return end
+  -- un seul propriétaire de la course au corps : Speed (ligne + boussole) ; Radar garde son point « Ton corps »
+  local Sp = T.Speed
+  if type(Sp) == "table" and Sp.IsEnabled and Sp:IsEnabled() then R:Clear("corpse") return end
   local d, me = R.char.death, R.Me()
   if type(d) ~= "table" or not me or me.c ~= d.c or not (d.n and me.n) then R:Clear("corpse") return end
   local yd = sqrt((d.n - me.n) ^ 2 + (d.w - me.w) ^ 2)

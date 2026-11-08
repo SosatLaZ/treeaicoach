@@ -485,7 +485,7 @@ local function objectives()
   for _, q in ipairs(Q and Q.lastList or {}) do
     if not q.complete then
       for _, o in ipairs(q.obj or {}) do
-        if not o.finished and (o.need or 1) > 1 then
+        if not o.finished and (o.need or 1) > 1 and (o.t == nil or o.t == "i") then   -- DATA : objets seulement
           local mob, rate = M.BestSource(o.name)
           if mob then out[#out + 1] = { name = o.name, have = o.have, need = o.need, mob = mob, rate = rate } end
         end

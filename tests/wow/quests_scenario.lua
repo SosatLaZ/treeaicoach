@@ -13,7 +13,7 @@ return function(M, ctx)
   M.quests = {
     { header = ZONE },
     { title = "Sang de lion", level = 26, complete = false, xp = 2400, item = 9001,
-      objectives = { { text = "Sang de lion : 2/10", done = false, have = 2, need = 10 } } },
+      objectives = { { text = "Sang de lion : 2/10", done = false, have = 2, need = 10, type = "item" } } },
     { title = "Les ours de Hautebrande", level = 25, complete = false, xp = 2000,
       objectives = { { text = "Ours enragé tué : 7/8", done = false, have = 7, need = 8 } } },
     { title = "Le courrier", level = 24, complete = true, xp = 1500, objectives = {} },
@@ -43,7 +43,7 @@ return function(M, ctx)
   local n, h, nn = Q.ParseObjective("2/10 Sang de lion")
   ctx.check(n == "Sang de lion" and h == 2 and nn == 10, "modern objective format")
   -- progress toast
-  M.quests[2].objectives[1] = { text = "Sang de lion : 3/10", done = false, have = 3, need = 10 }
+  M.quests[2].objectives[1] = { text = "Sang de lion : 3/10", done = false, have = 3, need = 10, type = "item" }
   Q.Update()
   local toast
   for _, s in ipairs(T:GetSuggestions()) do if s.text == "Sang de lion : 3/10" then toast = s end end
