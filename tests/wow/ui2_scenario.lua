@@ -93,6 +93,7 @@ return function(M, ctx)
       if f and f:IsShown() then f:Hide() end
     end
   end
+  do local w0 = T:GetWizard(); if w0 and w0:IsShown() then w0:Hide() end end  -- 1st-launch wizard may already be open
   T:ShowWizard(1)
   local wiz = T:GetWizard()
   local wd = Th:GetWindow(wiz)
