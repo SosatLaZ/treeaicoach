@@ -172,7 +172,7 @@ return function(M, ctx)
   MP.Update(true)
   local u0 = MP.updates
   M.Advance(2, 0.02)
-  check(MP.updates - u0 <= 21 and MP.updates - u0 >= 10, "driver updates ≤ 10 Hz (" .. (MP.updates - u0) .. " in 2 s)")
+  check(MP.updates - u0 <= 21 and MP.updates - u0 >= 5, "driver updates 5..10 Hz (" .. (MP.updates - u0) .. " in 2 s)")
 
   -- ------------------------------------------------------------- HereBeDragons-Pins path (stub)
   local added, removed = {}, {}

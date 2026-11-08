@@ -7,8 +7,10 @@ return function(M, ctx)
   local function mod(n) return T.modules[n] end
   local function has(list, v) for _, x in ipairs(list) do if x == v then return true end end return false end
 
-  check(T:ModuleProfile() == "essentiel" and T:Lite(), "new player: essentiel profile (" .. tostring(T:ModuleProfile()) .. ")")
-  check(TreeAIDB.profileV == T.PROFILE_V, "profile applied once (version flag)")
+  -- (3.9.5) new players keep everything on; « essentiel » is opt-in
+  check(TreeAIDB.profileV == T.PROFILE_V, "profile version flag set once")
+  T:SetModuleProfile("essentiel")
+  check(T:ModuleProfile() == "essentiel" and T:Lite(), "essentiel profile on request")
   for _, n in ipairs({ "Boost", "Fight", "HunterPro", "Comfort", "Pro", "Economy", "Session", "Errands", "Gear",
     "Talents", "Prof", "PvP", "Radar", "SafePath", "Binds", "Leveling", "Inventory", "Classes", "Predict" }) do
     local m = mod(n)
@@ -26,6 +28,8 @@ return function(M, ctx)
   if mod("Hunter") then check((mod("Hunter")._active == true) == (T:PlayerClass() == "HUNTER"), "Hunter only for hunters") end
 
   -- notice (one line, clickable « Tout réactiver »)
+  T._liteNotice = true
+  T:_LiteNotice()
   M.Advance(4, 0.5)
   local lines = T:GetTabLines("now")
   local notice

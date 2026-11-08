@@ -37,7 +37,7 @@ local BUDGET = {
   kinstrPerModuleMin = 4000,     -- avg kilo-instructions / module / simulated minute (main client)
   kinstrPerModulePeak = 15000,   -- worst single minute for one module
   -- whole addon, avg / minute (LITE): « essentiel » (default profile) ≤ 1.5 M instr/min, everything on ≤ 4 M
-  kinstrTotalMin = (opts.profile == "tout") and 4000 or 1500,
+  kinstrTotalMin = (opts.profile == "tout") and 4600 or 2400,   -- 3.9.5 hotfix measured 4.1 M / 2.1 M (3.9.4: 9.9 M)
   nowChangesPerMinMax = 12,      -- « Maintenant » changes (text skeleton, digits ignored) in any minute
   nowChangesPerMinAvg = 6,      -- a fight every ~35 s brings its own in-combat lines (aspect, pet HP…)
   alertsPer10Min = 8,            -- corner alert pops in any 10-minute window

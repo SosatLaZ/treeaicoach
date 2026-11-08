@@ -1084,6 +1084,9 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   PvP = { lite = false, combat = true, desc = "JcJ : aides contre les joueurs" },
   Radar = { lite = false, desc = "Radar rond des objectifs" },
   SafePath = { lite = false, desc = "Chemin sûr : évite les monstres" },
+  Edge = { lite = false, desc = "Astuces avancées (petits avantages)" },
+  Detect = { lite = true, desc = "Détection : rares, trésors, monstres de quête, services proches" },
+  MinimapPins = { lite = true, desc = "Points sur la minimap (ce que Questie ne montre pas)" },
   Binds = { lite = false, desc = "Raccourcis clavier conseillés" },
   Leveling = { lite = false, desc = "Montée de niveau : zones, rythme" },
   Inventory = { lite = false, desc = "Inventaire : tri, objets inutiles" },
@@ -1174,8 +1177,7 @@ function TreeAI:_ApplyProfileOnce()
   if type(db) ~= "table" then return end
   if (tonumber(db.profileV) or 0) >= self.PROFILE_V then return end
   db.profileV = self.PROFILE_V
-  self:SetModuleProfile("essentiel")
-  self._liteNotice = true
+  -- (3.9.5) le joueur veut TOUT : on garde tout allumé (les gains de perf restent) ; « essentiel » reste au choix
 end
 
 function TreeAI:_LiteNotice()
