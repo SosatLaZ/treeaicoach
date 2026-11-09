@@ -137,10 +137,11 @@ return function(M, ctx)
   M.quests[2].objectives[2] = { text = "Griffe d'ours : 5/5", done = true, have = 5, need = 5, type = "item" }
   M.quests[2].complete = true
   ctx.fire("QUEST_LOG_UPDATE")
-  M.Advance(1)
+  M.Advance(4)   -- (4.3.6) les réactions au journal sont regroupées 1,5 s après le dernier évènement
   if Q and Q.Update then Q.Update() end
   _, info = H.Plates()
-  check(not info.nameplate2 and not Tr.NeededDrops()["ours noir"], "quest complete: drop badge + drop line gone")
+  check(not info.nameplate2, "quest complete: drop badge gone")
+  check(not Tr.NeededDrops()["ours noir"], "quest complete: drop line gone")
   -- quest removed from the log
   table.remove(M.quests, 2)
   ctx.fire("QUEST_REMOVED", 2010)

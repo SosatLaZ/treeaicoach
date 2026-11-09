@@ -1381,13 +1381,16 @@ function M.UpdateCounts()
         local h, n = read(e)
         if h then
           if h > (tonumber(e.have) or 0) then bumped[e.key] = tnow end
+          if n and h >= n and (tonumber(e.have) or 0) < n then M._filled = true end   -- objectif rempli : vraie relecture
           lastHave[e.key] = h
           e.have, e.need = h, n or e.need
         end
       end
     end
   end
+  M._filled = false
   fix(D.byName) fix(D.mobName) fix(D.mobNpc)
+  if M._filled and M.Schedule then M.Schedule("rebuild", 0.2) end
   for unit in pairs(plates) do M.UpdatePlate(unit) end
   M.UpdateTarget()
   M.countsCost = clock() - t0
@@ -1436,8 +1439,12 @@ function M:OnEnable()
   self:RegisterEvent("BAG_UPDATE_DELAYED", function() schedule("bags", 0.05) schedule("tab", 2) end)
   -- (V5H) compteur qui avance : nombres seulement (0,1 s) ; quête / objectif rempli : relecture complète (0,8 s)
   local function logChanged()
-    local sig = T.QuestLogSig and T:QuestLogSig()
-    if sig and sig == M._logSig and not pending.rebuild then schedule("counts", 0.1) return end
+    local sig = T.QuestLogSig and T:QuestLogSig(true)   -- frais : l'ordre des évènements ne doit pas servir un vieux cache
+    if sig and sig == M._logSig and not pending.rebuild then
+      schedule("counts", 0.1)
+      schedule("rebuild", 3)   -- filet : un client qui cache les compteurs (Forever) — au plus une relecture par rafale
+      return
+    end
     M._logSig = sig
     schedule("rebuild", 0.8)
   end

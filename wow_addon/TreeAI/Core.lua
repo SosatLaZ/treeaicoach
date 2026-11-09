@@ -16,7 +16,7 @@ local TreeAI = _G.TreeAI or {}
 _G.TreeAI = TreeAI
 
 TreeAI.name = ADDON_NAME
-TreeAI.version = "4.3.5"
+TreeAI.version = "4.3.6"
 TreeAI.SCHEMA = 1
 TreeAI.PREFIX = "TREEAI"
 TreeAI.PRIO_INFO, TreeAI.PRIO_TIP, TreeAI.PRIO_URGENT = 1, 2, 3
@@ -791,9 +791,9 @@ TreeAI._questGen = 0
 function TreeAI:QuestGen() return self._questGen end
 --- (4.3.3 Planner → 4.3.6 V5H, partagée) signature légère du journal : quêtes + finies + objectifs REMPLIS (pas les
 --- compteurs 4/6 → 5/6) ; lue une fois par changement du journal (mémo sur T:QuestGen), nil = illisible
-function TreeAI:QuestLogSig()
+function TreeAI:QuestLogSig(fresh)
   local m = self._qsig
-  if m and m.gen == self._questGen then return m.sig end
+  if not fresh and m and m.gen == self._questGen then return m.sig end
   local parts, ok = {}, false
   local QL = rawget(_G, "C_QuestLog")
   if QL and QL.GetNumQuestLogEntries and QL.GetInfo then

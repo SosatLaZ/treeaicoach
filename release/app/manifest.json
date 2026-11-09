@@ -1,25 +1,25 @@
 {
- "version": "4.3.5",
+ "version": "4.3.6",
  "exe": "TreeAICoach-app.exe",
- "sha256": "da904c6de8138fc640ff3dddac425384719bf276c5b421d0baae36ae8dea2be7",
+ "sha256": "44f963bf3d8b2086a3948b640be3b0d343174b0ab3baba236c5879dbb9324937",
  "chunks": [
   {
-   "name": "4.3.5/part-01.zip",
-   "size": 88058601,
-   "sha256": "beb9fed5a7703ce7167b632fb926d8651809381d1c300e2f33ed32225f784251",
+   "name": "4.3.6/part-01.zip",
+   "size": 88058712,
+   "sha256": "84475841694863cdf08c3cdf33d6a4a57e8d1daa5e02d29e455de9312e918111",
    "files": 127
   },
   {
-   "name": "4.3.5/part-02.zip",
-   "size": 14201900,
-   "sha256": "bbf7e40c609989e91de8bdc37cc0fc378bd1f91308c67564053d9ab17e9fd879",
+   "name": "4.3.6/part-02.zip",
+   "size": 14206509,
+   "sha256": "ed09ebc9f54bf9b65936d8f4baec4f2f30e40bb98a1d5356a94404eb9411dfa9",
    "files": 688
   }
  ],
- "total_size": 102260501,
+ "total_size": 102265221,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "TreeAI 4.3.5 : qu\u00eates prises v\u00e9rifi\u00e9es, qu\u00eates fant\u00f4mes retir\u00e9es, mode Monter vite, zone gard\u00e9e, XP/min, potions jamais vendues."
+ "notes": "TreeAI 4.3.6 : moins de lags (qu\u00eates, objectifs), boutons rapides toujours visibles, macros plus claires."
 }

@@ -3,6 +3,14 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 4.3.6 · 9 novembre 2026
+
+- **Moins de lags** : prendre une quête, la suivre, tuer un monstre de quête, remplir un objectif → un seul calcul
+  regroupé (pire image 2-4 ms mesurée) ; « reste à tuer » sur les monstres mis à jour à chaque kill.
+- **Boutons rapides** toujours à l'écran (position hors écran oubliée, `/tai barre` pour les remettre).
+- Macros chasseur renommées et plus claires (TAI Feindre, TAI Pièges, icônes) ; en combat, cible / munitions /
+  familier continuent d'être suivis.
+
 ## 4.3.5 · 9 novembre 2026
 
 - « Prendre » : validé seulement quand la quête est dans ton journal (« Prends la quête » tant qu'elle n'y est pas).
