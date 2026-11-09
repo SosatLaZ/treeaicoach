@@ -8,7 +8,7 @@ if type(ADDON_NAME) ~= "string" then ADDON_NAME = "TreeAI" end
 local _G = _G
 local type, pairs, ipairs, tostring, tonumber, select = type, pairs, ipairs, tostring, tonumber, select
 local pcall, setmetatable, next = pcall, setmetatable, next
-local tinsert, tremove, tsort, tconcat = table.insert, table.remove, table.sort, table.concat
+local tremove, tsort, tconcat = table.remove, table.sort, table.concat
 local strsub, strfind, strgsub, strformat, strbyte, strchar = string.sub, string.find, string.gsub, string.format, string.byte, string.char
 local mmax, mmin = math.max, math.min
 
@@ -590,6 +590,7 @@ local MO = { at = -1e9, acc = 0, wakers = {}, still = 3 }
 local dueBuf = {}
 local function byNext(a, b) return a.next < b.next end
 local runSlices, slicePending   -- file « tranches » (rafraîchissement auto) : voir StartAutoRefresh
+local SP = { q = {}, h = 1, n = 0 }   -- (4.4 SMART) T:Spread : un travail par image (une seule locale : plafond de 200)
 local function schedStep(elapsed)
   local t = now()
   -- image très longue (≥ 0,5 s : chargement, tests à pas d'1 s) : rien n'est retardé, comme avant
@@ -643,7 +644,20 @@ local function schedStep(elapsed)
     end
     if m < schedNext then schedNext = m end
   end
-  if runSlices then runSlices(jobs, t0) end
+  if runSlices then jobs = runSlices(jobs, t0) or jobs end
+  -- (4.4 SMART) file « un par image » (T:Spread) : un travail seulement dans une image restée sans travail lourd
+  if SP.h <= SP.n and (jobs == 0 or coarse) then
+    local e = SP.q[SP.h]
+    SP.q[SP.h] = nil
+    SP.h = SP.h + 1
+    if SP.h > SP.n then SP.h, SP.n = 1, 0 end
+    if not (e.owner and e.owner._suspended) then
+      local prev = TreeAI._ctx
+      TreeAI._ctx = e.ctx
+      runAs(e.owner, e.fn, e.a1, e.a2, e.a3, e.a4)
+      TreeAI._ctx = prev
+    end
+  end
 end
 TreeAI._SchedStep = schedStep   -- tests
 
@@ -690,7 +704,7 @@ local function ensureSched()
       f:SetScript("OnUpdate", function(_, elapsed)
         local a = MO.acc + (elapsed or 0)
         if a >= 1 then MO.acc = 0 safecall(motionPoll) else MO.acc = a end   -- (4.0.1) 1 coup d'œil / s
-        if slicePending or now() >= schedNext then safecall(schedStep, elapsed) end   -- image sans travail : 1 comparaison
+        if slicePending or SP.n > 0 or now() >= schedNext then safecall(schedStep, elapsed) end   -- image sans travail : 1 comparaison
       end)
       schedFrame = f
     end
@@ -1156,11 +1170,11 @@ local function sliceDone()
 end
 local arCtx = setmetatable({}, { __index = function(t, k) local v = k .. ":AutoRefresh"; rawset(t, k, v); return v end })
 runSlices = function(jobs, t0)
-  if not slicePending then return end
+  if not slicePending then return jobs end
   local late = jobs < 0 or now() >= sliceAt   -- échéance : avant le cycle suivant, tout est passé
   local info = TreeAI.MODULE_INFO or {}
   while sliceHead <= sliceN do
-    if not late and (jobs >= SLICE_JOBS or (jobs > 0 and t0 and (profile() - t0) > SLICE_MS)) then return end
+    if not late and (jobs >= SLICE_JOBS or (jobs > 0 and t0 and (profile() - t0) > SLICE_MS)) then return jobs end
     local name = sliceQ[sliceHead]
     sliceQ[sliceHead] = nil
     sliceHead = sliceHead + 1
@@ -1177,6 +1191,7 @@ runSlices = function(jobs, t0)
   slicePending = false
   sliceHead, sliceN = 1, 0
   safecall(sliceDone)
+  return jobs + 1
 end
 
 -- (CLEAN 4.0, repris du module Confort) ralenti auto : sous 30 images/s deux relevés de suite (toutes les 3 s),
@@ -1268,6 +1283,27 @@ function TreeAI:StartAutoRefresh()
     runSlices(-math.huge, nil)   -- pas d'ordonnanceur (tests sans CreateFrame) : tout de suite
   end)
 end
+end
+
+--- (4.4 SMART) fn(a1..a4) au nom de `owner`, dans une prochaine image où rien d'autre de lourd ne tourne (un par image).
+--- Sans ordonnanceur (tests sans CreateFrame) : tout de suite.
+function TreeAI:Spread(owner, fn, a1, a2, a3, a4, ctx)
+  if type(fn) ~= "function" then return end
+  if not isMod(owner) then owner = nil end
+  if not ensureSched() then return runAs(owner, fn, a1, a2, a3, a4) end
+  SP.n = SP.n + 1
+  SP.q[SP.n] = { owner = owner, fn = fn, a1 = a1, a2 = a2, a3 = a3, a4 = a4, ctx = ctx }
+end
+--- (4.4 SMART) comme Fire, mais chaque abonné dans sa propre image (messages lourds et pas pressés : SUMMARY)
+function TreeAI:FireSpread(message, ...)
+  local list = messages[message]
+  if not list then return end
+  local a, b = ...
+  for owner, fn in pairs(list) do
+    if ownerActive(owner) then
+      self:Spread(owner, fn, owner, message, a, b, tostring(type(owner) == "table" and owner.name or "core") .. ":" .. message)
+    end
+  end
 end
 
 function TreeAI:Fire(message, ...)
@@ -3281,7 +3317,7 @@ function TreeAI:Summary()
   return self:CharDB().summary
 end
 
-function TreeAI:UpdateSummary()
+function TreeAI:UpdateSummary(spread)
   local s = self:Summary()
   local function g(fn, ...) return try(_G[fn], ...) end
   local className, classFile = g("UnitClass", "player")
@@ -3308,7 +3344,7 @@ function TreeAI:UpdateSummary()
   end
   s.addonVersion = self.version
   s.updated = wallclock()
-  self:Fire("SUMMARY", s)
+  if spread then self:FireSpread("SUMMARY", s) else self:Fire("SUMMARY", s) end
   return s
 end
 
@@ -3917,7 +3953,7 @@ local summaryPending = false
 function TreeAI:_QueueSummary()
   if summaryPending or not self._loggedIn then return end
   summaryPending = true
-  self:After(2, function() summaryPending = false; self:UpdateSummary() end)
+  self:After(2, function() summaryPending = false; self:UpdateSummary(true) end)   -- (4.4 SMART) abonnés étalés
 end
 
 function TreeAI:GROUP_ROSTER_UPDATE()
