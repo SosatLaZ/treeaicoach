@@ -41,7 +41,13 @@ local function now() return try(G.GetTime) or 0 end
 local function after(sec, fn)
   if T.After then T:After(sec, fn) elseif G.C_Timer and G.C_Timer.After then G.C_Timer.After(sec, fn) else fn() end
 end
-local function say(msg) if M.Print then M:Print(msg) elseif G.print then G.print("TreeAI Touches: " .. msg) end end
+-- (4.3 V43) rien dans le chat : la réponse d'un clic s'affiche dans la fenêtre (bandeau), sinon en message d'écran
+local function say(msg)
+  local W = T.Window
+  if W and W.Flash and W.IsOpen and W.IsOpen() then pcall(W.Flash, msg, 8) return end
+  local UE = rawget(G, "UIErrorsFrame")
+  if UE and UE.AddMessage then pcall(UE.AddMessage, UE, "TreeAI : " .. tostring(msg), 1, 0.82, 0) end
+end
 
 ---------------------------------------------------------------------------------------------------
 -- Barres : case -> commande de raccourci (interface Blizzard)
