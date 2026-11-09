@@ -1,25 +1,25 @@
 {
- "version": "4.2.0",
+ "version": "4.3.0",
  "exe": "TreeAICoach-app.exe",
- "sha256": "fffd927130e2d062b0a06b9b8a67cd88b293cff8a282d07c9ee3da35e3609719",
+ "sha256": "441cc410750abbb068b9af0cbd12a2f70e72d2feaacef84c26b1f4cf4edf14b5",
  "chunks": [
   {
-   "name": "4.2.0/part-01.zip",
-   "size": 88058592,
-   "sha256": "be3b24990f510eb8579d5841f6c02b8e168e5ba8767d5325fa415b372015c195",
+   "name": "4.3.0/part-01.zip",
+   "size": 88058601,
+   "sha256": "82b6c9511d59256f53094b2ff26ff2b735807627dc7139a6f3353b645ca63865",
    "files": 127
   },
   {
-   "name": "4.2.0/part-02.zip",
-   "size": 14185782,
-   "sha256": "5654853058334d000afc4353b9f2ae5baf9388807b58c8d4dcdaa91b30a23d99",
+   "name": "4.3.0/part-02.zip",
+   "size": 14191842,
+   "sha256": "24dafda0275337b3815e2a8d891c49a8d8e3a477089df81e070e91b2a53062c0",
    "files": 688
   }
  ],
- "total_size": 102244374,
+ "total_size": 102250443,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "TreeAI 4.2 : trajet chronom\u00e9tr\u00e9 et qu\u00eates prises en passant, carte native, zone bloqu\u00e9e corrig\u00e9e, HV li\u00e9e aux m\u00e9tiers, bouton M\u00e9tiers, moins de lag."
+ "notes": "TreeAI 4.3 : menu en 11 cat\u00e9gories, meilleur \u00e9quipement calcul\u00e9, aide \u00e0 l'\u00e9quipement, corrections."
 }

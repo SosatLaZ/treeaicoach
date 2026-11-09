@@ -1,6 +1,6 @@
 {
-  "version": "4.2.0",
+  "version": "4.3.0",
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334,
-  "notes": "TreeAI 4.2 : trajet chronométré et quêtes prises en passant, carte native, zone bloquée corrigée, HV liée aux métiers, bouton Métiers, moins de lag."
+  "notes": "TreeAI 4.3 : menu en 11 catégories, meilleur équipement calculé, aide à l'équipement, corrections."
 }

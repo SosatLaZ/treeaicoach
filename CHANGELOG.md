@@ -3,6 +3,16 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 4.3.0 · 9 novembre 2026
+
+- **Menu en 11 catégories** : Quêtes · Trajet · Groupe · Donjons · Équipement · Métiers · HV · Chasseur · Conseils ·
+  Macros & touches · Réglages.
+- **Équipement : « Le meilleur maintenant »** — un objet par emplacement, obtenable tout de suite (sacs, quête,
+  donjon à 4, marchand / HV dans tes moyens, artisanat), gain réel, coût, temps ; clic = y aller. Infobulle « pour
+  toi / pour ton groupe », réparations avec la boussole.
+- Corrigés : `/tai profil`, `/tai raccourcis` (la barre de combat devient `/tai combat`), plus rien dans le chat.
+- Stock de potions de soins (« 2 sur 5 », clic = HV).
+
 ## 4.2.0 · 9 novembre 2026
 
 - **Trajet** : étapes chronométrées dont la somme fait l'en-tête ; quêtes prises en passant (« Prends ici : 3
