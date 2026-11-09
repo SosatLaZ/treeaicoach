@@ -141,11 +141,13 @@ function Z:WatchPass()
     for q in pairs(log) do
       local m = ch.watchManual[q]
       if m ~= true and not wantSet[q] and api.watched(q) then
+        if T.ExpectQuestWatch then T:ExpectQuestWatch(q, false) end   -- (V5H) un seul réveil pour toute la passe
         api.remove(q); ch.watchOurs[q] = nil; n = n + 1
       end
     end
     for _, q in ipairs(want) do
       if ch.watchManual[q] ~= false and not api.watched(q) then
+        if T.ExpectQuestWatch then T:ExpectQuestWatch(q, true) end
         api.add(q)
         if api.watched(q) then ch.watchOurs[q] = true; n = n + 1 end
       elseif ch.watchManual[q] == nil and api.watched(q) then ch.watchOurs[q] = true end

@@ -824,13 +824,20 @@ end
 local EMPTY = { groups = {}, count = 0, strong = 0 }
 M.gone = {}              -- [questID] = heure : abandonnée, le journal ne l'a pas encore retirée (cachée 15 s)
 
-function M.Compute()
-  local list = scan()
-  local ctx = M.Context(list)
-  local qs, fin = M.Gather(list, ctx)
-  M.ctx = ctx
-  M.evals = A.EvaluateAll(qs, ctx)
-  M.cleanup = A.Cleanup(fin, ctx)
+-- (4.3.6 V5H) en étapes : M.Compute() les enchaîne d'un coup (clic, page) ; le recalcul de fond (M.Refresh) en fait
+-- une par image (jamais tout le journal évalué dans la même image qu'une quête prise)
+local STEPS = {
+  function(w) w.list = scan() w.ctx = M.Context(w.list) end,
+  function(w) w.qs, w.fin = M.Gather(w.list, w.ctx) end,
+  function(w) w.evals = A.EvaluateAll(w.qs, w.ctx) end,
+  function(w) w.cleanup = A.Cleanup(w.fin, w.ctx) end,
+}
+M.COMPUTE_STEPS = STEPS
+function M.Compute(w)
+  if not w then w = {} for _, f in ipairs(STEPS) do f(w) end end
+  M.ctx = w.ctx
+  M.evals = w.evals
+  M.cleanup = w.cleanup
   M.cleanupAt = now()
   -- une seule vérité pour « À retirer » : le suivi (Tracker / Todo / Plain) lit les mêmes faits que la page
   local strong = {}
@@ -926,12 +933,12 @@ function M.Hint()
 end
 
 local last = -100
-function M.Update(force)
+function M.Update(force, w)
   if not (M.IsEnabled and M:IsEnabled()) then return end
   if inCombat() then return end
   if not force and now() - last < 3 then return end
   last = now()
-  M.Compute()
+  M.Compute(w)
   M.lines = M.Lines()
   push(M.lines)
   M.Hint()
@@ -941,10 +948,32 @@ function M.Update(force)
 end
 
 local pending = false
+local slicing, again = false, false
 function M.Refresh(delay)
+  if slicing then again = true return end   -- (V5H) demandé pendant le calcul en étapes : refait après
   if pending then return end
   pending = true
-  T:After(delay or 1, function() pending = false pcall(M.Update, true) end)
+  T:After(delay or 1, function()
+    -- (V5H) une étape par image, puis la mise à jour (rien en combat : reprise par COMBAT_END)
+    local w, i = {}, 0
+    slicing, again = true, false
+    local function done()
+      slicing, pending = false, false
+      if again then again = false M.Refresh(1) end
+    end
+    local function step()
+      if inCombat() or not (M.IsEnabled and M:IsEnabled()) then done() return end
+      i = i + 1
+      if STEPS[i] then
+        if not pcall(STEPS[i], w) then done() return end
+        T:After(0, step)
+        return
+      end
+      pcall(M.Update, true, w)
+      done()
+    end
+    step()
+  end)
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -1195,7 +1224,18 @@ function M:OnEnable()
   local evs = lite and { "QUEST_ACCEPTED", "PLAYER_LEVEL_UP" }
     or { "QUEST_LOG_UPDATE", "QUEST_ACCEPTED", "PLAYER_LEVEL_UP", "ZONE_CHANGED_NEW_AREA", "GROUP_ROSTER_UPDATE" }
   for _, ev in ipairs(evs) do
-    M:RegisterEvent(ev, function() M.Refresh(1.5) end)
+    if ev == "QUEST_LOG_UPDATE" then
+      -- (4.3.6 V5H) un compteur qui avance (4/6 → 5/6) ne change rien à « à abandonner » : seulement une quête
+      -- prise / finie / un objectif rempli (signature légère du journal, lue une fois par changement)
+      M:RegisterEvent(ev, function()
+        local sig = T.QuestLogSig and T:QuestLogSig()
+        if sig and sig == M._logSig then return end
+        M._logSig = sig
+        M.Refresh(1.5)
+      end)
+    else
+      M:RegisterEvent(ev, function() M.Refresh(1.5) end)
+    end
   end
   M:RegisterEvent("QUEST_REMOVED", function() M.Refresh(1) end)
   if not lite then M:On("COMBAT_END", function() M.Refresh(1.5) end) end

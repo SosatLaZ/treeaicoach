@@ -514,7 +514,13 @@ local function setWatch(q, on)
   if not api or inCombat() then return false end
   S.busyWatch = true
   local ok = pcall(function()
-    if on and not api.watched(q) then api.add(q) elseif not on and api.watched(q) then api.remove(q) end
+    if on and not api.watched(q) then
+      if T.ExpectQuestWatch then T:ExpectQuestWatch(q, true) end   -- (V5H) l'événement renvoyé est le nôtre
+      api.add(q)
+    elseif not on and api.watched(q) then
+      if T.ExpectQuestWatch then T:ExpectQuestWatch(q, false) end
+      api.remove(q)
+    end
   end)
   S.busyWatch = false
   return ok

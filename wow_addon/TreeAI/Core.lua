@@ -789,13 +789,128 @@ TreeAI.QUEST_EVENTS = { QUEST_LOG_UPDATE = true, QUEST_ACCEPTED = true, QUEST_RE
   UNIT_QUEST_LOG_CHANGED = true, QUEST_WATCH_UPDATE = true, QUEST_WATCH_LIST_CHANGED = true }
 TreeAI._questGen = 0
 function TreeAI:QuestGen() return self._questGen end
+--- (4.3.3 Planner → 4.3.6 V5H, partagée) signature légère du journal : quêtes + finies + objectifs REMPLIS (pas les
+--- compteurs 4/6 → 5/6) ; lue une fois par changement du journal (mémo sur T:QuestGen), nil = illisible
+function TreeAI:QuestLogSig()
+  local m = self._qsig
+  if m and m.gen == self._questGen then return m.sig end
+  local parts, ok = {}, false
+  local QL = rawget(_G, "C_QuestLog")
+  if QL and QL.GetNumQuestLogEntries and QL.GetInfo then
+    local okN, n = pcall(QL.GetNumQuestLogEntries)
+    if okN and type(n) == "number" then
+      ok = true
+      for i = 1, n do
+        local ok2, info = pcall(QL.GetInfo, i)
+        if ok2 and type(info) == "table" and not info.isHeader and info.questID then
+          local q = info.questID
+          local done = QL.IsComplete and select(2, pcall(QL.IsComplete, q)) and 1 or 0
+          local fin = ""
+          local ok3, obj = pcall(QL.GetQuestObjectives or function() end, q)
+          if ok3 and type(obj) == "table" then
+            for _, o in ipairs(obj) do fin = fin .. ((type(o) == "table" and o.finished == true) and "1" or "0") end
+          end
+          parts[#parts + 1] = tostring(q) .. ":" .. done .. fin
+        end
+      end
+    end
+  elseif _G.GetNumQuestLogEntries and _G.GetQuestLogTitle then
+    local okN, n = pcall(_G.GetNumQuestLogEntries)
+    if okN and type(n) == "number" then
+      ok = true
+      for i = 1, n do
+        local ok2, title, _, _, isHeader, _, isComplete, _, qid = pcall(_G.GetQuestLogTitle, i)
+        if ok2 and title and not isHeader then
+          local fin = ""
+          local okB, nb = pcall(_G.GetNumQuestLeaderBoards or function() return 0 end, i)
+          for j = 1, (okB and tonumber(nb) or 0) do
+            local okL, _, _, finished = pcall(_G.GetQuestLogLeaderBoard, j, i)
+            fin = fin .. ((okL and finished) and "1" or "0")
+          end
+          parts[#parts + 1] = tostring(qid or title) .. ":" .. ((isComplete and isComplete ~= 0) and 1 or 0) .. fin
+        end
+      end
+    end
+  end
+  local sig = ok and table.concat(parts, ",") or nil
+  self._qsig = { gen = self._questGen, sig = sig }
+  return sig
+end
 TreeAI._ctxCache = setmetatable({}, { __mode = "k" })
 -- (4.0.1) événement -> { [handler] = { unité = true } } : la vie d'un membre du groupe ou d'une barre de nom ne réveille
 -- plus (ni ne chronomètre) les handlers qui ne veulent que « player » / « pet » (avant : enveloppe appelée, puis filtrée)
 TreeAI._unitOf = {}
-local function dispatch(event, ...)
+-- (4.3.6 V5H QUESTLAG) « lag quand j'accepte une quête / quand le suivi change » : une quête prise / rendue / retirée
+-- ouvre une rafale ; les QUEST_LOG_UPDATE / UNIT_QUEST_LOG_CHANGED("player") / QUEST_WATCH_UPDATE qui suivent sont
+-- retenus et donnés UNE fois, QUEST_SETTLE s après le dernier (un seul recalcul au lieu d'un par événement) ; les
+-- changements de suivi faits par TreeAI lui-même (T:ExpectQuestWatch) ne réveillent personne un par un : un seul
+-- QUEST_WATCH_LIST_CHANGED (sans quête) à la fin de la rafale. Hors rafale (objectif qui avance) : tout de suite.
+TreeAI.QUEST_SETTLE = 1.5
+local dispatch
+do
+local Q_OPEN = { QUEST_ACCEPTED = true, QUEST_REMOVED = true, QUEST_TURNED_IN = true }
+local Q_HOLD = { QUEST_LOG_UPDATE = true, UNIT_QUEST_LOG_CHANGED = true, QUEST_WATCH_UPDATE = true }
+local qb = { last = -100, held = {}, order = {}, armed = false, flushing = false, n = 0, seen = {}, open = false }
+local selfWatch = {}
+TreeAI._questBurst = qb
+--- TreeAI va changer le suivi de q (ajout = added) : l'événement que le jeu en renvoie est le nôtre
+function TreeAI:ExpectQuestWatch(q, added)
+  q = tonumber(q)
+  if q then selfWatch[q] = { a = added and true or false, at = now() } end
+end
+local function qbFlush()
+  local wait = qb.last + TreeAI.QUEST_SETTLE - now()
+  if wait > 0.02 then coreLater(wait, qbFlush) return end
+  qb.armed = false
+  local order, held = qb.order, qb.held
+  qb.order, qb.held = {}, {}
+  qb.flushing = true
+  for _, ev in ipairs(order) do
+    local a = held[ev]
+    if a then qb.n = qb.n + 1 safecall(dispatch, ev, unpack(a, 1, a.n)) end
+  end
+  qb.flushing = false
+end
+local function qbHold(ev, ...)
+  if not qb.held[ev] then qb.order[#qb.order + 1] = ev end
+  qb.held[ev] = pack(...)
+  if not qb.armed then qb.armed = true coreLater(TreeAI.QUEST_SETTLE, qbFlush) end
+  return true
+end
+--- vrai = événement retenu (donné une fois à la fin de la rafale)
+function TreeAI._QuestHold(event, ...)
+  if qb.flushing then return false end
+  local t = now()
+  local fresh = t - qb.last >= TreeAI.QUEST_SETTLE and not qb.armed
+  if fresh then qb.seen, qb.open = {}, false end
+  if Q_OPEN[event] then qb.last, qb.open = t, true return false end
+  if event == "QUEST_WATCH_LIST_CHANGED" then
+    local q = tonumber(pub((...)))
+    local e = q and selfWatch[q]
+    if e and t - e.at < 3 then
+      selfWatch[q] = nil
+      qb.last = math.max(qb.last, t - TreeAI.QUEST_SETTLE + 0.5)
+      return qbHold(event)
+    end
+    return false
+  end
+  if not Q_HOLD[event] then return false end
+  if event == "UNIT_QUEST_LOG_CHANGED" and pub((...)) ~= "player" then return false end
+  -- hors quête prise / rendue (un monstre tué, un objectif qui avance) : le premier de chaque sorte tout de suite
+  -- (nombres à jour sur les barres de nom), les suivants regroupés en un seul, à la fin de la rafale
+  qb.last = t
+  if not qb.open and not qb.seen[event] then qb.seen[event] = true return false end
+  return qbHold(event, ...)
+end
+end
+
+dispatch = function(event, ...)
   local list = handlers[event]
   if not list then return end
+  if TreeAI.QUEST_EVENTS[event] and TreeAI._QuestHold(event, ...) then
+    TreeAI._questGen = TreeAI._questGen + 1
+    return
+  end
   -- (LITE) auras : seulement joueur / familier / cible (pas chaque membre du groupe ni chaque barre de nom)
   if event == "UNIT_AURA" and not AURA_UNITS[(...)] then return end
   evGen = evGen + 1

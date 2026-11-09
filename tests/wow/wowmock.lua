@@ -582,7 +582,9 @@ end
 function GetTime() return M.now end
 function GetServerTime() return math.floor(M.serverTime) end
 function GetTimePreciseSec() return M.now end
-function debugprofilestop() return M.now * 1000 end
+-- (4.3.6 V5H) TREEAI_REALCLOCK=1 : + le temps processeur réel (l'ordonnanceur du cœur voit le vrai coût d'une image)
+local realClock = os.getenv("TREEAI_REALCLOCK") == "1"
+function debugprofilestop() return M.now * 1000 + (realClock and os.clock() * 1000 or 0) end
 
 local function newTimer(delay, fn, interval, iterations)
   if type(fn) ~= "function" then error("C_Timer: callback must be a function", 3) end

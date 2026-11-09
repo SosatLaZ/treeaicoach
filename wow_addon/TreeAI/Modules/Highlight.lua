@@ -191,8 +191,8 @@ function M.Rebuild()
   local byName, byID, upcoming, mobName, mobNpc = {}, {}, {}, {}, {}
   local list = questList()
   for _, q in ipairs(list) do
-    for _, o in ipairs(q.obj or {}) do
-      local e = { quest = q.title, qid = q.id, obj = o.name, have = o.have or 0, need = o.need or 1,
+    for oi, o in ipairs(q.obj or {}) do
+      local e = { quest = q.title, qid = q.id, idx = oi, obj = o.name, have = o.have or 0, need = o.need or 1,
         done = o.finished and true or false, ready = q.complete and true or false, key = q.id .. ":" .. low(o.name) }
       local k = low(o.name)
       if k ~= "" then
@@ -1350,6 +1350,49 @@ end
 
 -- ------------------------------------------------------------------ orchestration (événementiel, regroupé)
 local pending = {}
+--- (4.3.6 V5H) un monstre tué (4/6 → 5/6) : seulement les nombres des marques déjà posées (barres de nom affichées,
+--- cible, infobulle) — ni relecture de Questie, ni balayage des barres, ni sacs, ni onglet. Un objectif rempli change
+--- la signature du journal : relecture complète (la marque disparaît).
+function M.UpdateCounts()
+  local t0 = clock()
+  -- les seules quêtes marquées, lues directement (C_QuestLog.GetQuestObjectives) ; client sans : le journal relu
+  local QL = rawget(G, "C_QuestLog")
+  local direct = QL and type(QL.GetQuestObjectives) == "function"
+  local objs, cur = {}, nil
+  if not direct then
+    cur = {}
+    for _, q in ipairs(questList()) do
+      for _, o in ipairs(q.obj or {}) do cur[tostring(q.id) .. ":" .. low(o.name)] = o end
+    end
+  end
+  local function read(e)
+    if not direct then local o = cur[e.key] return o and tonumber(o.have), o and tonumber(o.need) end
+    local l = objs[e.qid]
+    if l == nil then l = try(QL.GetQuestObjectives, e.qid) or false objs[e.qid] = l end
+    local o = l and e.idx and l[e.idx]
+    if type(o) ~= "table" then return nil end
+    if secret(o.numFulfilled) or secret(o.numRequired) then return nil end
+    return tonumber(o.numFulfilled), tonumber(o.numRequired)
+  end
+  local tnow = try(G.GetTime) or 0
+  local function fix(tbl)
+    for _, e in pairs(tbl or {}) do
+      if type(e) == "table" and e.key and e.qid then
+        local h, n = read(e)
+        if h then
+          if h > (tonumber(e.have) or 0) then bumped[e.key] = tnow end
+          lastHave[e.key] = h
+          e.have, e.need = h, n or e.need
+        end
+      end
+    end
+  end
+  fix(D.byName) fix(D.mobName) fix(D.mobNpc)
+  for unit in pairs(plates) do M.UpdatePlate(unit) end
+  M.UpdateTarget()
+  M.countsCost = clock() - t0
+end
+
 local function schedule(what, delay)
   if pending[what] then return end
   pending[what] = true
@@ -1364,6 +1407,8 @@ local function schedule(what, delay)
       M.RefreshPlates()
       M.UpdateTarget()
       M.PushTab()
+    elseif what == "counts" then
+      M.UpdateCounts()
     elseif what == "bags" then
       M.RefreshBags()
     elseif what == "tab" then
@@ -1389,12 +1434,19 @@ end
 function M:OnEnable()
   -- (4.0.1) l'onglet Quêtes (objets de quête des sacs) 2 s après le butin, avec les autres lecteurs des sacs
   self:RegisterEvent("BAG_UPDATE_DELAYED", function() schedule("bags", 0.05) schedule("tab", 2) end)
-  self:RegisterEvent("QUEST_LOG_UPDATE", function() schedule("rebuild", 0.8) end)
+  -- (V5H) compteur qui avance : nombres seulement (0,1 s) ; quête / objectif rempli : relecture complète (0,8 s)
+  local function logChanged()
+    local sig = T.QuestLogSig and T:QuestLogSig()
+    if sig and sig == M._logSig and not pending.rebuild then schedule("counts", 0.1) return end
+    M._logSig = sig
+    schedule("rebuild", 0.8)
+  end
+  self:RegisterEvent("QUEST_LOG_UPDATE", logChanged)
   self:RegisterEvent("QUEST_ACCEPTED", function() schedule("rebuild", 0.8) end)
   self:RegisterEvent("QUEST_TURNED_IN", function() schedule("rebuild", 0.8) end)
   self:RegisterEvent("QUEST_REMOVED", function() schedule("rebuild", 0.8) end)
   -- (4.0.1) 0,8 s : après la relecture du journal par Quêtes (0,5 s), dans une autre image
-  self:RegisterEvent("UNIT_QUEST_LOG_CHANGED", function(_, _, u) if u == "player" then schedule("rebuild", 0.8) end end)
+  self:RegisterEvent("UNIT_QUEST_LOG_CHANGED", function(_, _, u) if u == "player" then logChanged() end end)
   self:RegisterEvent("GET_ITEM_INFO_RECEIVED", function() kindCache = {} schedule("bags", 0.3) schedule("tab", 2) end)
   if not (T.Lite and T:Lite()) then   -- (LITE) barres de nom / cible : seulement hors profil essentiel
     self:RegisterEvent("NAME_PLATE_UNIT_ADDED", function(_, _, unit) M.UpdatePlate(unit) M.UpdateCompass() end)

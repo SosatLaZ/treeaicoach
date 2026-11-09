@@ -1639,27 +1639,7 @@ function P:NoteWhy(why)
   self._why = w
 end
 -- (4.3.3) signature légère du journal : quêtes + finies + objectifs remplis (PAS les compteurs 4/6 → 5/6)
-local function logSig()
-  local QL = rawget(_G, "C_QuestLog")
-  if not (QL and QL.GetNumQuestLogEntries and QL.GetInfo) then return nil end
-  local ok, n = pcall(QL.GetNumQuestLogEntries)
-  if not ok or type(n) ~= "number" then return nil end
-  local parts = {}
-  for i = 1, n do
-    local ok2, info = pcall(QL.GetInfo, i)
-    if ok2 and type(info) == "table" and not info.isHeader and info.questID then
-      local q = info.questID
-      local done = QL.IsComplete and select(2, pcall(QL.IsComplete, q)) and 1 or 0
-      local fin = ""
-      local ok3, obj = pcall(QL.GetQuestObjectives or function() end, q)
-      if ok3 and type(obj) == "table" then
-        for _, o in ipairs(obj) do fin = fin .. ((type(o) == "table" and o.finished == true) and "1" or "0") end
-      end
-      parts[#parts + 1] = tostring(q) .. ":" .. done .. fin
-    end
-  end
-  return table.concat(parts, ",")
-end
+local function logSig() return T:QuestLogSig() end   -- (V5H) partagée par le cœur, une lecture par changement
 local JOURNAL = { QUEST_LOG_UPDATE = true, UNIT_QUEST_LOG_CHANGED = true }
 function P:Dirty(autoStale, why)
   -- un compteur d'objectif qui bouge ne change pas le trajet : pas de gros recalcul (freeze à chaque progression)
