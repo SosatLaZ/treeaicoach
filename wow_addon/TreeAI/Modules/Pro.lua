@@ -236,10 +236,10 @@ end
 -- (4.4 SMART) relevé du journal gardé tant que le journal (T:QuestGen, avancé à chaque événement de quête), le niveau et
 -- les escortes repérées n'ont pas changé : avant, ~60 lectures d'API + analyses de texte à chaque cycle (3 s)
 local escortGen = 0
-function M.ScanLog()
+function M.ScanLog(fresh)
   local qg = T.QuestGen and T:QuestGen()
   local key = qg and (qg .. ":" .. level() .. ":" .. escortGen) or nil
-  if key and key == M._scanKey and M.log then return M.log end
+  if not fresh and key and key == M._scanKey and M.log then return M.log end
   M._scanKey = key
   local list = {}
   local CQ = g("C_QuestLog")
@@ -792,7 +792,7 @@ function M.Update(force)
   if inCombat() then return end                 -- Forever : valeurs masquées en combat
   if not force and now() - lastUpdate < 2 then return end
   lastUpdate = now()
-  local list = M.ScanLog()
+  local list = M.ScanLog(force)   -- forcé (/tai pro, après un combat…) : relevé complet
   trackProgress(list)
   M.NoteInn()
   local quests, info = M.BuildLines()

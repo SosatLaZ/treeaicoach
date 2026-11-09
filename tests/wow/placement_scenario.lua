@@ -92,7 +92,7 @@ return function(M, ctx)
     -- login + 2 s: the screen is laid out but not stable / settled yet → no automatic placement so far
     check(not (st and st.sig), "connexion + 2 s : aucun placement automatique sur un écran pas encore posé")
     sane("connexion + 2 s")
-    M.Advance(3, 0.1)
+    M.Advance(3, 0.02)   -- (4.4 SMART) the first placement is sliced over frames: real frames (50 / s), not 10 / s
     st = TreeAIDB.chars[T:CharKey()].layout
     check(st and st.sig and st.sig:match("^1920x1080"), "premier placement sur l'écran final (" .. tostring(st and st.sig) .. ")")
     check(st and st.v == T.LAYOUT_VERSION, "version du placement notée")

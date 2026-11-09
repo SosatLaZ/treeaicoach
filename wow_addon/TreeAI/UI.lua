@@ -1757,6 +1757,15 @@ function TreeAI:GetAlert() return alert, alertItems end
 -- Un cadre déplacé à la main garde sa place (« réinitialiser » / « Placer automatiquement » le rendent).
 ---------------------------------------------------------------------------
 local CELL = 16
+-- (4.4 SMART) placement automatique découpé : lancé par le pilote du placement (connexion, résolution changée), il
+-- tourne dans une coroutine qui rend la main toutes les LAYOUT_SLICE unités de travail (≈ 1,5 ms) → plus d'image de
+-- 70 ms à la connexion. Appelé directement (bouton « Placer », tests), il reste d'un seul tenant.
+TreeAI.LAYOUT_SLICE = 1200
+local LAY = { co = nil, n = 0 }   -- (une seule locale : le fichier est au plafond des 200 locales de Lua 5.1)
+function LAY.yield(units)
+  LAY.n = LAY.n + units
+  if LAY.n >= TreeAI.LAYOUT_SLICE and coroutine.running() == LAY.co then LAY.n = 0 coroutine.yield() end
+end
 local SCAN_NAMES = {
   "MinimapCluster", "Minimap", "MinimapBackdrop", "MainMenuBar", "MainMenuBarArtFrame", "MainActionBar",
   "MultiBarBottomLeft", "MultiBarBottomRight", "MultiBarRight", "MultiBarLeft", "MultiBar5", "MultiBar6",
@@ -1983,8 +1992,22 @@ local function newGrid(scan)
     local c1 = math.min(cols - 1, math.floor((r.l + r.w + margin - 1) / CELL))
     local r0 = math.max(0, math.floor((r.b - margin) / CELL))
     local r1 = math.min(rowsN - 1, math.floor((r.b + r.h + margin - 1) / CELL))
+    if r1 < r0 or c1 < c0 then return end
     for y = r0, r1 do for x = c0, c1 do g.occ[y * cols + x + 1] = 1 end end
-    g.sum = nil
+    -- (4.4 SMART) sommes cumulées gardées : seule la partie en haut à droite de (r0, c0) sera recalculée
+    if g.sum then g.dr0, g.dc0 = math.min(g.dr0 or r0, r0), math.min(g.dc0 or c0, c0) end
+  end
+  local function refresh()   -- recalcul partiel : lignes ≥ dr0, colonnes ≥ dc0 (le reste n'a pas bougé)
+    local S, W1, occ, c0 = g.sum, g.W1, g.occ, g.dc0
+    for y = g.dr0 + 1, rowsN do
+      local run = S[y * W1 + c0] - S[(y - 1) * W1 + c0]
+      for x = c0 + 1, cols do
+        run = run + occ[(y - 1) * cols + x]
+        S[y * W1 + x] = S[(y - 1) * W1 + x] + run
+      end
+      if LAY.co then LAY.yield(cols - c0) end
+    end
+    g.dr0, g.dc0 = nil, nil
   end
   function g.build()
     local S = {}
@@ -1996,11 +2019,12 @@ local function newGrid(scan)
         run = run + g.occ[(y - 1) * cols + x]
         S[y * W1 + x] = S[(y - 1) * W1 + x] + run
       end
+      if LAY.co then LAY.yield(cols) end
     end
-    g.sum, g.W1 = S, W1
+    g.sum, g.W1, g.dr0, g.dc0 = S, W1, nil, nil
   end
   function g.used(x, y, w, h)   -- cases occupées dans [x, x+w) × [y, y+h)
-    if not g.sum then g.build() end
+    if not g.sum then g.build() elseif g.dr0 then refresh() end
     local S, W1 = g.sum, g.W1
     return S[(y + h) * W1 + x + w] - S[y * W1 + x + w] - S[(y + h) * W1 + x] + S[y * W1 + x]
   end
@@ -2027,6 +2051,7 @@ local function bestSpot(g, w, h, tx, ty, allowCorner)
   local function scan(x0, x1, y0, y1, step)
     for y = math.max(0, y0), math.min(g.rows - ch, y1), step do
       for x = math.max(0, x0), math.min(g.cols - cw, x1), step do
+        if LAY.co then LAY.yield(3) end
         if g.used(x, y, cw, ch) == 0 and (allowCorner or not (g.corner and g.corner(x, y, cw, ch))) then
           local cx, cy = (x + cw / 2) * CELL, (y + ch / 2) * CELL
           local d = math.sqrt((cx - tx) ^ 2 + (cy - ty) ^ 2)
@@ -2196,7 +2221,9 @@ local function bestBy(g, w, h, score, allowCorner)
   local function scan(x0, x1, y0, y1, step)
     for y = math.max(0, y0), math.min(g.rows - ch, y1), step do
       for x = math.max(0, x0), math.min(g.cols - cw, x1), step do
+        if LAY.co then LAY.yield(3) end
         if g.used(x, y, cw, ch) == 0 and (allowCorner or not (g.corner and g.corner(x, y, cw, ch))) then
+          if LAY.co then LAY.yield(10) end
           local d = score(x * CELL, y * CELL)
           if not best or d < best then best, bx, by = d, x, y end
         end
@@ -2276,6 +2303,9 @@ function TreeAI:AutoLayout(force, strict)
     self:RunOutOfCombat("autolayout", function() if self:AutoLayout(force) then layoutState().v = LAYOUT_V end end)
     return nil, "combat"
   end
+  -- (4.4 SMART) un placement direct (bouton, réglage) remplace un placement découpé encore en cours
+  local d = self._layoutDriver
+  if d and d.co and coroutine.running() ~= d.co then d.co, d.stable = nil, true end
   local scan = self:ScanScreen()
   if scan.notReady then
     -- (PLACEBUG) UIParent sans taille (connexion) : aucun placement sur des mesures vides, refait dès qu'il en a une
@@ -2419,9 +2449,14 @@ function TreeAI:AutoLayout(force, strict)
       for wi, pw in ipairs(widths) do
         for li, lines in ipairs(linesList) do
           local w, h = pw * k, heightFor(lines)
-          local l, b, d = bestBy(grid, w, h, function(x, y) return score(x, y, w, h) end, style == "coins")
+          -- (4.4 SMART) borne : un score est ≥ 0, une taille dont la seule pénalité dépasse déjà le meilleur est sautée
+          local pen = (wi - 1) * 20 + (li - 1) * 45
+          local l, b, d
+          if not bestScore or pen < bestScore then
+            l, b, d = bestBy(grid, w, h, function(x, y) return score(x, y, w, h) end, style == "coins")
+          end
           if l then
-            local sc = d + (wi - 1) * 20 + (li - 1) * 45     -- garder la taille si possible
+            local sc = d + pen     -- garder la taille si possible
             if not bestScore or sc < bestScore then bestL, bestB, bestScore, bw, bl = l, b, sc, pw, lines end
           end
         end
@@ -2584,11 +2619,11 @@ do
   end
   poll = function()
     drv.polling = false
-    if not drv.pending then return end
+    if not drv.pending and not drv.co then return end
     local t = nowT()
     local key = sizeKey()
     if key ~= drv.key then drv.key, drv.since = key, t end
-    if key and t - drv.since >= STABLE and t >= drv.notBefore and not TreeAI:InCombat() then
+    if drv.pending and not drv.co and key and t - drv.since >= STABLE and t >= drv.notBefore and not TreeAI:InCombat() then
       local kind = drv.pending
       drv.pending = nil
       -- cadres créés depuis (boussole, suivi…) : inscrits = leurs glisser sont notés comme les autres
@@ -2596,9 +2631,39 @@ do
       -- scan vide = cadres du jeu pas encore mesurables : on patiente (6 s au plus, puis on place quand même)
       drv.firstTry = drv.firstTry or t
       local strict = t - drv.firstTry < PATIENCE
-      local _, why
-      if kind == "force" then _, why = TreeAI:AutoLayout(true, false)
-      else _, why = TreeAI:CheckAutoLayout(strict) end
+      -- (4.4 SMART) le calcul part dans une coroutine, repris image après image jusqu'au bout (voir LAY.yield)
+      local co = coroutine.create(function()
+        if kind == "force" then return TreeAI:AutoLayout(true, false) end
+        return TreeAI:CheckAutoLayout(strict)
+      end)
+      drv.co, drv.coKind, drv.coAt = co, kind, nil
+    end
+    if drv.co and TreeAI:InCombat() then   -- combat entre deux tranches : reprise après (rien ne bouge en combat)
+      drv.polling = true
+      local run = TreeAI._RunAs or function(_, fn) fn() end
+      run(nil, function() TreeAI:After(POLL, poll) end)
+      return
+    end
+    if drv.co then
+      local co = drv.co
+      -- image « longue » (≥ 0,5 s depuis la tranche précédente : chargement, tests à gros pas) : tout d'un coup, comme avant
+      local coarse = t - (drv.coAt or t) >= 0.5
+      drv.coAt = t
+      local ok, _, why
+      repeat
+        LAY.co, LAY.n = co, 0
+        ok, _, why = coroutine.resume(co)
+        LAY.co = nil
+      until not (ok and coarse and coroutine.status(co) ~= "dead")
+      if ok and coroutine.status(co) ~= "dead" then
+        drv.polling = true
+        local run = TreeAI._RunAs or function(_, fn) fn() end
+        run(nil, function() TreeAI:After(0, poll) end)
+        return
+      end
+      drv.co = nil
+      if not ok then TreeAI:Debug("placement:", tostring(_)) why = nil end
+      local kind = drv.coKind
       if why == "scan" or why == "screen" or why == "combat" then
         drv.pending = drv.pending or kind
       else

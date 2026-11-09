@@ -91,6 +91,7 @@ return function(M, ctx)
   }
   P.route = { id = "auto", title = "Plan auto (en jeu)", steps = steps, verdict = "ok" }
   P.steps, P.cursor, P.log = steps, 1, {}
+  T:Fire("PLAN_BUILT")   -- (4.4 SMART) as the Planner does when it builds a route (no poll timing to rely on)
   local st = PD.Stops()
   check(st and #st == 4 and st[3].kind == "fly", "Route:Stops = 4 stops (3rd = flight): " .. tostring(st and #st))
   M.Advance(0.4, 0.1)
