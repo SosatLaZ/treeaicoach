@@ -535,6 +535,7 @@ local function ensureTimerFrame()
   end)
 end
 
+TreeAI.AFTER_HEAVY = 0.25   -- (4.2 FIX42) rappels différés « lourds » confiés à l'ordonnanceur (TreeAI._sliceAfter)
 function TreeAI:After(sec, fn)
   if type(fn) ~= "function" then return end
   local owner = isMod(curOwner) and curOwner or nil
@@ -542,6 +543,10 @@ function TreeAI:After(sec, fn)
     if owner and owner._suspended then return end   -- module coupé entre-temps : rien
     runAs(owner, fn)
   end
+  -- (4.2 FIX42, « micro-lag toutes les secondes ») un rafraîchissement regroupé (≥ 0,25 s : Quêtes, Planificateur,
+  -- Nettoyage, Suivi…) passe par l'ordonnanceur : jamais deux travaux lourds dans la même image, budget ~1,5 ms
+  local sa = TreeAI._sliceAfter
+  if sa and sa(sec, cb, owner) then return end
   if C_Timer and C_Timer.After then return C_Timer.After(sec or 0, cb) end
   ensureTimerFrame()
   if timers then
@@ -573,6 +578,9 @@ function Ticker:IdleStretch(k) k = tonumber(k) self.stretch = (k and k > 1) and 
 -- phase propre (suite du nombre d'or : jamais deux tickers sur le même instant), au plus SLICE_JOBS rappels
 -- « lourds » (période ≥ 1 s) par image et ~SLICE_MS de travail (debugprofilestop) ; le reste passe à l'image suivante (file par échéance).
 local SLICE_JOBS, SLICE_MS, SLICE_WAIT = 3, 1.5, 0.5   -- SLICE_WAIT : image « longue »
+-- (4.2 FIX42) coût mesuré de chaque travail (moyenne glissante, ms) : un travail « gros » (≥ BIG_MS) passe seul dans
+-- son image ; un second travail lourd n'entre que si le coût prévu tient dans le budget de l'image
+TreeAI.SLICE_MS, TreeAI.BIG_MS = SLICE_MS, 0.6
 local sched, schedFrame, schedNext, schedSeq = {}, nil, math.huge, 0
 -- (4.0.1) MOUVEMENT : l'OnUpdate unique de l'ordonnanceur jette un coup d'œil par seconde (position + cap). Joueur
 -- immobile depuis 3 s = les minuteurs « de marche » (ticker:IdleStretch(k)) battent k fois moins vite ; dès qu'il
@@ -600,20 +608,36 @@ local function schedStep(elapsed)
     for i = #dueBuf, n + 1, -1 do dueBuf[i] = nil end
     if n > 1 then tsort(dueBuf, byNext) end
     schedNext = math.huge   -- un minuteur lancé par un rappel ci-dessous l'abaisse (startTicker)
+    local big, BIG_MS = false, TreeAI.BIG_MS
     for i = 1, n do
       local p = dueBuf[i]
       dueBuf[i] = nil
-      local heavy = p.sec >= 1   -- < 1 s = pas de travail découpé / minuterie de combat : léger, jamais retardé
+      -- < 1 s = pas de travail découpé / minuterie de combat : léger, jamais retardé ; rappel unique (T:After) : lourd
+      -- seulement si ceux de son module ont COÛTÉ ≥ 0,1 ms (mesuré) — un rappel jamais mesuré passe tout de suite
+      local heavy = p.sec >= 1 or (p.once and (p.cost or 0) >= 0.1)
+      local est = p.cost or 0.2
       if p.cancelled or not p.real then   -- annulé par un rappel précédent de cette image
-      elseif heavy and not coarse and (jobs >= SLICE_JOBS or (jobs > 0 and t0 and (profile() - t0) > SLICE_MS)) then
+      elseif heavy and not coarse and jobs > 0 and (jobs >= SLICE_JOBS or big or est >= BIG_MS * 0.4
+          or (t0 and (profile() - t0) + est > SLICE_MS)) then
         -- reste dû : passera à l'image suivante (file par échéance, le plus en retard d'abord)
         if p.next < m then m = p.next end
       else
-        local per = (still and p.stretch) and p.sec * p.stretch or p.sec
-        local nx = p.next + per
-        p.next = (nx > t) and nx or (t + per)   -- en retard : on garde la cadence sans rafale de rattrapage
+        if p.once then
+          p.cancelled = true   -- rappel unique : retiré au prochain passage
+        else
+          local per = (still and p.stretch) and p.sec * p.stretch or p.sec
+          local nx = p.next + per
+          p.next = (nx > t) and nx or (t + per)   -- en retard : on garde la cadence sans rafale de rattrapage
+        end
+        local c0 = (heavy or p.once) and profile and profile()
         if heavy then jobs = jobs + 1 end
         p.cb()
+        if c0 then
+          local dt = (profile() or c0) - c0
+          p.cost = p.cost and (p.cost * 0.6 + dt * 0.4) or dt
+          if p.key then TreeAI._onceCost[p.key] = p.cost end
+          if heavy and dt >= BIG_MS then big = true end
+        end
         if p.real and not p.cancelled and p.next < m then m = p.next end
       end
     end
@@ -708,6 +732,21 @@ local function startTicker(p)
   end
   coreLater(p.sec, loop)
   p.real = h
+end
+
+-- (4.2 FIX42) rappel unique « lourd » dans l'ordonnanceur (T:After ≥ 0,25 s) : coût mesuré par site d'appel (même
+-- fonction = même coût prévu), passe seul dans son image s'il est gros
+TreeAI._onceCost = setmetatable({}, { __mode = "k" })   -- module -> coût moyen (ms) de ses rappels uniques
+TreeAI._sliceAfter = function(sec, cb, owner)
+  if not ensureSched() then return false end
+  local key = owner or TreeAI
+  local w = tonumber(sec) or 0
+  local p = { sec = 0, wait = w, once = true, cb = cb, next = now() + w, key = key }
+  setmetatable(p, { __index = function(_, k) if k == "cost" then return TreeAI._onceCost[key] end end })   -- coût lu à l'échéance
+  p.real = { Cancel = function() p.cancelled = true end }
+  sched[#sched + 1] = p
+  if p.next < schedNext then schedNext = p.next end
+  return true
 end
 
 --- NewTicker(sec, fn[, owner]) : renvoie un objet avec :Cancel() ; owner = module (défaut : celui qui tourne)
@@ -918,6 +957,79 @@ function TreeAI:UserAction(fn, ...)
   return ok
 end
 function TreeAI:InUserAction() return (self._userAction or 0) > 0 end
+
+-- (4.2 FIX42, étude §8.9) achats / artisanat / retraits / ventes / réparation (BuyMerchantItem, CraftRecipe /
+-- DoTradeSkill, UseContainerItem, RepairAllItems) : UN seul chemin. Jamais en combat, jamais hors d'un clic du
+-- joueur (T:UserAction, appelé par l'OnClick d'un bouton ou une touche), un appel par clic. Chaque appel est noté
+-- (diag.shop) ; un blocage du jeu dans les 5 s qui suivent = « mode sûr » automatique : le bouton reste, mais le clic
+-- montre l'objet dans la fenêtre du jeu (surbrillance, page) et c'est TOI qui cliques dans la fenêtre du jeu.
+TreeAI.SHOP_WINDOW = 5
+function TreeAI:ShopSafe()
+  local db = self.db
+  return type(db) == "table" and (db.shopSafe == true or db.shopSafeAuto == true) or false
+end
+function TreeAI:SetShopSafe(on)
+  local db = self.db
+  if type(db) ~= "table" then return end
+  db.shopSafe = on and true or false
+  if not on then db.shopSafeAuto = nil end
+end
+--- appelle fn(...) pour l'action « api » (texte), ou refuse : renvoie ok, raison ("combat" | "noclick" | "safe" | "api")
+function TreeAI:ShopCall(api, fn, ...)
+  if type(fn) ~= "function" then return false, "api" end
+  if self:InCombat() then return false, "combat" end
+  local diag
+  if type(self.db) == "table" then
+    self.db.diag = type(self.db.diag) == "table" and self.db.diag or {}
+    diag = self.db.diag
+    diag.shop = type(diag.shop) == "table" and diag.shop or { n = 0, refused = 0 }
+  end
+  if not self:InUserAction() then
+    if diag then diag.shop.refused = (tonumber(diag.shop.refused) or 0) + 1 diag.shop.lastRefused = tostring(api) end
+    return false, "noclick"
+  end
+  if self:ShopSafe() then return false, "safe" end
+  local ok = pcall(fn, ...)
+  self._shopAt, self._shopApi = (GetTime and GetTime()) or 0, tostring(api)
+  if diag then
+    diag.shop.n = (tonumber(diag.shop.n) or 0) + 1
+    diag.shop.last = { api = tostring(api), t = (time and time()) or 0, ctx = tostring(self._ctx or self._lastCtx or "?") }
+  end
+  if ok then return true end
+  return false, "api"
+end
+--- blocage du jeu juste après un appel ShopCall : on passe en mode sûr (gardé), et on le note pour /tai bloque
+function TreeAI:_ShopBlocked(func)
+  local t = (GetTime and GetTime()) or 0
+  if not (self._shopAt and t - self._shopAt <= self.SHOP_WINDOW) then return false end
+  local db = self.db
+  if type(db) == "table" then
+    db.shopSafeAuto = true
+    db.diag = type(db.diag) == "table" and db.diag or {}
+    db.diag.shopTaint = { api = self._shopApi, func = tostring(func or "?"), t = (time and time()) or 0 }
+  end
+  return true
+end
+--- autocontrôle (/tai bloque achats, page Infos) : lignes lisibles
+function TreeAI:ShopCheck()
+  local db = type(self.db) == "table" and self.db or {}
+  local d = type(db.diag) == "table" and db.diag or {}
+  local sh = type(d.shop) == "table" and d.shop or {}
+  local out = {}
+  out[#out + 1] = ("Achats / fabrications TreeAI : %d appel%s, tous dans un clic hors combat ; %d refusé%s hors clic.")
+    :format(tonumber(sh.n) or 0, (tonumber(sh.n) or 0) > 1 and "s" or "", tonumber(sh.refused) or 0, (tonumber(sh.refused) or 0) > 1 and "s" or "")
+  if type(sh.last) == "table" then out[#out + 1] = "Dernier : " .. tostring(sh.last.api) .. " (" .. tostring(sh.last.ctx) .. ")" end
+  if type(d.shopTaint) == "table" then
+    out[#out + 1] = ("Blocage du jeu (%s) juste après « %s » : mode sûr allumé (TreeAI montre, tu cliques)."):format(
+      tostring(d.shopTaint.func), tostring(d.shopTaint.api))
+  else
+    out[#out + 1] = "Aucun blocage du jeu après un achat TreeAI."
+  end
+  out[#out + 1] = self:ShopSafe() and "Mode sûr : OUI — le bouton montre l'objet dans la fenêtre du jeu, tu achètes / crées toi-même."
+    or "Mode sûr : non — un clic = un achat (BuyMerchantItem) ou une fabrication, rien sans clic."
+  out[#out + 1] = "Vérif. en jeu : achète via TreeAI, puis achète un objet à la main chez le marchand : s'il passe, tout va bien."
+  return out
+end
 
 -- SPIKE : le cycle ne lance plus tous les :AutoRefresh() dans la même image ; il remplit une file que
 -- l'ordonnanceur vide par tranches (≤ SLICE_JOBS rappels / image, budget SLICE_MS), puis REFRESH + panneau.
@@ -3700,6 +3812,7 @@ local function onBlocked(kind, addon, func)
   end
   local ctx = TreeAI._blockCtx or TreeAI._lastCtx or "?"
   TreeAI._blockCtx = nil
+  if TreeAI:_ShopBlocked(func) then ctx = tostring(ctx) .. " (après un achat TreeAI : mode sûr)" end
   if type(db) == "table" and db.diag and db.diag.blocked then db.diag.blocked[#db.diag.blocked].ctx = ctx end
   -- TAINT : compteurs par (fonction, module) gardés au /reload (« Blocages », /tai bloque) — pas seulement les 20 derniers
   TreeAI._blockedSession = (TreeAI._blockedSession or 0) + 1

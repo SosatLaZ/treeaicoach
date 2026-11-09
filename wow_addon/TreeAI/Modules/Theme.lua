@@ -27,18 +27,21 @@ local PALETTES = {
     barBg = { 0, 0, 0, 0.55 }, border = { 0.78, 0.62, 0.28, 0.9 }, borderSoft = { 0.78, 0.62, 0.28, 0.35 },
     text = { 0.92, 0.92, 0.92, 1 }, muted = { 0.6, 0.6, 0.62, 1 }, hover = { 1, 1, 1, 0.08 },
     button = { 0.14, 0.15, 0.19, 0.95 }, selected = { 0.78, 0.62, 0.28, 0.30 }, flat = true,
+    small = { 0.04, 0.05, 0.07, 0.42 }, smallBorder = { 0.78, 0.62, 0.28, 0.30 },
   },
   { -- Clair
     bg = { 0.20, 0.22, 0.26, 0.88 }, panel = { 0.26, 0.28, 0.32, 0.92 }, hud = { 0.15, 0.16, 0.19, 0.55 },
     barBg = { 0.1, 0.1, 0.12, 0.6 }, border = { 0.95, 0.85, 0.55, 0.95 }, borderSoft = { 0.95, 0.85, 0.55, 0.4 },
     text = { 1, 1, 1, 1 }, muted = { 0.78, 0.78, 0.8, 1 }, hover = { 1, 1, 1, 0.12 },
     button = { 0.32, 0.34, 0.39, 0.95 }, selected = { 0.95, 0.85, 0.55, 0.30 }, flat = true,
+    small = { 0.15, 0.16, 0.19, 0.45 }, smallBorder = { 0.95, 0.85, 0.55, 0.35 },
   },
   { -- Blizzard
     bg = { 0, 0, 0, 0.85 }, panel = { 0.05, 0.05, 0.05, 0.9 }, hud = { 0, 0, 0, 0.4 },
     barBg = { 0, 0, 0, 0.5 }, border = { 0.8, 0.8, 0.8, 1 }, borderSoft = { 0.6, 0.6, 0.6, 0.6 },
     text = { 1, 1, 1, 1 }, muted = { 0.65, 0.65, 0.65, 1 }, hover = { 1, 0.82, 0.2, 0.15 },
     button = { 0.12, 0.08, 0.04, 0.9 }, selected = { 1, 0.82, 0.2, 0.25 }, flat = false,
+    small = { 0, 0, 0, 0.40 }, smallBorder = { 0.6, 0.6, 0.6, 0.45 },
   },
 }
 for _, p in ipairs(PALETTES) do for k, v in pairs(COMMON) do if p[k] == nil then p[k] = v end end end
@@ -58,10 +61,15 @@ local KINDS = {
   badge = { bg = "bg", border = "border" },
   button = { bg = "button", border = "borderSoft" },
   row = { bg = false, border = false, hover = true },
-  alert = { bg = "bg", border = "prio3" },
+  alert = { bg = "small", border = "prio3" },   -- (4.2 FIX42) alerte : fond transparent comme les autres petits cadres
   tooltip = { bg = "bg", border = "border" },
   card = { bg = "bg", border = "borderSoft" },                -- (UIREDO) fenêtre / carte : fond plat, liseré 1 px
+  -- (4.2 FIX42) petits cadres posés sur l'écran (bande, alertes, cartes du marchand / de l'HV / de la banque) : fond
+  -- transparent ~0,4, liseré 1 px discret, petite police (Th.SMALL) — jamais la fenêtre ni les menus
+  small = { bg = "small", border = "smallBorder" },
 }
+--- (4.2 FIX42) jetons des petits cadres : alpha du fond (0,35-0,5), police, hauteur des boutons
+Th.SMALL = { alpha = 0.42, font = "S", fontPx = 10, btnH = 20, pad = 6 }
 Th.KINDS = KINDS
 
 local skins = setmetatable({}, { __mode = "k" })   -- frame -> { kind, opts, tex }

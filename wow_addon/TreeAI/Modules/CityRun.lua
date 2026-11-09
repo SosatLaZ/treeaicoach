@@ -30,11 +30,12 @@ if not (T and T.RegisterModule) then return end
 
 local CR = T:RegisterModule("CityRun", {
   title = "Courses en ville",
-  defaults = { enabled = true, propose = true, pins = true, npcs = {} },
+  defaults = { enabled = true, propose = true, pins = true, townToast = true, npcs = {} },
   charDefaults = { run = false, choice = {}, pick = {} },
   options = {
     { key = "propose", type = "toggle", label = "Proposer « Courses en ville » en entrant dans une ville (2 courses ou plus)", section = "Courses en ville" },
     { key = "pins", type = "toggle", label = "Points métiers sur la carte (maîtres, marchands utiles, banque, HV…)", section = "Courses en ville" },
+    { key = "townToast", type = "toggle", label = "En arrivant en ville : une petite alerte « Ici : réparer, flèches… » (une fois par visite)", section = "Courses en ville" },
   },
 })
 T.CityRun = CR
@@ -1890,6 +1891,20 @@ function CR.BuyQty(e)
   return qty
 end
 CR.pendingBuy = {}
+-- (4.2 FIX42) le chemin unique des actions du jeu (Core.ShopCall : clic du joueur, hors combat, mode sûr)
+local function shop(api, fn, ...)
+  if T.ShopCall then return T:ShopCall(api, fn, ...) end
+  if inCombat() then return false, "combat" end
+  return pcall(fn, ...)
+end
+--- mode sûr : l'objet montré dans la fenêtre du marchand (ProfLevel), rien n'est acheté
+local function showMerchant(index, txt)
+  local P = PL()
+  if P and type(P.ShowMerchantItem) == "function" then return P.ShowMerchantItem(index, txt) end
+  say(txt .. " : clic droit dessus dans la fenêtre du marchand.")
+  return false
+end
+CR.Shop = shop
 --- UN achat (dans le clic) : BuyMerchantItem(case, quantité exacte, lot du marchand)
 function CR.BuyNext()
   if inCombat() then refuse("Achat : hors combat.") return false end
@@ -1901,7 +1916,8 @@ function CR.BuyNext()
   if cost > playerMoney() then say(fmt("Pas assez d'or pour %d %s (%s).", qty, itemName(e.id), money(cost))) return false end
   local fn = g("BuyMerchantItem")
   if type(fn) ~= "function" then return false end
-  local ok = pcall(fn, e.index, qty)
+  local ok, why = shop("BuyMerchantItem", fn, e.index, qty)
+  if why == "safe" then return showMerchant(e.index, fmt("%d %s", qty, itemName(e.id))) end
   if ok then
     CR.pendingBuy[e.id] = (CR.pendingBuy[e.id] or 0) + qty
     CR.bought = (CR.bought or 0) + 1
@@ -1920,7 +1936,8 @@ function CR.SellNext()
   local CC = g("C_Container")
   local fn = (CC and CC.UseContainerItem) or g("UseContainerItem")
   if type(fn) ~= "function" then return false end
-  local ok = pcall(fn, s.bag, s.slot)
+  local ok, why = shop("UseContainerItem", fn, s.bag, s.slot)
+  if why == "safe" then say(fmt("Mode sûr : clic droit sur %s dans tes sacs pour le vendre.", itemName(s.id))) return false end
   if ok then
     CR.pendingSell[s.bag .. ":" .. s.slot] = true
     CR.sold = (CR.sold or 0) + 1
@@ -1942,7 +1959,8 @@ function CR.RepairNow()
   if cost > playerMoney() then say(fmt("Pas assez d'or pour réparer (%s).", money(cost))) return false end
   local fn = g("RepairAllItems")
   if type(fn) ~= "function" then return false end
-  local ok = pcall(fn)
+  local ok, why = shop("RepairAllItems", fn)
+  if why == "safe" then say("Mode sûr : clique l'enclume « Tout réparer » de la fenêtre du marchand.") return false end
   if ok then
     if CR.run then CR.run.repaired = true end
     say("Réparé : " .. money(cost))
@@ -1988,13 +2006,59 @@ function CR.WithdrawNext()
   local CC = g("C_Container")
   local fn = (CC and CC.UseContainerItem) or g("UseContainerItem")
   if type(fn) ~= "function" then return false end
-  local ok = pcall(fn, pick.bag, pick.slot)
+  local ok, why = shop("UseContainerItem", fn, pick.bag, pick.slot)
+  if why == "safe" then
+    local P = PL()
+    if P and P.GlowBank then pcall(P.GlowBank, { e }) end
+    say(fmt("Mode sûr : clic droit sur la case en surbrillance (%s) de ta banque.", itemName(e.id)))
+    return false
+  end
   if ok then
     CR.pendingBank[e.id] = (CR.pendingBank[e.id] or 0) + pick.n
     say(fmt("Retiré : %d %s", pick.n, itemName(e.id)))
   end
   return ok
 end
+-- (4.2 FIX42) « Sortir à vendre » : à la banque, le SURPLUS des compos (verdict « en trop » : jamais ce que le plan
+-- ou les quêtes demandent) passe dans tes sacs, une pile par clic ; le marchand le vend ensuite (carte du marchand)
+CR.pendingOut = {}
+function CR.BankSellList()
+  local P = PL()
+  if not (CR.bankOpen or (P and P.bankOpen)) then return {} end
+  local slots = P and P.bankSlots or {}
+  local out = {}
+  for _, e in ipairs(CR.ExtraList()) do
+    local inBank = e.n - (e.bags or 0) - (CR.pendingOut[e.id] or 0)
+    if inBank > 0 and slots[e.id] and #slots[e.id] > 0 then out[#out + 1] = { id = e.id, n = inBank, slots = slots[e.id] } end
+  end
+  return out
+end
+function CR.BankSellNext()
+  if inCombat() then refuse("Banque : hors combat.") return false end
+  if merchantShown() then say("Ferme le marchand d'abord (sinon le jeu vendrait l'objet).") return false end
+  local e = CR.BankSellList()[1]
+  if not e then say("Rien en trop à la banque.") return false end
+  -- la plus grosse pile qui ne dépasse pas le surplus (jamais une pile qui contient du « besoin »)
+  local pick
+  for _, sl in ipairs(e.slots) do if sl.n <= e.n and (not pick or sl.n > pick.n) then pick = sl end end
+  if not pick then say(fmt("%s : la plus petite pile de la banque dépasse le surplus (%d) — rien sorti.", itemName(e.id), e.n)) return false end
+  local CC = g("C_Container")
+  local fn = (CC and CC.UseContainerItem) or g("UseContainerItem")
+  if type(fn) ~= "function" then return false end
+  local ok, why = shop("UseContainerItem", fn, pick.bag, pick.slot)
+  if why == "safe" then
+    local P = PL()
+    if P and P.GlowBank then pcall(P.GlowBank, { { id = e.id, slots = { pick } } }) end
+    say(fmt("Mode sûr : clic droit sur la case en surbrillance (%s) de ta banque.", itemName(e.id)))
+    return false
+  end
+  if ok then
+    CR.pendingOut[e.id] = (CR.pendingOut[e.id] or 0) + pick.n
+    say(fmt("Sorti de la banque : %d %s (à vendre)", pick.n, itemName(e.id)))
+  end
+  return ok
+end
+
 --- (contrat ProfLevel.FocusPlan) pendant les courses, à l'HV : le métier dont on achète les compos
 function CR.Borrow()
   local run = CR.run
@@ -2158,6 +2222,33 @@ function CR.CheckPropose()
       onClick = function() CR.Start() end,
       tooltip = { "Courses en ville", "Clic : lancer (trajet optimal, la boussole te guide, chaque arrêt se coche seul).",
         "Clic droit : ne plus proposer." } })
+  -- (4.2 FIX42) en arrivant en ville : UNE petite alerte (une fois par visite) qui dit ce qu'il y a à faire ici
+  -- (« Ici : réparer, flèches, maître de classe »), au même endroit que les autres alertes ; rien dans le chat
+  if T.ShowAlert and CR.db.townToast ~= false then
+    local names, seen = {}, {}
+    for _, e in ipairs(plan.errands) do
+      local l = e.kind ~= "sell" and CR.ShortLabel(e) or nil
+      if l and not seen[l] and #names < 3 then seen[l] = true names[#names + 1] = l end
+    end
+    if #names > 0 then
+      pcall(T.ShowAlert, T, { id = "CityRun:town", text = "Ici : " .. tconcat(names, ", ") .. (n > #names and fmt(" (+%d)", n - #names) or "")
+        .. " — « Courses en ville » dans TreeAI", prio = 3, tab = "now" }, true)
+      CR.toastFor = p.mapID
+    end
+  end
+end
+--- (4.2 FIX42) libellé court d'une course pour l'alerte d'arrivée en ville
+local SHORT = { repair = "réparer", bank = "banque", mail = "courrier", ah = "HV", ctrainer = "maître de classe",
+  ptrainer = "maître de métier", inn = "auberge", flight = "vol" }
+function CR.ShortLabel(e)
+  if type(e) ~= "table" then return nil end
+  if SHORT[e.kind] then return SHORT[e.kind] end
+  if e.kind == "vendor" then
+    local it = e.items and e.items[1]
+    if it then return fmt("%d %s", tonumber(it.n) or 0, itemName(it.id)) end
+    return type(e.label) == "string" and cut(e.label, 24) or "marchand"
+  end
+  return type(e.label) == "string" and cut(e.label, 24) or nil
 end
 
 -- ===================================================================== « Me concentrer sur les métiers »
@@ -2782,12 +2873,12 @@ CR.handlers = {
     CR.trainerKind = nil
   end,
   BANKFRAME_OPENED = function()
-    CR.bankOpen, CR.pendingBank = true, {}
+    CR.bankOpen, CR.pendingBank, CR.pendingOut = true, {}, {}
     pcall(CR.Remember, "bank", (try(g("UnitName"), "npc")))
     if CR.run then CR.Soon(0.2) end
   end,
   BANKFRAME_CLOSED = function()
-    CR.bankOpen, CR.pendingBank = false, {}
+    CR.bankOpen, CR.pendingBank, CR.pendingOut = false, {}, {}
     if CR.run then visit("bank") end
   end,
   MAIL_SHOW = function()
@@ -2812,7 +2903,7 @@ CR.handlers = {
   GOSSIP_SHOW = function() pcall(CR.LearnGossip) end,
   CONFIRM_BINDER = function() pcall(CR.Remember, "inn", (try(g("UnitName"), "npc"))) if CR.run then visit("inn") end end,
   BAG_UPDATE_DELAYED = function()
-    CR.pendingBuy, CR.pendingBank, CR.pendingSell = {}, {}, {}
+    CR.pendingBuy, CR.pendingBank, CR.pendingSell, CR.pendingOut = {}, {}, {}, {}
     if CR.run then CR.Soon(0.2) end
   end,
   PLAYER_MONEY = function() if CR.run then CR.Soon(0.3) end end,

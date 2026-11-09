@@ -706,7 +706,7 @@ local function createAmmoButton()
   b.icon:SetAllPoints(b)
   b.count = b:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
   b.count:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -1, 1)
-  b:SetScript("OnClick", function() M:BuyAmmo() end)
+  b:SetScript("OnClick", function() T:UserAction(function() M:BuyAmmo() end) end)
   if T.Theme and T.Theme.ShortcutStyle then T.Theme:ShortcutStyle(b) end   -- (UIREDO) même bouton partout
   b:SetScript("OnEnter", function(self)
     local o = M._ammoOffer
@@ -790,16 +790,28 @@ function M:BuyAmmo()
   if n <= 0 then return false end
   local buy = G.BuyMerchantItem
   if type(buy) ~= "function" then return false end
-  local guard = 0
-  T:UserAction(function()
+  -- (4.2 FIX42) Core.ShopCall : dans TON clic (T:UserAction de l'OnClick), hors combat ; mode sûr = l'objet montré
+  -- dans la fenêtre du marchand, tu achètes toi-même. Les piles voulues dans CE clic (au plus 25), rien d'autre.
+  local guard, why = 0, nil
+  local function run()
     while n > 0 and guard < 25 do
       local q = min(n, o.maxStack or 200)
-      try(buy, o.index, q)
+      if not T.ShopCall then break end
+      local ok, w = T:ShopCall("BuyMerchantItem", buy, o.index, q)
+      if w then why = w break end
+      if not ok then break end
       n, guard = n - q, guard + 1
     end
-  end)
+  end
+  run()
+  if why == "safe" then
+    local P = T.ProfLevel
+    if P and P.ShowMerchantItem then pcall(P.ShowMerchantItem, o.index, (o.name or "Munitions") .. " ×" .. n)
+    elseif T.ClickNote then T:ClickNote("Mode sûr : clic droit sur tes munitions dans la fenêtre du marchand.") end
+    return false
+  end
   T:After(0.6, function() M:InvalidatePicks() M:Request() end)
-  return true
+  return guard > 0
 end
 
 ---------------------------------------------------------------------------

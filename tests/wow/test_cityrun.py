@@ -29,7 +29,7 @@ def test_cityrun_scenario(flavor):
 def test_protected_calls_only_in_click_actions():
     body = re.sub(r"--[^\n]*", "", MODULE.read_text(encoding="utf-8"))
     for api, fns in (("BuyMerchantItem", ("CR.BuyNext",)), ("RepairAllItems", ("CR.RepairNow",)),
-                     ("UseContainerItem", ("CR.SellNext", "CR.WithdrawNext"))):
+                     ("UseContainerItem", ("CR.SellNext", "CR.WithdrawNext", "CR.BankSellNext"))):   # 4.2: bank « Sortir à vendre »
         hits = [m.start() for m in re.finditer(r"\b" + re.escape(api) + r"\b", body)]
         assert hits, api
         for h in hits:
@@ -40,7 +40,7 @@ def test_protected_calls_only_in_click_actions():
         assert bad not in body, bad
     assert "inCombat()" in body and "T:UserAction" in body
     # every action refuses combat first
-    for fn in ("CR.BuyNext", "CR.SellNext", "CR.RepairNow", "CR.WithdrawNext"):
+    for fn in ("CR.BuyNext", "CR.SellNext", "CR.RepairNow", "CR.WithdrawNext", "CR.BankSellNext"):
         i = body.index("function " + fn)
         assert "if inCombat() then refuse(" in body[i:i + 200], fn
 
