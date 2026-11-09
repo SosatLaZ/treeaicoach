@@ -940,7 +940,12 @@ function F:OnEnable()
   self.ticker = T:NewTicker(30, function()
     if inCombat() then return end
     -- (CLEAN) toutes les 2 min suffisent ; jamais dans l'image du minuteur (où tournent d'autres modules) : 1 s après
-    if F._dirty or now() - lastRun >= 120 then T:After(1.1, function() if not inCombat() then F:Refresh(true) end end) end
+    -- (4.3.3) gros calcul : au plus toutes les 2 min si zone / niveau a changé, sinon toutes les 5 min (freezes à 30 s)
+    local age = now() - lastRun
+    local shown = F.frame and F.frame.IsShown and F.frame:IsShown()
+    if (shown and F._dirty) or (F._dirty and age >= 120) or age >= 300 then
+      T:After(1.1, function() if not inCombat() then F:Refresh(true) end end)
+    end
   end, self)
   T:After(8, function() if not inCombat() then F:Refresh(true) end end)
 end

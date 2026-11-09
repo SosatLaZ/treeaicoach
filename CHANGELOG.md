@@ -3,6 +3,11 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 4.3.3 · 9 novembre 2026
+
+- Moins de freezes : la recherche « Chercher » ne refait plus son gros calcul toutes les 30 s (au plus toutes les
+  2 min après un changement de zone, sinon toutes les 5 min).
+
 ## 4.3.2 · 9 novembre 2026
 
 - Le fichier d'erreurs repart à zéro à chaque nouvelle version (les vieilles erreurs ne passent plus pour actuelles).

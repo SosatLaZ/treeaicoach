@@ -1,6 +1,6 @@
 {
-  "version": "4.3.2",
+  "version": "4.3.3",
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334,
-  "notes": "TreeAI 4.3.2 : le fichier d'erreurs repart à zéro à chaque version."
+  "notes": "TreeAI 4.3.3 : moins de freezes (recherche moins fréquente)."
 }

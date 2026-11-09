@@ -1,25 +1,25 @@
 {
- "version": "4.3.2",
+ "version": "4.3.3",
  "exe": "TreeAICoach-app.exe",
- "sha256": "c60460d4eb54fc7404e15a839769358c835c8235fa1d2cf857dd9b4ad767ade2",
+ "sha256": "7f1347453de130a928880c9d89e023677d625e2c50168d5b2721f424e3e15021",
  "chunks": [
   {
-   "name": "4.3.2/part-01.zip",
+   "name": "4.3.3/part-01.zip",
    "size": 88058592,
-   "sha256": "db8b18866c297c5f583b9045b5d6ab2bb7ffb4858339e6bb81fe67bcee880713",
+   "sha256": "e2a54d2a7be1d9b5beb3811be55fd5d00cb785bdba64f985a619658360464a2f",
    "files": 127
   },
   {
-   "name": "4.3.2/part-02.zip",
-   "size": 14194006,
-   "sha256": "2747d0f4dcc4e559ce85f509b00611d5505bddb349a46c5ac789f28d6395e776",
+   "name": "4.3.3/part-02.zip",
+   "size": 14194106,
+   "sha256": "7f9698e168c4feb7283799290bf78f459470999ed49702d70d7672438af504e5",
    "files": 688
   }
  ],
- "total_size": 102252598,
+ "total_size": 102252698,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "TreeAI 4.3.2 : le fichier d'erreurs repart \u00e0 z\u00e9ro \u00e0 chaque version."
+ "notes": "TreeAI 4.3.3 : moins de freezes (recherche moins fr\u00e9quente)."
 }
