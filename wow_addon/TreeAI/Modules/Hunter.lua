@@ -499,6 +499,19 @@ local function freeTrainingPoints()
 end
 M.FreeTrainingPoints = freeTrainingPoints
 
+--- (4.3.6 V5H) en combat : vie du familier (une lecture, pas de sac) — « Guérison » quand il va tomber
+function M:CheckPetHealth()
+  if not (inCombat() and UnitExists and UnitExists("pet")) or (UnitIsDead and UnitIsDead("pet")) then clear("petlow") return end
+  local hp = tonumber(_ns(UnitHealth and UnitHealth("pet")))
+  local mx = tonumber(_ns(UnitHealthMax and UnitHealthMax("pet")))
+  if hp and mx and mx > 0 and hp / mx < 0.35 and knows(S.MEND) then
+    suggest("petlow", ("Soigne ton familier : « %s » (%d %%)"):format(spellName(S.MEND) or "Guérison du familier",
+      math.floor(hp / mx * 100)), 3, 8, { tooltip = "Macro « TAI Familier » : un clic = Guérison du familier." })
+  else
+    clear("petlow")
+  end
+end
+
 function M:CheckTraining()
   if inCombat() or not (UnitExists and UnitExists("pet")) then return end
   local free = freeTrainingPoints()
@@ -1145,7 +1158,12 @@ function M:Enable()
     self._slowTicker = TreeAI:NewTicker(5, function()
       if not M.enabled then return end
       pcall(M.CheckPet, M)
-      if inCombat() then pcall(M.CheckAspect, M) end
+      -- (V5H) en combat : le strict nécessaire continue (cible / aspect, vie du familier, munitions toutes les 10 s)
+      if inCombat() then
+        pcall(M.CheckAspect, M) pcall(M.CheckPetHealth, M)
+        M._ammoTick = (M._ammoTick or 0) + 1
+        if M._ammoTick % 2 == 0 then pcall(M.CheckAmmo, M) end
+      else clear("petlow") end
     end, M)
   end
   if type(self.On) == "function" and not self.summaryHooked then

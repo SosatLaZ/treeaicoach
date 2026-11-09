@@ -34,6 +34,7 @@ def test_visible_login_combat_reload(tmp_path):
         for n in ("TreeAIStrip", "TreeAICompassFrame", "TreeAIMinimapButton"):
             assert f"VISIBLE {tag} ok {n}" in out, (tag, n)
     assert "VISIBLE alerte ok TreeAIAlert" in out
+    assert "VISIBLE combat familier suivi" in out
     assert "VISIBLE /tai barre (module coupé) ok TreeAIStrip" in out
     out = run("reload", sv_load=sv)
     assert "VISIBLE combat ok TreeAIStrip" in out

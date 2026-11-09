@@ -48,9 +48,19 @@ return function(M, ctx)
   -- combat: everything stays, nothing hidden
   M.target = { exists = true, name = "Hyène de test", level = 27, health = 500, healthMax = 500, hostile = true }
   ctx.fire("PLAYER_TARGET_CHANGED")
+  -- (item 4) hunter checks keep running in combat: a pet about to die → « Soigne ton familier »
+  if T.modules.Hunter and not T.modules.Hunter._active then T:SetModuleEnabled("Hunter", true) end
+  M.pet.health = 120
   M.EnterCombat() ctx.fire("PLAYER_REGEN_DISABLED")
-  M.Advance(3, 0.1)
+  M.Advance(6, 0.1)
   audit("combat", ALWAYS)
+  local petlow = false
+  for _, e in ipairs(T:GetSuggestions()) do if tostring(e.text):find("Soigne ton familier", 1, true) then petlow = true end end
+  -- Forever: the pet's health is a secret value in combat (unreadable by addons) → the check stays silent, no error
+  local sec = rawget(_G, "issecretvalue") and issecretvalue(UnitHealth("pet"))
+  check(petlow or sec, "combat : vie du familier suivie (« Soigne ton familier »)")
+  if petlow or sec then out("combat familier suivi") end
+  M.pet.health = 500
   M.LeaveCombat() ctx.fire("PLAYER_REGEN_ENABLED")
   M.Advance(2, 0.1)
   audit("après combat", ALWAYS)
