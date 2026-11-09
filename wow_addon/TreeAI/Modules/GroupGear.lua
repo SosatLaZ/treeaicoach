@@ -256,9 +256,12 @@ end
 GG.HasTreeAI = hasTreeAI
 
 -- ===================================================================================== mon équipement, mes sacs
+-- (4.4 SMART) équipement relu seulement quand le jeu dit qu'il a changé (PLAYER_EQUIPMENT_CHANGED → S.gearDirty),
+-- ou toutes les GG.GEAR_MAX s au plus (filet) ; avant : 17 lectures + analyses de liens toutes les 2 s, pour rien
+GG.GEAR_MAX = 60
 local function readMine()
   local t = now()
-  if me.gearAt and t - me.gearAt < 1 and not S.gearDirty then return me.gear end
+  if me.gearAt and t - me.gearAt < GG.GEAR_MAX and not S.gearDirty then return me.gear end
   me.level = num(try(g("UnitLevel"), "player")) or me.level
   local gear = {}
   for _, s in ipairs(SLOTS) do
@@ -606,25 +609,31 @@ function GG.Summary(m)
 end
 
 -- ===================================================================================== partage TreeAI (GGE / GGB / GGQ)
+local payMemo = {}   -- (4.4 SMART) message calculé une fois par état (même table d'équipement / de sacs = même texte)
 local function myGearPayload()
   readMine()
+  local E = eng()
+  local sp = E and E.SpecTab and num(try(E.SpecTab)) or 0
+  if payMemo.gear == me.gear and payMemo.sp == sp and payMemo.g then return payMemo.g end
   local parts = {}
   for _, sl in ipairs(SLOTS) do
     local id, sfx = GG.ParseLink(me.gear[sl])
     if id then parts[#parts + 1] = sl .. "=" .. GG.Compact(id, sfx) end
   end
-  local E = eng()
-  local sp = E and E.SpecTab and num(try(E.SpecTab)) or 0
-  return "1;" .. floor(sp or 0) .. ";" .. tconcat(parts, ",")
+  payMemo.gear, payMemo.sp = me.gear, sp
+  payMemo.g = "1;" .. floor(sp or 0) .. ";" .. tconcat(parts, ",")
+  return payMemo.g
 end
 local function myBagsPayload()
+  if payMemo.bags == myBags and payMemo.b then return payMemo.b end
   local parts = {}
   for _, b in ipairs(myBags) do
     if #parts >= GG.MAX_BAG then break end
     local id, sfx = GG.ParseLink(b.link)
     if id then parts[#parts + 1] = GG.Compact(id, sfx) end
   end
-  return "1;" .. tconcat(parts, ",")
+  payMemo.bags, payMemo.b = myBags, "1;" .. tconcat(parts, ",")
+  return payMemo.b
 end
 GG.GearPayload, GG.BagsPayload = myGearPayload, myBagsPayload
 

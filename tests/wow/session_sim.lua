@@ -36,6 +36,7 @@ do
     elseif a == "--addon" then opts.addon = arg[i + 1]; i = i + 1
     elseif a == "--profile" then opts.profile = arg[i + 1]; i = i + 1
     elseif a == "--fine" then opts.fine = true
+    elseif a == "--sub" then opts.sub = true
     elseif a == "--step" then opts.step = tonumber(arg[i + 1]); i = i + 1
     elseif a == "--ms-rate" then opts.msRate = tonumber(arg[i + 1]); i = i + 1
     elseif a == "--idle" then opts.idle = true
@@ -257,6 +258,8 @@ local getinfo = debug.getinfo
 -- SPIKE: per-frame cost on the main client (one frame = timers + OnUpdate of one wowmock Advance step,
 -- 0.2 s on the main client). FR.acc = samples (×1000 instr) in the open frame; FR.mods = by Module:line.
 local FR = { open = false, acc = 0, mods = {}, jobs = {}, fjobs = {}, costs = {}, phase = {}, worst = {}, idx = 0, kbStart = 0, kb = {}, hookKB = 0 }
+local FINE_ENV = {}         -- client name -> its Lua environment (4.4 SMART: read TreeAI._ctx in the hook)
+local fineIncl = {}         -- --fine: samples by « context  job » (4.4 SMART)
 local fine = {}             -- --fine: samples by « Module:line » of the innermost addon function (main client)
 -- FIDELITY: the forever layer of the mock (secret values, documented flags, wrappers: functions defined after
 -- WowMock.FOREVER_LAYER_LINE) is C code in the game: its samples are not addon CPU. The mock's API bodies are
@@ -289,6 +292,26 @@ local function hook()
           l2 = l2 + 1
         end
         fine[k] = (fine[k] or 0) + 1
+        -- 4.4 SMART: inclusive cost by « what pays »: the dispatch context (module:event, Module:AutoRefresh) or,
+        -- for tickers / OnUpdate, the outermost non-Core addon function
+        local l3, job, prev, sub = lvl, nil, nil, nil
+        while true do
+          local i3 = getinfo(l3, "S")
+          if not i3 then break end
+          local m3 = modOf(i3.source)
+          if m3 then
+            local here = m3 .. ":" .. i3.linedefined
+            if m3 ~= "Core" or not job then job, sub = here, prev end
+            prev = here
+          end
+          l3 = l3 + 1
+        end
+        if sub and opts.sub then job = job .. " > " .. sub end   -- --sub: + the function the job called (4.4 SMART)
+        local E1 = FINE_ENV[CUR]
+        local T1 = E1 and rawget(E1, "TreeAI")
+        local ctx = T1 and rawget(T1, "_ctx")
+        local key = (type(ctx) == "string" and ctx or "-") .. "  " .. tostring(job)
+        fineIncl[key] = (fineIncl[key] or 0) + 1
       end
       break
     end
@@ -539,6 +562,7 @@ local function newClient(idx)
     xp = 15000 + idx * 1000 }
   local c = { name = spec.name, idx = idx, main = idx == 1, alerts = {}, sends = {} }
   c.env, c.M = newWorld(spec)
+  FINE_ENV[c.name] = c.env
   clients[c.name] = c
   order[#order + 1] = c
   return c
@@ -566,6 +590,7 @@ local function reload(c)
   local sv = serialize("TreeAIDB", rawget(c.env, "TreeAIDB"))
   local oldM = c.M
   c.env, c.M = newWorld({ idx = c.idx, name = c.name, class = oldM.player.class }, oldM)
+  FINE_ENV[c.name] = c.env
   loadAddon(c, sv)
   c.segmentStart = MINUTE
   R.joinMin = R.joinMin or {}
@@ -720,7 +745,17 @@ local function frameHook(begin)
   FR.kb[sec] = (FR.kb[sec] or 0) + math.max(0, kb)
   local cost = FR.acc
   if sec < 30 then   -- login / first layout (loading screen just gone): measured apart
-    if cost > (FR.loginWorst or 0) then FR.loginWorst = cost end
+    if cost > (FR.loginWorst or 0) then
+      FR.loginWorst = cost
+      local top, jt = {}, {}   -- 4.4 SMART: who pays the login frame (-v)
+      for mk, byLine in pairs(FR.mods) do for line, n in pairs(byLine) do top[#top + 1] = { k = mk .. ":" .. line, n = n } end end
+      for k, n in pairs(FR.fjobs) do jt[#jt + 1] = { k = k, n = n } end
+      table.sort(top, function(a, b) return a.n > b.n end)
+      table.sort(jt, function(a, b) return a.n > b.n end)
+      for i = #top, 9, -1 do top[i] = nil end
+      for i = #jt, 7, -1 do jt[i] = nil end
+      FR.loginTop = { t = order[1].M.now - T0, top = top, jobs = jt }
+    end
     return
   end
   FR.costs[#FR.costs + 1] = cost
@@ -1475,6 +1510,12 @@ do
   for sec, kb in pairs(FR.kb) do if sec >= 60 then kbs = kbs + kb nk = nk + 1 if kb > kbMax then kbMax = kb end end end
   local kbAvg = nk > 0 and kbs / nk or 0
   P(("login (first 30 s): worst frame %d kinstr (budget %d)"):format(FR.loginWorst or 0, BUDGET.frameLoginKinstr))
+  if opts.verbose and FR.loginTop then
+    local parts, jp = {}, {}
+    for _, e in ipairs(FR.loginTop.top) do parts[#parts + 1] = ("%s=%d"):format(e.k, e.n) end
+    for _, e in ipairs(FR.loginTop.jobs) do jp[#jp + 1] = ("%s=%d"):format(e.k, e.n) end
+    P(("  login worst @%5.1fs  %s  | jobs %s"):format(FR.loginTop.t, table.concat(parts, " "), table.concat(jp, " ")))
+  end
   if (FR.loginWorst or 0) > BUDGET.frameLoginKinstr then fail(("hitch: login frame %d kinstr > %d"):format(FR.loginWorst, BUDGET.frameLoginKinstr)) end
   P(("frames: %d  worst %d kinstr  p99 %d  p50 %d  mean %.1f  1-Hz phase ratio %.2f  alloc %.1f KB/s (max %.0f KB in 1 s)")
     :format(n, c[n] or 0, pct(0.99), pct(0.5), mean, phRatio, kbAvg, kbMax))
@@ -1547,6 +1588,11 @@ if opts.fine then
   table.sort(ks, function(a, b) return fine[a] > fine[b] end)
   P("fine (main client, minutes 1+, kinstr/min by Module:function line; the hook's own work inflates every count):")
   for i = 1, math.min(opts.verbose and 300 or 80, #ks) do P(("  %-40s %7.1f"):format(ks[i], fine[ks[i]] / math.max(1, opts.minutes - 1))) end
+  local ki = {}
+  for k in pairs(fineIncl) do ki[#ki + 1] = k end
+  table.sort(ki, function(a, b) return fineIncl[a] > fineIncl[b] end)
+  P("inclusive (main client, minutes 1+, kinstr/min by dispatch context + outermost job):")
+  for i = 1, math.min(60, #ki) do P(("  %-60s %7.1f"):format(ki[i], fineIncl[ki[i]] / math.max(1, opts.minutes - 1))) end
 end
 if totalMain / nMin > BUDGET.kinstrTotalMin then fail(("cpu: addon total %.0f kinstr/min > %d"):format(totalMain / nMin, BUDGET.kinstrTotalMin)) end
 

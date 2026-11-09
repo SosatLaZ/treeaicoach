@@ -1209,13 +1209,17 @@ function M:ScanNow()
   if not ok then self:Debug("plan:", plan) end
 end
 
+-- (4.4 SMART) la minuterie des tranches n'existe que pendant un calcul : au repos, zéro travail (avant : un rappel
+-- toutes les 0,1 s pour toujours, ≈ 600 réveils / min de l'ordonnanceur pour rien)
+local function stopTicker() if M._ticker then M._ticker:Cancel() M._ticker = nil end end
 local function step()
-  if not job then return end
+  if not job then stopTicker() return end
   if T:InCombat() then return end
   local ok, res = coroutine.resume(job)
-  if not ok then M:Debug("plan:", res) job = nil return end
+  if not ok then M:Debug("plan:", res) job = nil stopTicker() return end
   if coroutine.status(job) == "dead" then
     job = nil
+    stopTicker()
     if res then M:Publish(res) end
   end
 end
@@ -1225,13 +1229,17 @@ function M:Start()
   dirty, lastRun = false, (g("GetTime") and g("GetTime")()) or 0
   job = coroutine.create(function() return M.Plan(400) end)
   step()
+  if job and not M._ticker and T.NewTicker then M._ticker = T:NewTicker(0.1, step, M) end
 end
 
+-- (4.4 SMART) recalcul seulement quand une entrée a changé (équipement, sacs, niveau, quête prise, talents : markDirty) ;
+-- filet de sécurité toutes les 10 min (avant : un plan complet toutes les 2 min même sans rien de neuf)
+M.REPLAN_MAX = 600
 function M:AutoRefresh()
   if T:InCombat() then return end
   if job then step() return end
   local t = (g("GetTime") and g("GetTime")()) or 0
-  if dirty and t - lastRun >= 5 or t - lastRun >= 120 then self:Start() end
+  if dirty and t - lastRun >= 5 or t - lastRun >= M.REPLAN_MAX then self:Start() end
 end
 
 local function markDirty() dirty = true srcCache = {} craftAt = -100 end
@@ -1399,8 +1407,7 @@ function M:OnEnable()
   self:RegisterEvent("CHARACTER_POINTS_CHANGED", function() markDirty() end)
   self:On("COMBAT_END", function() if job then T:After(1, step) end end)
   self:On("SUMMARY", function(m) if m.plan then local s = T:Summary() if type(s) == "table" then s.gear = M.Summary(m.plan) end end end)
-  if self._ticker then self._ticker:Cancel() end
-  self._ticker = T:NewTicker(0.1, function() if job then step() end end)
+  if self._ticker then self._ticker:Cancel() self._ticker = nil end
   T:After(8, function() M:AutoRefresh() end)
 end
 

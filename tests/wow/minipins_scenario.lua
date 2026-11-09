@@ -173,8 +173,13 @@ return function(M, ctx)
   -- perf: ≤ 5 placements / s through the Minimap-child driver (LITE)
   MP.Update(true)
   local u0 = MP.updates
-  M.Advance(2, 0.02)
+  for _ = 1, 4 do T:WakeMotion() M.Advance(0.5, 0.02) end   -- the player keeps moving
   check(MP.updates - u0 <= 11 and MP.updates - u0 >= 5, "driver updates ≤ 5 Hz (" .. (MP.updates - u0) .. " in 2 s)")
+  -- (4.4 SMART) standing still, nothing new: the pins stay where they are, no position read at all
+  M.Advance(2, 0.1)
+  u0 = MP.updates
+  M.Advance(5, 0.02)
+  check(MP.updates - u0 == 0, "still: no minimap placement (" .. (MP.updates - u0) .. " in 5 s)")
 
   -- ------------------------------------------------------------- HereBeDragons-Pins path (stub)
   local added, removed = {}, {}

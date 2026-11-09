@@ -52,6 +52,7 @@ MP.LAYERS, MP.LABELS = LAYERS, LABELS
 local floor, sqrt, atan2, cos, sin, pi, abs, max, min =
   math.floor, math.sqrt, math.atan2, math.cos, math.sin, math.pi, math.abs, math.max, math.min
 local STEP = 0.2                 -- ≤ 5 placements / s (LITE)
+MP.STILL_SLOW = 15               -- (4.4 SMART) liste refaite au plus toutes les 15 s quand le joueur ne bouge pas
 local CIRCLE = "Interface\\CharacterFrame\\TempPortraitAlphaMask"
 local ARROW = "Interface\\Minimap\\MinimapArrow"
 
@@ -522,6 +523,13 @@ function MP.Update(force)
   if not force and t - (MP.lastAt or -1) < STEP then return end
   MP.lastAt = t
   local mm = minimap()
+  -- (4.4 SMART) immobile (ni position ni orientation changées : Core, relevé 1 / s + PLAYER_STARTED_MOVING) et rien de
+  -- neuf (journal, zone, zoom → MP.sig effacé) : les épingles sont déjà à leur place, aucune relecture de position ;
+  -- la liste se refait toutes les 15 s à l'arrêt au lieu de 3 s (avant : 5 relevés de position / s pour rien)
+  local qg = T.QuestGen and T:QuestGen() or 0
+  if not force and MP.sig and MP.pins and MP.qg == qg and T.Moving and not T:Moving(1.5)
+      and t - (MP.slowAt or 0) < MP.STILL_SLOW and MP.engine ~= "hbd" then return end
+  MP.qg = qg
   local R = radar()
   local me = R and R.Me and R.Me()
   local visible = mm and (not mm.IsVisible or try(mm.IsVisible, mm))

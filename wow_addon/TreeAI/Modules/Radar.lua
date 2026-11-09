@@ -986,6 +986,14 @@ end
 R.cost, R.costMax, R.updates = 0, 0, 0
 function R.Update()
   if not frame then return end
+  -- (4.4 SMART) joueur immobile (position et orientation inchangées, relevé du cœur) : rien à replacer entre deux
+  -- relevés des points (1 / s, le groupe et les cibles bougent) — avant : 20 positions relues / s à l'arrêt
+  local tq = now()
+  if R.lastSig and R.pins and T.Moving and not T:Moving(1.5) and tq - (R.slowAt or 0) <= 1 and opt("zoom") == R._lz then
+    if zoomText and zoomText:IsShown() and tq - (R.zoomShownAt or 0) > 2.5 then zoomText:Hide() end
+    return
+  end
+  R._lz = opt("zoom")
   local t0 = try(_G.debugprofilestop)
   local me = R.Me()
   if not me then R.Visibility() return end

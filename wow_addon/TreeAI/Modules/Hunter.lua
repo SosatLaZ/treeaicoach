@@ -1079,6 +1079,7 @@ local EVENTS = {
 
 local UNIT_EVENTS = { UNIT_PET = true, UNIT_HAPPINESS = true, UNIT_INVENTORY_CHANGED = true,
   UNIT_SPELLCAST_SUCCEEDED = true, UNIT_SPELLCAST_START = true, UNIT_AURA = true }
+local coal = { window = false, pending = false }   -- (4.4 SMART) événements regroupés (voir la fin de M:OnEvent)
 function M:OnEvent(ev, ...)
   if ev == "PLAYER_STARTED_MOVING" then M.moving = true return end   -- barre de tir : « Ne bouge pas ! »
   if ev == "PLAYER_STOPPED_MOVING" then M.moving = false return end
@@ -1123,12 +1124,29 @@ function M:OnEvent(ev, ...)
     return
   end
   if ev == "PLAYER_REGEN_ENABLED" then self:OnLeaveCombat() end
+  -- (4.4 SMART) rafales (sacs, inventaire, bonheur / barre du familier : 5 à 20 par combat ou par butin) : le premier
+  -- événement est traité tout de suite, les suivants des 0,4 s qui suivent en UN seul passage à la fin de la fenêtre
   if ev == "BAG_UPDATE_DELAYED" or ev == "UNIT_INVENTORY_CHANGED" or ev == "PLAYER_ENTERING_WORLD"
       or ev == "PLAYER_REGEN_ENABLED" then
-    self:CheckAmmo()
+    coal.ammo = true
   end
+  if ev == "PLAYER_REGEN_ENABLED" or ev == "PLAYER_ENTERING_WORLD" then coal.train = true end
+  if coal.window and TreeAI.After then coal.pending = true return end
+  self:FlushEvents()
+  if TreeAI.After then
+    coal.window = true
+    TreeAI:After(M.COALESCE, function()
+      coal.window = false
+      if coal.pending then coal.pending = false M:FlushEvents() end
+    end)
+  end
+end
+M.COALESCE = 0.4
+function M:FlushEvents()
+  if not self.enabled then return end
+  if coal.ammo then coal.ammo = false self:CheckAmmo() end
   self:CheckPet()
-  if ev == "PLAYER_REGEN_ENABLED" or ev == "PLAYER_ENTERING_WORLD" then self:CheckTraining(); self:CheckAspect() end
+  if coal.train then coal.train = false self:CheckTraining(); self:CheckAspect() end
   self:PushTab()
 end
 

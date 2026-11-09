@@ -233,7 +233,14 @@ local function isEscortText(s)
   return false
 end
 
+-- (4.4 SMART) relevé du journal gardé tant que le journal (T:QuestGen, avancé à chaque événement de quête), le niveau et
+-- les escortes repérées n'ont pas changé : avant, ~60 lectures d'API + analyses de texte à chaque cycle (3 s)
+local escortGen = 0
 function M.ScanLog()
+  local qg = T.QuestGen and T:QuestGen()
+  local key = qg and (qg .. ":" .. level() .. ":" .. escortGen) or nil
+  if key and key == M._scanKey and M.log then return M.log end
+  M._scanKey = key
   local list = {}
   local CQ = g("C_QuestLog")
   local n = tonumber((CQ and CQ.GetNumQuestLogEntries and try(CQ.GetNumQuestLogEntries)) or try(g("GetNumQuestLogEntries"))) or 0
@@ -473,7 +480,7 @@ function M:QUEST_DETAIL()
   local qid = tonumber((try(g("GetQuestID"))))
   if not qid then return end
   local text = (try(g("GetQuestText")) or "") .. " " .. (try(g("GetObjectiveText")) or "")
-  if isEscortText(text) then M.char.escort[qid] = true end
+  if isEscortText(text) then M.char.escort[qid] = true escortGen = escortGen + 1 end
   M.CaptureRewards(qid)
 end
 function M:QUEST_COMPLETE() M.CaptureRewards(tonumber((try(g("GetQuestID"))))) end
