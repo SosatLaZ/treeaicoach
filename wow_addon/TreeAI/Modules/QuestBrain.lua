@@ -29,7 +29,7 @@ local QB = T:RegisterModule("QuestBrain", {
 T.QuestBrain = QB
 
 local floor, max, min, huge = math.floor, math.max, math.min, math.huge
-local tsort, tconcat, fmt = table.sort, table.concat, string.format
+local tsort, tconcat, fmt, tinsert = table.sort, table.concat, string.format, table.insert
 local function tryPass(ok, a, ...) if ok then return a, ... end return nil end
 local function try(fn, ...) if type(fn) ~= "function" then return nil end return tryPass(pcall(fn, ...)) end
 local function G(name) return rawget(_G, name) end
@@ -54,6 +54,8 @@ QB.MODES = {
     tip = "Le trajet de ta zone de travail : prendre, faire et rendre dans le meilleur ordre." },
   { id = "group", label = "Avec le groupe", short = "Groupe", binding = "TREEAI_QB_GROUP",
     tip = "D'abord les quêtes que ton groupe a aussi, puis celles à partager ; les élites quand vous êtes 3 ou plus." },
+  { id = "fastlvl", label = "Monter vite", short = "Vite", binding = "TREEAI_QB_FASTLVL",
+    tip = "Une seule ligne « Fais ça maintenant » et les 3 suivantes : le plus d'XP par heure (quêtes finies tout près, meilleur paquet, XP reposée, donjon en groupe, monstres quand les quêtes manquent)." },
 }
 local BY_ID = {}
 for i, m in ipairs(QB.MODES) do BY_ID[m.id] = i end
@@ -296,6 +298,7 @@ function QB.Eligible(q, rec, ctx)
   local gap = tonumber(Z and Z.db and Z.db.gap) or 3
   if lv > 0 and lv - ctx.level > gap then return false, "trop haute" end
   if Z and Z.char and Z.char.ignore and Z.char.ignore[q] then return false, "ignorée" end
+  if QB.Phantom and QB.Phantom(q) then return false, "pas proposée" end   -- (4.3.5 PICKFIX) vue absente chez le PNJ
   local elite, grp, dg, ex = false, false, false, {}
   if Z and Z.Kind then elite, grp, dg, ex = Z.Kind(q, rec, nil) end
   if ex.pvp or ex.raid then return false, ex.pvp and "JcJ" or "raid" end
@@ -535,6 +538,7 @@ local function zoneCount()
 end
 local function counts()
   local c = { turnin = #QB.TurnInList(), pickup = #QB.PickupList(99), zone = zoneCount() }
+  c.fastlvl = c.turnin + c.pickup
   local g = 0
   for _, e in ipairs(QB.GroupList()) do if e.n > 0 then g = g + 1 end end
   c.group = g
@@ -655,6 +659,353 @@ function QB.Prev()
   return true
 end
 function QB.Skipped(q) return QB.skipped[tonumber(q) or -1] and true or false end
+
+-- ===================================================================== (4.3.5 PICKFIX) quêtes « fantômes »
+-- « des quêtes qu'affiche Questie n'existent pas » : quand la fenêtre d'un donneur prévu s'ouvre (GOSSIP_SHOW,
+-- QUEST_GREETING, QUEST_DETAIL seul) et qu'une prise prévue chez CE PNJ n'y est pas, elle est retenue « pas proposée »
+-- pour ce personnage (raison + date + niveau), sortie de « Quêtes à prendre » et du trajet ; idem pour un donneur
+-- atteint (≤ 10 m, PNJ ciblé / vu) puis quitté 2 fois sans la quête. Retentée au niveau suivant.
+QB.VISIT_YD, QB.LEAVE_YD, QB.GIVER_YD, QB.SAME_NAME_YD = 11, 40, 15, 80
+local function phantoms()
+  local c = QB.char
+  if type(c) ~= "table" then return nil end
+  if type(c.phantom) ~= "table" then c.phantom = {} end
+  return c.phantom
+end
+--- quête vue absente chez son donneur → { why, at, day, lv, t } ; nil sinon (ou après un passage de niveau)
+function QB.Phantom(q)
+  local ph = phantoms()
+  q = tonumber(q)
+  local e = ph and q and ph[q]
+  if not e then return nil end
+  if (tonumber(e.lv) or 0) < myLevel() then ph[q] = nil return nil end   -- niveau suivant : on retente
+  return e
+end
+function QB.MarkPhantom(q, why, title)
+  local ph = phantoms()
+  q = tonumber(q)
+  if not (ph and q) or QB.Phantom(q) then return false end
+  ph[q] = { why = why, at = epoch(), day = _ns((try(G("date"), "%Y-%m-%d"))), lv = myLevel(), t = title }
+  QB.Bump()
+  return true
+end
+function QB.ClearPhantom(q)
+  q = tonumber(q)
+  local ph = phantoms()
+  if ph and q then ph[q] = nil end
+  if q and type(QB.char) == "table" and type(QB.char.visits) == "table" then QB.char.visits[q] = nil end
+  if q then QB._visit[q] = nil end
+end
+QB._visit = {}
+local function sameName(a, b) return type(a) == "string" and type(b) == "string" and a ~= "" and a:lower() == b:lower() end
+local function playerPt()
+  local g = Geo()
+  local m, x, y
+  if g.Player then m, x, y = g.Player() end
+  return (m and x) and { map = m, x = x, y = y } or nil
+end
+--- prises prévues (trajet, puis « Quêtes à prendre ») pas encore dans le journal → { { q, map, x, y, name, title } }
+function QB.PlannedPicks()
+  local out, seen = {}, {}
+  local recs = recsOf(exportData())
+  local log = logSnap()
+  local function add(q, map, x, y, name, title)
+    q = tonumber(q)
+    if not q or seen[q] or log[q] or isDone(q) then return end
+    seen[q] = true
+    out[#out + 1] = { q = q, map = map, x = x, y = y, name = name, title = title }
+  end
+  local P = T.Planner
+  for i = (P and P.cursor) or 1, #((P and P.steps) or {}) do
+    local s = P.steps[i]
+    if s.k == "pick" and s.q and not s._done then
+      local rec = recs[tonumber(s.q)]
+      local g = rec and rec.s or {}
+      add(s.q, s.map or g.map, s.x or g.x, s.y or g.y, g.name or s.npc, (rec and rec.t) or QB.LearnedTitle(s.q))
+    end
+  end
+  for _, e in ipairs(QB.PickupList(12)) do add(e.questID, e.map, e.x, e.y, e.npc, e.title) end
+  return out
+end
+local function fromNpc(c, npc, me)
+  local d = me and c.x and distYd(me, c)
+  if c.name and npc then return sameName(c.name, npc) and (d == nil or d <= QB.SAME_NAME_YD) end
+  return d ~= nil and d <= QB.GIVER_YD
+end
+local function phantomSaid(n, npc)
+  if n <= 0 then return end
+  replanNow("quête non proposée")
+  pcall(QB.Suggest, QB, "phantom", fmt("%d quête%s pas proposée%s par %s : retirée%s du trajet (retentée au niveau suivant)",
+    n, n > 1 and "s" or "", n > 1 and "s" or "", npc or "ce PNJ", n > 1 and "s" or ""), 1, { ttl = 8, sound = false })
+end
+--- la fenêtre d'un PNJ montre ce qu'il propose (offered = { ids = {}, titles = {} } ; nil = on ne sait pas) → nombre retiré
+function QB.CheckOffered(offered)
+  if type(offered) ~= "table" then return 0 end
+  if _ns((try(G("UnitIsPlayer"), "npc"))) then return 0 end          -- quête partagée par un joueur : rien à juger
+  local npc = _ns((try(G("UnitName"), "npc")))
+  if type(npc) ~= "string" or npc == "" then npc = nil end
+  local me = playerPt()
+  local n = 0
+  for _, c in ipairs(QB.PlannedPicks()) do
+    local judge = next(offered.ids) ~= nil or type(c.title) == "string" or (not next(offered.titles))   -- sans id ni titre : on ne sait pas
+    if judge and fromNpc(c, npc, me) and not offered.ids[c.q] and not (type(c.title) == "string" and offered.titles[c.title:lower()]) then
+      if QB.MarkPhantom(c.q, "pas proposée par " .. (npc or "le PNJ"), c.title) then n = n + 1 end
+    end
+  end
+  phantomSaid(n, npc)
+  return n
+end
+local function titleSet(ok, ...)
+  if not ok then return nil end
+  local t = {}
+  for i = 1, select("#", ...) do
+    local v = _ns((select(i, ...)))
+    if type(v) == "string" and v ~= "" then t[v:lower()] = true end
+  end
+  return t
+end
+--- ce que propose la fenêtre ouverte : "gossip" | "greeting" | "detail" → { ids, titles } ou nil (illisible)
+function QB.Offered(kind)
+  local ids, titles = {}, {}
+  if kind == "gossip" then
+    local GI = G("C_GossipInfo")
+    if type(GI) == "table" and GI.GetAvailableQuests then
+      local list = try(GI.GetAvailableQuests)
+      if type(list) ~= "table" then return nil end
+      for _, a in ipairs(list) do
+        if type(a) == "table" then
+          local q, t = tonumber(_ns(a.questID)), _ns(a.title)
+          if q then ids[q] = true end
+          if type(t) == "string" then titles[t:lower()] = true end
+        end
+      end
+      return { ids = ids, titles = titles }
+    end
+    local f = G("GetGossipAvailableQuests")                   -- 4.3.4 : titre, niveau, … à plat
+    if type(f) ~= "function" then return nil end
+    titles = titleSet(pcall(f))
+    return titles and { ids = ids, titles = titles } or nil
+  elseif kind == "greeting" then
+    local nA = tonumber(_ns((try(G("GetNumAvailableQuests"))))) or 0
+    for i = 1, min(nA, 12) do
+      local q = tonumber(_ns((select(5, try(G("GetAvailableQuestInfo"), i)))))
+      local t = _ns((try(G("GetAvailableTitle"), i)))
+      if q then ids[q] = true end
+      if type(t) == "string" and t ~= "" then titles[t:lower()] = true end
+    end
+    if nA > 0 and not next(ids) and not next(titles) then return nil end
+    return { ids = ids, titles = titles }
+  elseif kind == "detail" then
+    local q, t = questIDNow(), _ns((try(G("GetTitleText"))))
+    if not q and type(t) ~= "string" then return nil end
+    if q then ids[q] = true end
+    if type(t) == "string" and t ~= "" then titles[t:lower()] = true end
+    return { ids = ids, titles = titles }
+  end
+end
+QB.LIST_HOLD_S = 120
+function QB.OnQuestWindow(kind)
+  local npc = _ns((try(G("UnitName"), "npc")))
+  if kind == "detail" then
+    -- une quête ouverte depuis la liste d'un PNJ (gossip / accueil) : sa liste a déjà été jugée
+    local l = QB._listFrom
+    if l and sameName(l.n, npc) and now() - l.at < QB.LIST_HOLD_S then return 0 end
+  else
+    QB._listFrom = { n = npc, at = now() }
+  end
+  return QB.CheckOffered(QB.Offered(kind))
+end
+--- (toutes les 3 s, hors combat, par le Planner) donneur atteint (≤ 10 m, ciblé / vu) puis quitté (> 40 yd) sans sa
+--- quête : 1re fois, l'arrêt reste (dit une fois) ; 2e fois, la quête est retenue « pas proposée »
+function QB.VisitTick()
+  local me, g = playerPt(), Geo()
+  if not (me and g.Dist and type(QB.char) == "table") then return 0 end
+  QB.char.visits = type(QB.char.visits) == "table" and QB.char.visits or {}
+  local V = QB.char.visits
+  local tname, mo = _ns((try(G("UnitName"), "target"))), _ns((try(G("UnitName"), "mouseover")))
+  local n, npcN = 0, nil
+  for _, c in ipairs(QB.PlannedPicks()) do
+    local d = c.x and c.map and g.Dist(me.map, me.x, me.y, c.map, c.x, c.y)
+    local v = QB._visit[c.q]
+    if d and d <= QB.VISIT_YD then
+      v = v or {}
+      QB._visit[c.q] = v
+      v.inside = true
+      if not c.name or sameName(c.name, tname) or sameName(c.name, mo) then v.seen = true end
+    elseif v and v.inside and d and d > QB.LEAVE_YD then
+      v.inside = false
+      if v.seen then
+        v.seen = nil
+        V[c.q] = (tonumber(V[c.q]) or 0) + 1
+        if V[c.q] >= 2 then
+          V[c.q] = nil
+          if QB.MarkPhantom(c.q, "PNJ atteint 2 fois sans la proposer", c.title) then n, npcN = n + 1, c.name end
+        else
+          pcall(QB.Suggest, QB, "leftgiver", fmt("Tu pars sans « %s » : l'arrêt reste dans le trajet", cut(c.title or ("quête " .. c.q), 32)),
+            1, { ttl = 8, sound = false })
+        end
+      end
+    end
+  end
+  phantomSaid(n, npcN)
+  return n
+end
+
+-- ===================================================================== (4.3.5 PICKFIX) mode « Monter vite » (fastlvl)
+-- « Fais ça maintenant » + les 3 suivants, le plus d'XP par heure d'après les données réelles : quêtes finies tout près
+-- d'abord, puis le meilleur paquet (XP / min trajet compris : Route / PathLearn), l'XP reposée (monstres × 2), le donjon
+-- en groupe (≥ 4, niveau dedans), un coin à monstres appris (XP et temps entre deux morts) quand les quêtes manquent,
+-- vol / pierre de foyer quand le trajet les prend. Chaque étape : XP, temps, pourquoi.
+QB.FAST_NEAR_S = 180
+QB.GRIND_MIN_KILLS = 5
+local function grindDB()
+  local db = QB.db
+  if type(db) ~= "table" then return nil end
+  if type(db.grind) ~= "table" then db.grind = {} end
+  return db.grind
+end
+--- XP d'un monstre tué (CHAT_MSG_COMBAT_XP_GAIN) : le coin (zone, carré de 3 %) apprend XP et temps entre deux morts
+function QB.LearnKill(xp, name)
+  xp = tonumber(xp)
+  local me, G0 = playerPt(), grindDB()
+  if not (xp and xp > 0 and me and G0) then return end
+  local key = fmt("%d:%d:%d", me.map, floor(me.x / 3), floor(me.y / 3))
+  local e = G0[key] or { m = me.map, x = floor(me.x / 3) * 3 + 1.5, y = floor(me.y / 3) * 3 + 1.5, xp = 0, sec = 0, n = 0 }
+  local t = now()
+  local gap = QB._lastKill and t - QB._lastKill or nil
+  QB._lastKill = t
+  e.n, e.xp, e.lv, e.name, e.at = e.n + 1, e.xp + xp, myLevel(), name or e.name, epoch()
+  e.sec = e.sec + ((gap and gap <= 90) and gap or 30)
+  G0[key] = e
+  prune(G0)
+end
+function QB.ParseXP(msg)
+  msg = _ns(msg)
+  if type(msg) ~= "string" then return nil end
+  local xp = msg:match("(%d+) points? d'expérience") or msg:match("(%d+) experience")
+  local name = msg:match("^(.-) meurt") or msg:match("^(.-) dies")
+  return tonumber(xp), name
+end
+--- meilleur coin à monstres appris (niveau à ±2) → { map, x, y, rate (XP/s), name } ou nil
+function QB.BestGrind()
+  local best, L = nil, myLevel()
+  for _, e in pairs(grindDB() or {}) do
+    if e.n >= QB.GRIND_MIN_KILLS and e.sec > 0 and math.abs((e.lv or L) - L) <= 2 then
+      local r = e.xp / e.sec
+      if not best or r > best.rate then best = { map = e.m, x = e.x, y = e.y, rate = r, name = e.name } end
+    end
+  end
+  return best
+end
+local function restedXP() return tonumber(_ns((try(G("GetXPExhaustion"))))) or 0 end
+local function mins(sec) return max(1, floor((sec or 0) / 60 + 0.5)) end
+--- → { now = étape, nexts = { 3 étapes } } ; étape = { kind, text, xp, sec, why, q }
+function QB.FastPlan()
+  local level, group = myLevel(), groupSize()
+  local me = playerPt()
+  local rested = restedXP()
+  local near, rest = {}, {}
+  local used = {}
+  local function add(list, c)
+    if c.q and used[c.q] then return end
+    if c.q then used[c.q] = true end
+    c.sec = max(15, c.sec or 60)
+    c.rate = (c.xp or 0) / c.sec
+    list[#list + 1] = c
+  end
+  for _, e in ipairs(QB.TurnInList()) do
+    local eta = e.eta or (me and e.x and legSec(me, e))
+    if eta then
+      local c = { kind = "turn", q = e.questID, xp = e.xp or 0, sec = eta + 15, text = fmt("Rends « %s »%s", cut(e.title, 30), e.npc and (" à " .. e.npc) or "") }
+      if eta <= QB.FAST_NEAR_S then c.why = "finie, tout près : XP tout de suite" add(near, c)
+      else c.why = "finie" add(rest, c) end
+    end
+  end
+  -- objectifs du trajet (quêtes du journal) : XP de la quête / (arrivée + temps sur place)
+  local R, P = T.Route, T.Planner
+  local recs = recsOf(exportData())
+  local log = logSnap()
+  if R and R.Stops and P and P.steps then
+    local ok, st = pcall(R.Stops, R, 12)
+    for _, e in ipairs(ok and type(st) == "table" and st or {}) do
+      local s = e.step
+      local q = s and tonumber(s.q)
+      if q and s.k == "obj" and log[q] and log[q].done ~= 1 then
+        local lq = log[q]
+        local o = lq.obj[tonumber(s.o) or 0]
+        local kill = o and (o.type == "monster")
+        local c = { kind = "obj", q = q, xp = rewardXP(q, recs[q], lq.lv, level), sec = (e.at or 0) + (tonumber(s.svc) or 180),
+          text = P.StepLabel and P:StepLabel(s) or ("Avance « " .. cut(lq.t, 30) .. " »"), why = "meilleur paquet du trajet (trajet compris)" }
+        if kill and rested > 0 then c.xp, c.why = c.xp * 1.3, c.why .. " · XP reposée sur les monstres" end
+        add(rest, c)
+      end
+    end
+  end
+  for _, e in ipairs(QB.PickupList(6)) do
+    add(rest, { kind = "pick", q = e.questID, xp = e.xp or 0, sec = (tonumber(e.minutes) or 6) * 60,
+      text = fmt("Prends « %s »%s", cut(e.title, 30), e.npc and (" (" .. e.npc .. ")") or ""), why = "quête à prendre : " .. (e.why or "") })
+  end
+  -- donjon en groupe
+  local Dg, E = T.Dungeon, engine()
+  if group >= 4 and Dg and Dg.ForLevel and E then
+    for _, d in ipairs((try(Dg.ForLevel, level)) or {}) do
+      if level >= (d.min or 1) and level <= (d.max or 60) then
+        local xp = E.KillXP(level, floor(((d.min or level) + (d.max or level)) / 2), true) * E.GroupShare(group) * 120
+        add(rest, { kind = "dungeon", xp = floor(xp), sec = 45 * 60, text = "Donjon en groupe : " .. tostring(d.n or d.key),
+          why = fmt("groupe de %d, niveau %d-%d", group, d.min or 0, d.max or 0) })
+        break
+      end
+    end
+  end
+  -- coin à monstres appris : quand les quêtes manquent (ou rapportent moins)
+  local gr = QB.BestGrind()
+  if gr then
+    local bestQ = 0
+    for _, c in ipairs(rest) do if c.kind ~= "dungeon" then bestQ = max(bestQ, c.rate) end end
+    local rate = gr.rate * (rested > 0 and 2 or 1)
+    if #near + #rest == 0 or rate > bestQ then
+      local travel = (me and legSec(me, gr)) or 0
+      add(rest, { kind = "grind", xp = floor(rate * 600), sec = travel + 600,
+        text = fmt("Tue des monstres%s (%.0f, %.0f)", gr.name and (" « " .. cut(gr.name, 24) .. " »") or "", gr.x, gr.y),
+        why = fmt("plus de bonne quête : %s XP/h appris ici%s", thousands(rate * 3600), rested > 0 and " · XP reposée × 2" or "") })
+    end
+  end
+  tsort(near, function(a, b) if a.sec ~= b.sec then return a.sec < b.sec end return (a.q or 0) < (b.q or 0) end)
+  tsort(rest, function(a, b) if a.rate ~= b.rate then return a.rate > b.rate end return (a.q or 0) < (b.q or 0) end)
+  local all = {}
+  for _, c in ipairs(near) do all[#all + 1] = c end
+  for _, c in ipairs(rest) do all[#all + 1] = c end
+  -- vol / pierre de foyer : quand le trajet les prend avant l'étape 1 (Route compte le temps gagné)
+  if R and R.Stops and all[1] and all[1].kind ~= "turn" then
+    local ok, st = pcall(R.Stops, R, 1)
+    local e = ok and type(st) == "table" and st[1]
+    if e and (e.kind == "hs" or e.kind == "fly" or e.kind == "boat" or e.kind == "zeppelin") then
+      tinsert(all, 1, { kind = e.kind, xp = 0, sec = tonumber(e.sec) or 60, rate = 0,
+        text = tostring(e.text or (e.kind == "hs" and "Pierre de foyer" or "Vol")),
+        why = e.kind == "hs" and "la pierre de foyer est le plus court vers la suite" or "le vol est le plus court vers la suite" })
+    end
+  end
+  return { now = all[1], nexts = { all[2], all[3], all[4] }, rested = rested > 0 }
+end
+local function stepText(c)
+  return fmt("%s — +%s XP, ≈ %d min · %s", c.text, thousands(c.xp or 0), mins(c.sec), c.why or "")
+end
+QB.FastStepText = stepText
+--- lignes du mode « Monter vite » : « Fais ça maintenant : … » puis « Ensuite : … » (3 au plus)
+function QB.FastLines()
+  local p = QB.FastPlan()
+  local out = {}
+  if not p.now then
+    out[1] = { text = "Fais ça maintenant : rien de rentable connu ici — choisis une zone (/tai zone)", prio = 1 }
+    return out
+  end
+  out[1] = { text = "Fais ça maintenant : " .. stepText(p.now), prio = 2 }
+  for i = 1, 3 do
+    local c = p.nexts[i]
+    if c then out[#out + 1] = { text = fmt("%d. %s", i, stepText(c)), prio = 1 } end
+  end
+  return out
+end
 
 -- ===================================================================== trajet : les étapes du mode (contrat ZonePlan)
 --- quêtes à prendre mises dans le trajet du mode « Quêtes à prendre » : les meilleures, au plus pickRoute
@@ -1359,7 +1710,10 @@ function QB:OnEnable()
   -- (ZONEPICK) quête prise / retirée, niveau : les quêtes à prendre par zone sont à recompter (un gestionnaire par évènement)
   local RESCAN = { QUEST_ACCEPTED = true, QUEST_REMOVED = true, PLAYER_LEVEL_UP = true }
   for _, ev in ipairs({ "QUEST_LOG_UPDATE", "QUEST_ACCEPTED", "QUEST_REMOVED", "PLAYER_LEVEL_UP", "GROUP_ROSTER_UPDATE" }) do
-    self:RegisterEvent(ev, RESCAN[ev] and function() QB.scanGen = QB.scanGen + 1 QB.Bump() end or bump)
+    self:RegisterEvent(ev, RESCAN[ev] and function(_, _, a, b)
+      if ev == "QUEST_ACCEPTED" then pcall(QB.ClearPhantom, tonumber(_ns(b)) or tonumber(_ns(a))) end   -- (4.3.5) vraiment prise
+      QB.scanGen = QB.scanGen + 1 QB.Bump()
+    end or bump)
   end
   self:RegisterEvent("QUEST_TURNED_IN", function(_, _, q)
     pcall(QB.StoryDone, tonumber(_ns(q)))
@@ -1369,9 +1723,14 @@ function QB:OnEnable()
   end)
   self:On("EXPORT_UPDATED", bump)
   -- PNJ rencontrés (sans Questie) : seulement quand tu leur parles (aucune minuterie)
-  self:RegisterEvent("GOSSIP_SHOW", function() pcall(QB.LearnGossip) end)
-  self:RegisterEvent("QUEST_GREETING", function() pcall(QB.LearnGreeting) end)
-  self:RegisterEvent("QUEST_DETAIL", function() pcall(QB.LearnDetail) end)
+  self:RegisterEvent("GOSSIP_SHOW", function() pcall(QB.LearnGossip) pcall(QB.OnQuestWindow, "gossip") end)
+  self:RegisterEvent("QUEST_GREETING", function() pcall(QB.LearnGreeting) pcall(QB.OnQuestWindow, "greeting") end)
+  self:RegisterEvent("QUEST_DETAIL", function() pcall(QB.LearnDetail) pcall(QB.OnQuestWindow, "detail") end)
+  -- (4.3.5 PICKFIX) monstre tué : le coin à monstres apprend
+  self:RegisterEvent("CHAT_MSG_COMBAT_XP_GAIN", function(_, _, msg)
+    local xp, name = QB.ParseXP(msg)
+    if xp then pcall(QB.LearnKill, xp, name) end
+  end)
   self:RegisterEvent("QUEST_PROGRESS", function() pcall(QB.LearnFinisher) end)
   self:RegisterEvent("QUEST_COMPLETE", function() pcall(QB.LearnFinisher) end)
   self:On("PLAN_BUILT", function() if QB.Mode() == "pickup" then QB:CheckEmpty() end end)
@@ -1383,12 +1742,17 @@ function QB:OnDisable()
 end
 
 local SLASH = { rendre = "turnin", prendre = "pickup", zone = "zone", ici = "zone", groupe = "group", group = "group",
-  turnin = "turnin", pickup = "pickup" }
+  turnin = "turnin", pickup = "pickup", vite = "fastlvl", fastlvl = "fastlvl" }
 local function slashMode(id)
   QB.SetMode(id)
   pcall(QB.Suggest, QB, "qbmode", "Mode : " .. tostring(QB.Label(id)), 1, { ttl = 5, sound = false })
 end
 T:RegisterSlash("rendre", function() slashMode("turnin") end, "rendre : mode « Rendre mes quêtes » (toutes tes quêtes finies, au plus vite)")
+T:RegisterSlash("vite", function()
+  slashMode("fastlvl")
+  local ok, l = pcall(QB.FastLines)
+  if ok and l and l[1] then pcall(QB.Suggest, QB, "fastlvl", l[1].text, 2, { ttl = 20, sound = false }) end
+end, "vite : mode « Monter vite » (« Fais ça maintenant » + les 3 suivantes, le plus d'XP par heure)")
 T:RegisterSlash("prendre", function() slashMode("pickup") end, "prendre : mode « Quêtes à prendre » (les meilleures près de toi)")
 T:RegisterSlash("cerveau", function(rest)
   rest = tostring(rest or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")

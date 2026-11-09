@@ -825,6 +825,9 @@ function Z:Accept(q, rec, lq, level, group)
   local elite, grp, dg, ex = Z.Kind(q, rec, lq)
   if ex.failed then return false, "échouée" end
   if lq and lq.done == 1 then return true end
+  -- (4.3.5 PICKFIX) pas dans le journal et vue absente chez son donneur (« Questie l'affiche, elle n'existe pas ») : hors trajet
+  local QBm = T.QuestBrain
+  if not lq and QBm and QBm.Phantom and QBm.Phantom(q) then return false, "pas proposée" end
   if ex.pvp then return false, "JcJ" end
   if ex.raid then return false, "raid" end
   if ex.dungeonDone then return false, "donjon fait" end         -- (JOURNAL) donjon déjà fait : rien à y gagner
@@ -1334,7 +1337,7 @@ function Z:BuildRoute(P, yieldFn, depth)
     if not d or d > 400 then self.lastKeys = nil end
   end
   self.lastStart = start
-  local style = self:Style()
+  local style = (bmode == "fastlvl") and "fast" or self:Style()   -- (4.3.5 PICKFIX) « Monter vite » : le plus d'XP par heure
   if bmode == "group" then style = "group" end
   local maxS = (tonumber(opt("maxMin")) or 0) * 60
   if equal then maxS = 0 end

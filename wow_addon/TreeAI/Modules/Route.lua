@@ -1822,7 +1822,8 @@ function R:CompassTarget(me)
     return { key = key, kind = "zone", plan = true, questID = s.q, step = s, title = label, label = label, zone = zone,
       src = "trajet" }
   end
-  return withDist({ key = key, kind = s.k == "turn" and "turnin" or "objective", plan = true, questID = s.q, step = s,
+  -- (4.3.5 PICKFIX) une prise n'est pas un objectif : « Dans la zone » ✓ à 30 yd du donneur faisait croire que c'était bon
+  return withDist({ key = key, kind = (s.k == "turn" and "turnin") or (s.k == "pick" and "pickup") or "objective", plan = true, questID = s.q, step = s,
     title = label, label = label, mapID = s.map, x = s.x / 100, y = s.y / 100, src = "trajet" }, me, s.map, s.x, s.y)
 end
 

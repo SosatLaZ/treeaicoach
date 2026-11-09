@@ -481,7 +481,7 @@ return function(M, ctx)
     noEnglish(m.label .. " " .. m.tip, "B mode " .. tostring(m.id))
     see(("B mode %s · %s · « %s » · count %s · key %s%s"):format(m.id, m.label, m.short, tostring(m.count), tostring(m.key), m.active and " · ACTIF" or ""))
   end
-  check(table.concat(ids, ",") == "turnin,pickup,zone,group", "B: four modes in order: " .. table.concat(ids, ","))
+  check(table.concat(ids, ",") == "turnin,pickup,zone,group,fastlvl", "B: modes in order (4.3.5: + fastlvl): " .. table.concat(ids, ","))
   local act = 0
   for _, m in ipairs(modes) do if m.active then act = act + 1 end end
   check(act == 1 and QB.Mode() == "zone", "B: one active mode, « zone » by default (" .. tostring(QB.Mode()) .. ")")

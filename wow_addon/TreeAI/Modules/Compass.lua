@@ -1456,7 +1456,13 @@ local function refresh()
   local t = st.target
   local lt = M.ShortLabel(t.label or t.title or "Cible")
   if lt ~= lastLabel then lastLabel = lt; label:SetText(lt) end
-  if st.arrived then
+  -- (4.3.5 PICKFIX) « quand j'arrive, pour lui c'est bon, mais pas du tout » : au donneur, jamais la coche « Arrivé »
+  -- tant que la quête n'est pas dans le journal — « Prends la quête » (l'arrêt reste jusqu'à QUEST_ACCEPTED)
+  if st.arrived and t.kind == "pickup" then
+    arrow:Hide() shadow:Hide()
+    if ring:IsShown() then ring:Hide() check:Hide() if ring.ag and ring.ag.Stop then ring.ag:Stop() end end
+    if not textOff then setTag("Prends la quête", 1, 0.82, 0.2) end
+  elseif st.arrived then
     arrow:Hide() shadow:Hide()
     ring:Show() check:Show()
     if ring.ag and ring.ag.Play and not (ring.ag.IsPlaying and ring.ag:IsPlaying()) then ring.ag:Play() end
@@ -1467,7 +1473,7 @@ local function refresh()
       arrow:Show() shadow:Show()
       if not shown then shown = st.rel end
       paint(shown)
-      if lastTag == "Arrivé" or lastTag == "Dans la zone" then setTag(nil) end
+      if lastTag == "Arrivé" or lastTag == "Dans la zone" or lastTag == "Prends la quête" then setTag(nil) end
       -- la flèche pas encore sur sa cible (nouvelle cible, tu as tourné) : l'animation repart
       if abs(G.Shortest(shown, st.rel)) >= 0.004 then M.SetAnim(true) end
     else
