@@ -308,11 +308,18 @@ return function(M, ctx)
     ("boussole = sa cible en 40 lettres (« %s » / « %s »)"):format(cLabel, full))
   check(nx and strip(nx.title) == full and norm(nx.sub) == norm(cDist), ("Prochaine étape = la boussole (« %s » · « %s » / « %s » · « %s »)")
     :format(nx and strip(nx.title) or "?", nx and strip(nx.sub) or "?", full, cDist))
+  -- (4.3 V43) les arrêts sont sur la page Trajet (la page Quêtes garde la carte du trajet)
+  W.Select("route")
+  M.Advance(1, 0.1)
+  local rt = stepsShown()
+  s1 = rt[1] and rt[1].f.step
   check(s1 and strip(s1.title) == full and norm(s1.sub) == norm(cDist), ("arrêt 1 du trajet = la boussole (« %s » · « %s »)")
     :format(s1 and strip(s1.title) or "?", s1 and strip(s1.sub) or "?"))
-  if st[3] then
-    check(strip(st[3].f.step.title) ~= strip(s1 and s1.title or ""), "un arrêt = une ligne (pas deux fois le même PNJ)")
+  if rt[2] then
+    check(strip(rt[2].f.step.title) ~= strip(s1 and s1.title or ""), "un arrêt = une ligne (pas deux fois le même PNJ)")
   end
+  W.Select("quests")
+  M.Advance(1, 0.1)
   local nTiles = 0
   for _, r in ipairs(W.lastLay.rects) do if r.kind == "tile" then nTiles = nTiles + 1 end end
   -- (4.1 ZONEPICK) en tête : la zone (« Changer ») + « Choisir ma zone » / « Conseille-moi », puis les 4 modes
