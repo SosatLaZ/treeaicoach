@@ -1,25 +1,25 @@
 {
- "version": "4.3.3",
+ "version": "4.3.4",
  "exe": "TreeAICoach-app.exe",
- "sha256": "7f1347453de130a928880c9d89e023677d625e2c50168d5b2721f424e3e15021",
+ "sha256": "081172f707b7b1265c03c11ef0828b04c173b3b95dc22b6b5cbb03c802940b9d",
  "chunks": [
   {
-   "name": "4.3.3/part-01.zip",
-   "size": 88058592,
-   "sha256": "e2a54d2a7be1d9b5beb3811be55fd5d00cb785bdba64f985a619658360464a2f",
+   "name": "4.3.4/part-01.zip",
+   "size": 88058593,
+   "sha256": "66dd4c69cbd78853e805f1881228a042665b651641d0c4f9aa4c918f4bd2f0ad",
    "files": 127
   },
   {
-   "name": "4.3.3/part-02.zip",
-   "size": 14194106,
-   "sha256": "7f9698e168c4feb7283799290bf78f459470999ed49702d70d7672438af504e5",
+   "name": "4.3.4/part-02.zip",
+   "size": 14194575,
+   "sha256": "d9c89f5eee63e9133a247d2a77bd0988a58a2e25b1a6768c2999862486e82844",
    "files": 688
   }
  ],
- "total_size": 102252698,
+ "total_size": 102253168,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "TreeAI 4.3.3 : moins de freezes (recherche moins fr\u00e9quente)."
+ "notes": "TreeAI 4.3.4 : plus de freeze \u00e0 chaque monstre de qu\u00eate tu\u00e9."
 }

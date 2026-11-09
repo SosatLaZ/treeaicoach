@@ -3,6 +3,11 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 4.3.4 · 9 novembre 2026
+
+- **Plus de freeze à chaque monstre de quête tué** : un compteur qui avance (4/6 → 5/6) ne relance plus le gros
+  calcul du trajet ; il ne se refait que quand un objectif est rempli, une quête prise, finie ou rendue.
+
 ## 4.3.3 · 9 novembre 2026
 
 - Moins de freezes : la recherche « Chercher » ne refait plus son gros calcul toutes les 30 s (au plus toutes les
