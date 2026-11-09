@@ -1,25 +1,25 @@
 {
- "version": "4.3.0",
+ "version": "4.3.1",
  "exe": "TreeAICoach-app.exe",
- "sha256": "441cc410750abbb068b9af0cbd12a2f70e72d2feaacef84c26b1f4cf4edf14b5",
+ "sha256": "8e9125c4fe8c419ee17f584cc9276d0488f48483c7c596f530e582272358131d",
  "chunks": [
   {
-   "name": "4.3.0/part-01.zip",
+   "name": "4.3.1/part-01.zip",
    "size": 88058601,
-   "sha256": "82b6c9511d59256f53094b2ff26ff2b735807627dc7139a6f3353b645ca63865",
+   "sha256": "7cfe93e83e37d26a2dd17d6c596fe709f1491c8ece4c1377b5599e7b68c59bf8",
    "files": 127
   },
   {
-   "name": "4.3.0/part-02.zip",
-   "size": 14191842,
-   "sha256": "24dafda0275337b3815e2a8d891c49a8d8e3a477089df81e070e91b2a53062c0",
+   "name": "4.3.1/part-02.zip",
+   "size": 14193906,
+   "sha256": "8b5efffdb477ac89d916a16c74e106c4d82abd12801ff0e90b037ce1b0c85b16",
    "files": 688
   }
  ],
- "total_size": 102250443,
+ "total_size": 102252507,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "TreeAI 4.3 : menu en 11 cat\u00e9gories, meilleur \u00e9quipement calcul\u00e9, aide \u00e0 l'\u00e9quipement, corrections."
+ "notes": "TreeAI 4.3.1 : tuto des macros, badge Auto/Fixe, glisser sur la barre, lier la touche."
 }

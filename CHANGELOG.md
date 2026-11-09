@@ -3,6 +3,12 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 4.3.1 · 9 novembre 2026
+
+- **Macros : vrai tuto** (« Comment ça marche » en 4 étapes), badge Auto / Fixe, « Sert à » et « Où la mettre »,
+  clic = la macro dans ta main pour la poser sur ta barre, « Lier la touche », préréglage « Mes 5 macros
+  essentielles » (chasseur). Toutes les macros vérifiées (syntaxe, sorts, rangs) : aucune fausse.
+
 ## 4.3.0 · 9 novembre 2026
 
 - **Menu en 11 catégories** : Quêtes · Trajet · Groupe · Donjons · Équipement · Métiers · HV · Chasseur · Conseils ·
