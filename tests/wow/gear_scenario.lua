@@ -88,6 +88,9 @@ return function(M, ctx)
     if r.srcKind == "craft" then craftRow = r end
   end
   ctx.check(craftRow and Gr.GoSource(craftRow.src) == "prof", "craft row: click opens the Métiers page")
+  -- (4.3 V43) potion stock: the best classic healing potion for the level, counted in the bags
+  local ps = Gr.PotionStock()
+  ctx.check(ps and ps.best == 1710 and ps.have == 0 and ps.want == 5, "potions: item 1710 (level 21+) is the best at 27, none in bags")
   -- hunter notes: ammo mismatch (bow + only bullets), mail at 40
   ctx.check(plan.hunter and plan.hunter.ammoNeed == 2 and plan.hunter.ammoOK == false, "ammo type mismatch detected")
   ctx.check(plan.hunter.mail and plan.hunter.mail:find("40"), "mail at 40 note")

@@ -2197,6 +2197,20 @@ function W.RepairRow(Ly)
       "Une pièce à 0 % ne donne plus ses stats." },
     clickHint = "Clic : la boussole vers le réparateur le plus proche", onClick = function() W.GoRepair() end })
 end
+--- (4.3 V43) stock de potions de soins : « 2 sur 5 », la meilleure de ton niveau, clic = la chercher à l'HV
+function W.PotionRow(Ly)
+  local Gm = T.modules and T.modules.Gear
+  if not (Gm and Gm.PotionStock) or W.Query() ~= "" then return end
+  local ok, st = pcall(Gm.PotionStock)
+  if not (ok and type(st) == "table") or st.have >= st.want then return end
+  Ly.row({ id = "gear:potions", text = fmt("Potions de soins : %d sur %d conseillées%s", st.have, st.want,
+      st.name and (" — la meilleure pour toi : " .. st.name) or ""), kind = st.have == 0 and "warn" or "info",
+    icon = ICON .. "INV_Potion_51", tooltip = { "Une potion sauve un pull raté ; en donjon, garde-en au moins " .. st.want .. ".",
+      st.name and fmt("%s : tu en as %d.", st.name, st.haveBest) or "Ta meilleure potion n'est pas encore connue du jeu (survole-la une fois).",
+      "Où : l'HV ou un alchimiste (ami, groupe)." },
+    clickHint = "Clic : la chercher à l'HV (ouverte), sinon la page HV",
+    onClick = function() if Gm.GoSource then Gm.GoSource({ kind = "ah" }, { id = st.best }) end end })
+end
 function W.GearTop()
   local Gm = T.modules and T.modules.Gear
   if not (Gm and Gm._active) then return {} end
@@ -2223,6 +2237,7 @@ W.AddPage({ id = "gear", label = "Équipement", short = "Équipement", icon = IC
   top = function() return W.GearTop and W.GearTop() or {} end,
   render = function(Ly)
     W.RepairRow(Ly)
+    W.PotionRow(Ly)
     W.GearNow(Ly)
     W.RenderTab(Ly, "gear", modOff("Gear") and "Le module Équipement est coupé (fonction bêta) : « Allumer Équipement », en bas à droite."
       or "Rien de mieux pour l'instant : TreeAI regarde tes sacs, tes récompenses de quête et l'HV.")

@@ -939,6 +939,32 @@ function M.NowRows(plan)
   return out
 end
 
+-- (4.3 V43) stock de potions de soins : les potions classiques (objets du jeu), la meilleure de ton niveau
+M.POTIONS = { { 118, 1 }, { 858, 3 }, { 929, 12 }, { 1710, 21 }, { 3928, 35 }, { 13446, 45 } }
+M.POTION_WANT = 5
+function M.PotionStock()
+  local lv = level()
+  local best
+  for _, p in ipairs(M.POTIONS) do if p[2] <= lv then best = p[1] end end
+  if not best then return nil end
+  local usable = {}
+  local D = T.Data and T.Data.Consumables
+  for _, r in ipairs(D and D.hpot or {}) do if type(r) == "table" and (r[2] or 1) <= lv then usable[r[1]] = true end end
+  usable[best] = true
+  local have, haveBest = 0, 0
+  if API.IterBags then
+    for _, _, info in API.IterBags() do
+      local id = info and (info.itemID or info.id)
+      local n = info and tonumber(info.stackCount or info.count) or 1
+      if id and usable[id] then have = have + n end
+      if id == best then haveBest = haveBest + n end
+    end
+  end
+  local name = itemInfo(best)
+  return { best = best, name = type(name) == "string" and name ~= "" and name or nil, have = have, haveBest = haveBest,
+    want = M.POTION_WANT }
+end
+
 -- Chasseur : arme à distance (DPS, vitesse), munitions assorties, mailles au niv 40
 function M.HunterNotes(plan)
   local c, cur = plan.ctx, plan.cur
