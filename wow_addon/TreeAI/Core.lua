@@ -3519,7 +3519,7 @@ TreeAI.SLASH_GROUPS = TreeAI.SLASH_GROUPS or {
   { "Boussole", { "boussole", "aller", "cible", "way" } },
   { "Groupe", { "groupe", "objectif", "partir", "pret", "sync" } },
   { "Combat", { "cherche", "stats", "pvp" } },
-  { "Macros et touches", { "macros", "binds", "touches", "raccourcis" } },
+  { "Macros et touches", { "macros", "binds", "touches", "raccourcis", "combat" } },
   { "HV et métiers", { "hv", "metiers" } },
   { "Outils", { "modules", "module", "statut", "perf", "selftest", "diag", "debug", "test", "bloque" } },
 }
@@ -3640,13 +3640,19 @@ TreeAI:RegisterSlash("alerte", function()
 end, L["tester l'encadré d'alerte"])
 TreeAI:RegisterSlash("options", function() if TreeAI.OpenOptions then TreeAI:OpenOptions() end end, L["ouvrir les options"])
 TreeAI:RegisterSlash("perf", function() TreeAI:PrintPerf() end, "les modules qui coûtent le plus (CPU)")
+-- (4.3 V43) UNE commande « profil » : la 1re (perso | compte) était écrasée par celle-ci → les deux usages ici
+TreeAI._profilSaves = slash.profil and slash.profil.fn
 TreeAI:RegisterSlash("profil", function(rest)
+  local profilSaves = TreeAI._profilSaves
   rest = tostring(rest or ""):lower()
   if rest == "sûr" or rest == "safe" then rest = "sur" end
+  if profilSaves and (rest == "perso" or rest == "char" or rest == "personnage" or rest == "compte" or rest == "account") then
+    return profilSaves(rest)
+  end
   if rest == "tout" or rest == "essentiel" or rest == "sur" then TreeAI:SetModuleProfile(rest) end
   local p = TreeAI:ModuleProfile()
-  TreeAI:Print("Profil des modules : " .. (TreeAI.MODULE_PROFILE_LABEL[p] or p) .. "  (/tai profil sur | essentiel | tout)")
-end, "profil des modules : sur (défaut), essentiel (léger) ou tout (bêta compris)")
+  TreeAI:Print("Profil des modules : " .. (TreeAI.MODULE_PROFILE_LABEL[p] or p) .. "  (/tai profil sur | essentiel | tout ; perso | compte : réglages)")
+end, "sur | essentiel | tout : profil des modules ; perso | compte : réglages propres à ce perso ou communs")
 TreeAI:RegisterSlash("modules", function()
   for name, mod in TreeAI:IterModules() do
     TreeAI:Print("  " .. (mod.title or name) .. " (" .. name .. "): " .. onoff(mod:IsEnabled()))

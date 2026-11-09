@@ -1055,7 +1055,8 @@ function M:OnEnable()
   self:RegisterEvent("MERCHANT_CLOSED", function() M._ammoOffer = nil M:Request(0.1) end)
   self:RegisterEvent("PLAYER_ENTERING_WORLD", bags)
   if T.RegisterSlash then
-    T:RegisterSlash("raccourcis", function()
+    -- (4.3 V43) « /tai combat » : « /tai raccourcis » reste la barre Quêtes · voyage (Quick), plus écrasée ici
+    T:RegisterSlash("combat", function()
       db().bar = not opt("bar")
       M:Print(opt("bar") and "Barre de raccourcis affichée." or "Barre de raccourcis masquée.")
       M:Request(0)

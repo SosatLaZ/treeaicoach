@@ -218,7 +218,7 @@ return function(M, ctx)
   check(W.CurrentPage() == "macros", "Macros & touches rouvre la dernière sous-page (Macros)")
   local tabs = {}
   for _, rr in ipairs(W.lastLay.rects) do if rr.kind == "tab" then tabs[#tabs + 1] = rr.label:gsub(" %(%d+%)$", "") end end
-  check(table.concat(tabs, ",") == "Macros,Raccourcis", "Macros & touches : onglets Macros · Raccourcis (" .. table.concat(tabs, ",") .. ")")
+  check(table.concat(tabs, ",") == "Macros,Raccourcis,Sorts & barres", "Macros & touches : onglets Macros · Raccourcis · Sorts & barres (" .. table.concat(tabs, ",") .. ")")
   W.Select("settings")
   tabs = {}
   for _, rr in ipairs(W.lastLay.rects) do if rr.kind == "tab" then tabs[#tabs + 1] = rr.label:gsub(" %(%d+%)$", "") end end

@@ -1048,11 +1048,11 @@ W.NAV = { "quests", "route", "group", "dungeon", "gear", "prof", "hv", "hunter",
 W.ALIAS = { now = "quests", perso = "gear" }
 -- page rangée sous une page de la navigation (hors navigation, surlignée sous sa page mère)
 W.PARENT = { journal = "quests", brain = "quests",
-  pet = "hunter", talents = "hunter", macros = "binds", keys = "binds",
+  pet = "hunter", talents = "hunter", macros = "binds", keys = "binds", spellkeys = "binds",
   display = "settings", modules = "settings", addons = "settings", options = "settings",
   tools = "settings", navlog = "settings", tab = "settings" }
 -- sous-pages montrées en onglets en haut de la page mère (dans cet ordre) ; la mère ouvre la dernière choisie
-W.SUBS = { hunter = { "pet", "talents" }, binds = { "macros", "keys" },
+W.SUBS = { hunter = { "pet", "talents" }, binds = { "macros", "keys", "spellkeys" },
   settings = { "display", "modules", "addons", "options", "tools" } }
 --- id demandé → id de la page réellement dessinée (alias résolus, page mère → sa sous-page)
 function W.Resolve(id)
@@ -2326,7 +2326,20 @@ W.AddPage({ id = "keys", label = "Raccourcis", icon = ICON .. "INV_Misc_Key_14",
     local B = T.modules and T.modules.Binds
     if B and B.Refresh then
       return "Raccourcis conseillés", function() T:SetModuleEnabled("Binds", true) W.OpenTab("binds") end,
-        "Clic : les touches conseillées pour tes sorts et macros (page Touches)"
+        "Clic : les touches conseillées pour tes sorts et macros (Sorts & barres)"
+    end
+  end })
+
+-- (4.3 V43) Macros & touches → Sorts & barres : le conseiller de touches (module Binds) rangé avec les touches,
+-- plus en « Onglet » sous Réglages
+W.AddPage({ id = "spellkeys", label = "Sorts & barres", icon = ICON .. "INV_Misc_Key_03", title = "Sorts & barres",
+  desc = "Cases vides, touches libres, sorts sans touche, où poser tes macros", render = function(Ly)
+    W.RenderTab(Ly, "binds", modOff("Binds") and "Le conseiller de touches est coupé : « Allumer Touches », en bas à droite."
+      or "Rien à corriger : tes sorts importants ont une touche.")
+  end,
+  action = function()
+    if modOff("Binds") and T.modules and T.modules.Binds then
+      return "Allumer Touches", function() T:SetModuleEnabled("Binds", true) end, "Clic : allume le conseiller de touches (sans /reload)"
     end
   end })
 
@@ -2472,7 +2485,7 @@ W.AddPage({ id = "tab", hidden = true, label = "Onglet", icon = TAB_ICON.tools,
   render = function(Ly) W.RenderTab(Ly, W.char and W.char.tab or "info") end })
 --- Ouvre un onglet du panneau dans la fenêtre (sa page si elle existe, sinon la page générique).
 local TAB_PAGE = { now = "quests", quests = "quests", group = "group", hv = "hv", dungeon = "dungeon", modules = "modules",
-  talents = "talents", gear = "gear", prof = "prof", macros = "macros", coach = "coach", journal = "journal" }
+  talents = "talents", gear = "gear", prof = "prof", macros = "macros", coach = "coach", journal = "journal", binds = "spellkeys" }
 function W.OpenTab(id)
   local pid = TAB_PAGE[id]
   if not pid and T.tabs and T.tabs[id] then
