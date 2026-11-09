@@ -825,6 +825,9 @@ function Z:Accept(q, rec, lq, level, group)
   local elite, grp, dg, ex = Z.Kind(q, rec, lq)
   if ex.failed then return false, "échouée" end
   if lq and lq.done == 1 then return true end
+  -- (4.3.5 PICKFIX) pas dans le journal et vue absente chez son donneur (« Questie l'affiche, elle n'existe pas ») : hors trajet
+  local QBm = T.QuestBrain
+  if not lq and QBm and QBm.Phantom and QBm.Phantom(q) then return false, "pas proposée" end
   if ex.pvp then return false, "JcJ" end
   if ex.raid then return false, "raid" end
   if ex.dungeonDone then return false, "donjon fait" end         -- (JOURNAL) donjon déjà fait : rien à y gagner
@@ -1268,9 +1271,27 @@ Z.ONWAY_S = 45                       -- remise juste hors zone : dans le trajet 
 Z.CITY = { [1454] = true, [1456] = true, [1458] = true, [1453] = true, [1455] = true, [1457] = true, [1947] = true,
   [1954] = true }
 function Z.IsCity(m) return Z.CITY[tonumber(m) or -1] or Z.CITY[Z.ZoneOf(m) or -1] or false end
+-- (4.3.5 PICKFIX) « je choisis une zone mais il oublie au bout d'un temps » : une zone choisie PAR TOI reste jusqu'à ce que
+-- tu la changes. Le retour à « auto » seulement quand elle n'a VRAIMENT plus rien (aucune quête gardée, aucune écartée
+-- par un réglage / le mode / la distance, données chargées) et une seule fois par choix. → nil = retour permis, sinon la
+-- raison de garder la zone (dite dans le journal du trajet). Pure.
+function Z.FallbackWhy(ch, requests, skipped, exp)
+  ch = ch or {}
+  if ch.zoneBy ~= "player" then return nil end                 -- choisie par le pilote auto : comme avant
+  if ch.fallbackFor and ch.fallbackFor == (ch.choice or 0) then return "retour déjà fait pour ce choix" end
+  if not (exp and exp.quests and #exp.quests > 0) then return "données de quêtes pas encore lues" end
+  if requests and #requests > 0 then return "quêtes sans position connue, gardées" end
+  for k, n in pairs(skipped or {}) do
+    if k ~= "zone" and (tonumber(n) or 0) > 0 then return "quêtes écartées pour l'instant (" .. tostring(k) .. ")" end
+  end
+  return nil
+end
 function Z:FallbackAuto(P, yieldFn, A, why)
   local name = (A and A.label) or "Zone choisie"
-  if self.char then self.char.mode, self.char.zones = "auto", {} end
+  if self.char then
+    self.char.fallbackFor = self.char.choice or 0             -- (4.3.5) une fois par choix
+    self.char.mode, self.char.zones = "auto", {}
+  end
   self.lastKeys, self._lastAllowed = nil, nil
   local txt = fmt("%s : %s → zone actuelle", cut(name, 24), why == "ville" and "une ville n'est pas une zone de quêtes"
     or "plus rien à faire")
@@ -1334,7 +1355,7 @@ function Z:BuildRoute(P, yieldFn, depth)
     if not d or d > 400 then self.lastKeys = nil end
   end
   self.lastStart = start
-  local style = self:Style()
+  local style = (bmode == "fastlvl") and "fast" or self:Style()   -- (4.3.5 PICKFIX) « Monter vite » : le plus d'XP par heure
   if bmode == "group" then style = "group" end
   local maxS = (tonumber(opt("maxMin")) or 0) * 60
   if equal then maxS = 0 end
@@ -1494,7 +1515,17 @@ function Z:BuildRoute(P, yieldFn, depth)
     -- rien de faisable = aucun arrêt avec un lieu (des arrêts sans position ne font pas un trajet : « 1er : aucun »)
     local placed = false
     for _, r in ipairs(requests) do for _, s2 in ipairs(r.steps) do if s2.x then placed = true break end end if placed then break end end
-    if not placed then return self:FallbackAuto(P, yieldFn, A, "vide") end
+    if not placed then
+      local why = Z.FallbackWhy(self.char, requests, skipped, exp)
+      if not why then return self:FallbackAuto(P, yieldFn, A, "vide") end
+      if self.keptNote ~= why then
+        local NTr = T.NavTrace
+        if NTr and NTr.Log then pcall(NTr.Log, "zone", fmt("%s gardée (rien à faire maintenant) : %s", cut(A.label or "zone", 24), why)) end
+      end
+      self.keptNote = why
+    else
+      self.keptNote = nil
+    end
   end
   local Rt = T.Route                                  -- trop dures / trop loin → proposition (Route.lua)
   if Rt and Rt.FilterRequests and Rt:IsEnabled() and not equal then
@@ -1882,6 +1913,7 @@ function Z:SetMode(mode, map)
     map = tonumber(map)
     if ch.mode ~= "zones" then ch.zones = {} end
     ch.mode = "zones"
+    ch.zoneBy, ch.choice = "player", (tonumber(ch.choice) or 0) + 1   -- (4.3.5) cochée à la main = choix du joueur
     if ch.zones[map] then ch.zones[map] = nil else ch.zones[map] = true end
     if not next(ch.zones) then ch.mode = "auto" end
   elseif mode == "continent" then ch.mode = "continent"
@@ -1901,6 +1933,7 @@ function Z:PickZone(map, by)
     return false
   end
   ch.zoneBy = (by == "brain") and "brain" or "player"      -- (ZONEFIX) qui l'a choisie (pilote auto ou joueur)
+  ch.choice = (tonumber(ch.choice) or 0) + 1               -- (4.3.5 PICKFIX) un numéro par choix (retour auto : une fois)
   ch.mode, ch.zones = "zones", { [map] = true }
   self.lastKeys, self._lastAllowed = nil, nil
   if T.Export and T.Export.Dirty then pcall(T.Export.Dirty, T.Export) end

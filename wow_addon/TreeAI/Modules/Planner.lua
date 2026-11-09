@@ -581,6 +581,18 @@ local function stepDone(s, log, me)
   if s.k == "turn" and q then return questDone(q) end
   return false
 end
+-- (4.3.5 PICKFIX) « ça vérifie mal si la quête est prise » : un arrêt de quête (prendre / objectif / rendre) n'est JAMAIS
+-- fait par la distance ni par un « passer » mémorisé — seulement par le journal. Les arrêts sans quête (vol, foyer…)
+-- passés à l'arrivée sont retenus par leur IDENTITÉ (sorte + lieu), plus par leur rang : le trajet refait (rangs
+-- décalés) ne fait plus passer un autre arrêt pour fait.
+local QUEST_KIND = { pick = true, turn = true, obj = true }
+P.QUEST_KIND = QUEST_KIND
+local function skipKey(key, s)
+  return tostring(key) .. ":" .. tostring(s.k) .. "@" .. tostring(s.map or "") .. ":" .. tostring(s.x or "") .. ":" .. tostring(s.y or "")
+end
+P.SkipKey = skipKey
+local function skippable(s) return not s.q and not QUEST_KIND[s.k or ""] end
+P.Skippable = skippable
 function P:Evaluate()
   local steps = self:EnsureSteps()
   if not steps then return nil end
@@ -595,7 +607,7 @@ function P:Evaluate()
     s._done = d and true or false
     s._full = nil
     if s.q and d then lastQuestDone = i end
-    if not s.q and self.char.skip[self.key .. ":" .. i] then s._done = true end
+    if skippable(s) and self.char.skip[skipKey(self.key, s)] then s._done = true end
   end
   -- (ZONEPLAN / QUESTQA) d'abord les règles du trajet : quêtes ignorées, refusées (donjon, élite seul, JcJ…) et
   -- arrêts hors de la zone de travail masqués (plan de l'appli compris) — AVANT le contrôle ci-dessous, pour qu'un
@@ -649,7 +661,7 @@ function P:Evaluate()
   end
   local cursor = #steps + 1
   for i, s in ipairs(steps) do
-    if i < lastQuestDone and not s.q and not s.finder then s._done = true end
+    if i < lastQuestDone and skippable(s) and not s.finder then s._done = true end
     if not s._done and not s._other then cursor = i break end
   end
   local Fd = T.Finder                -- arrêts ajoutés depuis « Chercher » (Finder.lua), insérés au plus court
@@ -1372,7 +1384,20 @@ local function routeChoiceNames(self)
 end
 P.RouteName, P.RouteChoices = routeName, routeChoices
 
+-- (4.3.5 PICKFIX) mode « Monter vite » : « Fais ça maintenant » + les 3 suivantes en tête de la vue du trajet
+local linesRaw
 function P:Lines()
+  local l = linesRaw(self)
+  local QBm = T.QuestBrain
+  if QBm and QBm.Mode and QBm.FastLines and QBm.Mode() == "fastlvl" then
+    local ok, fl = pcall(QBm.FastLines)
+    if ok and type(fl) == "table" then
+      for i = #fl, 1, -1 do tinsert(l, 1, fl[i]) end
+    end
+  end
+  return l
+end
+linesRaw = function(self)
   local Rt = T.Route                                  -- clean « Trajet 12 min · 2,4 km » view (Route.lua)
   if Rt and Rt.PlanLines and Rt:IsEnabled() then
     local ok, l = pcall(Rt.PlanLines, Rt, self)
@@ -1734,10 +1759,12 @@ function P:OnEnable()
     if P:TickChanged() then
       -- arrival on a non-quest step (fly / hs / meet…) within 40 yd → done
       local s = P.steps[P.cursor or 0]
-      if s and not s.q and s.x then
+      if s and skippable(s) and s.x then
         local d = where(s)
-        if d and d < 40 and P.char then P.char.skip[P.key .. ":" .. P.cursor] = true; P:Evaluate() end
+        if d and d < 40 and P.char then P.char.skip[skipKey(P.key, s)] = true; P:Evaluate() end
       end
+      local QBm = T.QuestBrain                       -- (4.3.5 PICKFIX) donneur atteint puis quitté sans la quête
+      if QBm and QBm.VisitTick then pcall(QBm.VisitTick) end
       P:QuickWin()
       P:Render()
     end
@@ -1760,8 +1787,8 @@ local function slash(rest)
       if s.q then   -- a quest step is read from the quest log: passing it = moving it after the next step
         if P.steps[P.cursor + 1] then local x = tremove(P.steps, P.cursor); tinsert(P.steps, P.cursor + 1, x) end
         P:StepsChanged()
-      else
-        P.char.skip[P.key .. ":" .. P.cursor] = true
+      elseif skippable(s) then
+        P.char.skip[skipKey(P.key, s)] = true
       end
     end
     P:Evaluate(); P._sig = nil; P:Render()
