@@ -37,3 +37,10 @@ Objectif : une version stable, rapide, claire, qui guide seule un chasseur 30+ e
 1. Rejouer chaque bug réel (fichiers TreeAI-erreurs.txt, captures) en scénario d'abord.
 2. Session simulée de 4 h (groupe de 4, combat, villes, HV, morts) : 0 erreur, 0 freeze > 50 ms, 0 contradiction.
 3. Revue « ce que le joueur voit » écran par écran ; puis une seule publication V5.0.0.
+
+## H. Retours du 9 nov (après 4.3.5) — priorité haute
+- Macros jugées « horribles » : refaire le contenu ET l'aspect (moins de macros, plus fortes, icônes claires).
+- Petites barres rapides (Raccourcis / boutons) invisibles chez le joueur : trouver pourquoi en jeu (profil, placement
+  hors écran, strata, mode sûr) et garantir qu'elles s'affichent.
+- « Tout ce qui n'apparaît pas » : audit en jeu de chaque élément censé s'afficher.
+- En combat : garder le strict nécessaire, mais certains calculs (cible, munitions, familier) doivent continuer.
