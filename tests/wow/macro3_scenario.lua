@@ -81,8 +81,9 @@ return function(M, ctx)
   for i, p in ipairs(W.PAGES) do ids[p.id] = i end
   -- the harness storm may have folded/unfolded the page's sections: back to the defaults
   if W.char and W.char.collapsed then
-    for _, k in ipairs({ "macros:list", "macros:off", "macros:set", "macros:more" }) do W.char.collapsed[k] = nil end
+    for _, k in ipairs({ "macros:list", "macros:off", "macros:set", "macros:more", "macros:howto" }) do W.char.collapsed[k] = nil end
   end
+  Mc._pageSel = nil   -- the storm may have selected a macro (its « Réglages » rows repeat the name)
   check(ids.macros and ids.tools and ids.modules and ids.tools < ids.macros and ids.macros < ids.modules,
     "« Macros » page registered between « Outils » and « Fonctions »")
   M.Hw(function() Mc:TogglePanel() end)
@@ -120,8 +121,33 @@ return function(M, ctx)
   check(stm.onBar and stm.key == "1", "on a bar with its key read: " .. tostring(stm.key))
   W.Render()
   local found
-  for _, r in ipairs(W.lastLay.rects) do if r.kind == "row" and r.label:find(main, 1, true) then found = r.label end end
+  for _, r in ipairs(W.lastLay.rects) do if r.kind == "row" and not found and r.label:find(main, 1, true) then found = r.label end end
   check(found and found:find("active", 1, true), "row of the macro on the bar: " .. tostring(found))
+  -- (4.3.1 MACROFIX) « Comment ça marche » : badge Auto / Fixe, à quoi / où, clic = sur le curseur, Lier la touche
+  check(found and (found:find("[Auto]", 1, true) or found:find("[Fixe]", 1, true)) and found:find("Sert à : ", 1, true)
+    and found:find(hunter and "Où : barre 1, touche 1" or "Où : ", 1, true), "row: badge + purpose + where: " .. tostring(found))
+  local howto
+  for _, r in ipairs(W.lastLay.rects) do if r.kind == "text" and r.label:find("^3%. Glisser sur ta barre") then howto = r end end
+  check(howto, "« Comment ça marche » step 3 shown")
+  check(Mc.PresetOK("essentiel") == hunter, "« Mes 5 macros essentielles » offered to hunters only")
+  if hunter then
+    local was = c.preset
+    Mc:SetPreset("essentiel")
+    local nIn = 0
+    for _, d in ipairs(Mc:Defs()) do if Mc:InPreset(d) then nIn = nIn + 1 end end
+    check(nIn == 5 and Mc:Opt(def("TAI Tir"), "mods") == false, "essentials preset: 5 macros, no modifiers " .. nIn)
+    Mc:SetPreset(was or "complet"); c.preset = was
+  end
+  M.cursor = nil
+  click(function() Mc:PickToBar(def(main)) end)
+  check(M.cursor and M.cursor.type == "macro", "row click: the macro is on the cursor")
+  M.cursor = nil
+  local bdef = def(hunter and "TAI Aspects" or "TAI Survie")
+  if bdef and Mc.MacroIndex(Mc:GameName(bdef)) then
+    local key = Mc.BindKeyOf(bdef)
+    click(function() Mc:BindKey(bdef) end)
+    check(key and GetBindingAction(key) == "MACRO " .. Mc:GameName(bdef), "« Lier la touche » " .. tostring(key))
+  end
 
   -- ---------------------------------------------------------------- auto: better food -> orange, one click -> green
   if hunter then

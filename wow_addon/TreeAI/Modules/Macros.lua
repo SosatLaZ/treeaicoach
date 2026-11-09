@@ -944,18 +944,29 @@ local PRESETS = {
     tip = "Le jeu conseillé : variantes Maj/Ctrl/Alt et survol (@mouseover)." },
   pro = { label = "Pro", mods = true, mo = true,
     tip = "Complet + les macros « Pro » qui tirent le maximum de chaque touche (pull en un bouton, burst, panique…)." },
+  -- (4.3.1 MACROFIX) chasseur débutant : 5 macros seulement, une touche = une chose (sans Maj/Ctrl/Alt ni survol)
+  essentiel = { label = "Mes 5 macros essentielles", mods = false, mo = false, class = "HUNTER",
+    only = { ["TAI Tir"] = 1, ["TAI Marque"] = 2, ["TAI Morsure"] = 3, ["TAI Familier"] = 4, ["TAI Aspects"] = 5 },
+    tip = "Seulement Tir (touche 1), Marque (2), Morsure (3), Familier (V) et Aspects (X) : le minimum pour bien jouer." },
 }
 M.PRESETS = PRESETS
-M.PRESET_ORDER = { "simple", "complet", "pro" }
+M.PRESET_ORDER = { "simple", "complet", "pro", "essentiel" }
+
+local function presetOK(p)
+  local P = p and PRESETS[p]
+  return P and (not P.class or P.class == playerClass()) and true or false
+end
+M.PresetOK = presetOK
 
 function M:Preset()
   local p = char().preset
-  return (p and PRESETS[p]) and p or "complet"
+  return presetOK(p) and p or "complet"
 end
 
--- la macro fait-elle partie du préréglage en cours ? (def = Complet, sp = Simple, pr = Pro)
+-- la macro fait-elle partie du préréglage en cours ? (def = Complet, sp = Simple, pr = Pro, only = liste fermée)
 function M:InPreset(def)
   local p = self:Preset()
+  if PRESETS[p].only then return PRESETS[p].only[def.n] and true or false end
   if p == "simple" and def.sp ~= nil then return def.sp and true or false end
   if p == "pro" and def.pr ~= nil then return def.pr and true or false end
   return def.def and true or false
@@ -985,7 +996,7 @@ end
 
 -- changer de préréglage : les réglages suivent (le nom, l'icône et le tank choisis restent)
 function M:SetPreset(p)
-  if not PRESETS[p] then return false end
+  if not presetOK(p) then return false end
   memo = { t = -1 }
   optGen = optGen + 1
   local c = char()
@@ -2406,7 +2417,7 @@ end
 --- préréglage : 1er clic = « clique encore pour confirmer » (8 s), 2e clic = réglages changés puis écrits tout de
 --- suite (même clic, hors combat). Rien n'est supprimé : une macro qui sort du préréglage est seulement désactivée.
 function M:ApplyPreset(p)
-  if not PRESETS[p] then return end
+  if not presetOK(p) then return end
   if p == self:Preset() then say(("Préréglage « %s » : déjà celui-ci."):format(PRESETS[p].label)) return end
   local t = now()
   local ask = M._presetAsk
@@ -2592,6 +2603,92 @@ local ICONS = "Interface\\Icons\\"
 local ORDER = { bad = 1, warn = 2, good = 3, muted = 4 }
 local function yesNo(v) return v and "oui" or "non" end
 
+---------------------------------------------------------------------------
+-- (4.3.1 MACROFIX) « Comment ça marche » : badge Auto / Fixe, à quoi elle sert, où la mettre, lier la touche
+---------------------------------------------------------------------------
+--- Auto : TreeAI la réécrit tout seul (objet du sac, sort appris, variante) ; Fixe : son texte ne change jamais
+function M.IsAutoKind(st)
+  local def = st.def
+  if st.auto == false then return false end
+  if def.c == "consumable" or def.c == "click" or (def.v and #def.v > 1) then return true end
+  for _, v in ipairs(def.v or {}) do
+    local b = v.b or ""
+    if b:find("?", 1, true) or b:find("{item:", 1, true) or b:find("{slot:", 1, true) then return true end
+  end
+  return false
+end
+function M.KindBadge(st)
+  return M.IsAutoKind(st) and "|cff4fc3f7[Auto]|r" or "|cffc8c8c8[Fixe]|r"
+end
+--- où la mettre, en clair (touche conseillée de la macro : « 1 » … « 6 » = barre 1, case N)
+function M.WhereShort(def)
+  local k = def.k or "-"
+  local n = k:match("^(%d)$")
+  if n then return ("barre 1, touche %s"):format(n) end
+  if k == "-" or k == "" then return "où tu veux (pas de touche conseillée)" end
+  return ("une case libre, touche %s (bouton « Lier la touche »)"):format(k)
+end
+function M.Purpose(def)
+  return "Sert à : " .. (def.d or "?") .. " · Où : " .. M.WhereShort(def)
+end
+--- touche à lier pour « Lier la touche » (« Maj+E » -> « SHIFT-E ») ; nil pour 1 à 6 (déjà la barre 1) et « - »
+function M.BindKeyOf(def)
+  local k = def.k
+  if type(k) ~= "string" or k == "-" or k == "" or k:match("^%d$") then return nil end
+  local B = T.Binds or (T.modules and T.modules.Binds)
+  if B and type(B.KeyFromHint) == "function" then return B.KeyFromHint(k) end
+  return (k:gsub("%s", ""):gsub("[Mm]aj%+", "SHIFT-"):gsub("[Cc]trl%+", "CTRL-"):gsub("[Aa]lt%+", "ALT-"):upper())
+end
+--- « Lier la touche » : SetBinding(touche, "MACRO nom") par le chemin protégé du module Raccourcis (clic, hors combat).
+--- Touche déjà prise par autre chose : un 2e clic dans les 8 s la remplace.
+function M:BindKey(def)
+  local key = M.BindKeyOf(def)
+  if not key then say("Pas de touche à lier : pose-la sur la barre 1, sa case a déjà sa touche."); return false end
+  if inCombat() then say("Impossible en combat : refais-le après."); return false end
+  local name = gname(def)
+  if not macroIndex(name) then say(name .. " : installe-la d'abord (clic sur sa ligne)."); return false end
+  local cmd = "MACRO " .. name
+  local cur = try(_G.GetBindingAction, key) or ""
+  if cur == cmd then say(("%s : déjà sur la touche %s."):format(name, keyText(key))); return true end
+  local ask, t = M._bindAsk, now()
+  if cur ~= "" and not (ask and ask.n == def.n and t - ask.t < 8) then
+    M._bindAsk = { n = def.n, t = t }
+    say(("La touche %s sert déjà à « %s » : clique encore pour la donner à %s."):format(keyText(key), cur, name))
+    return false
+  end
+  M._bindAsk = nil
+  local B = T.modules and T.modules.Binds or T.Binds
+  if not (B and type(B.Bind) == "function") then
+    say(("Échap > Raccourcis : mets « %s » sur la touche %s."):format(name, keyText(key)))
+    return false
+  end
+  local ok = B:Bind({ id = "macro:" .. def.n, how = "bind", key = key, item = { kind = "macro", name = name, cmd = cmd } }, true, true)
+  say(ok and ("%s : touche %s liée (enregistrée)."):format(name, keyText(key))
+    or ("Le jeu n'a pas pris la touche : Échap > Raccourcis > « %s » sur %s."):format(name, keyText(key)))
+  M.DirtyPlacement()
+  return ok and true or false
+end
+
+--- le bloc « Comment ça marche » en 4 étapes (repliable, ouvert la 1re fois)
+function M:RenderHowTo(Ly)
+  if not Ly.header("Comment ça marche", "macros:howto", nil, ICONS .. "INV_Misc_Book_09") then return end
+  Ly.text("1. Installer : un clic sur « Tout mettre à jour » (ou sur une ligne orange) crée les macros dans la "
+    .. "liste du jeu (Échap > Macros, onglet de ton personnage). Rien n'est écrit sans ton clic, jamais en combat.", "S", "text")
+  Ly.text("2. |cff4fc3f7[Auto]|r : TreeAI la réécrit tout seul quand ton sac, tes sorts ou tes rangs changent "
+    .. "(nouvelle nourriture, sort appris). |cffc8c8c8[Fixe]|r : son texte ne change jamais. Chaque ligne dit à quoi "
+    .. "elle sert et où la mettre (ex. « barre 1, touche 1 : ton tir principal »).", "S", "text")
+  Ly.text("3. Glisser sur ta barre : clique une ligne verte, la macro est sur ton curseur ; clique une case de ta "
+    .. "barre pour la poser (clic droit : annuler). Hors combat seulement.", "S", "text")
+  Ly.text("4. Les touches : la touche conseillée est à droite de « Où : ». Pour 1 à 6, pose-la sur la barre 1 à "
+    .. "cette case. Pour les autres (Maj+E, V…), ouvre la macro (clic) puis « Lier la touche ».", "S", "text")
+  if presetOK("essentiel") and self:Preset() ~= "essentiel" then
+    local asking = M._presetAsk and (now() - M._presetAsk.t) < 8 and M._presetAsk.p == "essentiel"
+    Ly.buttons({ { asking and "Confirmer « Mes 5 macros essentielles »" or "Mes 5 macros essentielles",
+      function() M:ApplyPreset("essentiel") end,
+      PRESETS.essentiel.tip .. " Clic, puis clic encore : les installer." } }, 1)
+  end
+end
+
 local function tipFor(st)
   local def = st.def
   local t = { def.d or "" }
@@ -2622,6 +2719,12 @@ local function clickOf(st)
   elseif st.code == "blocked" or st.code == "full" then
     return function() M._pageSel = def.n; M:ShowCopy({ { def = def, body = st.expected } }) end,
       "Clic : son texte à copier-coller"
+  end
+  if st.installed then
+    -- (4.3.1 MACROFIX) clic (matériel, hors combat) = la macro sur le curseur : pose-la sur ta barre ; + ses réglages
+    return function() M._pageSel = def.n; M:PickToBar(def) end,
+      "Clic : la prendre sur le curseur, puis clique une case de ta barre · ses réglages s'ouvrent dessous · clic droit : "
+        .. (st.on and "la désactiver" or "l'activer")
   end
   return function() M._pageSel = (M._pageSel ~= def.n) and def.n or nil end,
     "Clic : ses réglages · clic droit : " .. (st.on and "la désactiver" or "l'activer")
@@ -2666,11 +2769,14 @@ function M:RenderPage(Ly)
   local asking = ask and (now() - ask.t) < 8 and ask.p or nil
   for _, id in ipairs(M.PRESET_ORDER) do
     local P = PRESETS[id]
-    local label = (id == p) and ("« " .. P.label .. " »") or (asking == id and ("Confirmer « " .. P.label .. " »") or P.label)
-    presetBtns[#presetBtns + 1] = { label, function() M:ApplyPreset(id) end,
-      P.tip .. (id == p and " (préréglage en cours)" or " Clic, puis clic encore : l'appliquer (écrit tout de suite).") }
+    if presetOK(id) then
+      local label = (id == p) and ("« " .. P.label .. " »") or (asking == id and ("Confirmer « " .. P.label .. " »") or P.label)
+      presetBtns[#presetBtns + 1] = { label, function() M:ApplyPreset(id) end,
+        P.tip .. (id == p and " (préréglage en cours)" or " Clic, puis clic encore : l'appliquer (écrit tout de suite).") }
+    end
   end
   Ly.buttons(presetBtns, 3)
+  self:RenderHowTo(Ly)
   table.sort(list, function(a, b)
     if a.on ~= b.on then return a.on end
     local oa, ob = ORDER[a.badge] or 9, ORDER[b.badge] or 9
@@ -2690,9 +2796,9 @@ function M:RenderPage(Ly)
   local function row(st)
     local fn, hint = clickOf(st)
     local def = st.def
-    local right = st.onBar and (st.key and ("touche " .. keyText(st.key)) or "sans touche") or (st.code == "ok" and "pas sur une barre" or "")
-    Ly.row({ text = M.Dot(st.badge) .. " " .. st.name .. "  |cffb0b0b0" .. st.text
-        .. (st.autoText and (" · " .. st.autoText) or "") .. "|r",
+    local right = st.onBar and (st.key and ("touche " .. keyText(st.key)) or "sans touche") or (st.code == "ok" and "clic : sur le curseur" or "")
+    Ly.row({ text = M.Dot(st.badge) .. " " .. st.name .. " " .. M.KindBadge(st) .. "  |cffb0b0b0" .. st.text
+        .. (st.autoText and (" · " .. st.autoText) or "") .. "|r\n|cffd8d8d8" .. M.Purpose(def) .. "|r",
       right = right, icon = iconOf(def, bagCtx), tooltip = tipFor(st), onClick = fn, clickHint = hint,
       onRightClick = function() toggleOn(def) end, kind = "info" })
     shown = shown + 1
@@ -2775,6 +2881,11 @@ function M:RenderSettings(Ly, st)
   if st.code ~= "ok" and st.expected then btns[#btns + 1] = { st.installed and "Mettre à jour" or "Installer",
     function() M:UpdateOne(def, (_G.IsShiftKeyDown and _G.IsShiftKeyDown()) and true or false) end, "Clic : l'écrire maintenant" } end
   btns[#btns + 1] = { "Sur le curseur", function() M:PickToBar(def) end, "Clic : la macro sur ton curseur, pose-la sur ta barre" }
+  local bk = M.BindKeyOf(def)
+  if bk and st.installed then
+    btns[#btns + 1] = { "Lier la touche " .. keyText(bk), function() M:BindKey(def) end,
+      "Clic : la touche " .. keyText(bk) .. " lance cette macro (hors combat ; une touche déjà prise demande un 2e clic)" }
+  end
   if st.expected then btns[#btns + 1] = { "Copier-coller", function() M:ShowCopy({ { def = def, body = st.expected } }) end,
     "Son texte, à coller dans la fenêtre /macro" } end
   Ly.buttons(btns, 3)
