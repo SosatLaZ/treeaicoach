@@ -22,11 +22,13 @@ import time
 from dataclasses import dataclass, field
 
 from treeaicoach.wow.planner import models as M
+from treeaicoach.wow.planner import transport as TR
 from treeaicoach.wow.planner.data import Problem
 
 INF = float("inf")
 HEARTH_CAST = 10.0
 HEARTH_CD = 3600.0
+HEARTH_GAIN = TR.HEARTH_GAIN   # (4.2 ROUTE42) same rule as the addon (Route.lua): the hearth only if it saves ≥ 20 s
 BIG = 1e7
 GATE_MAX_FRAC = 0.5       # level gate: grind on the spot when the missing XP is ≤ half of the current level
 
@@ -178,7 +180,7 @@ class Solver:
             leg = D[p][n]
             if hs <= t:
                 alt = D[B][n] + HEARTH_CAST
-                if alt < leg:
+                if alt + HEARTH_GAIN <= leg:
                     leg = alt
                     hs = t + HEARTH_CD
             t += leg
@@ -267,7 +269,7 @@ class Solver:
         done, levels, hb, gb, hsv = [], [], [], [], []
         for n in route:
             leg, used, save, gr = D[p][n], False, 0.0, 0.0
-            if hs <= t and D[B][n] + HEARTH_CAST < leg:
+            if hs <= t and D[B][n] + HEARTH_CAST + HEARTH_GAIN <= leg:
                 save = leg - (D[B][n] + HEARTH_CAST)
                 leg, used, hs = D[B][n] + HEARTH_CAST, True, t + HEARTH_CD
             t += leg

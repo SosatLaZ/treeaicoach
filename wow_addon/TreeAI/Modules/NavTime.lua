@@ -318,6 +318,9 @@ function N.Sample()
   local gone = ps and (ps.dead or ps.ghost)
   if tr and (fight or taxi or gone) then tr.combat = true end
   if not c or taxi then pc = nil return nil end
+  -- (4.2 ROUTE42) même échantillon pour le trajet : quai atteint (départ du bateau vu), cage d'ascenseur, repère natif
+  local Rt = T.Route
+  if Rt and Rt.NoteSample and not gone then pcall(Rt.NoteSample, c, wx, wy, tnow) end
   local oc, ox, oy, ot = pc, px, py, pt
   pc, px, py, pt = c, wx, wy, tnow
   if not oc or oc ~= c then return nil end

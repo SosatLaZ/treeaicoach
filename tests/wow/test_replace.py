@@ -46,11 +46,11 @@ def test_taint_rules():
                     "CreateFrame(\"Frame\", nil, child)", "CreateFrame(\"Button\", nil, child)", "UseAction", "CastSpell"):
             assert bad not in c, (m, bad)
     qp = code("QuestPins")
-    assert "AddDataProvider" in qp and "MapCanvasDataProviderMixin" in qp          # Blizzard's supported map pattern
-    assert 'CF("Frame", nil, up)' in qp                                            # our overlay = child of UIParent
+    # (4.2 ROUTE42) icons INSIDE the map canvas (T.MapCanvas, PathDraw.lua), never a data provider, never on UIParent
+    assert "AddDataProvider" not in qp and "MC.Layer()" in qp and 'CF("Frame", nil, up)' not in qp
     w = code("Watch")
-    # the game's tracker: never Hide / Show in combat (alpha only), secure item buttons only out of combat
-    assert "SetAlpha\", 0)" in w and "RunOutOfCombat(\"Watch:hideTracker\"" in w and "RunOutOfCombat(\"Watch:items\"" in w
+    # the game's tracker: never hidden / moved (4.2: anchored under it), secure item buttons only out of combat
+    assert "hideTracker" not in w and "W.AnchorTarget" in w and "RunOutOfCombat(\"Watch:items\"" in w
     assert "SecureActionButtonTemplate" in w and "g(\"UIParent\"), \"SecureActionButtonTemplate\"" in w
 
 

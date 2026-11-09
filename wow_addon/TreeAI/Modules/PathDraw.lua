@@ -1,18 +1,21 @@
--- TreeAI — module PathDraw (agent PATH) : VOIR le chemin calculé par l'Itinéraire (Modules/Route.lua + Planner).
---  * Carte du monde : le trajet en pointillés entre les arrêts consécutifs, pastilles numérotées 1, 2, 3… et
---    icône du transport (vol, bateau, zeppelin, pierre de foyer). Dessiné sur NOTRE calque : un cadre enfant
---    d'UIParent posé (coordonnées absolues, jamais ancré ni reparenté sur un cadre de Blizzard) au-dessus du
---    canevas de WorldMapFrame, qui coupe ce qui dépasse. Prévenu par un fournisseur de données
---    (WorldMapFrame:AddDataProvider, le modèle prévu par Blizzard) s'il existe, sinon par HookScript OnShow/OnHide.
---    Segments : objets Line (CreateLine + SetStartPoint / SetEndPoint) en tirets, sinon des points (textures).
+-- TreeAI — module PathDraw (agent PATH, 4.2 ROUTE42) : VOIR le chemin calculé par l'Itinéraire (Modules/Route.lua + Planner).
+--  * Carte du monde : le trajet DANS la carte, comme une épingle du jeu — notre calque est un enfant du canevas de la carte
+--    (WorldMapFrame.ScrollContainer.Child) : il glisse et zoome avec elle, il est coupé au bord de la carte par son cadre
+--    défilant, il s'efface quand la carte se ferme. Son échelle = l'inverse de celle du canevas (traits et pastilles de
+--    taille constante à l'écran) ; repositionné seulement quand la carte affichée, le zoom ou le trajet change (post-crochets
+--    du jeu sur le canevas : hooksecurefunc(Child, "SetScale"), OnMapChanged, OnShow — aucun OnUpdate ; rien carte fermée). AUCUN AddDataProvider ni
+--    AcquirePin : sur Forever, la manette parcourt les épingles de la carte depuis du code sécurisé et un fournisseur
+--    d'addon la contamine (étude des addons, §1). Aucun cadre sur UIParent par-dessus la carte.
+--    Dessin à la Shortest Path (écrit par nous) : pointillés par étape (marche jaune / vert réglable, vol bleu, bateau /
+--    zeppelin turquoise, ascenseur / tram violet, foyer : rien — on se téléporte), étape en cours (depuis ta position)
+--    plus épaisse et pleine, petites flèches de sens tous les ~90 px, pastilles numérotées comme l'onglet (R.Groups).
+--    Segments : objets Line (CreateLine + SetStartPoint / SetEndPoint), sinon des points (textures).
 --  * Minimap : les 1–2 prochaines étapes en traînée de points qui tourne avec la minimap (même projection que
 --    Modules/MinimapPins.lua : MP.YardsRadius / rotation / forme). ≤ 5 Hz, seulement si le joueur a bougé
 --    (ou tourné, zoomé, ou si le trajet a changé) ; textures réutilisées (réserve), aucune table créée par passe.
---  * Rien n'est dessiné sans trajet actif (Itinéraire en pause = rien). Shortest Path Forever guide déjà :
---    on garde la carte du monde, la traînée minimap seulement si l'option le demande. Option « Guidage » du
---    module de guidage (s'il existe) respectée.
+--  * Rien n'est dessiné sans trajet actif (Itinéraire en pause = rien). Option « Guidage » respectée.
 -- Taint : aucun cadre protégé, aucun hook de cadre sécurisé, aucune fonction protégée ; cadres créés hors combat.
--- Lua 5.1, aucune globale.
+-- T.MapCanvas (ci-dessous) sert aussi à QuestPins et CityRun. Lua 5.1, aucune globale.
 local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
@@ -86,6 +89,102 @@ local function color()
   return c[1], c[2], c[3]
 end
 local function thick() return max(1, min(8, tonumber(PD.db and PD.db.width) or 3)) end
+
+-- ------------------------------------------------------------------ (4.2 ROUTE42) calques DANS la carte du monde
+-- MC.Layer() : un cadre à nous, enfant du canevas (ScrollContainer.Child), souris coupée (seules nos épingles la
+-- prennent) ; MC.Fit(layer) : échelle = 1 / échelle du canevas, taille = canevas × échelle → coordonnées du calque = pixels
+-- d'écran du canevas (épingles et traits de taille constante, ils suivent glisser / zoom sans rien faire) ; niveau juste
+-- au-dessus du fond de carte (canevas + MC.LEVEL), sous les épingles du jeu ; MC.Key = ce qui oblige à reposer (carte
+-- affichée, zoom, taille). Le cadre défilant de la carte coupe ce qui dépasse.
+local MC = type(T.MapCanvas) == "table" and T.MapCanvas or {}
+T.MapCanvas = MC
+MC.LEVEL = 4
+function MC.Parts()
+  local wm = G("WorldMapFrame")
+  if type(wm) ~= "table" then return nil end
+  local sc = wm.ScrollContainer
+  local child = type(sc) == "table" and sc.Child or nil
+  if type(child) ~= "table" or type(child.GetWidth) ~= "function" then return nil end
+  return wm, sc, child
+end
+function MC.Layer()
+  local _, _, child = MC.Parts()
+  local CF = G("CreateFrame")
+  if not (child and CF) then return nil end
+  local f = try(CF, "Frame", nil, child)
+  if not f then return nil end
+  try(f.EnableMouse, f, false)
+  f:SetPoint("TOPLEFT", child, "TOPLEFT", 0, 0)
+  f:SetSize(1, 1)
+  f._mc = true
+  return f
+end
+function MC.MapID()
+  local wm = MC.Parts()
+  if not wm then return nil end
+  local id = num(try(wm.GetMapID, wm))
+  if id then return id end
+  local CM = G("C_Map")
+  return CM and num(try(CM.GetBestMapForUnit, "player")) or nil
+end
+--- → mapID, largeur, hauteur (unités du calque = pixels d'écran du canevas), échelle du canevas ; nil si illisible
+function MC.Fit(f)
+  local _, _, child = MC.Parts()
+  if not (child and f) then return nil end
+  local cs = num(try(child.GetScale, child)) or 1
+  if cs <= 0.01 then cs = 1 end
+  local cw, ch = num(try(child.GetWidth, child)), num(try(child.GetHeight, child))
+  if not (cw and ch and cw > 0 and ch > 0) then return nil end
+  if f._cs ~= cs then try(f.SetScale, f, 1 / cs) f._cs = cs end
+  if f._w ~= cw * cs or f._h ~= ch * cs then f:SetSize(cw * cs, ch * cs) f._w, f._h = cw * cs, ch * cs end
+  local lv = min(9000, (num(try(child.GetFrameLevel, child)) or 1) + MC.LEVEL + (f._lvl or 0))
+  if f._lv ~= lv then try(f.SetFrameLevel, f, lv) f._lv = lv end
+  return MC.MapID(), cw * cs, ch * cs, cs
+end
+--- ce qui oblige à reposer le calque (aucune table) : carte affichée, zoom, largeur, hauteur du canevas
+function MC.Key()
+  local _, _, child = MC.Parts()
+  if not child then return nil end
+  return MC.MapID() or 0, num(try(child.GetScale, child)) or 1, num(try(child.GetWidth, child)) or 0,
+    num(try(child.GetHeight, child)) or 0
+end
+-- prévenus seulement quand la carte change : affichée, autre carte, zoom (le jeu appelle Child:SetScale à chaque pas de
+-- zoom), taille du canevas — par des post-crochets du jeu (hooksecurefunc / HookScript : n'altèrent pas son code), aucun
+-- OnUpdate ; glisser la carte ne demande rien (le calque est dans le canevas). Repli sans hooksecurefunc : lecture par image
+-- carte ouverte (MC.polling).
+MC.subs = MC.subs or {}
+local function fire() for _, f in ipairs(MC.subs) do pcall(f) end end
+MC.Fire = fire
+function MC.Hook()
+  local wm, _, child = MC.Parts()
+  if not child then return false end
+  if MC.hooked == child then return true end
+  local hs = G("hooksecurefunc")
+  if type(hs) ~= "function" then MC.polling = true return false end
+  pcall(hs, child, "SetScale", fire)
+  if type(wm.OnMapChanged) == "function" then pcall(hs, wm, "OnMapChanged", fire) end
+  if type(wm.HookScript) == "function" then pcall(wm.HookScript, wm, "OnShow", fire) end
+  if type(child.HookScript) == "function" then pcall(child.HookScript, child, "OnSizeChanged", fire) end
+  MC.hooked = child
+  return true
+end
+--- fn() appelé quand la carte change ; layer = le calque du module (repli : son OnUpdate, carte ouverte seulement)
+function MC.Watch(layer, fn)
+  local seen = false
+  for _, f in ipairs(MC.subs) do if f == fn then seen = true end end
+  if not seen then MC.subs[#MC.subs + 1] = fn end
+  if not MC.Hook() and layer then layer:SetScript("OnUpdate", fn) end
+end
+--- le calque appartient-il bien à la carte (jamais à UIParent) ? (tests, /tai chemin)
+function MC.InMap(f)
+  local _, _, child = MC.Parts()
+  local p = f and try(f.GetParent, f)
+  while p do
+    if p == child then return true end
+    p = try(p.GetParent, p)
+  end
+  return false
+end
 
 -- ------------------------------------------------------------------ trajet actif (Route / Planner)
 -- signature bon marché : identité de la liste d'étapes, curseur, longueur, pause (aucune table créée)
@@ -204,6 +303,8 @@ local function hideDots(from)
 end
 function PD.ClearMinimap()
   hideDots(1)
+  if PD.edge and PD.edge:IsShown() then PD.edge:Hide() end
+  PD.edgeShown = false
   PD.dotsShown = 0
   last.n = nil
 end
@@ -255,6 +356,7 @@ PD.LearnedPath = learnedPath
 local function readLegs(c, pn, pw)
   nLegs = 0
   local st = PD.Stops()
+  PD.npcMini = st and st[1] and PD.IsNpcStop(st[1]) or false
   if not st then return end
   PD.learnedPts = 0
   for i = 1, #st do
@@ -314,7 +416,10 @@ local function drawTrail(n, w)
               d:ClearAllPoints()
               d:SetPoint("CENTER", trail, "CENTER", px, py)
               d:SetSize(size, size)
-              d:SetVertexColor(cr, cg, cb, li <= 1 + (PD.learnedPts or 0) and 0.95 or 0.6)
+              local first = li <= 1 + (PD.learnedPts or 0)
+              local nc = first and PD.npcMini and PD.NpcColor() or nil
+              if nc then d:SetVertexColor(nc[1], nc[2], nc[3], 1)
+              else d:SetVertexColor(cr, cg, cb, first and 0.95 or 0.6) end
               if not d:IsShown() then d:Show() end
             end
           end
@@ -326,6 +431,34 @@ local function drawTrail(n, w)
   end
   hideDots(used + 1)
   PD.dotsShown = used
+  -- (4.2 ROUTE42) arrêt 1 hors de la minimap : une flèche sur le bord, tournée vers lui (comme les épingles du jeu)
+  local li = (PD.learnedPts or 0) + 1
+  local edge = false
+  if nLegs >= li and trail then
+    local bx, by = PD.Project(legs[li * 2 - 1] - n, legs[li * 2] - w, v.facing, v.rotate, k)
+    local d = sqrt(bx * bx + by * by)
+    local out = v.square and (abs(bx) > r or abs(by) > r) or d > r
+    if out and d > 0 then
+      local e = PD.edge
+      if not e then
+        e = trail:CreateTexture(nil, "OVERLAY")
+        e:SetTexture("Interface\\Minimap\\MinimapArrow")
+        PD.edge = e
+      end
+      local rr = r - 4
+      local ex, ey = bx / d * rr, by / d * rr
+      if v.square then local m = max(abs(bx), abs(by)) ex, ey = bx / m * rr, by / m * rr end
+      e:ClearAllPoints()
+      e:SetPoint("CENTER", trail, "CENTER", ex, ey)
+      e:SetSize(12, 12)
+      if e.SetRotation then pcall(e.SetRotation, e, (math.atan2 and math.atan2(by, bx) or 0) - math.pi / 2) end
+      e:SetVertexColor(cr, cg, cb, 1)
+      if not e:IsShown() then e:Show() end
+      edge = true
+    end
+  end
+  if not edge and PD.edge and PD.edge:IsShown() then PD.edge:Hide() end
+  PD.edgeShown = edge
   PD.mmRedraws = PD.mmRedraws + 1
 end
 
@@ -342,6 +475,7 @@ function PD.MinimapTick(force)
   local t = now()
   if not force and t - last.at < last.step then return end
   last.at = t
+  if view and view:IsVisible() then PD.MapTick() end   -- carte ouverte : l'étape en cours suit le joueur (≤ 5 Hz)
   if force then wantAt = -100 end
   local P, R = T.Planner, T.Route
   local steps, cur = P and P.steps, P and P.cursor
@@ -400,53 +534,50 @@ function PD.MinimapTick(force)
   drawTrail(n, w)
 end
 
--- ------------------------------------------------------------------ carte du monde : calque à nous
-local view, canvas = nil, nil            -- view = fenêtre visible (coupe), canvas = toute la carte (déplacée / zoomée)
-local dashes, badges = {}, {}
-PD.dashes, PD.badges = dashes, badges
-PD.segments, PD.badgesShown, PD.dashesShown, PD.mapRedraws = 0, 0, 0, 0
-local mapState = { id = nil, l = nil, b = nil, w = nil, h = nil, vl = nil, vb = nil, vw = nil, vh = nil, steps = nil,
-  cur = nil, len = nil, at = -100, dirty = true }
-local pts = {}                            -- points dessinés : x, y (px canevas), kind — réutilisée
-
-local function wmParts()
-  local wm = G("WorldMapFrame")
-  if type(wm) ~= "table" then return nil end
-  local sc = wm.ScrollContainer
-  local child = type(sc) == "table" and sc.Child or nil
-  if type(child) ~= "table" then return nil end
-  return wm, sc, child
+-- ------------------------------------------------------------------ carte du monde : calque DANS la carte (MC)
+local view, canvas = nil, nil            -- (4.2 ROUTE42) un seul cadre : enfant du canevas de la carte (MC.Layer)
+local dashes, badges, arrows = {}, {}, {}
+PD.dashes, PD.badges, PD.arrows = dashes, badges, arrows
+PD.segments, PD.badgesShown, PD.dashesShown, PD.arrowsShown, PD.mapRedraws = 0, 0, 0, 0, 0
+local mapState = { id = nil, cs = nil, w = nil, h = nil, steps = nil, cur = nil, len = nil, gen = nil, px = nil, py = nil,
+  dirty = true }
+local pts = {}                            -- points dessinés : x, y, sorte, n° de pastille — réutilisée
+-- couleurs par sorte d'étape (la marche = la couleur choisie) ; l'étape en cours, plus épaisse et pleine
+local KIND_RGB = { fly = { 0.35, 0.65, 1 }, boat = { 0.2, 0.9, 0.85 }, zeppelin = { 0.2, 0.9, 0.85 },
+  elevator = { 0.75, 0.45, 1 }, tram = { 0.75, 0.45, 1 } }
+PD.KIND_RGB = KIND_RGB
+-- (4.2 ROUTE42) « PNJ à voir » : l'arrêt en cours est un PNJ (rendre, prendre, marchand, maître, maître de vol, auberge…)
+-- → l'étape qui y mène change de couleur TOUT DE SUITE (or ; orange si le chemin est déjà jaune), carte et minimap, et sa
+-- pastille grossit ; retour à la couleur normale quand l'arrêt change
+local NPC_K = { pick = true, turn = true, vendor = true, train = true, fly = true, fp = true, hs = true, bank = true, mail = true }
+local NPC_GOLD, NPC_ORANGE = { 1, 0.82, 0.1 }, { 1, 0.5, 0.05 }
+function PD.NpcColor()
+  if tonumber(PD.db and PD.db.color) == 2 then return NPC_ORANGE end
+  return NPC_GOLD
 end
-local function shownMapID(wm)
-  local id = num(try(wm.GetMapID, wm))
-  if id then return id end
-  local CM = G("C_Map")
-  return CM and num(try(CM.GetBestMapForUnit, "player")) or nil
+--- l'entrée st (R:Stops) mène-t-elle à un PNJ ? (transport : son maître de vol / quai d'abord)
+function PD.IsNpcStop(e)
+  if type(e) ~= "table" then return false end
+  if e.kind == "fly" then return true end                       -- le maître de vol
+  local s = e.step
+  if not s then return false end
+  if s.buy then return true end                                 -- objet à acheter : le marchand
+  return NPC_K[s.k or ""] and true or false
 end
--- rectangle écran d'un cadre en coordonnées d'UIParent (lecture seule)
-local function rectOf(f)
-  local l, b = num(try(f.GetLeft, f)), num(try(f.GetBottom, f))
-  local w, h = num(try(f.GetWidth, f)), num(try(f.GetHeight, f))
-  if not (l and b and w and h) or w <= 0 or h <= 0 then return nil end
-  local es = num(try(f.GetEffectiveScale, f)) or 1
-  local up = G("UIParent")
-  local us = up and num(try(up.GetEffectiveScale, up)) or 1
-  local s = es / (us > 0 and us or 1)
-  return l * s, b * s, w * s, h * s
-end
+local ARROW = "Interface\\Minimap\\MinimapArrow"
+PD.ARROW_PX = 90
 
 local function ensureCanvas()
   if view then return view end
-  local CF, up = G("CreateFrame"), G("UIParent")
-  if not (CF and up) or inCombat() then return nil end
-  view = CF("Frame", nil, up)                       -- NOTRE cadre, enfant d'UIParent, jamais ancré sur la carte
-  try(view.EnableMouse, view, false)
-  try(view.SetClipsChildren, view, true)
-  view:Hide()
-  canvas = CF("Frame", nil, view)
-  try(canvas.EnableMouse, canvas, false)
-  view:SetScript("OnUpdate", function() PD.MapTick() end)
+  if inCombat() then return nil end
+  view = MC.Layer()
+  if not view then return nil end
+  view._lvl = 2                                    -- au-dessus des icônes de quêtes (QuestPins), sous les épingles du jeu
+  canvas = view
+  -- prévenu par la carte (affichée, autre carte, zoom) : un dessin seulement si quelque chose a changé ; le trajet qui
+  -- change ou le joueur qui marche : PD.Now / la passe de la minimap (≤ 5 Hz en marchant) redessinent si la carte est ouverte
   PD.view, PD.canvas = view, canvas
+  MC.Watch(view, function() if view:IsVisible() then PD.MapTick() end end)
   return view
 end
 local function hasLines()
@@ -473,6 +604,16 @@ local function dash(i)
   dashes[#dashes + 1] = d
   return dashes[i]
 end
+local function arrow(i)
+  local a = arrows[i]
+  if a then return a end
+  if i > 80 then return nil end
+  a = canvas:CreateTexture(nil, "OVERLAY")
+  a:SetTexture(ARROW)
+  a:SetSize(10, 10)
+  arrows[i] = a
+  return a
+end
 local function badge(i)
   local b = badges[i]
   if b then return b end
@@ -486,20 +627,21 @@ local function badge(i)
   badges[i] = b
   return b
 end
-local function hideMapFrom(di, bi)
+local function hideMapFrom(di, bi, ai)
   for i = di, #dashes do local o = dashes[i].obj if o:IsShown() then o:Hide() end end
   for i = bi, #badges do
     local b = badges[i]
     if b.bg:IsShown() then b.ring:Hide() b.bg:Hide() b.text:Hide() b.icon:Hide() end
   end
+  for i = ai or 1, #arrows do if arrows[i]:IsShown() then arrows[i]:Hide() end end
 end
 function PD.ClearMap()
   if not canvas then return end
-  hideMapFrom(1, 1)
-  PD.segments, PD.badgesShown, PD.dashesShown = 0, 0, 0
+  hideMapFrom(1, 1, 1)
+  PD.segments, PD.badgesShown, PD.dashesShown, PD.arrowsShown = 0, 0, 0, 0
 end
 
--- position (px canevas, origine en haut à gauche) d'un arrêt sur la carte affichée ; nil si ailleurs
+-- position (unités du calque, origine en haut à gauche) d'un lieu sur la carte affichée ; nil s'il est ailleurs
 local function onMap(mapID, p, W, H)
   if not (p and W) then return nil end
   local x, y
@@ -515,30 +657,32 @@ local function onMap(mapID, p, W, H)
 end
 PD.OnMap = onMap
 
-local function drawSegment(di, x1, y1, x2, y2, alpha)
+-- pointillés d'une étape (pleins pour l'étape en cours) + flèches de sens ; → index des tirets / flèches utilisés
+local function drawSegment(di, ai, x1, y1, x2, y2, alpha, rgb, current)
   local len = sqrt((x2 - x1) ^ 2 + (y2 - y1) ^ 2)
-  if len < 1 then return di end
-  local th = thick()
-  local cr, cg, cb = color()
+  if len < 1 then return di, ai end
+  local th = thick() + (current and 1 or 0)
+  local cr, cg, cb
+  if rgb then cr, cg, cb = rgb[1], rgb[2], rgb[3] else cr, cg, cb = color() end
   local period = 10 + th * 3                        -- tiret + trou
   local n = floor(len / period)
   if n > 60 then n, period = 60, len / 60 end       -- très long trajet : tirets plus espacés
   if n < 1 then n, period = 1, len end
-  local on = period * 0.6
+  local on = period * (current and 0.8 or 0.55)
   local ux, uy = (x2 - x1) / len, (y2 - y1) / len
   for k = 0, n - 1 do
     local d = dash(di + 1)
-    if not d then return di end
+    if not d then break end
     di = di + 1
-    local s, e = k * period, min(len, k * period + on)
+    local s0, e = k * period, min(len, k * period + on)
     local o = d.obj
     if d.line then
-      o:SetStartPoint("TOPLEFT", canvas, x1 + ux * s, -(y1 + uy * s))
+      o:SetStartPoint("TOPLEFT", canvas, x1 + ux * s0, -(y1 + uy * s0))
       o:SetEndPoint("TOPLEFT", canvas, x1 + ux * e, -(y1 + uy * e))
       if o.SetThickness then o:SetThickness(th) end
       if o.SetColorTexture then o:SetColorTexture(cr, cg, cb, alpha) end
     else                                              -- repli : un point par tiret
-      local m = (s + e) / 2
+      local m = (s0 + e) / 2
       o:ClearAllPoints()
       o:SetPoint("CENTER", canvas, "TOPLEFT", x1 + ux * m, -(y1 + uy * m))
       o:SetSize(th + 2, th + 2)
@@ -546,152 +690,157 @@ local function drawSegment(di, x1, y1, x2, y2, alpha)
     end
     if not o:IsShown() then o:Show() end
   end
-  return di
+  -- flèches de sens : une tous les PD.ARROW_PX (au moins une au milieu d'une étape assez longue)
+  if len >= 40 then
+    local na = max(1, floor(len / PD.ARROW_PX))
+    local ang = math.atan2 and math.atan2(-(y2 - y1), x2 - x1) or 0     -- angle à l'écran (y vers le haut)
+    for k = 1, na do
+      local a = arrow(ai + 1)
+      if not a then break end
+      ai = ai + 1
+      local t = (k - 0.5) / na
+      a:ClearAllPoints()
+      a:SetPoint("CENTER", canvas, "TOPLEFT", x1 + (x2 - x1) * t, -(y1 + (y2 - y1) * t))
+      a:SetSize(th + 8, th + 8)
+      if a.SetRotation then pcall(a.SetRotation, a, ang - math.pi / 2) end   -- la flèche du jeu pointe vers le haut
+      a:SetVertexColor(cr, cg, cb, min(1, alpha + 0.1))
+      if not a:IsShown() then a:Show() end
+    end
+  end
+  return di, ai
+end
+
+-- position du joueur sur la carte affichée (départ de l'étape en cours), nil s'il est ailleurs
+local function playerOnMap(mapID, W, H)
+  local Gp = T.Geo and T.Geo.Player
+  if not Gp then return nil end
+  local m, x, y = Gp()
+  if not (m and x) then return nil end
+  if m == mapID then return x / 100 * W, y / 100 * H end
+  local Rt = T.Route
+  local w = Rt and Rt.World and Rt.World({ map = m, x = x, y = y })
+  if not w then return nil end
+  return onMap(mapID, w, W, H)
 end
 
 function PD.DrawMap()
-  local wm, sc, child = wmParts()
-  if not (wm and ensureCanvas()) then return end
+  if not ensureCanvas() then return end
   PD.mapRedraws = PD.mapRedraws + 1
   local steps = routeSig()
   if not (steps and opt("map") and PD:IsEnabled() and not PD.GuidanceOff()) then PD.ClearMap() return end
-  local mapID = shownMapID(wm)
-  local vl, vb, vw, vh = rectOf(sc)
-  local cl, cb, cw, ch = rectOf(child)
-  if not (mapID and vl and cl) then PD.ClearMap() return end
+  local mapID, W, H = MC.Fit(view)
+  if not (mapID and W) then PD.ClearMap() return end
   if locked(view) then return end
-  view:ClearAllPoints()
-  view:SetPoint("BOTTOMLEFT", G("UIParent"), "BOTTOMLEFT", vl, vb)
-  view:SetSize(vw, vh)
-  canvas:ClearAllPoints()
-  canvas:SetPoint("BOTTOMLEFT", G("UIParent"), "BOTTOMLEFT", cl, cb)
-  canvas:SetSize(cw, ch)
   local st = PD.Stops()
-  local np = 0
-  for i = 1, #(st or {}) do
-    local e = st[i]
-    local x, y = onMap(mapID, e.place, cw, ch)
-    np = np + 1
-    local k = np * 3
-    pts[k - 2], pts[k - 1], pts[k] = x or false, y or false, e.kind
-    if np >= MAX_STOPS then break end
-  end
-  local di, bi, segs = 0, 0, 0
-  local lx, ly                                       -- dernier arrêt placé (ceux sans position sont sautés)
-  -- (QA-QUEST F18) mêmes numéros que l'onglet et la page Trajet : objectifs du même coin = un seul badge
+  -- points du dessin : départ du transport (maître de vol, quai) puis son arrivée ; un arrêt de quête ; pastilles
   local R = T.Route
   local okG, gr = false, nil
-  if R and R.Groups and st then okG, gr = pcall(R.Groups, st, np) end
+  if R and R.Groups and st then okG, gr = pcall(R.Groups, st, min(#st, MAX_STOPS)) end
   if not (okG and type(gr) == "table") then gr = nil end
+  local np = 0
+  local function put(x, y, kind, num2)
+    np = np + 1
+    local k = np * 4
+    pts[k - 3], pts[k - 2], pts[k - 1], pts[k] = x or false, y or false, kind, num2 or false
+  end
+  local npc = st and st[1] and PD.IsNpcStop(st[1]) or false
+  PD.npcLeg = npc
+  local px, py = playerOnMap(mapID, W, H)
+  put(px, py, "me", false)
+  for i = 1, min(#(st or {}), MAX_STOPS) do
+    local e = st[i]
+    if e.from and e.kind ~= "quest" and e.kind ~= "hs" then
+      local fx, fy = onMap(mapID, e.from, W, H)
+      put(fx, fy, "walk", false)
+    end
+    local x, y = onMap(mapID, e.place, W, H)
+    local same = gr and i > 1 and gr[i] == gr[i - 1]
+    put(x, y, e.kind, (not same) and (gr and gr[i] or i) or false)
+  end
+  local di, bi, ai, segs = 0, 0, 0, 0
+  local lx, ly, firstSeg = nil, nil, true
   for i = 1, np do
-    local x, y, kind = pts[i * 3 - 2], pts[i * 3 - 1], pts[i * 3]
-    if x and gr and i > 1 and gr[i] == gr[i - 1] then   -- même arrêt que le précédent : le trait, pas de 2e badge
-      if lx then
-        di = drawSegment(di, lx, ly, x, y, segs == 0 and 0.95 or 0.75)
+    local x, y, kind, nb = pts[i * 4 - 3], pts[i * 4 - 2], pts[i * 4 - 1], pts[i * 4]
+    if x then
+      if lx and kind ~= "hs" then                     -- foyer : on se téléporte, aucun trait jusqu'à l'auberge
+        local rgb = (firstSeg and npc and not KIND_RGB[kind]) and PD.NpcColor() or KIND_RGB[kind]
+        di, ai = drawSegment(di, ai, lx, ly, x, y, firstSeg and 1 or 0.75, rgb, firstSeg)
         segs = segs + 1
+        firstSeg = false
+      elseif lx then
+        firstSeg = false
       end
       lx, ly = x, y
-    elseif x then
-      if lx then
-        di = drawSegment(di, lx, ly, x, y, segs == 0 and 0.95 or 0.75)
-        segs = segs + 1
-      end
-      lx, ly = x, y
-      bi = bi + 1
-      local b = badge(bi)
-      local sz = (i == 1) and 20 or 16
-      local cr, cg, cb2 = color()
-      b.ring:ClearAllPoints()
-      b.ring:SetPoint("CENTER", canvas, "TOPLEFT", x, -y)
-      b.ring:SetSize(sz + 4, sz + 4)
-      b.ring:SetVertexColor(cr, cg, cb2, 1)
-      b.bg:ClearAllPoints()
-      b.bg:SetPoint("CENTER", canvas, "TOPLEFT", x, -y)
-      b.bg:SetSize(sz, sz)
-      b.bg:SetVertexColor(0.05, 0.05, 0.05, 0.9)
-      b.text:ClearAllPoints()
-      b.text:SetPoint("CENTER", b.bg, "CENTER", 0, 0)
-      b.text:SetText(tostring(gr and gr[i] or i))
-      b.ring:Show() b.bg:Show() b.text:Show()
-      local ic = ICON[kind]
-      if ic then
-        b.icon:SetTexture(ic)
-        b.icon:ClearAllPoints()
-        b.icon:SetPoint("LEFT", b.bg, "RIGHT", 1, 0)
-        b.icon:SetSize(14, 14)
-        b.icon:Show()
-      elseif b.icon:IsShown() then
-        b.icon:Hide()
+      if nb then
+        bi = bi + 1
+        local b = badge(bi)
+        local sz = (nb == 1) and ((npc and 24) or 20) or 16
+        local cr, cg, cb2 = color()
+        local kr = KIND_RGB[kind]
+        if nb == 1 and npc and not kr then kr = PD.NpcColor() end
+        if kr then cr, cg, cb2 = kr[1], kr[2], kr[3] end
+        b.ring:ClearAllPoints()
+        b.ring:SetPoint("CENTER", canvas, "TOPLEFT", x, -y)
+        b.ring:SetSize(sz + 4, sz + 4)
+        b.ring:SetVertexColor(cr, cg, cb2, 1)
+        b.bg:ClearAllPoints()
+        b.bg:SetPoint("CENTER", canvas, "TOPLEFT", x, -y)
+        b.bg:SetSize(sz, sz)
+        b.bg:SetVertexColor(0.05, 0.05, 0.05, 0.9)
+        b.text:ClearAllPoints()
+        b.text:SetPoint("CENTER", b.bg, "CENTER", 0, 0)
+        b.text:SetText(tostring(nb))
+        b.ring:Show() b.bg:Show() b.text:Show()
+        local ic = ICON[kind]
+        if ic then
+          b.icon:SetTexture(ic)
+          b.icon:ClearAllPoints()
+          b.icon:SetPoint("LEFT", b.bg, "RIGHT", 1, 0)
+          b.icon:SetSize(14, 14)
+          b.icon:Show()
+        elseif b.icon:IsShown() then
+          b.icon:Hide()
+        end
       end
     end
   end
-  hideMapFrom(di + 1, bi + 1)
-  PD.segments, PD.badgesShown, PD.dashesShown = segs, bi, di
-  -- calque juste au-dessus de la carte (même strate, niveau au-dessus du canevas)
-  try(view.SetFrameStrata, view, try(wm.GetFrameStrata, wm) or "HIGH")
-  try(view.SetFrameLevel, view, min(9000, (num(try(wm.GetFrameLevel, wm)) or 1) + 200))
+  hideMapFrom(di + 1, bi + 1, ai + 1)
+  PD.segments, PD.badgesShown, PD.dashesShown, PD.arrowsShown = segs, bi, di, ai
   if not view:IsShown() then view:Show() end
 end
 
--- ≤ 5 Hz tant que la carte est ouverte : redessine si la carte affichée / le zoom / le trajet a changé
+-- appelé par la carte (affichée, zoom, autre carte), le trajet (PD.Now) ou la passe de la minimap carte ouverte : relit la
+-- carte affichée, le zoom, la taille et le trajet ; redessine seulement si l'un d'eux a changé (glisser ne demande rien)
 function PD.MapTick(force)
-  local t = now()
-  if not force and t - mapState.at < STEP then return end
-  mapState.at = t
-  local wm, sc, child = wmParts()
-  if not (wm and try(wm.IsShown, wm)) then PD.MapHidden() return end
-  local id = shownMapID(wm)
-  local l, b, w, h = rectOf(child)
-  local vl, vb, vw, vh = rectOf(sc)
+  if not PD._active then if PD.segments > 0 or PD.badgesShown > 0 then PD.ClearMap() end return end
+  local id, cs, cw, ch = MC.Key()
+  if not id then return end
   local steps, cur, len = routeSig()
   local m = mapState
-  if force or m.dirty or id ~= m.id or l ~= m.l or b ~= m.b or w ~= m.w or h ~= m.h or vl ~= m.vl or vb ~= m.vb
-      or vw ~= m.vw or vh ~= m.vh or steps ~= m.steps or cur ~= m.cur or len ~= m.len then
-    m.id, m.l, m.b, m.w, m.h, m.vl, m.vb, m.vw, m.vh = id, l, b, w, h, vl, vb, vw, vh
-    m.steps, m.cur, m.len, m.dirty = steps, cur, len, false
+  local Gp = T.Geo and T.Geo.Player
+  local _, px, py
+  if Gp and steps then _, px, py = Gp() end
+  local moved = px and (not m.px or abs(px - m.px) + abs(py - m.py) > 0.15)
+  if force or m.dirty or id ~= m.id or cs ~= m.cs or cw ~= m.w or ch ~= m.h or steps ~= m.steps or cur ~= m.cur
+      or len ~= m.len or moved then
+    m.id, m.cs, m.w, m.h, m.steps, m.cur, m.len, m.dirty = id, cs, cw, ch, steps, cur, len, false
+    m.px, m.py = px, py
     PD.DrawMap()
   end
 end
 function PD.MapShown()
   mapState.dirty = true
   if not ensureCanvas() then return end
-  if not locked(view) then view:Show() end
   PD.MapTick(true)
 end
-function PD.MapHidden()
-  if view and view:IsShown() and not locked(view) then view:Hide() end
-end
+function PD.MapHidden() end                     -- le calque se cache avec la carte (enfant de son canevas)
 
--- fournisseur de données de la carte (modèle Blizzard) ; sinon HookScript OnShow / OnHide
+-- (4.2 ROUTE42) plus de fournisseur de données ni de crochet sur la carte : le calque est un enfant de son canevas
 local function attachMap()
   if PD._mapHooked then return true end
-  local wm = wmParts()
-  if not wm then return false end
-  local mk, mixin = G("CreateFromMixins"), G("MapCanvasDataProviderMixin")
-  if type(wm.AddDataProvider) == "function" and type(mk) == "function" and type(mixin) == "table" then
-    local p = try(mk, mixin)
-    if type(p) == "table" then
-      p.RefreshAllData = function() mapState.dirty = true end
-      p.RemoveAllData = function() PD.ClearMap() end
-      p.OnMapChanged = function() mapState.dirty = true end
-      p.OnShow = function() PD.MapShown() end
-      p.OnHide = function() PD.MapHidden() end
-      p.OnCanvasScaleChanged = function() mapState.dirty = true end
-      p.OnCanvasPanChanged = function() mapState.dirty = true end
-      p.OnCanvasSizeChanged = function() mapState.dirty = true end
-      if pcall(wm.AddDataProvider, wm, p) then
-        PD._mapHooked, PD.mapEngine, PD.provider = true, "provider", p
-        return true
-      end
-    end
-  end
-  if type(wm.HookScript) == "function" then
-    pcall(wm.HookScript, wm, "OnShow", function() if PD._active then PD.MapShown() end end)
-    pcall(wm.HookScript, wm, "OnHide", function() PD.MapHidden() end)
-    PD._mapHooked, PD.mapEngine = true, "hook"
-    return true
-  end
-  return false
+  if not ensureCanvas() then return false end
+  PD._mapHooked, PD.mapEngine = true, "canvas"
+  return true
 end
 PD.AttachMap = attachMap
 
@@ -736,8 +885,9 @@ function PD:OnEnable()
   end
   if T.OnMotion then T:OnMotion(PD, PD.Wake) end
   self:On("QUESTS_UPDATED", function() PD.Wake() end)
+  self:On("PLAN_BUILT", function() PD.Now() end)        -- (4.2) trajet refait : carte et minimap tout de suite
   self:RegisterEvent("PLAYER_REGEN_ENABLED", function() attachMap() ensureTrail() ensureCanvas() end)
-  local wm = wmParts()
+  local wm = MC.Parts()
   if wm and try(wm.IsShown, wm) then PD.MapShown() end
 end
 function PD:OnDisable()
@@ -750,17 +900,30 @@ function PD:OnDisable()
 end
 -- (4.0.1) carte du monde fermée : rien ; ouverte, ses propres événements (zoom, déplacement, trajet) la redessinent
 PD.autoIdleSafe = true
-function PD:AutoRefresh() mapState.dirty = true PD.Wake() end
+function PD:AutoRefresh()
+  mapState.dirty = true
+  PD.Wake()
+  if view and view:IsVisible() then PD.MapTick() end
+end
+--- (4.2 ROUTE42) l'arrêt a changé (Route:OnPlanStep) : carte et minimap redessinées TOUT DE SUITE (couleur « PNJ à voir »)
+function PD.Now()
+  if not PD._active then return end
+  last.n, last.ln, last.stopsAt, last.pollAt, mapState.dirty, wantAt = nil, nil, -100, -100, true, -100
+  PD.Wake()
+  pcall(PD.MinimapTick, true)
+  if view and view:IsVisible() then pcall(PD.MapTick, true) end
+end
 function PD:OnOptionChanged()
   PD.Wake()
   last.n, last.ln, last.stopsAt, last.pollAt, mapState.dirty, wantAt = nil, nil, -100, -100, true, -100
   PD.MinimapTick(true)
-  if view and view:IsShown() then PD.MapTick(true) end
+  if view and view:IsVisible() then PD.MapTick(true) end
 end
 
 function PD.Status()
-  return ("Chemin : carte %d arrêt(s), %d segment(s) (%s, %s) · minimap %d point(s)"):format(PD.badgesShown, PD.segments,
-    PD.mapEngine or "carte absente", PD._lines and "lignes" or "points", PD.dotsShown)
+  return ("Chemin : carte %d arrêt(s), %d segment(s) (%s, %s%s) · minimap %d point(s)"):format(PD.badgesShown, PD.segments,
+    PD.mapEngine or "carte absente", PD._lines and "lignes" or "points", (view and MC.InMap(view)) and ", dans la carte" or "",
+    PD.dotsShown)
 end
 if T.RegisterSlash then
   T:RegisterSlash("chemin", function() PD:Print(PD.Status()) end, "chemin : le trajet dessiné (statut)")

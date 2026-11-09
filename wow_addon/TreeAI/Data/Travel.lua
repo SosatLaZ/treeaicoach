@@ -4,12 +4,14 @@
 -- Position monde { continent, x (nord), y (ouest) } = repère de UnitPosition ; map/mx/my = carte de zone en %.
 -- docks[id] = { nom, c, x, y, map, mx, my } · lines = { { type, faction|false, période s, { {de, vers, traversée s}, … } } }
 -- taxi[nodeID] = { nom, c, x, y, map, mx, my, faction } · flights = { {de, vers, secondes}, … } (vols directs)
+-- lifts = { { type (elevator|tram), nom A, nom B, c, Ax, Ay, Bx, By, période s, trajet s, mapA, mxA, myA, mapB, mxB, myB }, … }
+--   (ascenseurs / tram : seulement des lieux mesurés ; liste à faire dans treeaicoach/wow/planner/transport.py, LIFTS)
 local T = TreeAI
 if type(T) ~= "table" then return end
 T.Data = T.Data or {}
 T.Data.Travel = {
   build = "1.60.1.70862", walk = 7.0, detour = 1.3, board = 20.0,
-  hearthCast = 10.0, hearthLoad = 5.0, minGain = 30.0,
+  hearthCast = 10.0, hearthLoad = 5.0, minGain = 30.0, hearthGain = 20.0,
   docks = {
     [1] = { "Cabestan", 1, -1005.6, -3841.6, 1413, 63.8, 38.8 },
     [2] = { "Baie-du-Butin", 0, -14277.7, 582.9, 1434, 25.7, 73.1 },
@@ -51,6 +53,8 @@ T.Data.Travel = {
     { "zeppelin", "Alliance", 359, { { 20, 21, 108 }, { 21, 20, 131 } } },
     { "zeppelin", "Horde", 320, { { 22, 23, 84 }, { 23, 22, 147 } } },
     { "boat", "Alliance", 247, { { 24, 25, 67 }, { 25, 24, 60 } } },
+  },
+  lifts = {
   },
   taxi = {
     [1] = { "Abbaye de Comté-du-Nord", 0, -8889.0, -0.5, 1453, 99.2, 77.1, "" },

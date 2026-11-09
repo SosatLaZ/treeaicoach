@@ -26,12 +26,17 @@ def test_toc_right_after_route():
 
 def test_taint_rules():
     src = code()
-    for bad in ("SetParent(", "hooksecurefunc", "SetCVar", "ShowUIPanel", "SetUserWaypoint", "SetSuperTracked",
-                "CreateFrame(\"Frame\", nil, child)", "CreateFrame(\"Frame\", nil, sc)", "CreateFrame(\"Frame\", nil, wm)"):
+    for bad in ("SetParent(", "SetCVar", "ShowUIPanel", "SetUserWaypoint", "SetSuperTracked",
+                "AddDataProvider", "AcquirePin", "MapCanvasDataProviderMixin"):
         assert bad not in src, bad
-    assert "AddDataProvider" in src and "MapCanvasDataProviderMixin" in src     # Blizzard's supported pattern
+    # (4.2) post-hooks only, on the canvas zoom / map change (the game's code runs first, unchanged)
+    assert src.count('pcall(hs, ') == 2 and 'pcall(hs, child, "SetScale", fire)' in src and 'pcall(hs, wm, "OnMapChanged", fire)' in src
+    # (4.2 ROUTE42) native placement: our layer is a child of the map CANVAS (pans / zooms / clips with it), scale =
+    # 1 / canvas scale; never a data provider (taints the gamepad map walk on Forever), never an overlay on UIParent
+    assert 'try(CF, "Frame", nil, child)' in src and "1 / cs" in src and "T.MapCanvas = MC" in src
     assert "SetStartPoint" in src and "CreateLine" in src                        # Line objects, with a fallback
-    assert 'CF("Frame", nil, up)' in src and 'CF("Frame", nil, mm)' in src       # our frames: UIParent / Minimap
+    assert 'CF("Frame", nil, mm)' in src                                         # minimap trail: child of Minimap
+    assert 'CF("Frame", nil, up)' not in src
 
 
 def test_options_and_budget():

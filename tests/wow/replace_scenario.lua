@@ -124,7 +124,7 @@ return function(M, ctx)
   _G.Questie.db.profile.enabled = false
   check(QP.Want("map") and QP.Want("minimap"), "Questie icons off (silent) → TreeAI draws everything")
 
-  -- ------------------------------------------------------------------ world map: our overlay via a data provider
+  -- ------------------------------------------------------------------ world map: (4.2) our layer INSIDE the map canvas
   local wm = CreateFrame("Frame", "WorldMapFrame", UIParent)
   local sc = CreateFrame("Frame", nil, wm)
   local child = CreateFrame("Frame", nil, sc)
@@ -148,15 +148,15 @@ return function(M, ctx)
     for i = 1, select("#", ...) do for k, v in pairs((select(i, ...))) do o[k] = v end end
     return o
   end)
-  check(QP.AttachMap() and QP.mapEngine == "provider", "world map: data provider attached (Blizzard pattern)")
-  local qprov = providers[#providers]
+  QP._mapHooked = nil
+  check(QP.AttachMap() and QP.mapEngine == "canvas" and #providers == 0, "(4.2) world map: layer in the canvas, no data provider")
   local wmScripts, wmPoints = 0, #wm.__points
   for _ in pairs(wm.__scripts) do wmScripts = wmScripts + 1 end
-  wm.__shown = true
-  qprov.OnShow()
+  wm:Show()
+  M.Advance(0.05, 0.05)
   local shown = QP.mapShown
-  check(shown >= 4 and QP.view and QP.view:IsShown() and QP.canvas:GetParent() == QP.view and QP.view:GetParent() == UIParent,
-    "map open: icons drawn on OUR overlay (" .. shown .. ")")
+  check(shown >= 4 and QP.view and QP.view:IsVisible() and QP.canvas == QP.view and QP.view:GetParent() == child,
+    "map open: icons drawn on OUR layer, a child of the map canvas (" .. shown .. ")")
   local chefBtn
   for _, e in ipairs(QP.mapPins) do if e.b:IsShown() and e.b.pin and e.b.pin.key == "a:npc:700" then chefBtn = e.b end end
   local pt = chefBtn and chefBtn.__points[1]
@@ -170,19 +170,19 @@ return function(M, ctx)
   check(#wm.__points == wmPoints, "WorldMapFrame never anchored / moved")
   local n2 = 0
   for _ in pairs(wm.__scripts) do n2 = n2 + 1 end
-  check(n2 == wmScripts, "no script set / hooked on WorldMapFrame (data provider only)")
-  -- pan: only our canvas follows; zoom: icons replaced
-  local r0, m0 = QP.mapRedraws, QP.mapMoves
+  check(n2 == wmScripts, "no script set / hooked on WorldMapFrame")
+  -- pan: the layer moves with the canvas, nothing re-placed ; zoom: icons re-placed, same canvas point
+  local r0 = QP.mapRedraws
   cx = 60
-  qprov.OnCanvasPanChanged()
   M.Advance(0.1, 0.05)
-  check(QP.mapMoves == m0 + 1 and QP.mapRedraws == r0, "pan = the overlay moves (1 anchor), no icon re-placed")
-  cw = 1500
-  qprov.OnCanvasScaleChanged()
+  check(QP.mapRedraws == r0, "pan = nothing to do (the layer is in the canvas)")
+  child:SetScale(1.5)
   M.Advance(0.1, 0.05)
-  check(QP.mapRedraws == r0 + 1, "zoom = icons re-placed")
+  local pz = chefBtn and chefBtn.__points[1]
+  check(QP.mapRedraws == r0 + 1 and pz and near(pz[4] * QP.view:GetScale(), 520 + ox * QP.view:GetScale(), 1e-6), "zoom = icons re-placed on the same canvas point")
   M.Advance(3, 0.2)
   check(QP.mapRedraws == r0 + 1, "static open map: no redraw")
+  child.__scale = 1
   -- density caps: 60 extra givers in the zone
   local extra = {}
   for i = 1, 60 do
@@ -192,7 +192,8 @@ return function(M, ctx)
     extra[#extra + 1] = id
   end
   exp.made = (exp.made or 0) + 1
-  qprov.RefreshAllData()
+  QP.MapDirty()
+  if QP.Invalidate then QP.Invalidate() end
   M.Advance(0.1, 0.05)
   local nAvail = 0
   for _, e in ipairs(QP.mapPins) do if e.b:IsShown() and e.b.pin.kind == "avail" then nAvail = nAvail + 1 end end
@@ -203,8 +204,7 @@ return function(M, ctx)
   for i = #exp.quests, 1, -1 do if exp.quests[i].id >= 3000 then table.remove(exp.quests, i) end end
   exp.made = exp.made + 1
   wm.__shown = false
-  qprov.OnHide()
-  check(not QP.view:IsShown(), "map closed → overlay hidden")
+  check(not QP.view:IsVisible(), "map closed → layer hidden with the map")
 
   -- ------------------------------------------------------------------ minimap: own engine, then HereBeDragons
   rawset(_G, "LibStub", nil)
@@ -368,42 +368,25 @@ return function(M, ctx)
     "in combat: progress « 3/6 » written in place, no re-layout, nothing blocked: " .. tostring(prog and prog.fs:GetText()))
   M.LeaveCombat()
   M.Advance(1, 0.1)
-  -- Blizzard tracker taken over: hidden out of combat, alpha only in combat, restored when off
+  -- (4.2 ROUTE42) the game's tracker: never hidden, never moved — the column is anchored UNDER it
   local tf = CreateFrame("Frame", "ObjectiveTrackerFrame", UIParent)
   tf.__protected = true          -- worst case: its quest item buttons are secure
   tf:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -60, -230)
   tf:Show()
-  -- (4.0.5) default: the game tracker is never touched
-  W.TakeOver()
-  check(tf:IsShown() and not W.replaced, "default: the game's tracker stays (never hidden)")
-  -- opt-in « Cacher le suivi du jeu » only
-  W.db.replace = true
-  W.TakeOver()
-  check(not tf:IsShown() and tf.__alpha == 0 and W.replaced, "Blizzard tracker hidden (out of combat)")
+  local tfPts = #tf.__points
+  check(W.TakeOver() == false and tf:IsShown() and not W.replaced, "the game's tracker is never taken over (option removed)")
+  if W.char then W.char.pos = nil end
+  W._force = true
+  W.Render()
+  local wfa = _G.TreeAIWatchFrame
+  local ap = { wfa:GetPoint(1) }
+  check(ap[2] == tf and ap[1] == "TOPRIGHT" and ap[3] == "BOTTOMRIGHT" and W.anchoredTo == "ObjectiveTrackerFrame",
+    "Suivi TreeAI anchored under the game's tracker")
   M.EnterCombat()
-  tf.__shown = true              -- Blizzard shows it again during a fight (its own code)
-  tf.__alpha = 1
-  tf.__scripts.OnShow(tf)
-  check(tf.__alpha == 0 and tf.__shown == true and blocked() == b0, "in combat: only SetAlpha(0), never Hide (nothing blocked)")
   W.Render()
   M.LeaveCombat()
   M.Advance(0.5, 0.1)
-  check(not tf:IsShown(), "after the fight: hidden for real")
-  -- edit mode open: left alone; closed: hidden again
-  local em = CreateFrame("Frame", "EditModeManagerFrame", UIParent)
-  em:Hide()
-  W.TakeOver()
-  em:Show()
-  tf:Show()
-  check(tf:IsShown(), "game edit mode open: the tracker is left to the player")
-  em:Hide()
-  check(not tf:IsShown(), "edit mode closed: hidden again")
-  W.db.replace = false
-  W:OnOptionChanged("replace")
-  check(tf:IsShown() and tf.__alpha == 1 and not W.replaced, "option off: Blizzard tracker restored")
-  W.db.replace = true
-  W:OnOptionChanged("replace")
-  check(not tf:IsShown(), "option on again: hidden")
+  check(tf:IsShown() and (tf.__alpha or 1) == 1 and #tf.__points == tfPts and blocked() == b0, "tracker untouched, in and out of combat")
   -- our window hidden in combat (alpha), shown again before the end of the fight: visible, never a transparent
   -- frame that would take the clicks
   local wf = _G.TreeAIWatchFrame
@@ -417,14 +400,15 @@ return function(M, ctx)
   M.LeaveCombat()
   M.Advance(0.5, 0.1)
   check(wf:IsShown() and wf.__alpha == 1 and blocked() == b0, "after the fight: still shown (the pending hide gave up)")
-  -- Questie tracker still on → one row offers to cut it (its own options, reload)
+  -- Questie tracker still on : (4.2) the column sits under it, no row offers to cut it anymore ; the Addons page can still
+  -- silence it in ITS options (one click, reload)
   _G.Questie.db.profile.enabled, _G.Questie.db.profile.trackerEnabled = true, true
   W.Render()
   local qrow
   for i = 1, W.rowsShown do if W.rows[i].kind == "questie" then qrow = W.rows[i] end end
-  check(qrow and tostring(qrow.fs:GetText()):find("Questie affiche aussi son suivi", 1, true), "row offering to cut Questie's tracker")
+  check(not qrow, "(4.2) no « cut Questie's tracker » row in the column")
   M.reloaded = nil
-  T:UserAction(W.RowClick, qrow, "LeftButton")
+  T:UserAction(A.SilenceQuestie, true)
   local p = _G.Questie.db.profile
   check(p.enabled == false and p.trackerEnabled == false and p.minimap.hide == true and M.reloaded, "one click: Questie silenced in ITS options + reload")
   check(A.QuestieState().silent, "Questie state: silent")
@@ -603,15 +587,14 @@ return function(M, ctx)
   check(moving <= 80, ("moving, map closed, own minimap engine: %.1f kinstr/min (≤ 80)"):format(moving))
   M.speed = 0
   M.pos = { mapID = 1424, x = 0.5, y = 0.5 }
-  wm.__shown = true
-  local opened = measure(60, 0.5, function(t) if t == 0 then qprov.OnShow() end end)
+  wm:Show()
+  local opened = measure(60, 0.5, function() end)
   check(opened <= 40, ("map open 60 s: %.1f kinstr/min (≤ 40)"):format(opened))
-  local panning = measure(30, 0.2, function(t) cx = 60 + t * 10 qprov.OnCanvasPanChanged() end)
+  local panning = measure(30, 0.2, function(t) cx = 60 + t * 10 end)
   -- (4.1) mesuré au 1/100 (au 1/1000, l'aliasing donnait 38 à la 4.0.6 pour un vrai ≈ 70 modern / 95 forever) :
   -- plafond 120 (4.1 : 63 / 87)
   check(panning <= 150, ("map open and dragged: %.1f kinstr/min (≤ 150)"):format(panning))
   wm.__shown = false
-  qprov.OnHide()
   M.Advance(2, 0.5)
   local after = measure(30, 0.5)
   check(after == 0, ("map closed again, still: %.1f kinstr/min (0)"):format(after))

@@ -1281,6 +1281,79 @@ function QB:WriteSummary()
   for i, e in ipairs(QB.PickupList(5)) do picks[i] = { q = e.questID, xp = e.xp, min = e.minutes } end
   s.questBrain = { v = 1, mode = QB.Mode(), turnin = #QB.TurnInList(), picks = picks }
 end
+-- ===================================================================== (4.2 ROUTE42) histoires : « Chapitre n sur N »
+-- La suite d'une quête se lit dans QuestieDB (lecture seule) : on remonte les prérequis jusqu'à la tête, puis on avance par
+-- « quête suivante ». « sur N » seulement pour une chaîne PROUVÉE : aucune bifurcation (un seul prérequis à chaque pas, la
+-- suivante n'a que celle-ci comme prérequis), aucune boucle, fin connue, et la quête est bien sur ce chemin ; sinon
+-- « Chapitre n » seul. Une quête seule (ni avant ni après) n'a pas de chapitre.
+QB.CHAIN_MAX = 30
+local function preList(db, q)
+  local single = db.Q(q, "preQuestSingle")
+  if type(single) == "table" and #single > 0 then return single end
+  local grp = db.Q(q, "preQuestGroup")
+  if type(grp) == "table" and #grp > 0 then return grp end
+  return nil
+end
+--- (pur sur db = { Q = fn(id, champ) }) → { head, n, N (nil = pas prouvée), len } ou nil (quête seule)
+function QB.Chain(db, q)
+  q = tonumber(q)
+  if not (q and type(db) == "table" and type(db.Q) == "function") then return nil end
+  local cur, depth, proven, seen = q, 0, true, { [q] = true }
+  while true do
+    local list = preList(db, cur)
+    if not list then break end
+    if #list > 1 then proven = false end
+    local p = tonumber(list[1])
+    if not p or seen[p] then proven = false break end
+    seen[p] = true
+    cur, depth = p, depth + 1
+    if depth >= QB.CHAIN_MAX then proven = false break end
+  end
+  local head, len, onPath, seen2 = cur, 1, cur == q, { [cur] = true }
+  while true do
+    local nx = tonumber(db.Q(cur, "nextQuestInChain"))
+    if not nx or nx <= 0 then break end
+    if seen2[nx] then proven = false break end
+    local pre = preList(db, nx)
+    if pre and not (#pre == 1 and tonumber(pre[1]) == cur) then proven = false end
+    seen2[nx] = true
+    cur, len = nx, len + 1
+    if nx == q then onPath = true end
+    if len >= QB.CHAIN_MAX then proven = false break end
+  end
+  if len <= 1 and depth == 0 then return nil end
+  if not onPath then proven = false end
+  return { head = head, n = depth + 1, N = proven and len or nil, len = len }
+end
+local chapMemo = {}
+function QB.Chapter(q)
+  q = tonumber(q)
+  if not q then return nil end
+  local m = chapMemo[q]
+  if m ~= nil then return m or nil end
+  local Xm = X()
+  local db = Xm and Xm.Source and try(Xm.Source, Xm)
+  if not db then return nil end                      -- sans Questie : rien (on ne devine pas une histoire)
+  local ok, c = pcall(QB.Chain, db, q)
+  c = ok and c or nil
+  chapMemo[q] = c or false
+  return c
+end
+--- quête rendue : la dernière d'une histoire prouvée → « Histoire terminée : X », une fois par personnage (dans « Maintenant »)
+function QB.StoryDone(q)
+  local c = QB.Chapter(q)
+  if not (c and c.N and c.n == c.N and QB.char) then return nil end
+  QB.char.storyDone = type(QB.char.storyDone) == "table" and QB.char.storyDone or {}
+  if QB.char.storyDone[c.head] then return nil end
+  QB.char.storyDone[c.head] = true
+  local Xm = X()
+  local db = Xm and Xm.Source and try(Xm.Source, Xm)
+  local nm = db and db.Q and try(db.Q, c.head, "name")
+  local txt = "Histoire terminée" .. ((type(nm) == "string" and nm ~= "") and (" : « " .. (T.Cut and T.Cut(nm, 34) or nm) .. " »") or "")
+  pcall(QB.Suggest, QB, "story", txt, 1, { ttl = 10, sound = false })
+  return txt
+end
+
 function QB:OnEnable()
   local function bump() QB.Bump() end
   -- (ZONEPICK) quête prise / retirée, niveau : les quêtes à prendre par zone sont à recompter (un gestionnaire par évènement)
@@ -1288,7 +1361,8 @@ function QB:OnEnable()
   for _, ev in ipairs({ "QUEST_LOG_UPDATE", "QUEST_ACCEPTED", "QUEST_REMOVED", "PLAYER_LEVEL_UP", "GROUP_ROSTER_UPDATE" }) do
     self:RegisterEvent(ev, RESCAN[ev] and function() QB.scanGen = QB.scanGen + 1 QB.Bump() end or bump)
   end
-  self:RegisterEvent("QUEST_TURNED_IN", function()
+  self:RegisterEvent("QUEST_TURNED_IN", function(_, _, q)
+    pcall(QB.StoryDone, tonumber(_ns(q)))
     QB.scanGen = QB.scanGen + 1
     QB.Bump()
     T:After(2, function() QB:CheckEmpty() end)

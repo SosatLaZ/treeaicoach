@@ -792,6 +792,7 @@ local OBJ_VERB = { monster = "Tue", item = "Ramasse", object = "Utilise", event 
 local EXP_VERB = { kill = "Tue", item = "Ramasse", obj = "Utilise", explore = "Explore", talk = "Parle à", spell = "Utilise l'objet sur" }
 function P:StepLabel(s)
   local q = s.q
+  local buy = s.buy                                  -- (4.2 ROUTE42) objet à acheter chez un marchand : « Achète « X » »
   -- (QUESTQA) objectif d'une quête du journal : toujours NOTRE libellé (verbe + nom, lu dans le journal), même
   -- quand le plan de l'appli en apporte un (« Fiole d'eau forte remplie » → « Ramasse « Fiole d'eau forte remplie » »)
   if s.k == "obj" and q and self.log and self.log[q] and self.log[q].obj[tonumber(s.o) or 0] then s = { k = "obj", q = q, o = s.o }
@@ -804,7 +805,7 @@ function P:StepLabel(s)
     if o and o.text then
       -- verbe d'abord, nom propre (sans « : 0/1 », espaces insécables du client FR compris)
       local name = T.ObjectiveName and T.ObjectiveName(o.text) or tostring(o.text)
-      local verb = OBJ_VERB[o.type or ""] or "Fais"
+      local verb = buy and "Achète" or OBJ_VERB[o.type or ""] or "Fais"
       if o.type == "monster" then name = name:gsub("%s+tuée?s?$", "") end
       if name == "" then name = questTitle(q) end
       return verb .. " « " .. cut(name, 34) .. " »"
@@ -817,7 +818,7 @@ function P:StepLabel(s)
     if type(ro) == "table" and type(ro.t) == "string" and ro.t ~= "" then
       local name = T.ObjectiveName and T.ObjectiveName(ro.t) or ro.t
       if ro.k == "kill" then name = name:gsub("%s+tuée?s?$", "") end
-      return (EXP_VERB[ro.k or ""] or "Fais") .. " « " .. cut(name, 34) .. " »"
+      return (buy and "Achète" or EXP_VERB[ro.k or ""] or "Fais") .. " « " .. cut(name, 34) .. " »"
     end
     return "Objectif de « " .. cut(questTitle(q), 30) .. " »"
   end
@@ -931,6 +932,17 @@ function P:QuestSteps(q, rec, lq, ctx)
         local ml = tonumber(o.mx) or tonumber(o.ml) or ctx.level
         local kxp = (o.k == "kill" or o.k == "item") and E.KillXP(ctx.level, ml) * E.GroupShare(ctx.group) * max(0, (oo.n or 1) - oo.have) or 0
         local st = place({ k = "obj", q = q, o = j, svc = med * 60, _pred = med, value = 0.5 * xp / count + kxp, xp = kxp }, o)
+        -- (4.2 ROUTE42) « Achète X » : un objet qui ne tombe d'aucun monstre ni objet du monde → l'arrêt est le marchand qui
+        -- le vend le plus vite atteint (vu en jouant, sinon QuestieDB) ; ~20 s sur place
+        if not st.x and o.k == "item" and tonumber(o.id) and not o.npc then
+          local Rt = T.Route
+          local pm, px, py = playerPos()
+          local v = Rt and Rt.VendorFor and Rt:IsEnabled() and try(Rt.VendorFor, o.id, (pm and px) and { map = pm, x = px, y = py } or nil)
+          if type(v) == "table" and v.map and v.x then
+            st.map, st.x, st.y, st.buy, st.vendorName = v.map, v.x, v.y, true, v.name
+            st.svc, st._pred, st.alt = 20, 20 / 60, nil
+          end
+        end
         if not st.x then place(st, lq and waypoint(q)) end
         if type(o.alt) == "table" then st.alt = o.alt end   -- (QUESTS 4.1) sites de rechange : un arrêt par quête et par lieu
         out[#out + 1] = st

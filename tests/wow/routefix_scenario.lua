@@ -16,7 +16,7 @@ return function(M, ctx)
   check(R and R.Solve and R.BruteForce and Zp and Zp.Engine and T.PathLearn, "Route solver + ZonePlan engine + PathLearn loaded")
   if not (R and R.Solve and Zp and T.PathLearn) then return end
   local N = Zp.Engine
-  check(N._routefix and N._old, "ZonePlan engine runs on the Route solver (exact ≤ 10 stops)")
+  check(not N._routefix and not R.InstallEngine, "(4.2) no bridge: ZonePlan calls the Route solver directly (exact ≤ 10 stops)")
   local function say(...) local t = {} for i = 1, select("#", ...) do t[i] = tostring((select(i, ...))) end io.stdout:write("AUDIT " .. table.concat(t, " ") .. "\n") end
   local abs, sqrt, floor = math.abs, math.sqrt, math.floor
 
@@ -66,9 +66,9 @@ return function(M, ctx)
   end
   say("exact-vs-brute", cases, "cases, worst ratio", string.format("%.4f", worst))
   check(cases >= 30 and worst <= 1.02, "≥ 30 brute-force cases, worst ratio " .. worst)
-  -- stability rule: > 10 % and > 30 s
-  check(R.Choose(970, 1000) == "old" and R.Choose(899, 1000) == "new" and R.Choose(80, 100) == "old" and R.Choose(1, nil) == "new"
-    and N.Choose == R.Choose, "stability: new order only for > 10 % and > 30 s")
+  -- stability rule (4.2 ROUTE42): gain ≥ min(10 %, 30 s)
+  check(R.Choose(975, 1000) == "old" and R.Choose(970, 1000) == "new" and R.Choose(92, 100) == "old" and R.Choose(1, nil) == "new",
+    "stability: new order only for a gain ≥ min(10 %, 30 s)")
 
   -- ------------------------------------------------------------ 2. realistic cases on the shipped travel tables
   local TX = T.Data.Travel.taxi
@@ -100,8 +100,8 @@ return function(M, ctx)
     for i, nd in ipairs(nodes) do nd.i = i end
     D[0][0] = 0
     local ord = N.Greedy(nodes, start, function(a, b) if a.i == 0 then return D[0][b.i] end return leg(a, b) end, { first = first })
-    local Dm = N._old.Matrix(nodes, ord, start, function(a, b) if a.i == 0 then return D[0][b.i] end return leg(a, b) end, first)
-    N._old.Improve(nodes, ord, Dm, nil, 3)
+    local Dm = N.Matrix(nodes, ord, start, function(a, b) if a.i == 0 then return D[0][b.i] end return leg(a, b) end, first)
+    N.Improve(nodes, ord, Dm, nil, 3)
     return ord
   end
   local function node(q, rank, p) return { qs = { [q] = rank }, x = 1, steps = { { k = rank == 1 and "pick" or (rank == 3 and "turn" or "obj") } }, value = 1000, svc = 15, pos = p } end

@@ -557,24 +557,6 @@ local mapPins = {}                        -- réserve { b = bouton, disk = textu
 QP.mapPins = mapPins
 QP.mapShown, QP.mapRedraws, QP.mapMoves = 0, 0, 0
 local ms = { id = nil, w = nil, h = nil, gen = nil, l = nil, b = nil, vl = nil, vb = nil, vw = nil, vh = nil }
-local function wmParts()
-  local wm = g("WorldMapFrame")
-  if type(wm) ~= "table" then return nil end
-  local sc = wm.ScrollContainer
-  local child = type(sc) == "table" and sc.Child or nil
-  if type(child) ~= "table" then return nil end
-  return wm, sc, child
-end
-local function rectOf(f)
-  local l, b = num(try(f.GetLeft, f)), num(try(f.GetBottom, f))
-  local w, h = num(try(f.GetWidth, f)), num(try(f.GetHeight, f))
-  if not (l and b and w and h) or w <= 0 or h <= 0 then return nil end
-  local es = num(try(f.GetEffectiveScale, f)) or 1
-  local up = g("UIParent")
-  local us = up and num(try(up.GetEffectiveScale, up)) or 1
-  local s = es / (us > 0 and us or 1)
-  return l * s, b * s, w * s, h * s
-end
 local function mapKind(id)
   local CM = g("C_Map")
   local info = CM and type(CM.GetMapInfo) == "function" and try(CM.GetMapInfo, id)
@@ -596,16 +578,18 @@ function QP.OnMap(mapID, p, W, H)
   return x / 100 * W, y / 100 * H
 end
 
+-- (4.2 ROUTE42) les icônes DANS la carte : un calque enfant de son canevas (T.MapCanvas, PathDraw.lua) — elles glissent et
+-- zooment avec elle, coupées à son bord, cachées quand elle se ferme ; aucun fournisseur de données (contamine la manette
+-- sur Forever), aucun cadre sur UIParent par-dessus la carte ; souris seulement sur les icônes
+local function MCv() local m = T.MapCanvas return type(m) == "table" and type(m.Layer) == "function" and m or nil end
 local function ensureCanvas()
   if view then return view end
-  local CF, up = g("CreateFrame"), g("UIParent")
-  if not (CF and up) or inCombat() then return nil end
-  view = CF("Frame", nil, up)                       -- NOTRE cadre, enfant d'UIParent, jamais ancré sur la carte
-  try(view.EnableMouse, view, false)
-  try(view.SetClipsChildren, view, true)
-  view:Hide()
-  canvas = CF("Frame", nil, view)
-  try(canvas.EnableMouse, canvas, false)
+  local MC = MCv()
+  if not MC or inCombat() then return nil end
+  view = MC.Layer()
+  if not view then return nil end
+  view._lvl = 1                                    -- sous le Chemin dessiné (pastilles numérotées)
+  canvas = view
   QP.view, QP.canvas = view, canvas
   return view
 end
@@ -686,40 +670,15 @@ QP.SelectFor = function(mapID, W, H, list)
 end
 
 function QP.DrawMap()
-  local wm, sc, child = wmParts()
-  if not (wm and ensureCanvas()) then return end
-  if not want("map") then QP.ClearMap() if view:IsShown() and not locked(view) then view:Hide() end return end
-  local mapID = num(try(wm.GetMapID, wm))
-  local vl, vb, vw, vh = rectOf(sc)
-  local cl, cb, cw, ch = rectOf(child)
-  if not (mapID and vl and cl) then QP.ClearMap() return end
+  if not ensureCanvas() then return end
+  if not want("map") then QP.ClearMap() return end
+  local MC = MCv()
+  local mapID, cw, ch = MC.Fit(view)
+  if not (mapID and cw) then QP.ClearMap() return end
   if locked(view) then return end
   local list = QP.Pins()
-  -- même carte, même taille du canevas, même liste : la carte a seulement glissé → le calque suit (2 points posés)
-  if ms.id == mapID and ms.w == cw and ms.h == ch and ms.gen == QP.gen and ms.vw == vw and ms.vh == vh then
-    if ms.l ~= cl or ms.b ~= cb or ms.vl ~= vl or ms.vb ~= vb then
-      view:ClearAllPoints()
-      view:SetPoint("BOTTOMLEFT", g("UIParent"), "BOTTOMLEFT", vl, vb)
-      canvas:ClearAllPoints()
-      canvas:SetPoint("BOTTOMLEFT", g("UIParent"), "BOTTOMLEFT", cl, cb)
-      ms.l, ms.b, ms.vl, ms.vb = cl, cb, vl, vb
-      QP.mapMoves = QP.mapMoves + 1
-    end
-    if not view:IsShown() then view:Show() end
-    return
-  end
-  ms.id, ms.w, ms.h, ms.gen, ms.l, ms.b, ms.vl, ms.vb, ms.vw, ms.vh = mapID, cw, ch, QP.gen, cl, cb, vl, vb, vw, vh
-  -- glisser rapide : position brute du canevas + échelle (relues seules pendant un glisser)
-  ms.child = child
-  ms.rl, ms.rb, ms.rw = child:GetLeft(), child:GetBottom(), child:GetWidth()
-  ms.k = (ms.rl and ms.rl ~= 0) and cl / ms.rl or ((ms.rw and ms.rw > 0) and cw / ms.rw) or 1
+  ms.id, ms.w, ms.h, ms.gen = mapID, cw, ch, QP.gen
   QP.mapRedraws = QP.mapRedraws + 1
-  view:ClearAllPoints()
-  view:SetPoint("BOTTOMLEFT", g("UIParent"), "BOTTOMLEFT", vl, vb)
-  view:SetSize(vw, vh)
-  canvas:ClearAllPoints()
-  canvas:SetPoint("BOTTOMLEFT", g("UIParent"), "BOTTOMLEFT", cl, cb)
-  canvas:SetSize(cw, ch)
   local mk = mapKind(mapID)
   if mk ~= nil and mk < 2 then QP.ClearMap() return end   -- carte du monde / cosmique : rien
   local small = mk == 2                                    -- continent : icônes plus petites
@@ -753,102 +712,38 @@ function QP.DrawMap()
   end
   hideMapFrom(used + 1)
   QP.mapShown = used
-  try(view.SetFrameStrata, view, try(wm.GetFrameStrata, wm) or "HIGH")
-  try(view.SetFrameLevel, view, min(9000, (num(try(wm.GetFrameLevel, wm)) or 1) + 150))   -- sous le Chemin dessiné (+200)
   if not view:IsShown() then view:Show() end
 end
 
---- la carte a glissé (même zoom : le zoom passe par OnCanvasScaleChanged → dessin complet) : seul notre canevas suit
---- (2 lectures, 1 point reposé — le même point d'ancrage remplacé, sans ClearAllPoints)
-function QP.MapPan()
-  local child = ms.child
-  if not (child and canvas and ms.k) then return QP.DrawMap() end
-  local l, b = child:GetLeft(), child:GetBottom()
-  if not (l and b) or (l == ms.rl and b == ms.rb) then return end
-  ms.rl, ms.rb = l, b
-  local k = ms.k
-  ms.l, ms.b = l * k, b * k
-  canvas:SetPoint("BOTTOMLEFT", g("UIParent"), "BOTTOMLEFT", ms.l, ms.b)
-  QP.mapMoves = QP.mapMoves + 1
-end
-
--- les événements de la carte arrivent par rafales (un par image pendant un glisser) : un drapeau par événement,
--- ≤ 10 passes / s, et l'OnUpdate s'arrête dès que rien n'attend (carte posée = rien par image)
-local mapDirty, panDirty, mapPoll, mapAcc, armed = false, false, false, 0, false
-local function mapOnUpdate(_, el)
-  mapAcc = mapAcc + (el or 0)
-  if mapPoll then
-    if mapAcc < 0.5 and not mapDirty then return end   -- repli sans fournisseur de données : 2 coups d'œil / s
-  elseif not (mapDirty or panDirty) then
-    view:SetScript("OnUpdate", nil)
-    armed = false
-    return
-  elseif mapAcc < 0.1 then
-    return
-  end
-  mapAcc = 0
-  local full = mapDirty or mapPoll
-  mapDirty, panDirty = false, false
-  local wm = wmParts()
-  if not (wm and wm:IsShown()) then QP.MapHidden() return end
-  if full then QP.DrawMap() else QP.MapPan() end
-end
-local function armMap()
-  if armed or not view then return end
-  if view:IsShown() or mapPoll then
-    armed, mapAcc = true, 0.1                   -- premier événement : la passe à l'image suivante
-    view:SetScript("OnUpdate", mapOnUpdate)
+-- (4.2 ROUTE42) prévenu par la carte (affichée, autre carte, zoom : T.MapCanvas.Watch) ou par la liste (QP.MapDirty) ; un
+-- dessin seulement si la carte affichée, le zoom, la taille ou la liste a changé — glisser la carte ne coûte rien
+local function mapOnUpdate()
+  if not QP._active then return end
+  local MC = MCv()
+  local id, cs, cw, ch = MC.Key()
+  if not id then return end
+  if ms.dirty or id ~= ms.kid or cs ~= ms.kcs or cw ~= ms.kw or ch ~= ms.kh or ms.gen ~= QP.gen then
+    ms.kid, ms.kcs, ms.kw, ms.kh, ms.dirty = id, cs, cw, ch, false
+    QP.DrawMap()
   end
 end
-function QP.MapDirty() mapDirty = true armMap() end
-function QP.MapPanned() panDirty = true armMap() end
+function QP.MapDirty()
+  ms.dirty = true
+  if view and view:IsVisible() and QP._active then mapOnUpdate() end
+end
+function QP.MapPanned() end
 function QP.MapShown()
   if not ensureCanvas() then return end
-  ms.gen = nil
-  if want("map") then
-    QP.DrawMap()
-    if mapPoll then armed = false armMap() end
-  end
+  ms.gen, ms.dirty = nil, true
+  if want("map") then mapOnUpdate() end
 end
-function QP.MapHidden()
-  if view then
-    view:SetScript("OnUpdate", nil)
-    if view:IsShown() and not locked(view) then view:Hide() end
-  end
-  armed, mapDirty, panDirty = false, false, false
-end
-
+function QP.MapHidden() end                         -- le calque se cache avec la carte
 local function attachMap()
   if QP._mapHooked then return true end
-  local wm = wmParts()
-  if not wm then return false end
-  local mk, mixin = g("CreateFromMixins"), g("MapCanvasDataProviderMixin")
-  if type(wm.AddDataProvider) == "function" and type(mk) == "function" and type(mixin) == "table" then
-    local p = try(mk, mixin)
-    if type(p) == "table" then
-      local function dirty() QP.MapDirty() end
-      p.RefreshAllData = dirty
-      p.RemoveAllData = function() QP.ClearMap() end
-      p.OnMapChanged = dirty
-      p.OnShow = function() QP.MapShown() end
-      p.OnHide = function() QP.MapHidden() end
-      p.OnCanvasScaleChanged = dirty
-      p.OnCanvasPanChanged = function() QP.MapPanned() end
-      p.OnCanvasSizeChanged = dirty
-      if pcall(wm.AddDataProvider, wm, p) then
-        QP._mapHooked, QP.mapEngine, QP.provider = true, "provider", p
-        return true
-      end
-    end
-  end
-  if type(wm.HookScript) == "function" then
-    mapPoll = true
-    pcall(wm.HookScript, wm, "OnShow", function() if QP._active then QP.MapShown() end end)
-    pcall(wm.HookScript, wm, "OnHide", function() QP.MapHidden() end)
-    QP._mapHooked, QP.mapEngine = true, "hook"
-    return true
-  end
-  return false
+  if not ensureCanvas() then return false end
+  MCv().Watch(view, function() if view:IsVisible() then mapOnUpdate() end end)
+  QP._mapHooked, QP.mapEngine = true, "canvas"
+  return true
 end
 QP.AttachMap = attachMap
 
@@ -1168,7 +1063,8 @@ function QP:OnEnable()
   self:On("PLAN_BUILT", onChange)
   self:On("BRAIN_PARKED", function() QP.Invalidate() onChange() end)   -- (BRAIN) quêtes mises en pause / reprises
   if T.OnMotion then T:OnMotion(QP, QP.Wake) end
-  local wm = wmParts()
+  local MC = MCv()
+  local wm = MC and MC.Parts()
   if wm and try(wm.IsShown, wm) then QP.MapShown() end
 end
 function QP:OnDisable()

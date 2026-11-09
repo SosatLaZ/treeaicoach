@@ -506,10 +506,11 @@ return function(M, ctx)
   local providers = {}
   function wm:AddDataProvider(p2) providers[#providers + 1] = p2 end
   rawset(_G, "MapCanvasDataProviderMixin", { OnAdded = function() end })
-  check(CR.AttachMap() and CR.mapEngine == "provider", "world map: data provider attached")
+  wm.__shown = false
+  CR._mapHooked = nil
+  check(CR.AttachMap() and CR.mapEngine == "canvas" and #providers == 0, "(4.2) world map: pins inside the map canvas, no data provider")
   local wmPoints = #wm.__points
-  wm.__shown = true
-  providers[#providers].OnShow()
+  wm:Show()
   local kinds, vendorWhy = {}, nil
   for _, b in ipairs(CR.mapPins) do
     if b:IsShown() and b.pin then
@@ -518,17 +519,16 @@ return function(M, ctx)
     end
   end
   check(kinds.ptrainer and kinds.bank and kinds.mail and kinds.flight and kinds.ctrainer, "pins: my trainers, bank, mailbox, flight, class trainer")
-  check(CR.mapShown >= 5 and CR.mview:IsShown() and CR.mview:GetParent() == UIParent and #wm.__points == wmPoints,
-    "pins on OUR overlay; WorldMapFrame never anchored (" .. CR.mapShown .. ")")
+  check(CR.mapShown >= 5 and CR.mview:IsVisible() and CR.mview:GetParent() == child and #wm.__points == wmPoints,
+    "pins on OUR layer inside the map canvas; WorldMapFrame never anchored (" .. CR.mapShown .. ")")
   local tb
   for _, b in ipairs(CR.mapPins) do if b:IsShown() and b.pin and b.pin.name == "Maître-Cuir-Test" then tb = b end end
   local pt = tb and tb.__points[1]
   if os.getenv("CITYRUN_DEBUG") and pt then io.stderr:write("PIN ", tostring(pt[1]), " ", tostring(pt[3]), " ", tostring(pt[4]), " ", tostring(pt[5]), "\n") end
   check(pt and pt[2] == CR.mcanvas and near(pt[4], 650) and near(pt[5], -0.35 * 667), "leatherworking trainer at (65 %, 35 %) of the canvas")
   check(tb and tb.icon:GetTexture():find("Trade_LeatherWorking", 1, true), "profession icon for the trainer")
-  providers[#providers].OnCanvasPanChanged()
   M.Advance(0.5)
-  check(CR.mview:GetScript("OnUpdate") == nil, "map at rest: no OnUpdate")
+  check(CR.mview:GetScript("OnUpdate") == nil, "map at rest: no OnUpdate (the game tells us when it zooms / changes)")
   local mouse = 0
   for _, b in ipairs(CR.mapPins) do if b:IsShown() then mouse = mouse + 1 end end
   check(mouse >= 5 and not (CR.mview.IsMouseEnabled and CR.mview:IsMouseEnabled()), "only the pin buttons take the mouse")
@@ -537,14 +537,15 @@ return function(M, ctx)
   M.FireEvent("BAG_UPDATE_DELAYED") M.Advance(0.5)
   if CR.Start() then
     M.Advance(0.5)
-    providers[#providers].OnMapChanged() M.Advance(0.1)
+    T.MapCanvas.Fire() M.Advance(0.1)
     local stopPins = {}
     for _, b in ipairs(CR.mapPins) do if b:IsShown() and b.pin and b.pin.kind == "stop" then stopPins[#stopPins + 1] = b end end
     check(#stopPins >= 1 and stopPins[1].num:GetText() ~= nil, "stops of the courses numbered on the map (" .. #stopPins .. ")")
     local target = stopPins[#stopPins]
     if target then
+      local key = target.pin.stop.key                   -- (4.2) the click redraws at once (pins reused): read it first
       target:Click()
-      check(CR.CurrentStop() and CR.CurrentStop().key == target.pin.stop.key, "pin click: that stop becomes the current step")
+      check(CR.CurrentStop() and CR.CurrentStop().key == key, "pin click: that stop becomes the current step")
     end
     CR.Stop("silent")
   end
@@ -577,9 +578,8 @@ return function(M, ctx)
   Cp.Questie, Cp.SpawnsOf = oldQ, oldS
   rawset(_G, "Questie", nil)
   CR.PinsDirty()
-  wm.__shown = false
-  providers[#providers].OnHide()
-  check(not CR.mview:IsShown(), "map closed: overlay hidden")
+  wm:Hide()
+  check(not CR.mview:IsVisible(), "map closed: layer hidden with the map")
   check(#M.violations == 0, "no violation (" .. #M.violations .. ")")
   rawset(_G, "UnitFactionGroup", oldFaction)
   rawset(_G, "MapCanvasDataProviderMixin", nil)

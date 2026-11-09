@@ -157,6 +157,10 @@ return function(M, ctx)
     local want = anchors()
     want.TreeAIAlert = nil   -- (hidden between alerts; its saved place is checked through settings.alert.pos)
     want.TreeAIStrip = nil   -- (4.1: placed by its own rules once the game's frames are measurable — strip_scenario.lua)
+    -- (4.2 ROUTE42) the Suivi column, never moved by the player, hangs under the game's tracker when there is room (checked
+    -- by route42_scenario.lua / replace_scenario.lua); a place the player chose is kept (TreeAI.Watch.char.pos.user)
+    local Wc = T.Watch and T.Watch.char
+    if not (Wc and type(Wc.pos) == "table" and Wc.pos.user) then want.TreeAIWatchFrame = nil end
     TreeAIDB.__placebug = { anchors = want, alert = rec and { rec.point, rec.x, rec.y },
       window = T.settings.windows and T.settings.windows.main and { T.settings.windows.main.point, r0(T.settings.windows.main.x), r0(T.settings.windows.main.y) } }
     check(alert ~= nil, "encadré d'alerte créé")

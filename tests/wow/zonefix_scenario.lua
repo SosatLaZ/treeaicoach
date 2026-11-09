@@ -211,6 +211,7 @@ return function(M, ctx)
     if e.kind == "fly" or e.kind == "hs" then flight = true end
     if e.step and e.step.map and Z.ZoneOf(e.step.map) ~= 1440 and not e.step.onWay then flight = true end
   end
+  if os.getenv("ZF_DEBUG") then for i, e in ipairs(R:Stops(64)) do io.stdout:write("ZFDBG ", i, " ", tostring(e.kind), " ", tostring(e.text or (e.step and (e.step.k .. ":" .. tostring(e.step.q) .. "@" .. tostring(e.step.map)))), " ", tostring(e.sec), "\n") end end
   check(not flight, "A: no flight / hearth / stop out of Orneval (« Vol pour Poste de Librevent » was stop 2): " .. stopsText())
   local all = R:Stops(64)
   local _, total = R.Horizon(all)

@@ -22,6 +22,7 @@ FLY_BOARD = 20.0      # s: talk to the flight master, take-off
 HEARTH_CAST = 10.0    # s cast
 HEARTH_LOAD = 5.0     # s loading screen / landing
 MIN_GAIN = 30.0       # s: a transport must beat walking by this much to be proposed
+HEARTH_GAIN = 20.0    # s: (4.2 ROUTE42) the hearthstone is used on a leg only when it saves at least this much
 
 # id: (frFR name, continent, x, y)
 DOCKS: dict[int, tuple[str, int, float, float]] = {
@@ -69,7 +70,19 @@ LINES: tuple[tuple[str, str | None, float, tuple[tuple[int, int, float], ...]], 
     ("boat", "Alliance", 247.0, ((24, 25, 67.0), (25, 24, 60.0))),          # Auberdine ↔ Hurlevent
 )
 
-MODE_FR = {"boat": "Bateau", "zeppelin": "Zeppelin", "fly": "Vol", "hs": "Pierre de foyer", "walk": "Marche"}
+# (4.2 ROUTE42) elevators and the tram as transport edges: (kind, frFR name of end A, frFR name of end B, continent,
+# A x, A y, B x, B y, period s, ride s) — world yards like DOCKS; the expected wait is half the period, both ways.
+# Only places we can prove go here (measured in game with /tai pos at both ends, or read from the client's
+# TransportAnimation / GameObject tables by our tools). Nothing is invented: until measured, the list stays empty and
+# the route walks (the relief factor of NavTime covers the climb). TODO (measure in game, Forever 1.60.1):
+#   - Les Pitons-du-Tonnerre: 4 elevators (Mulgore floor <-> mesa), period / ride from TransportAnimation
+#   - Poste de Librevent (Mille pointes): elevator (canyon floor <-> mesa)
+#   - Le Grand ascenseur (Tarides <-> Mille pointes)
+#   - Fossoyeuse: 4 elevators (Ruines de Lordaeron <-> city)
+#   - Tram des profondeurs (Hurlevent <-> Forgefer): both stations + ride, loading screen included
+LIFTS: tuple[tuple[str, str, str, int, float, float, float, float, float, float], ...] = ()
+
+MODE_FR = {"boat": "Bateau", "zeppelin": "Zeppelin", "elevator": "Ascenseur", "tram": "Tram", "fly": "Vol", "hs": "Pierre de foyer", "walk": "Marche"}
 
 
 def faction_ok(line_faction: str | None, faction: str | None) -> bool:
@@ -83,6 +96,25 @@ def transport_edges(faction: str | None = None) -> list[tuple[int, int, str, flo
         if faction_ok(fac, faction):
             for a, b, cross in legs:
                 out.append((a, b, kind, round(period / 2.0 + cross, 1)))
+    return out
+
+
+def lift_edges() -> list[tuple[int, int, str, float]]:
+    """(4.2 ROUTE42) (lift index, end 0|1 → end 1|0, kind, seconds = period / 2 + ride) for every lift, both ways."""
+    out = []
+    for i, (kind, _na, _nb, _c, _ax, _ay, _bx, _by, period, ride) in enumerate(LIFTS):
+        sec = round(period / 2.0 + ride, 1)
+        out.append((i, 0, kind, sec))
+        out.append((i, 1, kind, sec))
+    return out
+
+
+def lift_places() -> list[tuple[tuple[str, int, int], "Place"]]:
+    """(4.2 ROUTE42) both ends of every lift: (("lift", index, end), Place)."""
+    out = []
+    for i, (_k, na, nb, c, ax, ay, bx, by, _p, _r) in enumerate(LIFTS):
+        out.append((("lift", i, 0), Place(c, ax, ay, na)))
+        out.append((("lift", i, 1), Place(c, bx, by, nb)))
     return out
 
 
@@ -168,6 +200,8 @@ def _fastest(a, b, faction, taxi, known, speed, detour, hearth, hearth_ready, fl
         pts.append(p); keys.append(("taxi", t))
     for d, (name, c, x, y) in DOCKS.items():
         pts.append(Place(c, x, y, name)); keys.append(("dock", d))
+    for k, p in lift_places():
+        pts.append(p); keys.append(k)
     if hearth is not None and hearth_ready:
         pts.append(Place(hearth.c, hearth.x, hearth.y, hearth.name or "auberge")); keys.append("bind")
     index = {k: i for i, k in enumerate(keys)}
@@ -182,6 +216,8 @@ def _fastest(a, b, faction, taxi, known, speed, detour, hearth, hearth_ready, fl
         adj[index[("taxi", ta)]].append((index[("taxi", tb)], sec + FLY_BOARD, "fly"))
     for da, db, kind, sec in transport_edges(faction):
         adj[index[("dock", da)]].append((index[("dock", db)], sec, kind))
+    for li, end, kind, sec in lift_edges():
+        adj[index[("lift", li, end)]].append((index[("lift", li, 1 - end)], sec, kind))
     if "bind" in index:
         adj[0].append((index["bind"], HEARTH_CAST + HEARTH_LOAD, "hs"))
     dist = [math.inf] * len(pts)
@@ -244,8 +280,8 @@ def hubs(faction: str | None, taxi: dict, known: list[int], flights: dict | None
     """Hub graph = known flight masters + docks. Returns (keys, places, H all-pairs seconds, nxt next-hop matrix,
     mode of each direct edge). Walking between hubs of one continent is an edge too."""
     fplaces, fedges = flight_table(taxi, known, flights)
-    keys: list[Any] = [("taxi", t) for t in fplaces] + [("dock", d) for d in DOCKS]
-    places = list(fplaces.values()) + [Place(c, x, y, n) for (n, c, x, y) in DOCKS.values()]
+    keys: list[Any] = [("taxi", t) for t in fplaces] + [("dock", d) for d in DOCKS] + [k for k, _ in lift_places()]
+    places = list(fplaces.values()) + [Place(c, x, y, n) for (n, c, x, y) in DOCKS.values()] + [p for _, p in lift_places()]
     idx = {k: i for i, k in enumerate(keys)}
     m = len(keys)
     H = [[math.inf] * m for _ in range(m)]
@@ -262,6 +298,10 @@ def hubs(faction: str | None, taxi: dict, known: list[int], flights: dict | None
             H[i][j] = sec + FLY_BOARD; mode[(i, j)] = "fly"
     for da, db, kind, sec in transport_edges(faction):
         i, j = idx[("dock", da)], idx[("dock", db)]
+        if sec < H[i][j]:
+            H[i][j] = sec; mode[(i, j)] = kind
+    for li, end, kind, sec in lift_edges():
+        i, j = idx[("lift", li, end)], idx[("lift", li, 1 - end)]
         if sec < H[i][j]:
             H[i][j] = sec; mode[(i, j)] = kind
     nxt = [[j if H[i][j] < math.inf else -1 for j in range(m)] for i in range(m)]

@@ -1,22 +1,19 @@
--- TreeAI — module Watch « Suivi TreeAI » (agent REPLACE, 4.0.1) : LE suivi de quêtes à l'écran, à la place de celui
--- du jeu (et de celui de Questie quand il est silencieux).
---  * les quêtes du trajet, rangées par zone dans l'ordre du trajet (n° d'arrêt = celui de l'onglet et de la carte),
---    puis « Hors trajet » ; bascule « Par distance » (zones et quêtes par distance, retriées toutes les 4 s en marchant) ;
---  * chaque objectif : barre de progression, texte du jeu, et à droite la distance + la direction + la durée à pied
---    (NavTime) jusqu'à sa zone (amas d'apparitions de QuestieDB, sinon le point du jeu), EN DIRECT en marchant : une
---    lecture par seconde, seuls les textes dont la valeur arrondie change sont réécrits, rien à l'arrêt ;
---  * quête prête : « Rendre à X · 380 m E · 2 min » ; objet de quête : bouton sécurisé (type=item, comme la barre de
---    quête) posé HORS COMBAT seulement ; clic = la boussole vise ; clic droit = menu (guider, ignorer dans le trajet,
---    partager au groupe, retirer du suivi, abandonner : page « Journal »).
---  * « Remplacer le suivi du jeu » (défaut oui) : le suivi de Blizzard est caché HORS COMBAT (Hide + crochet OnShow
---    qui le recache ; en combat seulement SetAlpha(0), jamais Hide / SetPoint : ses boutons d'objet sont sécurisés) ;
---    mode édition du jeu ouvert = on le laisse ; option coupée = tout est rendu (Show + alpha 1). Questie : son suivi
---    se coupe dans SES options (une ligne propose le clic, recharge de l'interface) ; Shortest Path : page « Mes addons ».
--- Données lues : Quests.lastList (journal réel), QuestPins (positions : export QuestieDB / points du jeu), Route:Stops
--- (ordre et numéros ; on ne calcule aucun trajet ici), NavTime (durées). Cadre : enfant d'UIParent, Theme:Window,
--- posé une fois à la place du suivi du jeu puis jamais déplacé par TreeAI (PLACEBUG : place du joueur gardée,
--- mode édition TreeAI). Taint : aucun cadre de Blizzard modifié hormis Hide / Show / SetAlpha du suivi (hors combat
--- pour Hide / Show), aucun crochet sécurisé détourné. Lua 5.1, aucune globale.
+-- TreeAI — module Watch « Suivi TreeAI » (agent REPLACE 4.0.1, 4.2 ROUTE42) : une colonne À CÔTÉ du suivi du jeu, coupée
+-- d'office (un clic dans la fenêtre l'allume). Le suivi de Blizzard n'est JAMAIS caché, déplacé ni touché.
+--  * Place (4.2) : accrochée SOUS le suivi visible (celui de Questie s'il couvre celui du jeu, sinon celui du jeu), elle suit
+--    sa hauteur sans rien recalculer (une ancre, la même en combat et hors combat) ; détachable (glisser le titre : place du
+--    joueur gardée ; « Réinitialiser » la raccroche).
+--  * En tête (4.2) : « Histoire : zone · Chapitre n sur N » (N seulement pour une chaîne prouvée), « Trajet m:ss · km ·
+--    Arrêt n sur N : X », puis les étapes de transport numérotées et chronométrées (marche, vol, bateau, ascenseur, tram,
+--    pierre de foyer) dont la somme = l'en-tête (Route.Block) ; près d'un quai, « Prochains départs ». Le compte à rebours
+--    ne bouge qu'en marchant (1 lecture / s), rien à l'arrêt.
+--  * Puis les quêtes du trajet, rangées par zone dans l'ordre du trajet (n° d'arrêt = celui de l'onglet et de la carte),
+--    puis « Hors trajet » ; bascule « Par distance » ; chaque objectif : barre, texte du jeu, distance + direction + durée
+--    (NavTime) en direct ; quête prête : « Rendre à X » ; objet de quête : bouton sécurisé posé HORS COMBAT seulement ;
+--    clic = la boussole vise ; clic droit = menu.
+-- Données lues : Quests.lastList, QuestPins (positions), Route:Stops / Route.Block (ordre, étapes ; aucun trajet calculé
+-- ici), NavTime (durées). Taint : aucun cadre de Blizzard modifié (on s'ancre à lui, on ne le touche pas), aucun crochet
+-- sécurisé. Lua 5.1, aucune globale.
 local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
@@ -27,12 +24,12 @@ local W = T:RegisterModule("Watch", {
   description = "Ton suivi de quêtes à l'écran : les quêtes du trajet par zone, chaque objectif avec sa distance, "
     .. "sa direction et sa durée en direct, à côté du suivi du jeu (qui reste là).",
   -- (4.0.5) coupé d'office et ne cache plus jamais le suivi du jeu (le joueur doit pouvoir cliquer ses quêtes)
-  defaults = { enabled = false, shown = true, replace = false, sort = 1, maxQuests = 10, scale = 100, lock = false,
-               offRoute = true },
+  defaults = { enabled = false, shown = true, sort = 1, maxQuests = 10, scale = 100, lock = false,
+               offRoute = true, route = true },
   charDefaults = { pos = nil, hidden = {}, collapsed = false },
   options = {
     { key = "shown", type = "toggle", label = "Afficher le Suivi TreeAI", section = "Suivi" },
-    { key = "replace", type = "toggle", label = "Cacher le suivi du jeu (déconseillé : ses quêtes ne sont plus cliquables)", section = "Suivi" },
+    { key = "route", type = "toggle", label = "Trajet en tête : histoire, étapes chronométrées, prochains départs", section = "Suivi" },
     { key = "sort", type = "choice", label = "Ordre", values = { "Ordre du trajet", "Par distance" }, section = "Suivi" },
     { key = "offRoute", type = "toggle", label = "Montrer aussi les quêtes hors trajet", section = "Suivi" },
     { key = "maxQuests", type = "range", label = "Quêtes affichées", min = 3, max = 20, step = 1, section = "Cadre" },
@@ -345,6 +342,7 @@ local NICE = { Questie_BaseFrame = "le suivi de Questie", QuestieTrackerBaseFram
 function W.AvoidTrackers()
   W.blockedBy = nil
   if inCombat() or not frame then return nil end
+  if W.anchoredTo then return nil end                -- (4.2) accroché sous le suivi : il ne peut pas le couvrir
   local hit = W.Overlap()
   if not hit then return nil end
   local p = W.char and W.char.pos
@@ -394,7 +392,57 @@ W.FirstPlace = firstPlace
 -- place : celle du joueur / la première place notée ; la première place se prend sur un écran posé et stable
 -- (PLACEBUG : à la connexion les cadres du jeu ne sont pas encore à leur place), sinon une place provisoire
 local placeTries = 0
-local function applyPos()
+local applyFree, applyPos                             -- (place libre / place, définies plus bas)
+-- (4.2 ROUTE42) le suivi visible sous lequel s'accrocher : celui de Questie s'il est affiché (il couvre celui du jeu), sinon
+-- celui du jeu — son fond (NineSlice, à la hauteur des quêtes) quand il existe, sinon son cadre ; nil = aucun suivi visible
+W.QUESTIE_TRACKERS = { "Questie_BaseFrame", "QuestieTrackerBaseFrame", "Questie_TrackerBaseFrame" }
+function W.AnchorTarget()
+  for _, n in ipairs(W.QUESTIE_TRACKERS) do
+    local f = g(n)
+    if type(f) == "table" and meth(f, "IsVisible") then return f, n end
+  end
+  local tf, n = trackerFrame()
+  if tf and meth(tf, "IsVisible") then
+    local ns = tf.NineSlice
+    if type(ns) == "table" and meth(ns, "IsVisible") and (num(meth(ns, "GetHeight")) or 0) > 10 then return ns, n .. ".NineSlice" end
+    return tf, n
+  end
+  return nil
+end
+--- accroche le Suivi sous le suivi visible (place automatique seulement) ; → nom du suivi, ou nil (place libre)
+function W.Anchor(force)
+  if not frame then return nil end
+  local p = W.char and W.char.pos
+  if type(p) == "table" and p.user then W.anchoredTo = nil return nil end
+  local f, n = W.AnchorTarget()
+  -- pas la place sous lui (suivi du jeu haut comme l'écran) : place libre, à côté — jamais hors de l'écran ni dessus
+  local r = f and rectUI(f)
+  local h = num(meth(frame, "GetHeight")) or 120
+  if f and r and r.b - 6 - h < 20 then f, n = nil, nil end
+  if not f then
+    if W.anchoredTo then W.anchoredTo, W._anchorF = nil, nil applyFree() end
+    return nil
+  end
+  if force or W.anchoredTo ~= n or W._anchorF ~= f then
+    meth(frame, "ClearAllPoints")
+    meth(frame, "SetPoint", "TOPRIGHT", f, "BOTTOMRIGHT", 0, -6)   -- une ancre : notre cadre suit, le leur ne bouge pas
+    W.anchoredTo, W._anchorF = n, f
+  end
+  -- le suivi peut grandir (quêtes ajoutées) : la place sous lui est revue toutes les 2 s tant qu'on y est accroché et
+  -- affiché (un minuteur léger, jamais un OnUpdate ; arrêté sinon)
+  if not W._roomTk and T.NewTicker then
+    W._roomTk = T:NewTicker(2, function()
+      if not (W._active and frame and frame:IsShown() and W.anchoredTo) then
+        if W._roomTk and W._roomTk.Cancel then W._roomTk:Cancel() end
+        W._roomTk = nil
+        return
+      end
+      W.Anchor()
+    end, W)
+  end
+  return n
+end
+function applyFree()
   if not frame then return end
   local p = W.char and W.char.pos
   if type(p) ~= "table" then
@@ -411,6 +459,11 @@ local function applyPos()
   if inCombat() then return end
   meth(frame, "ClearAllPoints")
   meth(frame, "SetPoint", p.point or "TOPRIGHT", g("UIParent"), p.rel or p.point or "TOPRIGHT", p.x or -40, p.y or -260)
+end
+function applyPos()
+  if not frame then return end
+  if W.Anchor(true) then return end
+  applyFree()
 end
 
 local function hideTip() local tt = g("GameTooltip") if tt then try(tt.Hide, tt) end end
@@ -606,6 +659,65 @@ local function layoutRow(i, y, h, indent)
   return r
 end
 
+-- ===================================================================== (4.2 ROUTE42) en tête : le trajet (Route.Block)
+-- rangées de l'en-tête : { role, i } dans l'ordre ; réécrites sur place quand seuls les textes / temps changent
+local routeRows = {}
+W.routeRows = routeRows
+local function subTime(ss)
+  local R = T.Route
+  local t = (R and R.MSS) and R.MSS(ss.sec) or tostring(ss.sec)
+  return ss.est and ("environ " .. t) or t
+end
+--- (pur) les lignes de l'en-tête du trajet : { { role, text, right } } — histoire, trajet, arrêt, étapes, départs
+function W.RouteLines(b)
+  local out = {}
+  if type(b) ~= "table" then return out end
+  if b.story then out[#out + 1] = { role = "story", text = b.story } end
+  local R = T.Route
+  local head = fmt("Trajet %s · %s · Arrêt %d sur %d :", (R and R.MSS) and R.MSS(b.total) or tostring(b.total),
+    (R and R.Km) and R.Km(b.yd) or "", b.index or 1, b.count or 1)
+  out[#out + 1] = { role = "trip", text = head }
+  out[#out + 1] = { role = "label", text = cut(b.label or "?", 44) }
+  for _, ss in ipairs(b.steps or {}) do
+    out[#out + 1] = { role = "sub", text = fmt("%d. %s", ss.n, cut(ss.text, 38)), right = subTime(ss) }
+  end
+  if b.departures then
+    out[#out + 1] = { role = "dephead", text = "Prochains départs" }
+    for i, d in ipairs(b.departures) do
+      if i > 3 then break end
+      out[#out + 1] = { role = "dep", text = cut(d.text, 46) }
+    end
+  end
+  return out
+end
+local ROLE_RGB = { story = { 1, 0.82, 0.2 }, trip = { 1, 1, 1 }, label = { 0.35, 0.8, 1 }, sub = { 0.85, 0.85, 0.85 },
+  dephead = { 1, 0.82, 0.2 }, dep = { 0.7, 0.9, 1 } }
+local function paintRoute(r, ln)
+  r.fs:SetText(ln.text or "")
+  r.rt:SetText(ln.right or "")
+  local c = ROLE_RGB[ln.role] or ROLE_RGB.sub
+  meth(r.fs, "SetTextColor", c[1], c[2], c[3])
+end
+--- compte à rebours en marchant (1 lecture / s) : mêmes lignes → textes réécrits sur place ; sinon nouvelle mise en page
+function W.RouteTick()
+  if not (opt("route") and #routeRows > 0) then return 0 end
+  local R = T.Route
+  local ok, b = false, nil
+  if R and R.Block then ok, b = pcall(R.Block) end
+  local lines = W.RouteLines(ok and b or nil)
+  if #lines ~= #routeRows then
+    if not inCombat() then W._force = true W.Render() else W._pendingLayout = true end
+    return 0
+  end
+  local writes = 0
+  for i, ln in ipairs(lines) do
+    local r = rows[routeRows[i]]
+    if r and (r.fs:GetText() ~= ln.text or (r.rt:GetText() or "") ~= (ln.right or "")) then paintRoute(r, ln) writes = writes + 1 end
+  end
+  W.blk = ok and b or nil
+  return writes
+end
+
 --- dessine le suivi (hors combat : mise en page ; en combat : textes seulement, la mise en page attend la fin du combat)
 function W.Render()
   if not (W._active and opt("shown")) then return end
@@ -613,8 +725,11 @@ function W.Render()
   -- caché en combat par SetAlpha(0) puis réaffiché avant la fin du combat : rendu visible (un cadre transparent
   -- prendrait les clics sans se voir)
   if (num(meth(frame, "GetAlpha")) or 1) < 1 then meth(frame, "SetAlpha", 1) end
+  if not inCombat() then W.Anchor() end            -- (4.2) le suivi visible a changé (Questie affiché / caché)
   local me = playerWorld()
   local model = W.Model(me)
+  W.blk = opt("route") and T.Route and T.Route.Block and select(2, pcall(T.Route.Block)) or nil
+  if type(W.blk) ~= "table" then W.blk = nil end
   if inCombat() then
     -- en combat : la progression s'écrit sur place (textes, barres : nos cadres, rien de protégé) ; une quête en plus
     -- ou en moins attend la fin du combat (les boutons d'objet sécurisés ne bougent pas en combat)
@@ -650,6 +765,17 @@ function W.Render()
     if th and th.QuestDiffColor then return th:QuestDiffColor(lv, pl) end
     return 1, 0.82, 0
   end
+  for i = 1, #routeRows do routeRows[i] = nil end
+  for _, ln in ipairs(W.RouteLines(W.blk)) do
+    n = n + 1
+    local r = layoutRow(n, y, ROW_O, (ln.role == "sub" or ln.role == "label" or ln.role == "dep") and 6 or 0)
+    paintRoute(r, ln)
+    r.kind, r.qe, r.rowd, r.role = "route", nil, nil, ln.role
+    routeRows[#routeRows + 1] = n
+    y = y + ROW_O
+  end
+  if #routeRows > 0 then y = y + 4 end
+  W.routeN = #routeRows
   if model.n == 0 then
     n = n + 1
     local r = layoutRow(n, y, ROW_Q, 0)
@@ -743,17 +869,6 @@ function W.Render()
     r.kind, r.qe, r.rowd = "paused", nil, nil
     y = y + ROW_Q
   end
-  -- ligne Questie : son suivi est encore là (un clic le coupe dans SES options, recharge)
-  local AD = T.Addons
-  local qs = AD and type(AD.QuestieState) == "function" and AD.QuestieState() or nil
-  if qs and qs.loaded and qs.tracker and opt("replace") then
-    n = n + 1
-    local r = layoutRow(n, y + 2, ROW_Q, 0)
-    r.fs:SetText("Questie affiche aussi son suivi : clic pour le couper")
-    color(r.fs, 0.6, 0.8, 1)
-    r.kind, r.qe, r.rowd = "questie", nil, nil
-    y = y + ROW_Q + 2
-  end
   for i = n + 1, #rows do local r = rows[i] if r:IsShown() then r:Hide() end r.qe, r.rowd, r.kind = nil, nil, nil end
   W.rowsShown = n
   body:SetHeight(max(10, y + 4))
@@ -775,9 +890,9 @@ function W.Signature(model)
   local function prog(v) m = m + 1 progParts[m] = tostring(v) end
   put(W.db and W.db.sort) put(W.db and W.db.maxQuests) put(W.db and W.db.scale) put(model.total) put(model.paused or 0)
   put(frame and floor(num(meth(frame, "GetTop")) or 0))
-  local AD = T.Addons
-  local qs = AD and type(AD.QuestieState) == "function" and AD.QuestieState() or nil
-  put(qs and qs.loaded and qs.tracker and opt("replace") and 1 or 0)
+  local rl = W.RouteLines(W.blk)                     -- (4.2) en-tête du trajet : sa forme (lignes) / ses textes
+  put(#rl)
+  for _, ln in ipairs(rl) do put(ln.role) prog(ln.text) prog(ln.right) end
   for _, gr in ipairs(model.groups) do
     put(gr.zone)
     for _, qe in ipairs(gr.quests) do
@@ -798,7 +913,9 @@ end
 --- même structure qu'au dernier rendu : la progression est réécrite sur place, dans le même ordre que la mise en page
 function W.Refill(model, me)
   W.refills = (W.refills or 0) + 1
-  local n = (model.n == 0) and 1 or 0
+  local rl = W.RouteLines(W.blk)
+  for i, ln in ipairs(rl) do local r = rows[routeRows[i] or 0] if r then paintRoute(r, ln) end end
+  local n = #routeRows + ((model.n == 0) and 1 or 0)
   for i = 1, #live do live[i] = nil end
   local count = 0
   for _, gr in ipairs(model.groups) do
@@ -854,6 +971,14 @@ function W.RowTip(r)
   local tt = g("GameTooltip")
   if not (tt and r) then return end
   try(tt.SetOwner, tt, r, "ANCHOR_LEFT")
+  if r.kind == "route" then
+    try(tt.AddLine, tt, "Trajet", 1, 0.82, 0.2)
+    try(tt.AddLine, tt, "Les temps s'additionnent : l'en-tête = la somme des étapes. « environ » : pas encore mesuré "
+      .. "(vol jamais chronométré, bateau dont le départ n'a pas été vu).", 0.9, 0.9, 0.9, true)
+    try(tt.AddLine, tt, "Clic : guider vers l'étape en cours", 0.4, 0.8, 1)
+    try(tt.Show, tt)
+    return
+  end
   if r.kind == "questie" then
     try(tt.AddLine, tt, "Suivi de Questie", 1, 0.82, 0.2)
     try(tt.AddLine, tt, "Coupe le suivi, les icônes et le bouton de minimap de Questie dans SES options ; sa base de quêtes reste lue par TreeAI. L'interface se recharge.", 0.9, 0.9, 0.9, true)
@@ -910,6 +1035,11 @@ function W.RowClick(r, btn)
   if r.kind == "questie" then
     local AD = T.Addons
     if AD and type(AD.SilenceQuestie) == "function" then T:UserAction(AD.SilenceQuestie, true) end
+    return
+  end
+  if r.kind == "route" then                         -- (4.2) l'en-tête du trajet : guider vers l'étape en cours
+    local R = T.Route
+    if R and R.Follow and btn ~= "RightButton" then T:UserAction(function() R:Follow() end) end
     return
   end
   if btn == "RightButton" then W.OpenMenu(r) return end
@@ -1031,62 +1161,13 @@ function W.ToggleSort()
   W.Now()
 end
 
--- ===================================================================== remplacer le suivi du jeu
-local hooked = {}
-local function editModeOpen()
-  local em = g("EditModeManagerFrame")
-  return type(em) == "table" and meth(em, "IsShown") and true or false
-end
-local function wantReplace() return W._active and opt("shown") and opt("replace") and not editModeOpen() end
-W.WantReplace = wantReplace
-local function hideTracker(tf)
-  if not tf then return end
-  if inCombat() then
-    -- en combat : jamais Hide (ses boutons d'objet sont sécurisés) ; invisible, puis caché après le combat
-    meth(tf, "SetAlpha", 0)
-    if T.RunOutOfCombat then T:RunOutOfCombat("Watch:hideTracker", function() if wantReplace() then W.TakeOver() end end) end
-    return
-  end
-  if meth(tf, "IsShown") then meth(tf, "Hide") end
-  meth(tf, "SetAlpha", 0)
-  W.replaced = true
-end
---- cache le suivi du jeu (hors combat) + crochet OnShow qui le recache tant que l'option est là
-function W.TakeOver()
-  local tf = trackerFrame()
-  if not tf then return false end
-  if not hooked[tf] and type(tf.HookScript) == "function" then
-    hooked[tf] = true
-    pcall(tf.HookScript, tf, "OnShow", function(self) if wantReplace() then hideTracker(self) end end)
-  end
-  local em = g("EditModeManagerFrame")
-  if type(em) == "table" and type(em.HookScript) == "function" and not hooked[em] then
-    hooked[em] = true
-    -- mode édition du jeu : ouvert, le suivi du jeu revient (le joueur peut le régler) ; fermé, il se recache
-    pcall(em.HookScript, em, "OnHide", function() if wantReplace() then W.TakeOver() end end)
-    pcall(em.HookScript, em, "OnShow", function() if W.replaced then W.Restore(true) end end)
-  end
-  if not wantReplace() then return false end
-  hideTracker(tf)
-  return true
-end
---- rend le suivi du jeu tel quel (option coupée, Suivi TreeAI caché ou coupé, mode édition ouvert)
-function W.Restore(keepFlag)
-  local tf = trackerFrame()
-  if not (tf and (W.replaced or (num(meth(tf, "GetAlpha")) or 1) < 0.05)) then return false end
-  local function back()
-    meth(tf, "SetAlpha", 1)
-    if not meth(tf, "IsShown") then meth(tf, "Show") end
-    if not keepFlag then W.replaced = false end
-  end
-  if inCombat() then
-    meth(tf, "SetAlpha", 1)                       -- l'alpha tout de suite ; Show après le combat
-    if T.RunOutOfCombat then T:RunOutOfCombat("Watch:restoreTracker", back) end
-  else
-    back()
-  end
-  return true
-end
+-- ===================================================================== suivi du jeu : jamais caché (4.2 ROUTE42)
+-- L'ancienne option « Cacher le suivi du jeu » est retirée : le suivi de Blizzard reste toujours là, cliquable ; ces deux
+-- fonctions ne font plus rien (gardées pour les anciens appels) — seul un suivi caché par une ancienne version est rendu.
+W.replaced = false
+function W.WantReplace() return false end
+function W.TakeOver() return false end
+function W.Restore() return false end
 
 -- ===================================================================== cycle de vie
 local soonAt
@@ -1100,14 +1181,12 @@ function W.Apply()
   if not W._active then return end
   if opt("shown") then
     W.Render()
-    W.TakeOver()
   else
     if frame then
       if inCombat() then meth(frame, "SetAlpha", 0) T:RunOutOfCombat("Watch:hide", function() if frame and not (W._active and opt("shown")) then frame:Hide() meth(frame, "SetAlpha", 1) end end)
       else frame:Hide() end
     end
     W.PlaceItems()
-    W.Restore()
   end
 end
 
@@ -1118,12 +1197,13 @@ local function onUpdate(_, el)
   acc = acc + (el or 0)
   if acc < 1 then return end
   acc = 0
-  if not (frame and frame:IsShown()) or #live == 0 then W.Sleep() return end
+  if not (frame and frame:IsShown()) or (#live == 0 and #routeRows == 0) then W.Sleep() return end
   local moving = T.Moving and T:Moving(2) or false
   if not moving then W.idleN = (W.idleN or 0) + 1 if W.idleN >= 2 then W.Sleep() end return end
   W.idleN = 0
   local me = playerWorld()
   W.UpdateTexts(me)
+  W.RouteTick()
   -- par distance : l'ordre est revu toutes les 4 s en marchant (mise en page hors combat seulement)
   if (tonumber(W.db and W.db.sort) or 1) == 2 and not inCombat() and now() - lastSort >= 4 then
     lastSort = now()
@@ -1139,7 +1219,7 @@ function W.Sleep()
 end
 function W.Wake()
   W.idleN = 0
-  if driver and W.asleep and W._active and frame and frame:IsShown() and #live > 0 then
+  if driver and W.asleep and W._active and frame and frame:IsShown() and (#live > 0 or #routeRows > 0) then
     W.asleep, acc = false, 1
     driver:SetScript("OnUpdate", onUpdate)
   end
@@ -1161,9 +1241,8 @@ function W:OnEnable()
   end
   self:RegisterEvent("PLAYER_REGEN_ENABLED", function()
     if W._pendingLayout then W.Render() end
-    if wantReplace() then W.TakeOver() end
   end)
-  self:RegisterEvent("PLAYER_ENTERING_WORLD", function() W.Soon() if wantReplace() then W.TakeOver() end end)
+  self:RegisterEvent("PLAYER_ENTERING_WORLD", function() W.Soon() end)
   if T.OnMotion then T:OnMotion(W, W.Wake) end
   T:RunOutOfCombat("Watch:start", function() W.Apply() W.Wake() end)
 end
@@ -1179,14 +1258,10 @@ function W:OnDisable()
   end
   for i = 1, #wantItems do wantItems[i] = nil end
   W.PlaceItems()
-  W.Restore()
   if T.OnMotion then T:OnMotion(W, nil) end
 end
 W.autoIdleSafe = true
 function W:OnOptionChanged(key)
-  if key == "replace" or key == "shown" then
-    if opt("shown") and opt("replace") then W.TakeOver() else W.Restore() end
-  end
   if key == "shown" then W.Apply() return end
   W._force = true
   W.Render()
@@ -1196,7 +1271,7 @@ end
 function W.Status()
   if not W._active then return "Suivi TreeAI : coupé" end
   return fmt("Suivi TreeAI : %d quête(s), %d ligne(s) à distance vivante, ordre %s, suivi du jeu %s", W.model and W.model.n or 0,
-    #live, sortLabel():lower(), W.replaced and "caché" or "visible")
+    #live, sortLabel():lower(), "toujours visible")
 end
 if T.RegisterSlash then
   -- « /tai suivi » appartient au module Tracker (cadre, filtres, masquer) : le Suivi TreeAI a son propre mot

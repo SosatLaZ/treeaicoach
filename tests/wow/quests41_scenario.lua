@@ -508,12 +508,12 @@ return function(M, ctx)
   local okKind = true
   for i = P.cursor or 1, #(P.steps or {}) do
     local s = P.steps[i]
-    if s.q and not s._done and not s._other and s.k ~= "turn" then okKind = false end
+    if s.q and not s._done and not s._other and s.k ~= "turn" and not (s.k == "pick" and s.onWay) then okKind = false end
   end
-  check(okKind, "C: only « Rendre » stops")
+  check(okKind, "C: only « Rendre » stops (+ 4.2: quests picked up in passing at an NPC on the way)")
   -- the nearest first: Freewind (Les crocs de Galak, 30 yd) before the far zones
   local c1 = stops()[1]
-  check(c1 and c1.step and c1.step.q == 6003, "C: stop 1 = the turn-in a few steps away: " .. stopsText(2))
+  check(c1 and c1.step and c1.step.q == 6003, "C: stop 1 = the turn-in a few steps away (then the pick-ups at the same NPC): " .. stopsText(2))
   -- the two turn-ins at the same NPC (Mangeclous, Camp Taurajo) = one stop
   local nums = {}
   for i, e in ipairs(stops()) do if e.step and (e.step.q == 6010 or e.step.q == 6011) then nums[#nums + 1] = R.Groups(stops())[i] end end

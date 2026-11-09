@@ -763,7 +763,13 @@ function M.Rebuild(reason)
     for i, t in ipairs(M.targets) do if t.key == prev.key then found = i end end
     local cur = found and M.targets[found]
     local progressed = cur and prev.kind == "objective" and cur.label ~= prev.label
-    if found and (M.pinned or not auto) and not progressed then
+    -- (4.2 ROUTE42, journal du joueur) sans trajet, « la quête la plus proche » ne saute plus d'un objectif à l'autre à
+    -- chaque pas (la liste est retriée par distance) : la cible reste tant qu'elle existe et n'est pas faite ; elle ne
+    -- change que sur un clic, un objectif fini, ou un trajet qui revient (arrêt 1)
+    local first = M.targets[1]
+    local keepNear = found and not prev.plan and not prev.super and prev.kind ~= "custom" and not prev.corpse
+      and not (first and (first.plan or first.kind == "custom" or first.corpse))
+    if found and (M.pinned or not auto or keepNear) and not progressed then
       M.idx = found
     elseif reason ~= "init" and (not found or progressed) then
       M.pinned = nil
@@ -797,6 +803,10 @@ function M.Rebuild(reason)
 end
 
 function M.Cycle(step)
+  -- (4.2 ROUTE42) un double clic / une touche répétée ne fait qu'UN pas (journal : 6 cibles en 2 s)
+  local t0 = now()
+  if M._cycleAt and t0 - M._cycleAt < 0.35 then return M.Current() end
+  M._cycleAt = t0
   local n = #M.targets
   if n == 0 then M.Rebuild() n = #M.targets end
   if n == 0 then M:Print("Aucune cible : pas de quête suivie ni de point perso (/tai way x y).") return nil end

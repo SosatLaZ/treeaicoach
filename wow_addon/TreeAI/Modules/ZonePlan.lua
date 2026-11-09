@@ -419,13 +419,14 @@ function N.CapOK(nodes, ord, cap, logCount)
   end
   return true
 end
-function N.NearFirst(nodes, ord, start, dist, yd, cap, logCount)
+N.HUB_PICK = 250
+function N.NearFirst(nodes, ord, start, dist, yd, cap, logCount, only)
   if not (start and start.x and dist) then return ord end
   local out, moved = {}, {}
   for _, i in ipairs(ord) do
     local nd = nodes[i]
     local k = nd.steps[1].k
-    if (k == "turn" or k == "pick") and nd.x then
+    if (k == "turn" or k == "pick") and (not only or k == only) and nd.x then
       local d = dist(start, nd)
       if d and d <= (yd or N.NEAR) then
         local trial = {}
@@ -957,6 +958,105 @@ local function makeFirst(leg, start)
   return function(nd) return min(leg(start, nd), hs + leg(b, nd)) end
 end
 
+-- (4.2 ROUTE42) matrice du solveur de Route : D[0][j] depuis le joueur, D[i][j] trajets SANS foyer (Planner.Leg : marche /
+-- vol / bateau / zeppelin), D.hs[j] = foyer + auberge → j quand la pierre est prête et l'auberge connue, D.hsGain = 20 s
+local function hearthRow(start)
+  local Rt = T.Route
+  if not (start and start.map and Rt and Rt.HearthReady and try(Rt.HearthReady)) then return nil end
+  local bind = Rt.BindPlace and try(Rt.BindPlace)
+  if not (type(bind) == "table" and bind.map and bind.x) then return nil end
+  local Dt = T.Data and T.Data.Travel
+  return { map = bind.map, x = bind.x, y = bind.y }, ((Dt and Dt.hearthCast) or 10) + ((Dt and Dt.hearthLoad) or 5),
+    (Dt and Dt.hearthGain) or (Rt and Rt.HS_GAIN) or 20
+end
+-- (4.2 ROUTE42) seuil du foyer selon le mode : « Rendre mes quêtes » / « Quêtes à prendre » = 20 s (la règle de Shortest
+-- Path) ; trajet de zone / groupe = 2 min — la pierre ne revient qu'au bout d'une heure, on ne la brûle pas pour « foyer →
+-- Orgrimmar → vol retour » afin de gagner 30 s dans la zone (capture QA-QUEST F1) ; Route l'affiche avec le même seuil
+Z.HS_GAIN_ZONE = 120
+function Z.SolverMatrix(nodes, ord, start, leg, yield)
+  local D = { [0] = {} }
+  for a = 1, #ord do
+    local na = nodes[ord[a]]
+    D[0][ord[a]] = (start and start.x) and leg(start, na) or 45
+    local row = {}
+    D[ord[a]] = row
+    for b = 1, #ord do
+      if a ~= b then row[ord[b]] = leg(na, nodes[ord[b]]) end
+      if yield then yield() end
+    end
+  end
+  local b, hsS, gain = hearthRow(start)
+  if b then
+    D.hs, D.hsGain = {}, Z.hsGain or gain
+    for a = 1, #ord do
+      local nd = nodes[ord[a]]
+      if nd.x then D.hs[ord[a]] = hsS + leg(b, nd) end
+    end
+  end
+  return D
+end
+--- ajoute à D les lignes / colonnes des arrêts `extra` (indices de nodes) face à ceux de `ord` et entre eux
+function Z.ExtendMatrix(D, nodes, ord, extra, start, leg, yield)
+  local all = {}
+  for _, i in ipairs(ord) do all[#all + 1] = i end
+  for _, i in ipairs(extra) do all[#all + 1] = i end
+  local b, hsS = hearthRow(start)
+  for _, x in ipairs(extra) do
+    local nx = nodes[x]
+    D[0][x] = (start and start.x) and leg(start, nx) or 45
+    D[x] = D[x] or {}
+    for _, j in ipairs(all) do
+      if j ~= x then
+        D[x][j] = leg(nx, nodes[j])
+        D[j] = D[j] or {}
+        D[j][x] = leg(nodes[j], nx)
+      end
+      if yield then yield() end
+    end
+    if b and D.hs and nx.x then D.hs[x] = hsS + leg(b, nx) end
+  end
+  return D
+end
+-- (4.2 ROUTE42) quêtes disponibles à prendre en passant : pas dans le journal, pas déjà dans le trajet, acceptées par les
+-- règles du trajet (niveau, élite, donjon…), PNJ connu ; les Z.PICK_MAX plus proches du trajet (≤ Z.PICK_NEAR_YD)
+Z.PICK_MAX, Z.PICK_NEAR_YD, Z.PICK_DETOUR_S = 12, 700, 90
+function Z:OptionalPicks(nodes, ord, recs, log, requests, level, group, ctx, P, A)
+  local inRoute = {}
+  for _, r in ipairs(requests or {}) do inRoute[r.q] = true end
+  local Xm = X()
+  local isDone = Xm and Xm.IsQuestDone
+  local E = P.Engine
+  local pts = {}
+  for _, i in ipairs(ord) do if nodes[i].x then pts[#pts + 1] = nodes[i] end end
+  local out = {}
+  for q, rec in pairs(recs or {}) do
+    if not log[q] and not inRoute[q] and rec.st == "avail" and rec.s and rec.s.x and not (isDone and isDone(q))
+        and not (P.char and P.char.turned and P.char.turned[q]) and (rec.rl or 0) <= level and not rec.pre and not rec.preAny
+        and not Z.SkippedQuest(q) and (not A or not A.here or not Z.IsInstance(rec.s.map)) then
+      local near
+      for _, p in ipairs(pts) do
+        local d = worldDist(p, rec.s)
+        if d and (not near or d < near) then near = d end
+      end
+      if near and near <= Z.PICK_NEAR_YD then
+        local okA = self:Accept(q, rec, nil, level, group)
+        local v = okA and E and E.QuestVerdict and E.QuestVerdict(rec, ctx) or "impossible"
+        if okA and v ~= "impossible" then
+          local st = P:QuestSteps(q, rec, nil, ctx)
+          local pick = st and st[1]
+          if pick and pick.k == "pick" and pick.x then
+            out[#out + 1] = { steps = { pick }, map = pick.map, x = pick.x, y = pick.y, svc = pick.svc or 15,
+              value = pick.value or 0, qs = { [q] = 1 }, key = skey(pick), delta = 1, _near = near }
+          end
+        end
+      end
+    end
+  end
+  tsort(out, function(a, b) if a._near ~= b._near then return a._near < b._near end return a.key < b.key end)
+  for i = #out, Z.PICK_MAX + 1, -1 do out[i] = nil end
+  return out
+end
+
 -- ===================================================================== thèmes (« le bon thème » : camp + histoire)
 -- (ZONEFIX) camp = les PNJ qui donnent les quêtes (ou les reprennent, pour une quête du journal) à moins de 300 yd l'un
 -- de l'autre ; son nom = le maître de vol le plus proche (≤ 500 yd, même carte : « Poste de Bois-brisé » →
@@ -1161,7 +1261,26 @@ Z.FILL_MIN = 3                       -- ta zone a moins de 3 quêtes faisables :
 Z.ONWAY_S = 45                       -- remise juste hors zone : dans le trajet si elle coûte ≤ 45 s de détour
 
 -- Builds the in-game route (called by Planner:BuildAuto inside its time-sliced job). Returns route, export.
-function Z:BuildRoute(P, yieldFn)
+-- (4.2 ROUTE42, P0 du journal du joueur) une zone choisie ne donne JAMAIS un trajet vide en silence : « Fossoyeuse »
+-- (une capitale) choisie, 2 h de « 0 arrêt · 1er : aucun » pendant qu'il quêtait à Hautebrande, la boussole sautait de
+-- quête en quête. Une ville n'est jamais gardée comme zone de quêtes (seulement comme course en ville) ; une zone choisie
+-- sans rien à faire → retour à « auto » (ta zone + voisines), dit une fois (« Fossoyeuse : plus rien à faire → zone actuelle »)
+Z.CITY = { [1454] = true, [1456] = true, [1458] = true, [1453] = true, [1455] = true, [1457] = true, [1947] = true,
+  [1954] = true }
+function Z.IsCity(m) return Z.CITY[tonumber(m) or -1] or Z.CITY[Z.ZoneOf(m) or -1] or false end
+function Z:FallbackAuto(P, yieldFn, A, why)
+  local name = (A and A.label) or "Zone choisie"
+  if self.char then self.char.mode, self.char.zones = "auto", {} end
+  self.lastKeys, self._lastAllowed = nil, nil
+  local txt = fmt("%s : %s → zone actuelle", cut(name, 24), why == "ville" and "une ville n'est pas une zone de quêtes"
+    or "plus rien à faire")
+  self.fallbackNote = { text = txt, at = tonumber(try(G("GetTime"))) or 0 }
+  pcall(self.Suggest, self, "fallback", txt, 2, { ttl = 12, sound = false })
+  local NTr = T.NavTrace
+  if NTr and NTr.Log then pcall(NTr.Log, "zone", txt) end
+  return self:BuildRoute(P, yieldFn, 1)
+end
+function Z:BuildRoute(P, yieldFn, depth)
   local E = P.Engine
   local ctx = P.CostCtx()
   local Xm = X()
@@ -1173,6 +1292,11 @@ function Z:BuildRoute(P, yieldFn)
   local level, group = ctx.level or myLevel(), groupSize()
   self.fill = nil                                     -- jugé strictement : ta zone d'abord
   local A = self:Allowed()
+  if A.mode == "zones" and A.maps and not depth then
+    local allCity = next(A.maps) ~= nil
+    for m in pairs(A.maps) do if not Z.IsCity(m) then allCity = false end end
+    if allCity then return self:FallbackAuto(P, yieldFn, A, "ville") end
+  end
   -- (ZONEFIX) zone auto : ta zone seule ; ses voisines jugées à part, seulement pour la compléter si elle est vide
   local AN
   if A.mode == "auto" and A.maps and A.nb and next(A.nb) then
@@ -1366,6 +1490,12 @@ function Z:BuildRoute(P, yieldFn)
     far, masked.zone = keepFar, (#keepMask > 0) and keepMask or nil
     tsort(fillNames)
   end
+  if A.mode == "zones" and not depth then
+    -- rien de faisable = aucun arrêt avec un lieu (des arrêts sans position ne font pas un trajet : « 1er : aucun »)
+    local placed = false
+    for _, r in ipairs(requests) do for _, s2 in ipairs(r.steps) do if s2.x then placed = true break end end if placed then break end end
+    if not placed then return self:FallbackAuto(P, yieldFn, A, "vide") end
+  end
   local Rt = T.Route                                  -- trop dures / trop loin → proposition (Route.lua)
   if Rt and Rt.FilterRequests and Rt:IsEnabled() and not equal then
     local ok, res = pcall(Rt.FilterRequests, Rt, requests, recs, log, ctx)
@@ -1386,48 +1516,77 @@ function Z:BuildRoute(P, yieldFn)
   local cap = tonumber(try(C("C_QuestLog", "GetMaxNumQuestsCanAccept"))) or 20
   local logCount = 0
   for _ in pairs(log) do logCount = logCount + 1 end
-  local first = makeFirst(leg, start)
-  -- (QA-QUEST F1) la pierre de foyer seulement quand RIEN n'est à moins de 5 min d'ici (sinon : foyer → Orgrimmar →
-  -- vol → petite quête → vol retour, alors que la zone de quêtes est à 4 min à pied) ; Route l'affiche pareil
-  self.noHearth = nil
-  self.hearthAny = (bmode == "turnin") or nil
-  if first and start and not self.hearthAny then
-    for _, nd in ipairs(nodes) do
-      if nd.x and leg(start, nd) <= 300 then first, self.noHearth = nil, true break end
-    end
-  end
-  local legN = function(a, b) return leg(a, b) end
-  if self.hearthAny and first then                   -- (QUESTS 4.1) rendre : la pierre de foyer compte à chaque étape
-    local Rh = T.Route
-    local bind = Rh and Rh.BindPlace and try(Rh.BindPlace)
-    local D = T.Data and T.Data.Travel
-    if type(bind) == "table" and bind.map and bind.x then
-      local hs = ((D and D.hearthCast) or 10) + ((D and D.hearthLoad) or 5)
-      local b = { map = bind.map, x = bind.x, y = bind.y }
-      legN = function(a, c) return min(leg(a, c), hs + leg(b, c)) end
-    end
-  end
+  -- (4.2 ROUTE42) l'ordre = le solveur de Route appelé DIRECTEMENT (exact ≤ 10 arrêts, heuristique au-delà) sur une matrice
+  -- SANS foyer + D.hs (pierre de foyer une seule fois, au meilleur trajet, ≥ 20 s gagnées) — plus de règle « pas de foyer
+  -- si un arrêt est à moins de 5 min » (noHearth) ni de foyer compté à chaque trajet en « Rendre » ; plus de pont
+  -- (Route.InstallEngine). Route coupé : l'ancien moteur (2-opt / Or-opt, foyer au 1er trajet).
+  local solver = Rt and Rt.Solve and Rt.OrderCost and Rt.IsEnabled and Rt:IsEnabled() or false
+  Z.hsGain = (not equal) and Z.HS_GAIN_ZONE or nil
+  self.solver = solver and "route" or "local"
+  local first = makeFirst(leg, start)                -- la graine gloutonne (et l'ancien moteur) : foyer au 1er trajet
   local st0 = start or { }
   local bondK = (style == "story") and 4 or 1.3
-  local ord = N.Greedy(nodes, st0, legN, { horizon = (style == "clear") and 60 or 40, cap = cap - 2, logCount = logCount,
+  local ord = N.Greedy(nodes, st0, leg, { horizon = (style == "clear") and 60 or 40, cap = cap - 2, logCount = logCount,
     yield = yieldFn, first = first, bond = function(a, b) return (a.theme and a.theme == b.theme) and bondK or 1 end })
-  local D = N.Matrix(nodes, ord, st0, legN, first, yieldFn)
+  local D
   local greedy = {}
   for i, v in ipairs(ord) do greedy[i] = v end
-  N.Improve(nodes, ord, D, yieldFn, 3)
+  if solver then
+    D = Z.SolverMatrix(nodes, ord, start, leg, yieldFn)
+    local out, _, _, how = Rt.Solve(nodes, ord, D, { cap = cap - 2, logCount = logCount, yield = yieldFn })
+    if out and #out == #ord then ord = out end
+    self.solveHow = how
+  else
+    D = N.Matrix(nodes, ord, st0, leg, first, yieldFn)
+    N.Improve(nodes, ord, D, yieldFn, 3)
+  end
+  local costOf = solver and function(o2) return (Rt.OrderCost(D, o2)) end or function(o2) return N.Cost(D, o2) end
+  local choose = solver and Rt.Choose or N.Choose
   -- (QUESTQA) 2-opt / Or-opt ne regardent que le chemin : jamais un « Prendre » qui ferait déborder le journal
   if not N.CapOK(nodes, ord, cap - 2, logCount) then ord = greedy end
   -- (ZONEFIX) « Par histoire » : une histoire / un camp d'un seul tenant (le 2-opt les avait remêlés)
   if style == "story" then ord = N.ThemeGroup(nodes, ord, cap - 2, logCount) end
-  local cost = N.Cost(D, ord)
+  local cost = costOf(ord)
   local kept = "new"
   if self.lastKeys and #ord > 1 then
     local old = N.Patch(nodes, ord, self.lastKeys, D)
     if old and not N.CapOK(nodes, old, cap - 2, logCount) then old = nil end
     if old then
-      local oc = N.Cost(D, old)
-      kept = N.Choose(cost, oc)
+      local oc = costOf(old)
+      kept = choose(cost, oc)
       if kept == "old" then ord, cost = old, oc end
+    end
+  end
+  -- (4.2 ROUTE42) quêtes à prendre EN CHEMIN (Route.InsertOptional) : une quête disponible dont le PNJ est sur le trajet est
+  -- prise en passant quand le détour (trajet en plus + 15 s) vaut moins que ce qu'elle rapporte au rythme du trajet — jamais
+  -- un aller-retour plus tard ; journal jamais plein ; seulement les prises (ses objectifs viendront avec le trajet suivant)
+  self.onWayPicks = nil
+  if solver and Rt.InsertOptional and start and #ord > 0 and bmode ~= "pickup" and opt("pickOnWay") ~= false then
+    local cands = self:OptionalPicks(nodes, ord, recs, log, requests, level, group, ctx, P, A)
+    if #cands > 0 then
+      local base = {}
+      for _, c in ipairs(cands) do
+        nodes[#nodes + 1] = c
+        base[#base + 1] = #nodes
+      end
+      Z.ExtendMatrix(D, nodes, ord, base, start, leg, yieldFn)
+      local xpSum = 0
+      for _, i in ipairs(ord) do for _, s in ipairs(nodes[i].steps) do xpSum = xpSum + (s.xp or 0) end end
+      local tt = costOf(ord)
+      for _, i in ipairs(ord) do tt = tt + (nodes[i].svc or 0) end
+      local rate = xpSum / max(60, tt)
+      local before = {}
+      for i, v in ipairs(ord) do before[i] = v end
+      local _, added = Rt.InsertOptional(nodes, ord, D, base, rate, { maxDetour = Z.PICK_DETOUR_S })
+      if #added > 0 and not N.CapOK(nodes, ord, cap - 2, logCount) then ord, added = before, {} end
+      if #added > 0 then
+        self.onWayPicks = {}
+        for _, ad in ipairs(added) do
+          local nd = nodes[ad.i]
+          for _, s2 in ipairs(nd.steps) do s2.onWay, s2.opt = true, true end
+          self.onWayPicks[#self.onWayPicks + 1] = { q = nd.steps[1].q, detour = ad.detour }
+        end
+      end
     end
   end
   -- (QUESTS 4.1) « Avec le groupe » : les quêtes que le groupe a aussi, d'un seul tenant, avant les autres (le 2-opt ne voit
@@ -1438,6 +1597,26 @@ function Z:BuildRoute(P, yieldFn)
     ord = N.TimersFirst(nodes, ord, shared, cap - 2, logCount)
   end
   ord = N.NearFirst(nodes, ord, start, worldDist, N.NEAR, cap - 2, logCount)
+  -- (4.2 ROUTE42) « pas être à un endroit sans avoir pris une quête » : dans un camp / une ville (≥ 2 PNJ « ! » à moins de
+  -- N.HUB_PICK yd), les bonnes quêtes à prendre ici passent devant — on ne repart pas pour revenir les chercher
+  self.hubPicks = nil
+  if start and start.x then
+    local hubN = 0
+    for _, i in ipairs(ord) do
+      local nd = nodes[i]
+      if nd.x and N.HasPick(nd) then
+        local d = worldDist(start, nd)
+        if d and d <= N.HUB_PICK then hubN = hubN + #nd.steps end
+      end
+    end
+    if hubN >= 2 then
+      local before = ord
+      ord = N.NearFirst(nodes, ord, start, worldDist, N.HUB_PICK, cap - 2, logCount, "pick")
+      if ord ~= before then self.hubPicks = hubN end
+      -- rendre à portée de main d'abord (une remise peut ouvrir la suite chez le même PNJ), puis prendre
+      ord = N.NearFirst(nodes, ord, start, worldDist, N.NEAR, cap - 2, logCount, "turn")
+    end
+  end
   ord = N.PositionlessLast(nodes, ord, cap - 2, logCount)   -- (QA-QUEST F10) sans lieu connu : au bout
   -- (QA-QUEST F2) chrono en cours : ses arrêts d'abord (le bonus du glouton ne survit pas au 2-opt / Or-opt, à
   -- l'hystérésis ni à NearFirst, qui ne voient que le chemin) ; précédences et journal gardés
@@ -1716,6 +1895,11 @@ function Z:PickZone(map, by)
   local ch = self.char
   map = tonumber(map)
   if not (ch and map) then return false end
+  if Z.IsCity(map) then                              -- (4.2 ROUTE42) une ville n'est pas une zone de quêtes (courses en ville)
+    self.fallbackNote = { text = cut(Z.MapName(map), 24) .. " : une ville n'est pas une zone de quêtes → zone actuelle",
+      at = tonumber(try(G("GetTime"))) or 0 }
+    return false
+  end
   ch.zoneBy = (by == "brain") and "brain" or "player"      -- (ZONEFIX) qui l'a choisie (pilote auto ou joueur)
   ch.mode, ch.zones = "zones", { [map] = true }
   self.lastKeys, self._lastAllowed = nil, nil
@@ -2169,6 +2353,15 @@ function Z:HeadLines()
   if not self:IsEnabled() then return {} end
   local A = self._lastAllowed or self:Allowed()
   local out = {}
+  if self.hubPicks and self.hubPicks >= 2 then         -- (4.2 ROUTE42) les quêtes d'ici d'abord
+    out[#out + 1] = { text = fmt("Prends ici : %d quêtes", self.hubPicks), prio = 2, id = "zone:hubpicks",
+      tooltip = "Les PNJ « ! » à côté de toi passent en tête du trajet : on ne repart pas pour revenir les chercher" }
+  end
+  local fb = self.fallbackNote                       -- (4.2 ROUTE42) zone choisie vide / ville → retour à ta zone (2 min)
+  if fb and (tonumber(try(G("GetTime"))) or 0) - (fb.at or 0) < 120 then
+    out[#out + 1] = { text = fb.text, prio = 2, id = "zone:fallback", tooltip = "Clic : choisir une autre zone",
+      onClick = function() Z:ShowZoneMenu() end }
+  end
   local P = T.Planner
   local file = P and P.src == "file"
   -- (QUESTS 4.1) « Que faire » : les quatre modes du cerveau des quêtes, un clic (menu) — « Rendre mes quêtes » est ici

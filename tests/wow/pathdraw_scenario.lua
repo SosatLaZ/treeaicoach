@@ -49,13 +49,14 @@ return function(M, ctx)
     for i = 1, select("#", ...) do for k, v in pairs((select(i, ...))) do o[k] = v end end
     return o
   end)
-  check(PD.AttachMap() and provider and PD.mapEngine == "provider", "world map: data provider attached (Blizzard pattern)")
+  PD._mapHooked = nil
+  check(PD.AttachMap() and not provider and PD.mapEngine == "canvas", "(4.2) world map: layer inside the map canvas, no data provider")
   local wmPoints, wmScripts = #wm.__points, 0
   for _ in pairs(wm.__scripts) do wmScripts = wmScripts + 1 end
 
   -- line objects: record start / end points on our own canvas
   local cv = PD.canvas
-  check(cv and PD.view and cv:GetParent() == PD.view and PD.view:GetParent() == UIParent, "overlay = our frames under UIParent")
+  check(cv and PD.view and cv == PD.view and PD.view:GetParent() == child and T.MapCanvas.InMap(cv), "(4.2) our layer = child of the map canvas (never on UIParent)")
   local mkLine = cv.CreateLine
   cv.CreateLine = function(self, ...)
     local l = mkLine(self, ...)
@@ -68,8 +69,7 @@ return function(M, ctx)
 
   -- ------------------------------------------------------------- no route → nothing
   P.steps, P.cursor, P.route = nil, nil, nil
-  wm.__shown = true
-  provider.OnShow()
+  wm:Show()
   M.Advance(0.5, 0.1)
   check(PD.badgesShown == 0 and PD.segments == 0, "no route: world map overlay empty")
   M.Advance(0.5, 0.2)
@@ -94,8 +94,8 @@ return function(M, ctx)
   local st = PD.Stops()
   check(st and #st == 4 and st[3].kind == "fly", "Route:Stops = 4 stops (3rd = flight): " .. tostring(st and #st))
   M.Advance(0.4, 0.1)
-  check(PD.segments == 3 and PD.badgesShown == 4, ("world map: 3 segments + 4 badges (%d, %d)"):format(PD.segments, PD.badgesShown))
-  check(PD._lines == true and PD.dashesShown >= 3, "segments drawn as dashed Line objects: " .. tostring(PD.dashesShown))
+  check(PD.segments == 4 and PD.badgesShown == 4, ("world map: current leg + 3 segments + 4 badges (%d, %d)"):format(PD.segments, PD.badgesShown))
+  check(PD._lines == true and PD.dashesShown >= 4, "segments drawn as dashed Line objects: " .. tostring(PD.dashesShown))
   local b = PD.badges
   local texts = {}
   for i = 1, 4 do texts[i] = b[i] and b[i].text:GetText() end
@@ -106,30 +106,33 @@ return function(M, ctx)
   check(b[3].icon:IsShown() and tostring(b[3].icon:GetTexture()):find("Taxi") and not b[1].icon:IsShown(),
     "flight stop has a transport icon, quest stops do not")
   local d1 = PD.dashes[1] and PD.dashes[1].obj
-  check(d1 and d1.sp and d1.sp[1] == cv and near(d1.sp[2], 480, 1e-6) and d1.th == 3 and d1.rgba,
-    "first dash starts on badge 1, thickness 3, coloured")
-  check(PD.view:IsShown() and #wm.__points == wmPoints, "overlay shown; WorldMapFrame never anchored / moved")
+  check(d1 and d1.sp and d1.sp[1] == cv and near(d1.sp[2], 450, 1e-6) and d1.th == 4 and d1.rgba and near(d1.rgba[2], 0.82),
+    "(4.2) first dash = the current leg from the player (45 %), thicker, gold (« PNJ à voir »: stop 1 is a quest giver)")
+  local dl = PD.dashes[PD.dashesShown] and PD.dashes[PD.dashesShown].obj
+  check(dl and dl.th == 3 and dl.rgba and near(dl.rgba[2], 1), "later legs: thickness 3, the chosen colour")
+  check(PD.view:IsVisible() and #wm.__points == wmPoints, "layer shown with the map; WorldMapFrame never anchored / moved")
   local n2 = 0
   for _ in pairs(wm.__scripts) do n2 = n2 + 1 end
-  check(n2 == wmScripts, "no script set / hooked on WorldMapFrame with the data provider")
+  check(n2 == wmScripts, "no script set / hooked on WorldMapFrame")
 
   -- options : couleur / épaisseur / carte off
   PD.db.width, PD.db.color = 5, 2
   PD:OnOptionChanged()
   M.Advance(0.3, 0.1)
-  check(d1.th == 5 and near(d1.rgba[1], 1) and near(d1.rgba[2], 0.85), "option épaisseur 5 + couleur jaune applied")
+  dl = PD.dashes[PD.dashesShown] and PD.dashes[PD.dashesShown].obj
+  check(dl and dl.th == 5 and near(dl.rgba[1], 1) and near(dl.rgba[2], 0.85) and d1.th == 6 and near(d1.rgba[2], 0.5),
+    "option épaisseur 5 + couleur jaune applied (« PNJ à voir » turns orange next to yellow)")
   PD.db.map = false
   PD:OnOptionChanged()
   check(PD.badgesShown == 0 and PD.segments == 0, "« carte » off → nothing on the world map")
   PD.db.map, PD.db.width, PD.db.color = true, 3, 1
   PD:OnOptionChanged()
-  check(PD.segments == 3, "back on")
+  check(PD.segments == 4, "back on")
   local nDash = #PD.dashes
 
   -- ------------------------------------------------------------- minimap trail
   wm.__shown = false
-  provider.OnHide()
-  check(not PD.view:IsShown(), "map closed → overlay hidden")
+  check(not PD.view:IsVisible(), "map closed → layer hidden with it")
   M.Advance(0.6, 0.2)
   check(PD.dotsShown > 0 and PD.trail and PD.trail:GetParent() == Minimap, "minimap trail drawn on our child of Minimap: " .. PD.dotsShown)
   local mmPoints, mmScripts = #Minimap.__points, 0
@@ -165,8 +168,7 @@ return function(M, ctx)
   M.EnterCombat()
   M.speed = 7
   for k = 1, 10 do M.pos = { mapID = 1424, x = 0.47 - k * 0.0004, y = 0.41 } M.Advance(0.2, 0.2) end
-  wm.__shown = true
-  provider.OnShow()
+  wm:Show()
   M.Advance(0.4, 0.2)
   check(#M.blocked == 0, "combat: zero blocked actions (" .. #M.blocked .. ")")
   M.LeaveCombat()
@@ -178,7 +180,7 @@ return function(M, ctx)
   rawset(_G, "ShortestPathForever", { API = { NavigateRoute = function() end } })
   TreeAI:SetGuideMode("auto")
   M.Advance(1.2, 0.2)
-  check(PD.dotsShown == 0 and PD.segments == 3, "SPF guiding: minimap trail off, world map still drawn")
+  check(PD.dotsShown == 0 and PD.segments == 4, "SPF guiding: minimap trail off, world map still drawn")
   PD.db.minimapSPF = true
   PD:OnOptionChanged()
   M.Advance(0.4, 0.2)
@@ -190,6 +192,7 @@ return function(M, ctx)
 
   -- route cleared → everything hidden, pool kept
   P.steps, P.cursor = nil, nil
+  T:Fire("PLAN_BUILT")
   M.Advance(0.4, 0.2)
   local anyDot = false
   for _, d in ipairs(PD.dots) do if d:IsShown() then anyDot = true end end
@@ -198,7 +201,6 @@ return function(M, ctx)
   check(PD.dotsShown == 0 and not anyDot and PD.badgesShown == 0 and not anyBadge, "no route → trail + badges hidden")
   check(#PD.dashes == nDash, "dash pool kept (no leak)")
   wm.__shown = false
-  provider.OnHide()
   check(#M.blocked == 0, "zero blocked actions overall")
   check(PD.Status():find("^Chemin : "), "status: " .. PD.Status())
   -- client without Line objects → dotted textures instead of dashes
@@ -210,15 +212,13 @@ return function(M, ctx)
   for i, s0 in ipairs(steps) do fresh[i] = { k = s0.k, q = s0.q, o = s0.o, map = s0.map, x = s0.x, y = s0.y, label = s0.label } end
   P.route.steps = fresh
   P.steps, P.cursor = fresh, 1
-  wm.__shown = true
-  provider.OnShow()
+  wm:Show()
   M.Advance(0.4, 0.1)
   local dd = PD.dashes[1]
-  check(PD.segments == 3 and PD._lines == false and dd and not dd.line and dd.obj:GetObjectType() == "Texture"
-    and dd.obj.__points[1] and dd.obj.__points[1][2] == cv, "no CreateLine → 3 dotted segments with textures: " .. tostring(PD.segments)
+  check(PD.segments == 4 and PD._lines == false and dd and not dd.line and dd.obj:GetObjectType() == "Texture"
+    and dd.obj.__points[1] and dd.obj.__points[1][2] == cv, "no CreateLine → 4 dotted segments with textures: " .. tostring(PD.segments)
     .. " " .. tostring(PD._lines) .. " " .. tostring(dd and dd.obj:GetObjectType()))
   wm.__shown = false
-  provider.OnHide()
   P.steps, P.cursor = nil, nil
   rawset(_G, "MapCanvasDataProviderMixin", nil)
   if not hadMixins then rawset(_G, "CreateFromMixins", nil) end

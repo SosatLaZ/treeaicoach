@@ -2580,34 +2580,18 @@ local mview, mcanvas
 local mapPins = {}
 CR.mapPins = mapPins
 CR.mapShown, CR.mapRedraws = 0, 0
-local function wmParts()
-  local wm = g("WorldMapFrame")
-  if type(wm) ~= "table" then return nil end
-  local sc = wm.ScrollContainer
-  local child = type(sc) == "table" and sc.Child or nil
-  if type(child) ~= "table" then return nil end
-  return wm, sc, child
-end
-local function rectOf(f)
-  local l, b = num(try(f.GetLeft, f)), num(try(f.GetBottom, f))
-  local w, h = num(try(f.GetWidth, f)), num(try(f.GetHeight, f))
-  if not (l and b and w and h) or w <= 0 or h <= 0 then return nil end
-  local es = num(try(f.GetEffectiveScale, f)) or 1
-  local up = g("UIParent")
-  local us = up and num(try(up.GetEffectiveScale, up)) or 1
-  local s = es / (us > 0 and us or 1)
-  return l * s, b * s, w * s, h * s
-end
+-- (4.2 ROUTE42) épingles DANS la carte : un calque enfant de son canevas (T.MapCanvas, PathDraw.lua) — elles glissent et
+-- zooment avec elle, coupées à son bord, cachées quand elle se ferme ; aucun fournisseur de données (contamine la manette
+-- sur Forever), aucun cadre sur UIParent par-dessus la carte ; souris seulement sur les épingles
+local function MCv() local m = T.MapCanvas return type(m) == "table" and type(m.Layer) == "function" and m or nil end
 local function ensureMapCanvas()
   if mview then return mview end
-  local CF, up = g("CreateFrame"), g("UIParent")
-  if not (CF and up) or inCombat() then return nil end
-  mview = CF("Frame", nil, up)                 -- NOTRE cadre, enfant d'UIParent, jamais ancré sur la carte
-  try(mview.EnableMouse, mview, false)
-  try(mview.SetClipsChildren, mview, true)
-  mview:Hide()
-  mcanvas = CF("Frame", nil, mview)
-  try(mcanvas.EnableMouse, mcanvas, false)
+  local MC = MCv()
+  if not MC or inCombat() then return nil end
+  mview = MC.Layer()
+  if not mview then return nil end
+  mview._lvl = 3                                   -- au-dessus du chemin et des icônes de quêtes
+  mcanvas = mview
   CR.mview, CR.mcanvas = mview, mcanvas
   return mview
 end
@@ -2616,20 +2600,11 @@ function CR.ClearMap()
   CR.mapShown = 0
 end
 function CR.DrawMap()
-  local wm, sc, child = wmParts()
-  if not (wm and ensureMapCanvas()) then return end
-  if not (CR.PinsOn() and try(wm.IsShown, wm)) then CR.ClearMap() if mview:IsShown() then mview:Hide() end return end
-  local mapID = num(try(wm.GetMapID, wm))
-  local vl, vb, vw, vh = rectOf(sc)
-  local cl, cb, cw, ch = rectOf(child)
-  if not (mapID and vl and cl) then CR.ClearMap() return end
+  if not ensureMapCanvas() then return end
+  if not CR.PinsOn() then CR.ClearMap() return end
+  local mapID, cw, ch = MCv().Fit(mview)
+  if not (mapID and cw) then CR.ClearMap() return end
   CR.mapRedraws = CR.mapRedraws + 1
-  mview:ClearAllPoints()
-  mview:SetPoint("BOTTOMLEFT", g("UIParent"), "BOTTOMLEFT", vl, vb)
-  mview:SetSize(vw, vh)
-  mcanvas:ClearAllPoints()
-  mcanvas:SetPoint("BOTTOMLEFT", g("UIParent"), "BOTTOMLEFT", cl, cb)
-  mcanvas:SetSize(cw, ch)
   local list = CR.PinList(mapID)
   local used = 0
   for _, pin in ipairs(list) do
@@ -2644,49 +2619,30 @@ function CR.DrawMap()
   end
   for i = used + 1, #mapPins do local b = mapPins[i] if b:IsShown() then b:Hide() end b.pin = nil end
   CR.mapShown = used
-  try(mview.SetFrameStrata, mview, try(wm.GetFrameStrata, wm) or "HIGH")
-  try(mview.SetFrameLevel, mview, min(9000, (num(try(wm.GetFrameLevel, wm)) or 1) + 160))
-  if used > 0 then if not mview:IsShown() then mview:Show() end elseif mview:IsShown() then mview:Hide() end
 end
--- les événements de la carte arrivent par rafales : un drapeau, une passe à l'image suivante, puis plus rien
-local mapDirty = false
+-- prévenu par la carte (affichée, autre carte, zoom : T.MapCanvas.Watch) ou par la liste (CR.MapDirty) ; un dessin
+-- seulement si la carte affichée, le zoom, la taille ou la liste a changé
+local mk = {}
 local function mapOnUpdate()
-  if not mapDirty then mview:SetScript("OnUpdate", nil) return end
-  mapDirty = false
-  pcall(CR.DrawMap)
+  if not CR._active then return end
+  local id, cs, cw, ch = MCv().Key()
+  if not id then return end
+  if mk.dirty or id ~= mk.id or cs ~= mk.cs or cw ~= mk.w or ch ~= mk.h then
+    mk.id, mk.cs, mk.w, mk.h, mk.dirty = id, cs, cw, ch, false
+    pcall(CR.DrawMap)
+  end
 end
 function CR.MapDirty()
-  mapDirty = true
-  if mview then mview:SetScript("OnUpdate", mapOnUpdate) end
+  mk.dirty = true
+  if mview and mview:IsVisible() then mapOnUpdate() end
 end
-function CR.MapHidden()
-  mapDirty = false
-  if mview then mview:SetScript("OnUpdate", nil) if mview:IsShown() then mview:Hide() end end
-end
+function CR.MapHidden() end                         -- le calque se cache avec la carte
 function CR.AttachMap()
   if CR._mapHooked then return true end
-  local wm = wmParts()
-  if not wm then return false end
-  ensureMapCanvas()
-  local mk, mixin = g("CreateFromMixins"), g("MapCanvasDataProviderMixin")
-  if type(wm.AddDataProvider) == "function" and type(mk) == "function" and type(mixin) == "table" then
-    local pr = try(mk, mixin)
-    if type(pr) == "table" then
-      local function dirty() CR.MapDirty() end
-      pr.RefreshAllData, pr.OnMapChanged, pr.OnCanvasScaleChanged, pr.OnCanvasSizeChanged, pr.OnCanvasPanChanged = dirty, dirty, dirty, dirty, dirty
-      pr.RemoveAllData = function() CR.ClearMap() end
-      pr.OnShow = function() pcall(CR.DrawMap) end
-      pr.OnHide = function() CR.MapHidden() end
-      if pcall(wm.AddDataProvider, wm, pr) then CR._mapHooked, CR.mapEngine, CR.provider = true, "provider", pr return true end
-    end
-  end
-  if type(wm.HookScript) == "function" then
-    pcall(wm.HookScript, wm, "OnShow", function() if CR._active then pcall(CR.DrawMap) end end)
-    pcall(wm.HookScript, wm, "OnHide", function() CR.MapHidden() end)
-    CR._mapHooked, CR.mapEngine = true, "hook"
-    return true
-  end
-  return false
+  if not ensureMapCanvas() then return false end
+  MCv().Watch(mview, function() if mview:IsVisible() then mapOnUpdate() end end)
+  CR._mapHooked, CR.mapEngine = true, "canvas"
+  return true
 end
 -- ------------------------------------------------------------------ minimap
 local miniPins = {}
@@ -2773,8 +2729,7 @@ function CR.PinsDirty()
   CR.pinGen = (CR.pinGen or 0) + 1
   pinCache.key = nil
   if not CR._active then return end
-  local wm = wmParts()
-  if wm and try(wm.IsShown, wm) then CR.MapDirty() end
+  CR.MapDirty()                                       -- (redessiné à la prochaine image si la carte est ouverte)
   pcall(CR.DrawMini)
 end
 --- bouton « Points métiers sur la carte : oui / non » (page Métiers)

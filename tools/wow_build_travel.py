@@ -69,12 +69,14 @@ def build() -> str:
         "-- Position monde { continent, x (nord), y (ouest) } = repère de UnitPosition ; map/mx/my = carte de zone en %.",
         "-- docks[id] = { nom, c, x, y, map, mx, my } · lines = { { type, faction|false, période s, { {de, vers, traversée s}, … } } }",
         "-- taxi[nodeID] = { nom, c, x, y, map, mx, my, faction } · flights = { {de, vers, secondes}, … } (vols directs)",
+        "-- lifts = { { type (elevator|tram), nom A, nom B, c, Ax, Ay, Bx, By, période s, trajet s, mapA, mxA, myA, mapB, mxB, myB }, … }",
+        "--   (ascenseurs / tram : seulement des lieux mesurés ; liste à faire dans treeaicoach/wow/planner/transport.py, LIFTS)",
         "local T = TreeAI",
         'if type(T) ~= "table" then return end',
         "T.Data = T.Data or {}",
         "T.Data.Travel = {",
         f"  build = {q(tx.get('build', ''))}, walk = {TR.WALK}, detour = {TR.DETOUR}, board = {TR.FLY_BOARD},",
-        f"  hearthCast = {TR.HEARTH_CAST}, hearthLoad = {TR.HEARTH_LOAD}, minGain = {TR.MIN_GAIN},",
+        f"  hearthCast = {TR.HEARTH_CAST}, hearthLoad = {TR.HEARTH_LOAD}, minGain = {TR.MIN_GAIN}, hearthGain = {TR.HEARTH_GAIN},",
         "  docks = {",
     ]
     for d, (name, c, x, y) in sorted(TR.DOCKS.items()):
@@ -85,6 +87,13 @@ def build() -> str:
     for kind, fac, period, legs in TR.LINES:
         ls = ", ".join(f"{{ {a}, {b}, {cross:g} }}" for a, b, cross in legs)
         out.append(f"    {{ {q(kind)}, {q(fac) if fac else 'false'}, {period:g}, {{ {ls} }} }},")
+    out.append("  },")
+    out.append("  lifts = {")
+    for kind, na, nb, c, ax, ay, bx, by, period, ride in TR.LIFTS:
+        ma, mxa, mya = zone_of(maps, c, ax, ay, na)
+        mb, mxb, myb = zone_of(maps, c, bx, by, nb)
+        out.append(f"    {{ {q(kind)}, {q(na)}, {q(nb)}, {c}, {ax}, {ay}, {bx}, {by}, {period:g}, {ride:g}, "
+                   f"{ma}, {mxa}, {mya}, {mb}, {mxb}, {myb} }},")
     out.append("  },")
     out.append("  taxi = {")
     nodes = tx.get("nodes") or {}

@@ -342,7 +342,7 @@ return function(M, ctx)
     "F1: flats 1,3 km away → walk there, never « hearth → Orgrimmar → fly » first: " .. stopsText())
   local hs3 = false
   for i, e in ipairs(R:Stops(64)) do if i <= 4 and e.kind == "hs" then hs3 = true end end
-  check(not hs3 and Z.noHearth == true, "F1: built and shown without the hearth (a stop ≤ 5 min away)")
+  check(not hs3, "F1: built and shown without the hearth (a stop ≤ 5 min away: walking wins, 4.2 = the exact cost decides)")
   if VARIANT == "noquestie" then
     -- F10: positionless stops judged on their quest's zone (Ashenvale / Thunder Bluff quests stay out), and after
     -- the stops with a place; the game's waypoint of an unfinished quest is its objective, not its turn-in

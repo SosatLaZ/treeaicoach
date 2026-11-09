@@ -12,6 +12,10 @@
 --    d'objectif tenues (hold + radius + questID) et itinéraire renvoyé quand une étape est faite.
 --  * Tri des quêtes avant le calcul : trop loin / trop dures (niveau, élite en solo) → « Garde 6 quêtes,
 --    mets-en 3 de côté (trop loin) » ; un clic adopte (ces quêtes sortent du trajet, rien n'est abandonné).
+--  * (4.2 ROUTE42) chaque arrêt en étapes chronométrées (R.SubSteps / R.Block : « 1. Marcher jusqu'au maître de vol 0:21 »,
+--    l'en-tête = la somme des temps affichés, « environ » si non mesuré) ; départs de bateau VUS au quai (« part dans 1:40 ») ;
+--    ascenseurs / tram comme arêtes (données mesurées seulement) ; foyer seulement s'il fait gagner ≥ 20 s ; hystérésis
+--    min(10 %, 30 s) ; arrêts fusionnés chez SPF (questIDs, handins, Subscribe) ; repère natif du jeu sur un clic (option).
 -- Guidage UNIQUEMENT sur clic, jamais en combat ; aucune fonction protégée, aucun cadre de Blizzard touché.
 -- Lua 5.1, aucune globale.
 local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
@@ -20,14 +24,15 @@ if not (T and T.RegisterModule) then return end
 
 local R = T:RegisterModule("Route", {
   title = "Itinéraire",
-  defaults = { enabled = true, spf = true, filter = true, hearth = true, transports = true, farMin = 10 },
-  charDefaults = { paused = false, drop = {}, dropLevel = 0, bind = {}, taxi = {} },
+  defaults = { enabled = true, spf = true, filter = true, hearth = true, transports = true, farMin = 10, waypoint = false },
+  charDefaults = { paused = false, drop = {}, dropLevel = 0, bind = {}, taxi = {}, boat = {} },
   options = {
     { key = "transports", type = "toggle", label = "Chemin le plus rapide : vols, bateaux, zeppelins" },
     { key = "hearth", type = "toggle", label = "Compter la pierre de foyer quand elle est prête" },
     { key = "spf", type = "toggle", label = "« Suivre ce trajet » dans Shortest Path Forever (s'il est installé)" },
     { key = "filter", type = "toggle", label = "Proposer de laisser les quêtes trop loin / trop dures" },
     { key = "farMin", type = "range", label = "Trop loin au-delà de (minutes de trajet)", min = 5, max = 30, step = 1 },
+    { key = "waypoint", type = "toggle", label = "Repère du jeu à la fin de l'étape en cours (marqueur au centre de l'écran)" },
   },
 })
 T.Route = R
@@ -114,7 +119,15 @@ function R.BuildHubs(faction, known, o)
   for id, r in pairs(D.docks or {}) do
     pl[#pl + 1] = { kind = "dock", id = id, name = R.PlaceName("dock", id, r), c = r[2], n = r[3], w = r[4], map = r[5], x = r[6], y = r[7] }
   end
-  tsort(pl, function(a, b) if a.kind ~= b.kind then return a.kind == "taxi" end return a.id < b.id end)
+  -- (4.2 ROUTE42) ascenseurs / tram : les deux bouts de chaque ligne (Data/Travel.lua lifts — seulement des lieux mesurés)
+  for li, r in ipairs(D.lifts or {}) do
+    if tonumber(r[4]) and tonumber(r[5]) and tonumber(r[7]) then
+      pl[#pl + 1] = { kind = "lift", id = li * 2 - 1, li = li, name = r[2], c = r[4], n = r[5], w = r[6], map = r[11], x = r[12], y = r[13] }
+      pl[#pl + 1] = { kind = "lift", id = li * 2, li = li, name = r[3], c = r[4], n = r[7], w = r[8], map = r[14], x = r[15], y = r[16] }
+    end
+  end
+  local RANK = { taxi = 1, dock = 2, lift = 3 }
+  tsort(pl, function(a, b) if a.kind ~= b.kind then return RANK[a.kind] < RANK[b.kind] end return a.id < b.id end)
   for i, p in ipairs(pl) do idx[p.kind .. p.id] = i end
   local m = #pl
   local H, nxt, mode = {}, {}, {}
@@ -184,6 +197,14 @@ function R.BuildHubs(faction, known, o)
       end
     end
   end
+  for li, r in ipairs(D.lifts or {}) do
+    local a, b = idx["lift" .. (li * 2 - 1)], idx["lift" .. (li * 2)]
+    local s = (tonumber(r[9]) or 0) / 2 + (tonumber(r[10]) or 0)       -- attente moyenne (demi-période) + trajet
+    if a and b then
+      if s < H[a][b] then H[a][b], nxt[a][b], mode[a][b] = s, b, r[1] end
+      if s < H[b][a] then H[b][a], nxt[b][a], mode[b][a] = s, a, r[1] end
+    end
+  end
   for k = 1, m do
     local Hk = H[k]
     for i = 1, m do
@@ -198,7 +219,8 @@ function R.BuildHubs(faction, known, o)
     end
   end
   return { pl = pl, H = H, nxt = nxt, mode = mode, speed = speed, detour = detour, minGain = D.minGain or 30,
-           hs = (D.hearthCast or 10) + (D.hearthLoad or 5), detourOf = o.detourOf, mountUp = o.mountUp, learned = o.learned }
+           hs = (D.hearthCast or 10) + (D.hearthLoad or 5), hsGain = D.hearthGain or R.HS_GAIN, detourOf = o.detourOf,
+           mountUp = o.mountUp, learned = o.learned, flown = o.flights or {} }
 end
 
 -- (ROUTEFIX) marche = distance × détour DE LA ZONE du point d'arrivée (relief : NavTime, appris > a priori) ÷ vitesse
@@ -264,6 +286,15 @@ local function hubLegs(g, legs, from, bi, bj, b)
     local s = (mode == "walk") and walkS(g, a, c) or g.H[i][k]
     -- H[i][k] after Floyd is the best i→k; for a direct edge it is the edge itself
     pushLeg(legs, mode, s, c, mode == "walk" and sqrt((a.n - c.n) ^ 2 + (a.w - c.w) ^ 2) or 0)
+    if mode ~= "walk" then
+      -- (4.2 ROUTE42) départ du transport (maître de vol, quai, ascenseur) et « prouvé ou environ » : vol chronométré par
+      -- toi, ou durée des tables ; bateau / zeppelin : attente moyenne tant que le départ n'a pas été vu
+      local lg = legs[#legs]
+      lg.from, lg.fyd = a, (a.c == c.c) and sqrt((a.n - c.n) ^ 2 + (a.w - c.w) ^ 2) or 0
+      if mode == "fly" then lg.est = not (g.flown and g.flown[tostring(a.id) .. "-" .. tostring(c.id)])
+      elseif a.kind == "dock" then lg.dockA, lg.dockB, lg.est = a.id, c.id, true
+      elseif a.kind == "lift" then lg.li = a.li end
+    end
     i, guard = k, guard + 1
   end
   local pe = g.pl[bj]
@@ -315,6 +346,9 @@ end
 -- trajet auberge → j). Pur, testable (tests/wow/routefix_scenario.lua : comparé à la force brute).
 R.EXACT_N = 10
 R.HYST, R.HYST_MIN = 0.10, 30
+-- (4.2 ROUTE42) la pierre de foyer seulement si elle fait gagner au moins 20 s sur son trajet (Shortest Path : même règle) —
+-- le même seuil partout : ordre (R.Solve, R.OrderCost, force brute), affichage (hearthChoice), Python (solver.HEARTH_GAIN)
+R.HS_GAIN = 20
 local pow2 = {}
 do local p = 1 for k = 1, 31 do pow2[k] = p; p = p * 2 end end
 local function hasBit(mask, k) return floor(mask / pow2[k]) % 2 == 1 end
@@ -329,17 +363,20 @@ local function N_valid(nodes, ord)
   end
   return true
 end
--- garde l'ordre en place sauf gain réel : > 10 % du trajet et > 30 s
+-- (4.2 ROUTE42) garde l'ordre en place sauf gain réel : au moins min(10 % du trajet, 30 s) — la règle de Shortest Path
+-- (avant : > 10 % ET > 30 s, un trajet de 20 min devait gagner 2 min pour changer ; un trajet de 2 min, 30 s = 25 %) ;
+-- jamais pour moins de 3 s (arrondis)
 function R.Choose(newCost, oldCost)
   if not oldCost then return "new" end
   local gain = oldCost - newCost
-  if gain > R.HYST_MIN and gain > R.HYST * oldCost then return "new" end
+  if gain >= 3 and gain >= min(R.HYST_MIN, R.HYST * oldCost) then return "new" end
   return "old"
 end
 -- contexte local d'un sous-ensemble d'arrêts (ord = indices de nodes) : coûts, précédences, journal
 local function orderCtx(nodes, ord, D, o)
   local n = #ord
-  local cx = { n = n, c0 = {}, c = {}, hs = nil, pred = {}, delta = {}, cap = o and o.cap, log = (o and o.logCount) or 0 }
+  local cx = { n = n, c0 = {}, c = {}, hs = nil, pred = {}, delta = {}, cap = o and o.cap, log = (o and o.logCount) or 0,
+    hsGain = tonumber(D.hsGain) or R.HS_GAIN }
   local hsT = D.hs
   if type(hsT) == "table" and next(hsT) then cx.hs = {} end
   for a = 1, n do
@@ -379,7 +416,7 @@ local function evalLocal(cx, seq)
     s = s + lg
     if hs then
       local save = lg - hs[k]
-      if save > best then best, at = save, i end
+      if save >= cx.hsGain and save > best then best, at = save, i end
     end
     prev = k
   end
@@ -425,7 +462,7 @@ local function heldKarp(cx, yield)
     if predM[k] == 0 and not (cap and cx.delta[k] > 0 and cx.log + cx.delta[k] > cap) then
       local m = pow2[k]
       dp[key(m, k, 0)] = c0[k]
-      if hs and hs[k] < huge then dp[key(m, k, 1)] = hs[k] end
+      if hs and hs[k] < huge and c0[k] - hs[k] >= cx.hsGain then dp[key(m, k, 1)] = hs[k] end
     end
   end
   local ops = 0
@@ -450,7 +487,7 @@ local function heldKarp(cx, yield)
                 local nv = v + cl[j]
                 local ov = dp[k1]
                 if not ov or nv < ov - 1e-9 then dp[k1], par[k1] = nv, key(mask, last, h) end
-                if h == 0 and hs and hs[j] < huge then
+                if h == 0 and hs and hs[j] < huge and cl[j] - hs[j] >= cx.hsGain then
                   local k2 = key(nm, j, 1)
                   local hv = v + hs[j]
                   local ov2 = dp[k2]
@@ -626,7 +663,8 @@ function R.InsertOptional(nodes, ord, D, optional, rate, o)
       table.insert(ord, at + 1, x)
       if N_valid(nodes, ord) then
         local c = R.OrderCost(D, ord) - base
-        if c < bestC then bestAt, bestC = at, c end
+        -- (4.2 ROUTE42) à égalité (même PNJ), la place la plus tardive : rendre d'abord, prendre ensuite
+        if c <= bestC + 1e-6 then bestAt, bestC = at, math.min(c, bestC) end
       end
       table.remove(ord, at + 1)
     end
@@ -643,12 +681,13 @@ end
 function R.OrderCost(D, ord)
   local s, best, at, prev = 0, 0, nil, 0
   local hs = type(D.hs) == "table" and D.hs or nil
+  local gain = tonumber(D.hsGain) or R.HS_GAIN
   for i, j in ipairs(ord) do
     local lg = (D[prev] and D[prev][j]) or 0
     s = s + lg
     if hs and hs[j] then
       local save = lg - hs[j]
-      if save > best then best, at = save, i end
+      if save >= gain and save > best then best, at = save, i end
     end
     prev = j
   end
@@ -684,70 +723,9 @@ function R.BruteForce(nodes, ord, D, o)
   rec(1)
   return bestSeq, best
 end
--- (ROUTEFIX) moteur du trajet par zone (ZonePlan.Engine) branché sur ce solveur : même contrat que ses fonctions
--- (Matrix → D, Improve(ord) en place, Cost, Choose), sans toucher au fichier de ZonePlan. Matrix : trajets SANS foyer
--- (Planner.Leg) + D.hs (foyer → arrêt) quand la pierre est prête et l'auberge connue ; Improve = R.Solve (exact ≤ 10
--- arrêts) ; Cost = coût exact (foyer une seule fois) ; Choose = > 10 % et > 30 s. Rien n'est remplacé deux fois.
-function R.InstallEngine(N)
-  if type(N) ~= "table" or N._routefix or type(N.Matrix) ~= "function" or type(N.Improve) ~= "function" then return false end
-  N._routefix = true
-  local oldMatrix, oldImprove, oldCost = N.Matrix, N.Improve, N.Cost
-  N._old = { Matrix = oldMatrix, Improve = oldImprove, Cost = oldCost, Choose = N.Choose }   -- (audit / tests)
-  N.Matrix = function(nodes, ord, start, leg, first, yield)
-    local P = T.Planner
-    local Zp = T.ZonePlan
-    if not (R:IsEnabled() and type(leg) == "function") then return oldMatrix(nodes, ord, start, leg, first, yield) end
-    -- le trajet donné par ZonePlan, sauf en « Rendre mes quêtes » où il compte le foyer à CHAQUE trajet : le trajet sans
-    -- foyer du Planner (le foyer est ajouté une seule fois, ci-dessous)
-    local plain = (Zp and Zp.hearthAny and P and type(P.Leg) == "function") and P.Leg or leg
-    local D = { [0] = {}, routefix = true }
-    for a = 1, #ord do
-      local na = nodes[ord[a]]
-      D[0][ord[a]] = (start and start.x) and plain(start, na) or (first and first(na)) or leg(start, na)
-      local row = {}
-      D[ord[a]] = row
-      for b = 1, #ord do
-        if a ~= b then row[ord[b]] = plain(na, nodes[ord[b]]) end
-        if yield then yield() end
-      end
-    end
-    -- pierre de foyer : ZonePlan l'a jugée prête (first) ou l'a retirée pour « un arrêt à moins de 5 min » (noHearth) ;
-    -- ici, le coût exact décide (une fois, au meilleur trajet)
-    if start and start.map and (first or (Zp and Zp.noHearth)) and opt("hearth") then
-      local bind = R.BindPlace()
-      local Dt = data()
-      if type(bind) == "table" and bind.map and bind.x then
-        local hsS = ((Dt and Dt.hearthCast) or 10) + ((Dt and Dt.hearthLoad) or 5)
-        local b = { map = bind.map, x = bind.x, y = bind.y }
-        D.hs = {}
-        for a = 1, #ord do
-          local nd = nodes[ord[a]]
-          if nd.x then D.hs[ord[a]] = hsS + plain(b, nd) end
-        end
-      end
-    end
-    local cap = tonumber(try(C("C_QuestLog", "GetMaxNumQuestsCanAccept"))) or 20
-    local lc = 0
-    for _ in pairs((P and P.log) or {}) do lc = lc + 1 end
-    D.cap, D.logCount = cap - 2, lc
-    return D
-  end
-  N.Improve = function(nodes, ord, D, yield, passes)
-    if not (type(D) == "table" and D.routefix) then return oldImprove(nodes, ord, D, yield, passes) end
-    local out, cost, at, how = R.Solve(nodes, ord, D, { cap = D.cap, logCount = D.logCount, yield = yield })
-    if not out then return oldImprove(nodes, ord, D, yield, passes) end
-    for i = 1, #ord do ord[i] = out[i] end
-    R.lastSolve = { n = #ord, cost = cost, hsAt = at, how = how }
-    return ord
-  end
-  N.Cost = function(D, ord)
-    if type(D) == "table" and D.routefix then return (R.OrderCost(D, ord)) end
-    return oldCost(D, ord)
-  end
-  N.Choose = R.Choose
-  N.HYST, N.HYST_MIN = R.HYST, R.HYST_MIN
-  return true
-end
+-- (4.2 ROUTE42) le pont R.InstallEngine (qui remplaçait Matrix / Improve / Cost / Choose de ZonePlan) est retiré :
+-- ZonePlan:BuildRoute appelle directement R.Solve / R.OrderCost / R.Choose / R.InsertOptional sur sa matrice sans foyer
+-- + D.hs (pierre de foyer une seule fois, au meilleur trajet, ≥ 20 s gagnées).
 
 -- ===================================================================== état du jeu (gardé)
 local Geo = T.Geo or {}
@@ -910,9 +888,21 @@ end
 -- (ROUTEFIX) objectif « acheter X » : le marchand qui le vend le plus vite atteint depuis `from` ({ map, x, y } en %) —
 -- marchands vus en jouant (CityRun, objets de leur vitrine) puis QuestieDB (« vendors » de l'objet, points d'apparition)
 -- → { map, x, y, name, src = "vu"|"questie", sec } ou nil
+local vendorMemo = {}
 function R.VendorFor(itemID, from)
   itemID = tonumber(itemID)
   if not itemID then return nil end
+  -- (4.2 ROUTE42) le trajet la demande à chaque calcul : gardée 60 s par objet et par endroit (≈ 100 yd)
+  local mk = fmt("%d:%s:%d:%d", itemID, tostring(from and from.map), floor((from and from.x or 0) / 5), floor((from and from.y or 0) / 5))
+  local me = vendorMemo[mk]
+  if me and now() - me.at < 60 then return me.v end
+  local v = R.VendorForRaw(itemID, from)
+  R._vmN = (R._vmN or 0) + 1
+  if R._vmN > 200 then vendorMemo, R._vmN = {}, 1 end
+  vendorMemo[mk] = { at = now(), v = v }
+  return v
+end
+function R.VendorForRaw(itemID, from)
   local cands = {}
   local CR = T.CityRun
   local mem = CR and CR.Mem and try(CR.Mem)
@@ -1090,28 +1080,63 @@ local KIND = { pick = "pickup", turn = "turnin", obj = "objective", fly = "fligh
   train = "trainer", vendor = "innkeeper", boat = "boat", zep = "zeppelin" }
 local TRANSPORT = { fly = true, boat = true, zep = true, hs = true }
 -- remaining quest stops for SPF, in OUR order (SPF finds the flights / boats between them itself)
+-- (4.2 ROUTE42) un arrêt de l'onglet = UN arrêt chez SPF : objectifs du même coin (step.area) et prises / remises au même
+-- PNJ (≤ 25 yd) fusionnés, avec questIDs (toutes les quêtes de l'arrêt) et handins (les remises : le « ? » du jeu
+-- s'efface chez SPF) ; kind = badge de l'épingle ; hold + radius = zone d'objectif tenue
+local function sameStop(a, b)
+  if not (a and b) then return false end
+  if a.area and a.area == b.area then return true end
+  if (a.k == "pick" or a.k == "turn") and (b.k == "pick" or b.k == "turn") and a.map == b.map and a.x and b.x then
+    local d = Geo.Dist and Geo.Dist(a.map, a.x, a.y, b.map, b.x, b.y)
+    return d ~= nil and d <= 25
+  end
+  return false
+end
 function R:SPFStops()
   local P = T.Planner
   local steps, cur = P and P.steps, P and P.cursor
   if not (steps and cur) then return {} end
-  local stops = {}
+  local stops, prev, last = {}, nil, nil
   for i = cur, #steps do
     local s = steps[i]
     if not s._done and not s._other and s.x and not TRANSPORT[s.k] and #stops < 64 then
-      local label = P:StepLabel(s)
-      local st = { map = s.map, x = s.x / 100, y = s.y / 100, title = cut(label, 60), kind = KIND[s.k], questID = s.q }
-      if s.k == "obj" then st.hold, st.radius = true, 60 end
-      stops[#stops + 1] = st
+      if last and sameStop(prev, s) then
+        local q = s.q
+        if q then
+          local seen = false
+          for _, v in ipairs(last.questIDs) do if v == q then seen = true end end
+          if not seen then last.questIDs[#last.questIDs + 1] = q end
+          if s.k == "turn" then last.handins = last.handins or {}; last.handins[#last.handins + 1] = q end
+        end
+        last._n = last._n + 1
+        last.title = cut(last._t .. fmt(" + %d", last._n - 1), 60)
+      else
+        local label = P:StepLabel(s)
+        local st = { map = s.map, x = s.x / 100, y = s.y / 100, title = cut(label, 60), kind = KIND[s.k], questID = s.q,
+          questIDs = { s.q }, _t = cut(label, 52), _n = 1 }
+        if s.k == "turn" and s.q then st.handins = { s.q } end
+        if s.k == "obj" then st.hold, st.radius = true, 60 end
+        stops[#stops + 1] = st
+        last = st
+      end
+      prev = s
     end
   end
+  for _, st in ipairs(stops) do st._t, st._n = nil, nil end
   return stops
 end
 function R:HasRoute()
   local P = T.Planner
   return P and P.steps and P.cursor and P.cursor <= #P.steps or false
 end
+-- (4.2 ROUTE42) abonné à SPF (Subscribe) : l'arrêt courant / la fin viennent de ses notifications (lues une fois par
+-- changement), plus de sonde à chaque dessin ; sans abonnement, CurrentStop / Ended comme avant
 function R:Following()
   if not self.following or not spf() then return nil end
+  if self._subOK and self._spfFresh then
+    if self._spfEnded then self.following = nil return nil end
+    return self._spfStop
+  end
   local stop = call("CurrentStop", OWNER)
   if stop then return stop end
   local why = call("Ended", OWNER)
@@ -1125,12 +1150,15 @@ function R:CurrentStep()
   local P = T.Planner
   local steps, cur = P and P.steps, P and P.cursor
   if not (n and n >= 1 and steps and cur) then return nil end
-  local k = 0
+  local k, prev = 0, nil
   for i = cur, #steps do
     local s = steps[i]
     if not s._done and not s._other and s.x and not TRANSPORT[s.k] then
-      k = k + 1
-      if k == n then return s end
+      if not (prev and sameStop(prev, s)) then          -- (4.2 ROUTE42) mêmes arrêts fusionnés que R:SPFStops
+        k = k + 1
+        if k == n then return s end
+      end
+      prev = s
     end
   end
   return nil
@@ -1138,13 +1166,14 @@ end
 -- « Suivre ce trajet » (clic) : SPF si présent, sinon la boussole / repère du Planner sur l'arrêt 1
 function R:Follow()
   if inCombat() then self:Say("Guidage : après le combat") return false end
+  if opt("waypoint") then pcall(R.SyncWaypoint, true) end   -- (4.2 ROUTE42) clic : repère du jeu à la fin de l'étape
   local P = T.Planner
   if not self:HasRoute() then self:Say("Pas de trajet en cours") return false end
   self.char.paused = false
   local stops = self:SPFStops()
   if #stops > 0 and spf() then
     if call("NavigateRoute", OWNER, stops) then
-      self.following, self._sentAt, self._sentSig = true, now(), stopsSig(stops)
+      self.following, self._sentAt, self._sentSig, self._spfFresh = true, now(), stopsSig(stops), false
       self:Say(fmt("Trajet envoyé à Shortest Path : %d arrêt%s, dans le Suivi Forever", #stops, #stops > 1 and "s" or ""))
       self:Render()
       return "spf"
@@ -1172,12 +1201,15 @@ function R.WantFollow()
   return (Ad and type(Ad.db) == "table" and Ad.db.spfChoice == "order" and spf()) and true or false
 end
 function R:OnPlanStep()
+  if opt("waypoint") or R._wp then pcall(R.SyncWaypoint) end   -- (4.2 ROUTE42) repère natif : fin de l'étape en cours
+  local PDm = T.PathDraw                                        -- (4.2) le chemin dessiné change TOUT DE SUITE (« PNJ à voir »)
+  if PDm and PDm.Now then pcall(PDm.Now) end
   if self.char.paused then return end
   if not self.following then
     if not (R.WantFollow() and self:HasRoute()) or inCombat() then return end
     local stops = self:SPFStops()
     if #stops == 0 then return end
-    if call("NavigateRoute", OWNER, stops) then self.following, self._sentAt, self._sentSig = true, now(), stopsSig(stops) end
+    if call("NavigateRoute", OWNER, stops) then self.following, self._sentAt, self._sentSig, self._spfFresh = true, now(), stopsSig(stops), false end
     return
   end
   if inCombat() then self._resend = true return end
@@ -1190,7 +1222,7 @@ function R:OnPlanStep()
   if #stops == 0 then call("Cancel", OWNER); self.following, self._sentSig = nil, nil return end
   local sig = stopsSig(stops)
   if sig == self._sentSig then return end
-  if call("NavigateRoute", OWNER, stops) then self._sentAt, self._sentSig = now(), sig else self.following = nil end
+  if call("NavigateRoute", OWNER, stops) then self._sentAt, self._sentSig, self._spfFresh = now(), sig, false else self.following = nil end
 end
 function R:TogglePause()
   local ch = self.char
@@ -1206,7 +1238,9 @@ function R:TogglePause()
 end
 
 -- ===================================================================== arrêts affichés (quêtes + transports)
-local LEGTXT = { fly = "Vol pour %s", boat = "Bateau pour %s", zeppelin = "Zeppelin pour %s" }
+local LEGTXT = { fly = "Vol pour %s", boat = "Bateau pour %s", zeppelin = "Zeppelin pour %s", elevator = "Ascenseur pour %s",
+  tram = "Tram pour %s" }
+R.LEGTXT = LEGTXT
 local DIRS = { "N", "NE", "E", "SE", "S", "SO", "O", "NO" }
 local function dirTo(a, b)
   if not (a and b) then return nil end
@@ -1237,7 +1271,6 @@ end
 -- (ZONEFIX, PERF4) immobile (même position, revue au plus une fois par seconde) : gardé jusqu'à 5 min
 local stopsMemo = {}                 -- (QUESTQA) un mémo par n (1 = 1er arrêt, 64 = vue) : plus de recalcul en ping-pong
 R.STOPS_IDLE_S = 300
-local function idleNoHs() local Zp = T.ZonePlan return Zp and Zp.noHearth or false end
 local function graphNow() return opt("transports") and R.Graph() or false end
 -- (ROUTEFIX) UNE liste : Stops(1) (boussole, « Suivre », voyage rapide) est le début de Stops(64) (onglet, fenêtre,
 -- carte) — avant, chacune calculait la sienne (pierre de foyer jugée sur le seul 1er trajet d'un côté, sur tout le
@@ -1266,9 +1299,8 @@ function R:Stops(n)
       and m.skipN == (P.char and P.char.skip and next(P.char.skip) and true or false) then
     local age = tnow - (m.at or -1e9)
     if age < 5 then return m.out end
-    -- immobile : même position, mêmes étapes faites (Evaluate), mêmes vols connus (graphe), même pierre de foyer,
-    -- même règle « sans foyer »
-    if age < R.STOPS_IDLE_S and m.ev == P.evalRev and m.src == P.src and m.noHs == idleNoHs() then
+    -- immobile : même position, mêmes étapes faites (Evaluate), mêmes vols connus (graphe), même pierre de foyer
+    if age < R.STOPS_IDLE_S and m.ev == P.evalRev and m.src == P.src then
       if tnow - (m.chk or -1e9) < 1 then return m.out end
       local Gp = Geo.Player
       local pm, px, py
@@ -1284,7 +1316,7 @@ function R:Stops(n)
   if Geo.Player then pm, px, py = Geo.Player() end
   stopsMemo[n or 0] = { steps = P and P.steps, cur = P and P.cursor, len = P and #(P.steps or {}) or 0, rev = P and P.stepsRev,
     skipN = (P and P.char and P.char.skip and next(P.char.skip) and true or false), at = tnow, chk = tnow, out = out,
-    pm = pm, px = px, py = py, g = graphNow(), src = P and P.src, noHs = idleNoHs(), hs = R.HearthReady(),
+    pm = pm, px = px, py = py, g = graphNow(), src = P and P.src, hs = R.HearthReady(),
     ev = P and P.evalRev }
   R.firstKind = out[1] and out[1].kind or nil
   return out
@@ -1301,14 +1333,15 @@ local function legNoHs(g, a, b)
   end
   return sec, legs
 end
--- (ROUTEFIX) la pierre de foyer : UNE fois, au trajet où elle fait gagner le plus (≥ minGain), sur tout le parcours —
--- le même coût que l'ordre des arrêts (R.Solve / R.OrderCost) ; → index de l'entrée, secondes, étapes
+-- (ROUTEFIX) la pierre de foyer : UNE fois, au trajet où elle fait gagner le plus, sur tout le parcours — le même coût que
+-- l'ordre des arrêts (R.Solve / R.OrderCost), (4.2 ROUTE42) le même seuil : ≥ 20 s gagnées ; → index, secondes, étapes
 local function hearthChoice(g, items)
   if not (g and R.HearthReady()) then return nil end
   local bind = R.BindPlace()
   if not (type(bind) == "table" and bind.c) then return nil end
   local b = { c = bind.c, n = bind.n, w = bind.w, map = bind.map, x = bind.x, y = bind.y, name = bind.name or "auberge" }
-  local best, bi, bsec, blegs = g.minGain or 30, nil, nil, nil
+  local Zp = T.ZonePlan                              -- même seuil que l'ordre (ZonePlan : 2 min en zone, 20 s en « Rendre »)
+  local best, bi, bsec, blegs = ((Zp and tonumber(Zp.hsGain)) or g.hsGain or R.HS_GAIN) - 1e-6, nil, nil, nil
   for k, it in ipairs(items) do
     if it.sec and it.here then
       local s2, l2 = R.FastestWorld(g, b, it.here)
@@ -1364,10 +1397,27 @@ function R:StopsRaw()
   end
   -- 4. la liste affichée : les transports comme arrêts, puis l'arrêt
   local prevKind
+  local t0 = R.Epoch()
   for _, it in ipairs(items) do
     local s = it.s
     if it.legs then
       local run, trRun, lastTo = out.total, out.travel, it.from
+      -- (4.2 ROUTE42) bateau / zeppelin dont le départ a été vu au quai : l'attente réelle à l'heure d'arrivée au quai
+      -- (« part dans 1:40 ») au lieu de la demi-période ; jamais vu : demi-période, « environ »
+      local adj, tsum = false, 0
+      for _, lg in ipairs(it.legs) do
+        if lg.dockA and lg.dockB then
+          local wait, cross, known = R.BoatWait(lg.dockA, lg.dockB, t0 + run + tsum)
+          if wait and cross then
+            local ns = wait + cross
+            if known then lg.est = false end
+            lg.wait, lg.cross = wait, cross
+            if math.abs(ns - (lg.sec or 0)) > 0.5 then lg.sec, adj = ns, true end
+          end
+        end
+        tsum = tsum + (lg.sec or 0)
+      end
+      if adj then it.sec = tsum end
       for _, lg in ipairs(it.legs) do
         run, trRun = run + (lg.sec or 0), trRun + (lg.sec or 0)
         if lg.mode == "walk" then out.yd = out.yd + (lg.yd or 0)
@@ -1385,7 +1435,8 @@ function R:StopsRaw()
     local svc = stepSvc(steps, it.i)
     out.total = out.total + svc
     local kind = TRANSPORT[s.k] and (s.k == "zep" and "zeppelin" or s.k) or "quest"
-    out[#out + 1] = { kind = kind, step = s, sec = svc, place = it.here, at = out.total, ydAt = out.yd, trAt = out.travel }
+    out[#out + 1] = { kind = kind, step = s, sec = svc, place = it.here, at = out.total, ydAt = out.yd, trAt = out.travel,
+      legs = it.legs, from0 = it.from, hs = it.hs }   -- (4.2 ROUTE42) étapes de transport jusqu'à cet arrêt (Suivi, repère)
     prevKind = TRANSPORT[s.k] and kind or nil
   end
   local left = 0                                   -- arrêts restants au total (au-delà de la liste aussi)
@@ -1394,6 +1445,325 @@ function R:StopsRaw()
   out.hsAt = hi
   out.here = world((pm and px) and { map = pm, x = px, y = py } or nil)
   return out
+end
+-- ===================================================================== (4.2 ROUTE42) départs vus, ascenseurs, étapes chronométrées
+-- Ce que le joueur connaît de « Suivi Forever », écrit par nous : chaque arrêt décomposé en étapes de transport numérotées et
+-- chronométrées (« 1. Marcher jusqu'au maître de vol (La Croisée) 0:21 », « 2. Vol pour Orgrimmar 2:08 »), l'en-tête
+-- « Trajet 3:27 · 2,5 km · Arrêt 1 sur 10 : X » = la SOMME des temps affichés (arrondis à la seconde), « environ » seulement
+-- pour ce qui n'est pas mesuré (vol jamais chronométré, bateau dont le départ n'a pas été vu).
+--  * Bateaux / zeppelins : le départ est VU au quai (arrivée au quai d'en face après la traversée → heure de départ, gardée
+--    par personnage 6 h) ; « part dans 1:40 » au lieu de la demi-période ; près d'un quai, « Prochains départs ».
+--  * Ascenseurs / tram (Data/Travel.lua lifts, seulement des lieux mesurés) : la hauteur est inconnue, donc l'étape est finie
+--    quand on QUITTE la cage après y être resté au moins la durée du trajet ; partir avant = « Reviens au palier ».
+-- Échantillons : ceux de NavTime (1 Hz, seulement en bougeant) — aucun OnUpdate de plus, rien au repos.
+function R.Epoch()
+  return tonumber(try(G("time"))) or tonumber(try(G("GetServerTime"))) or floor(now())
+end
+local lineIdx
+local function lineLegs()
+  if lineIdx then return lineIdx end
+  lineIdx = {}
+  for li, ln in ipairs((data() or {}).lines or {}) do
+    for _, lg in ipairs(ln[4] or {}) do
+      lineIdx[tostring(lg[1]) .. "-" .. tostring(lg[2])] = { kind = ln[1], fac = ln[2], per = tonumber(ln[3]) or 0,
+        cross = tonumber(lg[3]) or 0, a = lg[1], b = lg[2], li = li, n = #(ln[4] or {}) }
+    end
+  end
+  return lineIdx
+end
+R.LineLegs = lineLegs
+R.BOAT_TTL, R.DOCK_YD, R.DISEMBARK, R.LIFT_YD = 6 * 3600, 45, 5, 10
+--- attente au quai a pour un départ vers b, si on y arrive à `at` (secondes époque) → attente, traversée, vu (true) |
+--- déduit / moyen (false) ; nil si ce n'est pas une ligne
+function R.BoatWait(a, b, at)
+  local L = lineLegs()
+  local e = L[tostring(a) .. "-" .. tostring(b)]
+  if not (e and e.per > 0) then return nil end
+  local boats = R.char and R.char.boat
+  local ob = type(boats) == "table" and boats[tostring(a) .. "-" .. tostring(b)] or nil
+  at = tonumber(at) or R.Epoch()
+  if type(ob) == "table" and tonumber(ob.t) and math.abs(at - ob.t) < R.BOAT_TTL then
+    return (ob.t - at) % e.per, e.cross, true
+  end
+  -- l'aller vu, ligne à deux quais : le retour en est déduit (même attente à chaque quai), « environ »
+  local back = L[tostring(b) .. "-" .. tostring(a)]
+  local ob2 = type(boats) == "table" and boats[tostring(b) .. "-" .. tostring(a)] or nil
+  if back and e.n == 2 and type(ob2) == "table" and tonumber(ob2.t) and math.abs(at - ob2.t) < R.BOAT_TTL then
+    local dwell = max(0, (e.per - e.cross - back.cross) / 2)
+    return (ob2.t + back.cross + dwell - at) % e.per, e.cross, false
+  end
+  return e.per / 2, e.cross, false
+end
+--- (pur) étape d'ascenseur : st = état gardé { inAt }, inCage = dans la cage, t = secondes, ride = durée du trajet
+--- → "riding" | "done" (sorti après la durée) | "back" (sorti trop tôt : « Reviens au palier ») | nil
+function R.LiftStep(st, inCage, t, ride)
+  if inCage then
+    if not st.inAt then st.inAt = t end
+    return "riding"
+  end
+  if not st.inAt then return nil end
+  local dur = t - st.inAt
+  st.inAt = nil
+  if dur >= (tonumber(ride) or 0) then st.doneAt = t return "done" end
+  st.backAt = t
+  return "back"
+end
+--- échantillon de position (NavTime, 1 Hz en bougeant) : quai atteint (départ vu), cage d'ascenseur, repère natif
+function R.NoteSample(c, wx, wy, tGame)
+  local D = data()
+  if not (D and c and wx and wy and R.char) then return end
+  local t = R.Epoch()
+  local near
+  for id, r in pairs(D.docks or {}) do
+    if r[2] == c then
+      local dx, dy = r[3] - wx, r[4] - wy
+      if dx * dx + dy * dy <= R.DOCK_YD * R.DOCK_YD then near = id break end
+    end
+  end
+  local st = R._dock or {}
+  R._dock = st
+  if near then
+    if st.id ~= near and st.id and st.t then
+      local key = tostring(st.id) .. "-" .. tostring(near)
+      local e = lineLegs()[key]
+      local dt = t - st.t
+      if e and dt >= e.cross * 0.8 and dt <= e.per + e.cross + 180 then
+        R.char.boat = type(R.char.boat) == "table" and R.char.boat or {}
+        R.char.boat[key] = { t = t - e.cross - R.DISEMBARK, seen = t }
+        R.boatSeen = (R.boatSeen or 0) + 1
+      end
+    end
+    st.id, st.t = near, t
+  end
+  local ls = R._liftSt or {}
+  R._liftSt = ls
+  for li, r in ipairs(D.lifts or {}) do
+    if r[4] == c then
+      local inCage = false
+      for _, e in ipairs({ { r[5], r[6] }, { r[7], r[8] } }) do
+        local dx, dy = e[1] - wx, e[2] - wy
+        if dx * dx + dy * dy <= R.LIFT_YD * R.LIFT_YD then inCage = true end
+      end
+      ls[li] = ls[li] or {}
+      local res = R.LiftStep(ls[li], inCage, tonumber(tGame) or now(), r[10])
+      if res == "done" or res == "back" then R.liftLast = { li = li, res = res, at = now() } end
+    end
+  end
+  if opt("waypoint") or R._wp then pcall(R.SyncWaypoint) end
+end
+--- « Prochains départs » : le joueur est à moins de 60 yd d'un quai → { { text, wait, known } } (nil sinon)
+function R.Departures(me)
+  local D = data()
+  if not (D and me and me.c) then return nil end
+  local dock, bd = nil, 60 * 60
+  for id, r in pairs(D.docks or {}) do
+    local d2 = (r[3] - me.n) ^ 2 + (r[4] - me.w) ^ 2
+    if r[2] == me.c and d2 <= bd then dock, bd = id, d2 end
+  end
+  if not dock then return nil end
+  local out, t = {}, R.Epoch()
+  local faction = R.Faction()
+  for _, e in pairs(lineLegs()) do
+    if e.a == dock and factionOK(e.fac, faction) then
+      local wait, _, known = R.BoatWait(e.a, e.b, t)
+      local to = D.docks[e.b]
+      local name = to and R.PlaceName("dock", e.b, to) or "?"
+      local what = fmt(LEGTXT[e.kind] or "%s", cut(name, 26))
+      out[#out + 1] = { text = known and fmt("%s : part dans %s", what, R.MSS(wait)) or fmt("%s : toutes les %s environ",
+        what, R.MSS(e.per)), wait = known and wait or huge, known = known, b = e.b }
+    end
+  end
+  tsort(out, function(a, b) if a.wait ~= b.wait then return a.wait < b.wait end return a.b < b.b end)
+  return #out > 0 and out or nil, dock
+end
+
+local function mss(sec)
+  sec = max(0, floor((tonumber(sec) or 0) + 0.5))
+  return fmt("%d:%02d", floor(sec / 60), sec % 60)
+end
+R.MSS = mss
+local PLACEWORD = { taxi = "au maître de vol", dock = "au quai", lift = "à l'ascenseur" }
+local ENDWORD = { pick = "Marcher jusqu'au PNJ (prendre)", turn = "Marcher jusqu'au PNJ (rendre)", obj = "Marcher jusqu'à la zone de l'objectif" }
+--- (pur) étapes de transport d'un arrêt de R:Stops (entrée avec .legs) → { { n, mode, text, sec (s entières), est, wait,
+--- to } }, total (= somme des secondes affichées), yards (marche + transports en ligne droite)
+function R.SubSteps(e)
+  local out, total, yd = {}, 0, 0
+  local legs = e and e.legs or {}
+  local lift = R.liftLast
+  for k, lg in ipairs(legs) do
+    local sec = max(0, floor((tonumber(lg.sec) or 0) + 0.5))
+    local skip = (lg.mode == "walk" and sec < 1)
+      or (lg.li and lift and lift.li == lg.li and lift.res == "done" and now() - lift.at < 120)   -- ascenseur pris
+    if not skip then
+      local to = lg.to or {}
+      local name = cut(tostring(to.name or ""), 26)
+      local txt
+      if lg.mode == "walk" then
+        if to.kind and PLACEWORD[to.kind] and k < #legs then
+          txt = "Marcher jusqu'" .. PLACEWORD[to.kind] .. (name ~= "" and (" (" .. name .. ")") or "")
+        else
+          txt = ENDWORD[e.step and e.step.k or ""] or "Marcher jusqu'à l'arrêt"
+        end
+      elseif lg.mode == "hs" then
+        txt = "Utilise ta pierre de foyer" .. (name ~= "" and (" (" .. name .. ")") or "")
+      else
+        txt = fmt(LEGTXT[lg.mode] or "%s", name ~= "" and name or "?")
+        if lg.wait and (lg.mode == "boat" or lg.mode == "zeppelin") then
+          txt = txt .. (lg.est and fmt(" (attente %s environ)", mss(lg.wait)) or fmt(" (part dans %s)", mss(lg.wait)))
+        end
+      end
+      if lg.li and lift and lift.li == lg.li and lift.res == "back" and now() - lift.at < 60 then
+        txt = "Reviens au palier de l'ascenseur"
+      end
+      out[#out + 1] = { n = #out + 1, mode = lg.mode, text = txt, sec = sec, est = lg.est and true or false, wait = lg.wait,
+        to = lg.to }
+      total = total + sec
+      yd = yd + (lg.mode == "walk" and (tonumber(lg.yd) or 0) or (tonumber(lg.fyd) or 0))
+    end
+  end
+  return out, total, yd
+end
+--- (pur) « Histoire : Mille pointes · Chapitre 2 sur 4 » ; N seulement pour une chaîne prouvée ; nil sans zone
+function R.StoryText(zone, ch)
+  if not zone or zone == "" then return nil end
+  local t = "Histoire : " .. cut(zone, 28)
+  if type(ch) == "table" and tonumber(ch.n) and (tonumber(ch.N) or tonumber(ch.len) or 0) > 1 then
+    t = t .. (tonumber(ch.N) and fmt(" · Chapitre %d sur %d", ch.n, ch.N) or fmt(" · Chapitre %d", ch.n))
+  end
+  return t
+end
+-- arrêts déjà faits depuis le début du trajet (étapes avant le curseur, un arrêt par coin / PNJ) : « Arrêt 3 sur 10 »
+local function doneStops(P)
+  local n, lastArea, lastQ = 0, nil, nil
+  for i = 1, (P.cursor or 1) - 1 do
+    local s = P.steps[i]
+    if s and not s._other then
+      local a = s.area or (s.k .. ":" .. tostring(s.q))
+      if not (a == lastArea or (s.q and s.q == lastQ and s.k == "turn")) then n = n + 1 end
+      lastArea, lastQ = a, s.q
+    end
+  end
+  return n
+end
+--- LE bloc du trajet (Suivi TreeAI, repère natif, tests) : { story, head, steps, total, yd, index, count, label, stop,
+--- departures, entry } ; nil sans trajet / en pause. En vol (taxi) : les étapes figées au décollage, le vol décompte.
+function R.Block()
+  if not (R:IsEnabled() and R.char) or R.char.paused then return nil end
+  local P = T.Planner
+  if not (P and P.steps and P.cursor and P.cursor <= #P.steps) then return nil end
+  local onTaxi = try(G("UnitOnTaxi"), "player") and true or false
+  if not onTaxi then R._taxiAt = nil elseif not R._taxiAt then R._taxiAt = now() end
+  if onTaxi and R._frozen then
+    local b = R._frozen
+    local left = 0
+    for _, ss in ipairs(b.steps) do
+      if ss.mode == "fly" then
+        ss._base = ss._base or ss.sec
+        ss.sec = max(0, floor(ss._base - (now() - R._taxiAt) + 0.5))
+      end
+      left = left + ss.sec
+    end
+    b.total = left
+    b.head = fmt("Trajet %s · %s · Arrêt %d sur %d : %s", mss(left), km(b.yd), b.index, b.count, b.label)
+    return b
+  end
+  local ok, all = pcall(R.Stops, R, 64)
+  if not (ok and type(all) == "table") then return nil end
+  local keepN, _, _, beyond = R.Horizon(all)
+  local st = {}
+  for i = 1, keepN do st[i] = all[i] end
+  local grp = R.Groups(st)
+  local fi
+  for i, e in ipairs(st) do if e.step then fi = i break end end
+  if not fi then return nil end
+  local e = st[fi]
+  local label = R.StopLabel(P, st, fi, grp) or (P.StepLabel and P:StepLabel(e.step)) or "?"
+  local steps, total, yd = R.SubSteps(e)
+  local done = doneStops(P)
+  local nq, seenG = 0, {}                            -- arrêts = destinations (les transports sont des étapes du trajet)
+  for i, x in ipairs(st) do if x.step and not seenG[grp[i]] then seenG[grp[i]] = true nq = nq + 1 end end
+  local index, count = done + 1, done + nq + (beyond or 0)
+  local b = { steps = steps, total = total, yd = yd, index = index, count = max(index, count), label = cut(label, 48),
+    stop = e.step, entry = e }
+  b.head = fmt("Trajet %s · %s · Arrêt %d sur %d : %s", mss(total), km(yd), b.index, b.count, b.label)
+  local Zp, QBm = T.ZonePlan, T.QuestBrain
+  local zone = (Zp and type(Zp.label) == "string" and Zp.label ~= "?" and Zp.label) or nil
+  if not zone and e.step.map and Zp and Zp.MapName then zone = Zp.MapName(e.step.map) end
+  local ch = QBm and QBm.Chapter and e.step.q and try(QBm.Chapter, e.step.q) or nil
+  b.story = R.StoryText(zone, ch)
+  local me = all.here
+  b.departures = R.Departures(me)
+  R._frozen = b
+  return b
+end
+-- ===================================================================== (4.2 ROUTE42) repère natif à la fin de l'étape en cours
+-- Option (coupée d'office) : le point utilisateur du jeu (C_Map.SetUserWaypoint, s'il existe sur Forever) posé à la FIN de
+-- l'étape en cours (maître de vol, quai, ascenseur, puis l'arrêt), le marqueur natif le suit (super-suivi seulement si le
+-- jeu l'a) ; jamais en combat ; rien quand Suivi Forever guide (il pose le sien) ; seul NOTRE repère est retiré.
+local function userWP()
+  local CM = G("C_Map")
+  if not (type(CM) == "table" and CM.GetUserWaypoint) then return "unknown" end
+  if CM.HasUserWaypoint and not try(CM.HasUserWaypoint) then return nil end
+  local wp = try(CM.GetUserWaypoint)
+  local pos = type(wp) == "table" and wp.position
+  local px, py
+  if type(pos) == "table" then
+    if type(pos.GetXY) == "function" then local ok2, a, b = pcall(pos.GetXY, pos) if ok2 then px, py = a, b end end
+    px, py = px or pos.x, py or pos.y
+  end
+  return type(wp) == "table" and wp.uiMapID or nil, tonumber(px), tonumber(py)
+end
+function R.ClearWaypoint()
+  local w = R._wp
+  R._wp, R._wpKey = nil, nil
+  if not w then return false end
+  local m, px, py = userWP()
+  local CM = G("C_Map")
+  -- seulement le nôtre : même carte, même point (sans lecture possible : celui qu'on a posé en dernier)
+  local ours = m == "unknown" or (m == w.map and px and math.abs(px - w.x) < 0.002 and math.abs(py - w.y) < 0.002)
+  if ours and CM and CM.ClearUserWaypoint then
+    return pcall(CM.ClearUserWaypoint) and true or false
+  end
+  return false
+end
+local function spfOwns()
+  if R.following or R.WantFollow() then return true end
+  local Cm = T.Compass
+  return (Cm and Cm.SPFOptIn and try(Cm.SPFOptIn) and spf()) and true or false
+end
+R.SPFOwns = spfOwns
+--- click = appelé depuis un clic du joueur (« Suivre ce trajet », ligne du trajet) : seul un clic POSE le repère (règle de
+--- TreeAI : le point utilisateur du jeu n'est jamais posé par du code sans clic) ; sans clic, le repère devenu faux (étape
+--- finie, trajet refait) est seulement RETIRÉ — le suivant est posé au prochain clic, la boussole guide entre-temps.
+--- → "set" | "same" | "cleared" | "stale" | nil
+function R.SyncWaypoint(click)
+  if inCombat() then return nil end
+  if not opt("waypoint") or spfOwns() then return R._wp and (R.ClearWaypoint() and "cleared") or nil end
+  local b = R.Block()
+  local tgt
+  for _, ss in ipairs(b and b.steps or {}) do
+    local to = ss.to
+    if ss.mode ~= "hs" and type(to) == "table" and to.map and tonumber(to.x) then tgt = to break end
+  end
+  if not tgt then return R._wp and (R.ClearWaypoint() and "cleared") or nil end
+  local x, y = tgt.x / 100, tgt.y / 100
+  local key = fmt("%s:%d:%d", tostring(tgt.map), floor(x * 1000), floor(y * 1000))
+  if key == R._wpKey then return "same" end
+  if not click then
+    if R._wp then R.ClearWaypoint() return "stale" end
+    return nil
+  end
+  local CM, UMP = G("C_Map"), G("UiMapPoint")
+  if not (type(CM) == "table" and CM.SetUserWaypoint and type(UMP) == "table" and type(UMP.CreateFromCoordinates) == "function") then
+    return nil
+  end
+  if CM.CanSetUserWaypointOnMap and not try(CM.CanSetUserWaypointOnMap, tgt.map) then return nil end
+  local pt = try(UMP.CreateFromCoordinates, tgt.map, x, y)
+  if not (pt and pcall(CM.SetUserWaypoint, pt)) then return nil end
+  local ST = G("C_SuperTrack")
+  if type(ST) == "table" and ST.SetSuperTrackedUserWaypoint then pcall(ST.SetSuperTrackedUserWaypoint, true) end
+  R._wp, R._wpKey = { map = tgt.map, x = x, y = y }, key
+  return "set"
 end
 -- ===================================================================== cible de la boussole = arrêt 1
 -- (ZONEFIX) la boussole vise TOUJOURS l'arrêt 1 de la carte « Prochaine étape » : même liste (R:Stops), même objet.
@@ -1717,9 +2087,6 @@ function R.PurgeSPF()
 end
 
 function R:OnEnable()
-  -- (ROUTEFIX) ordre exact / heuristique + foyer une fois + stabilité 10 % / 30 s pour le trajet par zone
-  local Zp = T.ZonePlan
-  if Zp and Zp.Engine then R.InstallEngine(Zp.Engine) end
   T:After(6, function()
     -- ménage des trajets empilés, PUIS (choix « ordre de TreeAI ») notre trajet renvoyé, un seul
     local function purgeThenSend() pcall(R.PurgeSPF); R.following, R._sentSig = nil, nil; pcall(R.OnPlanStep, R) end
@@ -1741,22 +2108,39 @@ function R:OnEnable()
   self:RegisterEvent("PLAYER_ENTERING_WORLD", landed)
   self:RegisterEvent("ZONE_CHANGED_NEW_AREA", landed)
   self:RegisterEvent("TAXIMAP_OPENED", function() knownT = nil end)
+  -- (4.2 ROUTE42) en vol : les étapes figées au décollage, le vol décompte (R.Block) ; à l'atterrissage, tout est refait
+  self:RegisterEvent("PLAYER_CONTROL_LOST", function()
+    if try(G("UnitOnTaxi"), "player") then R._taxiAt = now() end
+  end)
+  self:RegisterEvent("PLAYER_CONTROL_GAINED", function()
+    R._taxiAt = nil
+    if opt("waypoint") or R._wp then T:After(1, function() pcall(R.SyncWaypoint) end) end
+  end)
   self:On("COMBAT_END", function()
     if R._resend then R._resend = false; T:After(1, function() R:OnPlanStep() end) end
   end)
   local A = spf()
   if A and type(A.Subscribe) == "function" and not self._unsub then
-    self._unsub = call("Subscribe", function(changes)
+    local sub = call("Subscribe", function(changes)
       if type(changes) == "table" and (changes.ended or changes.stop or changes.changed) then
-        if R.following and not call("CurrentStop", OWNER) and call("Ended", OWNER) then R.following = nil end
+        -- (4.2 ROUTE42) l'état suivi est lu ICI, une fois par notification (R:Following le relit sans sonder)
+        R._spfStop = call("CurrentStop", OWNER)
+        R._spfEnded = (not R._spfStop) and call("Ended", OWNER) and true or false
+        R._spfFresh = true
+        if R.following and R._spfEnded then R.following = nil end
         R:Render()
       end
-    end) or true
+    end)
+    self._unsub, self._subOK = sub or true, sub ~= nil
   end
 end
 function R:OnDisable()
   if self.following then call("Cancel", OWNER) end
   self.following = nil
+  if not inCombat() then pcall(R.ClearWaypoint) end
+end
+function R:OnOptionChanged(key)
+  if key == "waypoint" or key == "spf" then pcall(R.SyncWaypoint) end
 end
 
 T:RegisterSlash("route", function(rest)
