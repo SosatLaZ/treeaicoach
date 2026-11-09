@@ -1718,6 +1718,14 @@ end
 function TreeAI:_ApplyProfileOnce()
   local db = self.db
   if type(db) ~= "table" then return end
+  -- (4.3.6 V5H) « les boutons rapides n'apparaissent pas » : remis UNE fois chez tout le monde (module, option,
+  -- place enregistrée hors écran revue au placement) ; /tai barre fait de même à la demande
+  if not db.v5hBar then
+    db.v5hBar = true
+    local sc = self.modules and self.modules.Shortcuts
+    if type(db.modChoice) == "table" then db.modChoice.Shortcuts = nil end
+    if sc and sc.db then sc.db.enabled = true sc.db.strip = true end
+  end
   if (tonumber(db.profileV) or 0) < self.PROFILE_V then
     db.profileV = self.PROFILE_V
     -- (3.9.9, REVIEW) une fois pour tous (nouveaux et anciens) : mode sûr ; les fonctions bêta restent à un clic

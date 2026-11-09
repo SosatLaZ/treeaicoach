@@ -491,12 +491,15 @@ end
 
 local function ensureStrip()
   if strip then return strip end
-  if inCombat() or type(G.CreateFrame) ~= "function" then return nil end
+  -- (V5H) cadres simples (aucun modèle sécurisé) sur UIParent : créés même en combat (/reload en combat = visibles)
+  if type(G.CreateFrame) ~= "function" then return nil end
   local ok, f = pcall(G.CreateFrame, "Frame", "TreeAIStrip", G.UIParent, G.BackdropTemplateMixin and "BackdropTemplate" or nil)
   if not ok or not f then return nil end
   strip = f
   meth(f, "SetSize", 200, BTN_H + 6)
   meth(f, "SetFrameStrata", "MEDIUM")
+  meth(f, "SetFrameLevel", 20)   -- (V5H) au-dessus des cadres du jeu de même strate (jamais couverte)
+  meth(f, "SetAlpha", 1)
   meth(f, "SetClampedToScreen", true)
   meth(f, "SetMovable", true)
   meth(f, "EnableMouse", true)
@@ -628,6 +631,21 @@ local function stripRect()
   return { l = l * k, b = b * k, w = w * k, h = h * k }
 end
 S.StripRect = stripRect
+--- (V5H) la bande est-elle (presque) entièrement à l'écran ? nil = pas encore mesurable
+--- (lu sur l'ancrage, pas sur le rectangle : le client ramène à l'écran ce qu'il dessine, pas la place enregistrée)
+local function fx(pt) pt = tostring(pt or "") return pt:find("LEFT") and 0 or pt:find("RIGHT") and 1 or 0.5 end
+local function fy(pt) pt = tostring(pt or "") return pt:find("BOTTOM") and 0 or pt:find("TOP") and 1 or 0.5 end
+function S.OnScreen()
+  if not strip then return nil end
+  local W, H = screen()
+  local pt, _, rp, x, y = meth(strip, "GetPoint")
+  local k = tonumber(meth(strip, "GetScale")) or 1
+  local w, h = (tonumber(meth(strip, "GetWidth")) or 0) * k, (tonumber(meth(strip, "GetHeight")) or 0) * k
+  if not (W and okAnchor(pt, x, y) and finite(w) and w > 0) then return nil end
+  local l = W * fx(rp or pt) + x * k - w * fx(pt)
+  local b = H * fy(rp or pt) + y * k - h * fy(pt)
+  return l >= -4 and b >= -4 and l + w <= W + 4 and b + h <= H + 4
+end
 function S.Avoid(W, H)
   local out, seen = {}, {}
   local function add(n)
@@ -688,25 +706,29 @@ local placeTries, placing = 0, false
 --- pose la bande : place du joueur si elle en a une, sinon la meilleure place libre en haut à gauche (hors combat)
 function S.PlaceStrip()
   if not strip then return false end
-  if inCombat() then T:RunOutOfCombat("Shortcuts:strip", S.PlaceStrip) return false end
+  -- (V5H) en combat, seulement tant qu'elle n'est pas encore à l'écran (cadre simple : jamais bloqué)
+  if inCombat() and meth(strip, "IsShown") then T:RunOutOfCombat("Shortcuts:strip", S.PlaceStrip) return false end
   local k = max(0.7, min(1.5, (tonumber(S.db and S.db.stripScale) or 100) / 100))
   meth(strip, "SetScale", k)
+  meth(strip, "SetAlpha", 1)
   local p = S.char and S.char.strip
   if type(p) == "table" and not okAnchor(p[1], p[3], p[4]) then S.char.strip, p = nil, nil end
   if type(p) == "table" then
     local rp = okAnchor(p[2], 0, 0) and p[2] or p[1]
     meth(strip, "ClearAllPoints")
-    if pcall(strip.SetPoint, strip, p[1], G.UIParent, rp, p[3], p[4]) then
+    if pcall(strip.SetPoint, strip, p[1], G.UIParent, rp, p[3], p[4]) and S.OnScreen() ~= false then
       S.placed = "player"
       if stripOn() then meth(strip, "Show") end
       return true
     end
+    -- (V5H) place enregistrée hors écran (autre résolution / échelle) : oubliée, place automatique
+    S.char.strip = nil
   end
   local W, H = screen()
   if not W then
-    -- écran pas encore posé (connexion) : quelques essais espacés, puis les événements d'écran prennent le relais
+    -- écran pas encore posé (connexion) : essais espacés, puis les événements d'écran prennent le relais
     -- (cachée d'ici là : jamais une image sur les cadres de groupe)
-    if placeTries < 5 then placeTries = placeTries + 1 T:After(2, S.PlaceStrip) end
+    if placeTries < 30 then placeTries = placeTries + 1 T:After(2, S.PlaceStrip) end
     meth(strip, "Hide")
     S.placed = nil
     return false
@@ -755,7 +777,7 @@ local lastWide
 --- dispose les boutons ; compact = icônes seules (étroit, ou option « un mot » coupée)
 function S.LayoutStrip(compact)
   if not stripOn() then if strip then meth(strip, "Hide") end return end
-  if inCombat() then T:RunOutOfCombat("Shortcuts:strip", function() S.LayoutStrip(compact) end) return end
+  if inCombat() and strip and meth(strip, "IsShown") then T:RunOutOfCombat("Shortcuts:strip", function() S.LayoutStrip(compact) end) return end
   if not ensureStrip() then return end
   local states = S.lastState or S.State()
   S.lastState = states
@@ -1164,7 +1186,7 @@ function S:OnEnable()
   for _, ev in ipairs({ "QUEST_LOG_UPDATE", "ZONE_CHANGED_NEW_AREA", "UPDATE_BINDINGS" }) do self:RegisterEvent(ev, soon) end
   -- le groupe se forme (cadres de groupe du jeu), l'écran change : la bande non posée par le joueur se repose
   local function replace()
-    if not (strip and stripOn()) or (S.char and S.char.strip) then return end
+    if not (strip and stripOn()) or (S.char and S.char.strip and S.OnScreen() ~= false) then return end
     T:RunOutOfCombat("Shortcuts:strip", S.PlaceStrip)
   end
   for _, ev in ipairs({ "GROUP_ROSTER_UPDATE", "PLAYER_ENTERING_WORLD", "UI_SCALE_CHANGED", "DISPLAY_SIZE_CHANGED" }) do
@@ -1202,10 +1224,37 @@ function S:OnOptionChanged(key)
   S.Layout()
 end
 
+--- (V5H) /tai barre : les boutons rapides reviennent à coup sûr (module, option, place automatique en haut à gauche) ;
+--- /tai barre actions : en plus la barre d'actions du bas (objet de quête, familier, aspect, manger)
+function S.Reset(arg)
+  if not S._active then T:SetModuleEnabled("Shortcuts", true) end
+  if not S.db then return false end
+  S.db.strip, S.db.stripScale = true, max(70, min(150, tonumber(S.db.stripScale) or 100))
+  if S.char then S.char.strip = nil end
+  lastSizeSig, lastWide, S.compact, S.placed = nil, nil, nil, nil
+  S.Refresh(true)
+  if strip then S.PlaceStrip() meth(strip, "SetAlpha", 1) end
+  if tostring(arg or ""):lower():find("action") then
+    for _, n in ipairs({ "Quick", "QuickFight" }) do
+      local m = T.modules and T.modules[n]
+      if m and not m._active then T:SetModuleEnabled(n, true) end
+    end
+    S.db.actionBar, S.db.dock = true, true
+    S:OnOptionChanged("actionBar")
+  end
+  flash("Boutons rapides : remis en haut à gauche." .. (S.db.actionBar and " Barre d'actions : en bas." or
+    " (/tai barre actions : aussi la barre d'actions du bas)"))
+  return true
+end
+T:RegisterSlash("barre", function(arg) S.Reset(arg) end,
+  "boutons rapides remis à l'écran (/tai barre [actions] : aussi la barre d'actions du bas)")
+
 T:RegisterSlash("boutons", function(arg)
   arg = tostring(arg or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
   if arg == "touches" then S.SuggestKeys() return end
   if DEF[arg] or arg == "mode" then S.Do(arg) return end
+  -- (V5H) allumés mais pas à l'écran : on les remet (jamais coupés par un « /tai boutons » pour les voir)
+  if S.db and S.db.strip ~= false and not (strip and meth(strip, "IsVisible")) then S.Reset() return end
   if S.db then S.db.strip = S.db.strip == false end
   S:OnOptionChanged("strip")
 end, "boutons rapides (/tai boutons [rendre|prendre|suivant|zone|groupe|journal|mode|touches])")
