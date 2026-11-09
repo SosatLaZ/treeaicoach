@@ -82,6 +82,12 @@ local DEFS = {
     match = { "journal", "clean", "nettoy", "tidy", "log" }, page = "journal",
     title = "Nettoyer mon journal",
     tip = "Les quêtes à abandonner (grises, trop loin, impossibles seul), en un coup d'œil." },
+  -- (4.2 FIX42) « Métiers » : seulement si tu as un métier de fabrication ; pastille = achats en attente du plan ;
+  -- clic = Personnage → Métiers, clic droit = lancer / quitter la session métier (le trajet de quêtes en pause)
+  { id = "metiers", label = "Métiers", icon = ICON .. "Trade_LeatherWorking", bind = "TREEAI_STRIP_METIERS", page = "prof",
+    title = "Métiers",
+    tip = "Clic : Personnage → Métiers (le plan pour monter ton métier). Clic droit : lancer ou quitter la session métier.",
+    optional = true },
   { id = "fenetre", label = "TreeAI", icon = ICON .. "INV_Misc_Book_09", bind = "TREEAI_MAIN",
     title = "Fenêtre TreeAI",
     tip = "Ouvre ou ferme la fenêtre TreeAI (Quêtes, Groupe, Donjons, Personnage, HV, Conseils pro, Réglages)." },
@@ -96,9 +102,10 @@ S.KEYS = {
   TREEAI_STRIP_SUIVANT = { "ALT-3", "CTRL-SHIFT-3" }, TREEAI_QB_ZONE = { "ALT-4", "CTRL-SHIFT-4" },
   TREEAI_QB_GROUP = { "ALT-5", "CTRL-SHIFT-5" }, TREEAI_STRIP_JOURNAL = { "ALT-6", "CTRL-SHIFT-6" },
   TREEAI_MAIN = { "ALT-7", "CTRL-SHIFT-7" }, TREEAI_MODE_NEXT = { "ALT-8", "CTRL-SHIFT-8" },
+  TREEAI_STRIP_METIERS = { "ALT-9", "CTRL-SHIFT-9" },
 }
 S.KEY_ORDER = { "TREEAI_QB_TURNIN", "TREEAI_QB_PICKUP", "TREEAI_STRIP_SUIVANT", "TREEAI_QB_ZONE",
-  "TREEAI_QB_GROUP", "TREEAI_STRIP_JOURNAL", "TREEAI_MAIN", "TREEAI_MODE_NEXT" }
+  "TREEAI_QB_GROUP", "TREEAI_STRIP_JOURNAL", "TREEAI_MAIN", "TREEAI_MODE_NEXT", "TREEAI_STRIP_METIERS" }
 -- noms lisibles (Échap > Raccourcis > AddOns > TreeAI)
 G.BINDING_HEADER_TREEAI = G.BINDING_HEADER_TREEAI or "TreeAI"
 G.BINDING_NAME_TREEAI_QB_TURNIN = "TreeAI : rendre mes quêtes au plus vite"
@@ -108,6 +115,7 @@ G.BINDING_NAME_TREEAI_QB_ZONE = "TreeAI : choisir ma zone"
 G.BINDING_NAME_TREEAI_QB_GROUP = "TreeAI : avec le groupe"
 G.BINDING_NAME_TREEAI_STRIP_JOURNAL = "TreeAI : nettoyer mon journal"
 G.BINDING_NAME_TREEAI_MODE_NEXT = "TreeAI : mode de quêtes suivant"
+G.BINDING_NAME_TREEAI_STRIP_METIERS = "TreeAI : métiers (page, session)"
 
 -- ===================================================================== données : T.QuestBrain (gardé)
 local function QB() local q = T.QuestBrain return type(q) == "table" and q or nil end
@@ -172,6 +180,7 @@ function S.State()
   local list, act = S.Modes(), activeId()
   local out = {}
   for _, d in ipairs(DEFS) do
+    if not d.optional or S.HasProf() then
     local st = { id = d.id, label = d.label, icon = d.icon, title = d.title, tip = d.tip, bind = d.bind }
     local m = S.ModeFor(d.id, list)
     if m then
@@ -184,12 +193,29 @@ function S.State()
     end
     if st.count == nil then
       if d.id == "rendre" then st.count = listLen(qcall("TurnInList")) or (not QB() and doneInLog() or nil)
-      elseif d.id == "prendre" then st.count = listLen(qcall("PickupList", 20)) end
+      elseif d.id == "prendre" then st.count = listLen(qcall("PickupList", 20))
+      elseif d.id == "metiers" then st.count = S.ProfBuys() st.active = type(T.focus) == "table" and T.focus.kind == "prof" end
     end
     st.key = S.KeyOf(d.bind)
     out[#out + 1] = st
+    end
   end
   return out
+end
+-- (4.2 FIX42) « Métiers » : tu as un métier de fabrication (Prof a lu tes métiers) ; achats en attente (ProfLevel)
+local function PLv() local p = T.ProfLevel return type(p) == "table" and p or nil end
+function S.HasProf()
+  local P = PLv()
+  if not (P and type(P.Line) == "function") then return false end
+  local Pm = T.modules and T.modules.Prof
+  if not (Pm and Pm._active) then return false end
+  return try(P.Line) ~= nil
+end
+function S.ProfBuys()
+  local P = PLv()
+  if not (P and type(P.PendingBuys) == "function") then return nil end
+  local n = tonumber(try(P.PendingBuys))
+  return (n and n > 0) and n or nil
 end
 
 -- ===================================================================== touches
@@ -298,6 +324,17 @@ function S.Do(id, button)
     if Wn and type(Wn.Toggle) == "function" then T.safecall(Wn.Toggle) else openPage(nil) end
     return "window"
   end
+  if id == "metiers" then
+    local P = PLv()
+    if button == "RightButton" and P and type(P.ToggleFocus) == "function" then
+      if inCombat() then flash("Session métier : après le combat.") return "combat" end
+      T.safecall(P.ToggleFocus, (type(P.Line) == "function" and try(P.Line)) or nil)
+      S.Refresh(true)
+      return "focus"
+    end
+    openPage("prof")
+    return "page"
+  end
   if id == "suivant" then
     -- (4.1 CITYRUN) session métier / courses en ville (T.focus) : étape suivante de la session, clic droit = précédente
     if type(T.focus) == "table" and type(T.FocusStep) == "function" then
@@ -328,7 +365,7 @@ T.StripAction = function(id) return S.Do(id) end   -- appelé par Bindings.xml
 -- ===================================================================== bande : cadre et boutons
 local strip, grip, keysBtn
 local btns, order = {}, {}
-local BTN_H, ICO, PAD, GAP = 28, 20, 5, 3
+local BTN_H, ICO, PAD, GAP = 24, 16, 4, 2   -- (4.2 FIX42) plus petite : 24 px de haut, icônes 16
 local function stripOn() return S._active and S.db and S.db.strip ~= false end
 local function stripLocked() return (S.db and S.db.stripLocked) or (T.FramesLocked and T:FramesLocked()) or false end
 local function okAnchor(p, x, y) return T.ValidAnchor and T.ValidAnchor(p, x, y) or false end
@@ -370,6 +407,16 @@ local function showTip(b)
     if s then n = n + 1 meth(tt, "AddLine", "• " .. s, 0.8, 0.8, 0.8) end
     if n >= 5 then break end
   end
+  if b.id == "metiers" then
+    local P = PLv()
+    local cl = P and type(P.ComponentLines) == "function" and try(P.ComponentLines, true) or {}
+    for i, l in ipairs(type(cl) == "table" and cl or {}) do
+      if i > 6 then break end
+      meth(tt, "AddLine", l, 0.8, 0.8, 0.8, true)
+    end
+    if (tonumber(st.count) or 0) > 0 then meth(tt, "AddLine", ("%d achat%s en attente dans ton plan"):format(st.count, st.count > 1 and "s" or ""), 1, 0.82, 0.2) end
+    if st.active then meth(tt, "AddLine", "Session métier en cours (clic droit : la quitter).", 0.4, 1, 0.4, true) end
+  end
   if b.id == "suivant" and type(T.Next) == "function" then
     local nx = try(T.Next)
     local s = type(nx) == "table" and (nx.line or nx.title)
@@ -394,7 +441,7 @@ local function newButton(def)
   meth(b, "SetHeight", BTN_H)
   meth(b, "RegisterForClicks", "LeftButtonUp", "RightButtonUp")
   b.bg = meth(b, "CreateTexture", nil, "BACKGROUND")
-  if b.bg then meth(b.bg, "SetAllPoints", b) tcolor(b.bg, "button", 0.14, 0.15, 0.19, 0.55) end
+  if b.bg then meth(b.bg, "SetAllPoints", b) tcolor(b.bg, "button", 0.14, 0.15, 0.19, 0.35) end
   b.sel = meth(b, "CreateTexture", nil, "BORDER")   -- mode choisi : fond or doux + liseré bas
   if b.sel then meth(b.sel, "SetAllPoints", b) tcolor(b.sel, "gold", 1, 0.82, 0.2, 0.22) meth(b.sel, "Hide") end
   b.line = meth(b, "CreateTexture", nil, "ARTWORK")
@@ -454,9 +501,10 @@ local function ensureStrip()
   meth(f, "SetMovable", true)
   meth(f, "EnableMouse", true)
   local th = Th()
-  if not (th and th:Skin(f, "card")) then
+  -- (4.2 FIX42) petit cadre posé sur l'écran : fond transparent (~0,4), liseré 1 px (Theme « small »)
+  if not (th and th:Skin(f, "small")) then
     f.bgt = meth(f, "CreateTexture", nil, "BACKGROUND")
-    if f.bgt then meth(f.bgt, "SetAllPoints", f) color(f.bgt, 0.05, 0.06, 0.08, 0.85) end
+    if f.bgt then meth(f.bgt, "SetAllPoints", f) color(f.bgt, 0.05, 0.06, 0.08, 0.42) end
   end
   -- poignée : glisser = déplacer (hors combat, sauf verrou), clic droit = réglages
   local okG, h = pcall(G.CreateFrame, "Button", "TreeAIStripGrip", f)
@@ -511,7 +559,7 @@ local function ensureStrip()
       if not tt then return end
       meth(tt, "SetOwner", self, "ANCHOR_BOTTOMRIGHT")
       meth(tt, "AddLine", "Raccourcis conseillés", 1, 0.82, 0.2)
-      meth(tt, "AddLine", "Un clic : Alt-1 à Alt-8 pour ces boutons, seulement sur les touches libres (rien n'est remplacé).",
+      meth(tt, "AddLine", "Un clic : Alt-1 à Alt-9 pour ces boutons, seulement sur les touches libres (rien n'est remplacé).",
         0.9, 0.9, 0.9, true)
       meth(tt, "AddLine", "Clic droit : ne plus proposer", 0.4, 0.8, 1)
       meth(tt, "Show")

@@ -2792,7 +2792,15 @@ function M:Tick()
   self:TryInspect(t)
   if t - S.lastAura >= AURA_GAP then self:PollAuras(t) end
   self:ReadyTick(t)
-  if self.Join and self.Join.Tick then self.Join.Tick(t, memberList()) end   -- (GROUPJOIN) trajet en cours, vote, positions
+  -- (GROUPJOIN) trajet en cours, vote, positions — (4.2 FIX42, « micro-lag toutes les secondes ») dans l'image
+  -- suivante : jamais les relevés du groupe ET les trajets du groupe dans la même image
+  if self.Join and self.Join.Tick and not S.joinSoon then
+    S.joinSoon = true
+    T:After(0, function()
+      S.joinSoon = nil
+      if M:IsEnabled() and inGroup() and not inCombat() and M.Join and M.Join.Tick then M.Join.Tick(now(), memberList()) end
+    end)
+  end
   self:NowApply()
   if pullOn and dirty.live then self:CheckPull() end
   local shown = T.TabShown and T:TabShown("group") or false

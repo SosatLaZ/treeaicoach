@@ -84,7 +84,7 @@ local DIET_FR = { meat = "viande", fish = "poisson", bread = "pain", cheese = "f
 local S = {
   AUTO = 75, FEED = 6991, FEED_EFFECT = 1539,
   MEND = 136, REVIVE = 982, CALL = 883, MARK = 1130, FEIGN = 5384,
-  FREEZING = 1499, AIMED = 19434, MULTI = 2643,
+  FREEZING = 1499, AIMED = 19434, MULTI = 2643, CONC = 5116,
   HAWK = 13165, MONKEY = 13163, CHEETAH = 5118, PACK = 13159, BEAST = 13161, WILD = 20043,
 }
 -- pièges (rang 1 et suivants) : givrant, immolation, givre, explosif — tous partagent une recharge de 15 s
@@ -326,7 +326,8 @@ local function inCombat()
 end
 
 -- Réglages (compte) : M.db fourni par le cœur (defaults fusionnés), sinon repli TreeAIDB.modules.Hunter.
-local DEFAULTS = { enabled = true, bar = true, trapBar = true, ammoWarn = 200, tab = true }
+-- (4.2 FIX42) aides en plus (barre piège / Feindre la mort, ennemi qui fuit) : coupées par défaut, rien de plus à l'écran
+local DEFAULTS = { enabled = true, bar = true, trapBar = false, fdTimer = false, fleeAlert = false, ammoWarn = 200, tab = true }
 local function settings()
   local d = type(M.db) == "table" and M.db or nil
   if not d then
@@ -701,8 +702,8 @@ function M.TrapText(tr, t)
   return ("%s posé : %d s au plus · %s"):format(tr.name, left, cdTxt)
 end
 
-local function buildTrapBar()
-  if trapBar or not CreateFrame or not opt("trapBar") then return trapBar end
+local function buildTrapBar(fd)
+  if trapBar or not CreateFrame or not (opt("trapBar") or (fd and opt("fdTimer"))) then return trapBar end
   local f = CreateFrame("StatusBar", nil, UIParent)
   if f.SetClampedToScreen then f:SetClampedToScreen(true) end
   f:SetSize(190, 12)
@@ -721,20 +722,40 @@ local function buildTrapBar()
   return f
 end
 
+-- (4.2 FIX42) Feindre la mort : recharge de 30 s (Classic), affichée dans la même petite barre (option, coupée par
+-- défaut). Lue seulement quand le jeu donne le n° du sort (hors restriction « cast ») : rien n'est deviné.
+local FD_CD = 30
+local fdCdUntil = 0
+function M.FDLeft(t) local l = fdCdUntil - (t or now()) return l > 0 and l or 0 end
+function M.FDText(t)
+  local l = M.FDLeft(t)
+  return l > 0 and ("Feindre la mort : prêt dans %d s"):format(math.ceil(l)) or nil
+end
 function M:TrapTick()
   local t = now()
-  if not trap then if trapBar then trapBar:Hide() end return end
-  local armedOver = trap.fight or t > trap.armedUntil
-  if armedOver and t > (trap.cdUntil or 0) then
-    trap = nil
-    if trapBar then trapBar:Hide() end
-    return
+  local fdTxt = opt("fdTimer") and M.FDText(t) or nil
+  if trap then
+    local armedOver = trap.fight or t > trap.armedUntil
+    if armedOver and t > (trap.cdUntil or 0) then trap = nil end
   end
-  if trapBar and opt("trapBar") then
-    trapBar:SetValue(trap.fight and 0 or math.max(0, trap.armedUntil - t))
-    trapBar.text:SetText(M.TrapText(trap, t))
-    trapBar:Show()
+  local trapTxt = (trap and opt("trapBar")) and M.TrapText(trap, t) or nil
+  if not (trapTxt or fdTxt) then if trapBar and trapBar:IsShown() then trapBar:Hide() end return end
+  if trapBar then
+    if trapTxt then
+      trapBar:SetMinMaxValues(0, TRAP_LIFE)
+      trapBar:SetValue(trap.fight and 0 or math.max(0, trap.armedUntil - t))
+    else
+      trapBar:SetMinMaxValues(0, FD_CD)
+      trapBar:SetValue(M.FDLeft(t))
+    end
+    trapBar.text:SetText(trapTxt and fdTxt and (trapTxt .. " · " .. fdTxt:gsub("^Feindre la mort", "FM")) or trapTxt or fdTxt)
+    if not trapBar:IsShown() then trapBar:Show() end
   end
+end
+function M:OnFeign()
+  local t = now()
+  fdCdUntil = t + FD_CD
+  if opt("fdTimer") then buildTrapBar(true) M:TrapTick() end
 end
 
 function M:OnTrapCast(name)
@@ -758,22 +779,62 @@ function M:OnLeaveCombat()
   fdAt = nil
 end
 
+-- (4.2 FIX42) « Ennemi qui fuit » (option, coupée par défaut) : en Classic, un humanoïde à bout de vie s'enfuit et
+-- ramène ses amis ; le jeu l'annonce par une émote de monstre (« … tente de fuir … »). Lue seulement quand le texte
+-- est lisible (sur Forever, la restriction « chat » peut la rendre secrète : alors rien, jamais deviné).
+local FLEE_WORDS = { "fuir", "enfuir", "s'enfuit", "panique", "flee", "run away", "runs away" }
+function M.IsFleeText(txt)
+  if type(txt) ~= "string" then return false end
+  local l = txt:lower()
+  for _, w in ipairs(FLEE_WORDS) do if l:find(w, 1, true) then return true end end
+  return false
+end
+function M:OnMonsterEmote(text, who)
+  if not opt("fleeAlert") then return end
+  text, who = _ns(text), _ns(who)
+  if not (M.IsFleeText(text) and inCombat()) then return end
+  local name = type(who) == "string" and who ~= "" and who or nil
+  local tgt = UnitName and _ns(UnitName("target"))
+  if name and type(tgt) == "string" and tgt ~= name then return end   -- un autre que ta cible : pas ton affaire
+  local what = knows(S.CONC) and "Trait de choc" or "achève-le"
+  suggest("flee", ("« %s » s'enfuit : %s avant qu'il ramène des amis"):format(name or "ta cible", what), 2, 8, { ttl = 6 })
+end
+
 ---------------------------------------------------------------------------
 -- Barre de tir automatique
 ---------------------------------------------------------------------------
 local bar, autoOn, lastShot, shotSpeed = nil, false, nil, 2.0
 M.clips = 0
+-- (4.2 FIX42, étude §8.1) la durée du tir vient de PLAYER_SWING(durée, type 2 = distance) : jamais secret, même en
+-- combat. UnitRangedDamage est secret pendant TOUT le combat sur Forever (repli 2,0 s faux) et le n° de sort de
+-- UNIT_SPELLCAST_SUCCEEDED aussi (restriction « cast ») : on garde la DERNIÈRE vitesse lisible (hors combat, ou le
+-- dernier PLAYER_SWING), jamais 2,0 s inventé tant qu'une vraie valeur a été vue.
+local readSpeed, swingAt = nil, -100
+M.SWING_RANGED = 2
 
 local function rangedSpeed()
   if UnitRangedDamage then
     local s = _ns(UnitRangedDamage("player"))
-    if type(s) == "number" and s > 0 then return s end
+    if type(s) == "number" and s > 0 and s < 10 then readSpeed = s return s end
   end
-  return 2.0
+  return readSpeed or 2.0
 end
+M.RangedSpeed = rangedSpeed
+--- les barres de swing natives de Forever (« Main droite / Main gauche / À distance », CVar showSwingTimer) sont
+--- affichées : la nôtre se tait (jamais deux barres pour la même chose)
+local function nativeSwing()
+  local C = rawget(_G, "C_CVar")
+  local get = (type(C) == "table" and C.GetCVar) or rawget(_G, "GetCVar")
+  if type(get) ~= "function" then return false end
+  local ok, v = pcall(get, "showSwingTimer")
+  v = ok and _ns(v) or nil
+  return v == "1" or v == 1 or v == true
+end
+M.NativeSwing = nativeSwing
+local function barWanted() return opt("bar") and not nativeSwing() end
 
 local function buildBar()
-  if bar or not CreateFrame or not opt("bar") then return end
+  if bar or not CreateFrame or not barWanted() then return end
   local f = CreateFrame("StatusBar", nil, UIParent)
   if f.SetClampedToScreen then f:SetClampedToScreen(true) end
   f:SetSize(160, 10)
@@ -826,10 +887,22 @@ local function buildBar()
 end
 
 function M:OnAutoShot()
+  if now() - swingAt < 0.4 then return end   -- PLAYER_SWING vient de donner le vrai départ et la vraie durée
   lastShot = now()
-  shotSpeed = rangedSpeed()
-  if bar and opt("bar") then bar:Show() end
+  -- un PLAYER_SWING récent (même combat) : sa durée (vitesse réelle, carquois compris) ; sinon la vitesse lue
+  shotSpeed = (now() - swingAt < 15 and readSpeed) or rangedSpeed()
+  if bar and barWanted() then bar:Show() end
 end
+--- PLAYER_SWING(durée, type) : type 2 = tir à distance (Tir auto) ; durée lisible même en combat
+function M:OnSwing(dur, kind)
+  dur, kind = tonumber(_ns(dur)), tonumber(_ns(kind))
+  if kind ~= M.SWING_RANGED or not dur or dur <= 0.3 or dur > 10 then return end
+  readSpeed, shotSpeed = dur, dur
+  lastShot = now()
+  swingAt = lastShot
+  if barWanted() then buildBar() if bar then bar:Show() end end
+end
+function M.ShotState() return lastShot, shotSpeed, readSpeed end
 
 local CLIPPERS = { [S.AIMED] = true, [S.MULTI] = true }
 function M:OnCastStart(spellID)
@@ -988,6 +1061,7 @@ local EVENTS = {
   "UNIT_PET", "UNIT_HAPPINESS", "PET_BAR_UPDATE", "BAG_UPDATE_DELAYED", "UNIT_INVENTORY_CHANGED",
   "START_AUTOREPEAT_SPELL", "STOP_AUTOREPEAT_SPELL", "UNIT_SPELLCAST_SUCCEEDED", "UNIT_SPELLCAST_START",
   "UNIT_AURA", "PLAYER_LOGOUT", "PLAYER_LEAVING_WORLD", "PLAYER_STARTED_MOVING", "PLAYER_STOPPED_MOVING",
+  "PLAYER_SWING", "CHAT_MSG_MONSTER_EMOTE",
 }
 
 local UNIT_EVENTS = { UNIT_PET = true, UNIT_HAPPINESS = true, UNIT_INVENTORY_CHANGED = true,
@@ -1008,6 +1082,8 @@ function M:OnEvent(ev, ...)
     end
   end
   if ev == "BAG_UPDATE_DELAYED" or ev == "UNIT_INVENTORY_CHANGED" or ev == "PLAYER_ENTERING_WORLD" then bagCache = nil end
+  if ev == "PLAYER_SWING" then return self:OnSwing(...) end
+  if ev == "CHAT_MSG_MONSTER_EMOTE" then return self:OnMonsterEmote(...) end
   if ev == "START_AUTOREPEAT_SPELL" then autoOn = true; buildBar(); return end
   if ev == "STOP_AUTOREPEAT_SPELL" then autoOn = false; return end
   if ev == "UNIT_SPELLCAST_SUCCEEDED" then
@@ -1015,7 +1091,7 @@ function M:OnEvent(ev, ...)
     if unit ~= "player" then return end
     spellID = pub(spellID)
     if spellID == S.AUTO then return self:OnAutoShot() end
-    if spellID == S.FEIGN or (spellID and spellName(spellID) == spellName(S.FEIGN)) then fdAt = now() return end
+    if spellID == S.FEIGN or (spellID and spellName(spellID) == spellName(S.FEIGN)) then fdAt = now() self:OnFeign() return end
     local tn = isTrap(spellID)
     if tn then self:OnTrapCast(tn) end
     return
@@ -1096,18 +1172,21 @@ end
 
 function M:OnOptionChanged(key, value)
   if key == "bar" and not value and bar then bar:Hide() end
-  if key == "trapBar" and not value and trapBar then trapBar:Hide() end
+  if key == "fleeAlert" and not value then clear("flee") end
+  if (key == "trapBar" or key == "fdTimer") and not value and trapBar then M:TrapTick() end
   if key == "tab" then tabSig = nil M:PushTab(true) end
 end
 
 -- Déclaration auprès du cœur (agent B) : défauts, classe, options auto-rendues.
-M.defaults = { enabled = true, bar = true, trapBar = true, ammoWarn = 200, tab = true }
+M.defaults = { enabled = true, bar = true, trapBar = false, fdTimer = false, fleeAlert = false, ammoWarn = 200, tab = true }
 M.classes = { HUNTER = true }
 M.title = "Chasseur"
 M.options = {
   { key = "tab", type = "toggle", label = "Onglet « Chasseur » : fiche du familier et des munitions" },
-  { key = "bar", type = "toggle", label = "Barre de tir automatique (Maj+glisser pour déplacer)" },
+  { key = "bar", type = "toggle", label = "Barre de tir automatique (se tait si les barres de swing du jeu sont affichées)" },
   { key = "trapBar", type = "toggle", label = "Barre de piège : posé, recharge (mode édition pour déplacer)" },
+  { key = "fdTimer", type = "toggle", label = "Feindre la mort : recharge de 30 s dans la barre de piège" },
+  { key = "fleeAlert", type = "toggle", label = "Alerte « ennemi qui fuit » (il ramène des amis)" },
   { key = "ammoWarn", type = "range", label = "Alerte munitions sous", min = 50, max = 2000, step = 50 },
 }
 

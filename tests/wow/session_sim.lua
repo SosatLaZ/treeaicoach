@@ -16,6 +16,12 @@
 --   lua5.1 tests/wow/session_sim.lua [--class HUNTER] [--flavor modern] [--minutes 60] [--addon DIR] [-v]
 --     [--profile essentiel|tout|sur] (default essentiel; sur = « mode sûr », what the player runs since 3.9.9)
 --     [--fine] (CPU by function) [--idle] (PERF4: nothing happens — standing still, no combat, no event; use --minutes 10)
+--     [--walk] (4.2 FIX42: the group of 4 walks the whole run — moving every second, a fight every ~40 s, bags opened /
+--       closed every 20 s, friends questing — and every Show / Hide of a TreeAI frame is logged: « flaps » = a frame
+--       toggling more than once in 10 s; use --minutes 5)
+--     [--step S] (4.2 FIX42: main-client frame step in seconds, default 0.2; 0.02 ≈ real 50 fps frames)
+--     [--ms-rate K] (4.2 FIX42: debugprofilestop() of the main client counts K kilo-instructions per ms of addon work, so
+--       Core's time-sliced scheduler sees a real cost; report: worst frame of each steady second, in kinstr and ≈ ms)
 --   Hitches (SPIKE): cost of every main-client frame (timers + OnUpdate, 0.2-s step): worst / p99, the 1-Hz
 --   phase ratio, the worst frames with their top functions (-v: + the jobs that pay), KB allocated / s.
 local HERE = (arg and arg[0] or "session_sim.lua"):match("^(.*)[/\\][^/\\]*$") or "."
@@ -30,7 +36,10 @@ do
     elseif a == "--addon" then opts.addon = arg[i + 1]; i = i + 1
     elseif a == "--profile" then opts.profile = arg[i + 1]; i = i + 1
     elseif a == "--fine" then opts.fine = true
+    elseif a == "--step" then opts.step = tonumber(arg[i + 1]); i = i + 1
+    elseif a == "--ms-rate" then opts.msRate = tonumber(arg[i + 1]); i = i + 1
     elseif a == "--idle" then opts.idle = true
+    elseif a == "--walk" then opts.walk = true
     elseif a == "-v" then opts.verbose = true end
     i = i + 1
   end
@@ -230,6 +239,8 @@ end
 
 -- CPU profiler: count hook, innermost addon file wins -------------------------------------------
 local CUR = "sim"            -- client being driven
+local SAMP = {}              -- (4.2 FIX42) count-hook samples (×1000 instr) per client: --ms-rate clock
+local SH = {}                -- (4.2 FIX42) --walk: Show / Hide transitions of addon frames (main client)
 local MINUTE = 0
 local cpu = {}               -- cpu[minute][client][module] = samples (1 sample = 1000 VM instructions)
 local srcMod = {}
@@ -303,6 +314,7 @@ local function hook()
       if job then FR.jobs[job] = (FR.jobs[job] or 0) + 1; FR.fjobs[job] = (FR.fjobs[job] or 0) + 1 end
     end
   end
+  if m then SAMP[CUR] = (SAMP[CUR] or 0) + 1 end   -- addon code only (the --ms-rate clock)
   local byMin = cpu[MINUTE]
   if not byMin then byMin = {}; cpu[MINUTE] = byMin end
   local byCl = byMin[CUR]
@@ -340,6 +352,56 @@ local function newWorld(spec, carryM)
   setfenv(chunk, env)
   local M = chunk()
   M.addonName = "TreeAI"
+  if opts.walk and spec.idx == 1 then
+    -- (4.2 FIX42) every Show / Hide transition of a frame created by addon code (creation site = its id)
+    local W = M.Widget
+    local show0, hide0, cf0 = W.Show, W.Hide, env.CreateFrame
+    env.CreateFrame = function(kind, name, ...)
+      local f = cf0(kind, name, ...)
+      if type(f) == "table" and not f.__fixId then
+        for lvl = 2, 8 do
+          local info = getinfo(lvl, "Sl")
+          if not info then break end
+          local m = modOf(info.source)
+          if m then f.__fixId = (type(name) == "string" and name) or (m .. ":" .. tostring(info.currentline)) break end
+        end
+      end
+      return f
+    end
+    W.Show = function(self, ...)
+      if self.__fixId and not self.__shown then SH[#SH + 1] = { t = M.now, id = self.__fixId, on = true, f = self } end
+      return show0(self, ...)
+    end
+    W.Hide = function(self, ...)
+      if self.__fixId and self.__shown then SH[#SH + 1] = { t = M.now, id = self.__fixId, on = false, f = self } end
+      return hide0(self, ...)
+    end
+    -- strata changes (the bag guard lowers / restores frames over the bags) and alpha crossing 0.05 count as toggles
+    local strata0, alpha0 = W.SetFrameStrata, W.SetAlpha
+    if strata0 then
+      W.SetFrameStrata = function(self, st, ...)
+        local was = self.__fixStrata
+        self.__fixStrata = st
+        if self.__fixId and was and was ~= st then SH[#SH + 1] = { t = M.now, id = self.__fixId .. " [strate]", on = st, f = self } end
+        return strata0(self, st, ...)
+      end
+    end
+    if alpha0 then
+      W.SetAlpha = function(self, a, ...)
+        local vis = (tonumber(a) or 1) > 0.05
+        if self.__fixId and self.__fixVis ~= nil and self.__fixVis ~= vis and self.__shown then
+          SH[#SH + 1] = { t = M.now, id = self.__fixId .. " [alpha]", on = vis, f = self }
+        end
+        self.__fixVis = vis
+        return alpha0(self, a, ...)
+      end
+    end
+  end
+  if opts.msRate and opts.msRate > 0 then
+    -- (4.2 FIX42) addon work costs time: K kilo-instructions of addon code = 1 ms on this clock (scheduler budgets)
+    local who, rate = spec.name, opts.msRate
+    env.debugprofilestop = function() return M.now * 1000 + (SAMP[who] or 0) / rate end
+  end
   FOREVER_LINE = M.FOREVER_LAYER_LINE or FOREVER_LINE
   M.traceSecretBooleans = false   -- forever: the harness lists secret booleans; the session does not read them
   M.Install(opts.flavor)
@@ -635,7 +697,9 @@ end
 -- time ----------------------------------------------------------------------------------------------
 local T0
 local function simSeconds() return order[1].M.now - T0 end
-local FRAMES_PER_SEC = 5   -- main client Advance step 0.2 s
+local STEP = (opts.step and opts.step > 0) and opts.step or 0.2
+local FRAMES_PER_SEC = math.max(1, math.floor(1 / STEP + 0.5))   -- main client Advance step (default 0.2 s)
+FR.secMax = {}   -- (4.2 FIX42) worst frame of each steady second
 local function frameHook(begin)
   if begin then
     FR.acc = 0
@@ -660,6 +724,7 @@ local function frameHook(begin)
     return
   end
   FR.costs[#FR.costs + 1] = cost
+  if cost > (FR.secMax[sec] or 0) then FR.secMax[sec] = cost end
   local ph = FR.idx % FRAMES_PER_SEC
   FR.phase[ph] = (FR.phase[ph] or 0) + cost
   local w = FR.worst
@@ -683,7 +748,7 @@ local function tick(sec)
     for _, c in ipairs(order) do
       CUR = c.name
       if c.main then c.M.FrameHook = frameHook end
-      c.M.Advance(1, c.main and 0.2 or 0.5)
+      c.M.Advance(1, c.main and STEP or 0.5)
     end
     pump()
     sampleMain(order[1])
@@ -1263,6 +1328,38 @@ local total = opts.minutes * 60
 -- PERF4 (4.0.1) --idle: the player stands still out of combat, nothing happens for the whole run (no event, no fight,
 -- the friends idle too): what TreeAI costs « in the background » when nothing changes (budget: ≈ 0)
 if opts.idle then events = {}; questing.to, questing2.to = -1, -1 end
+if opts.walk then
+  -- (4.2 FIX42) the group walks: positions every second, PLAYER_STARTED_MOVING, a fight every ~40 s, bags every 20 s
+  events = {}
+  questing.to, questing2.to = -1, -1
+  local t1, step, nf = simSeconds(), 0, 40
+  local bagF = rawget(main.env, "ContainerFrame1")
+  for _, c in ipairs(order) do CUR = c.name fire(c, "PLAYER_STARTED_MOVING") end
+  while simSeconds() < total do
+    local s = math.floor(simSeconds())
+    step = step + 1
+    for i, c in ipairs(order) do
+      local p = c.M.pos
+      if p then c.M.pos = { mapID = p.mapID, x = p.x + 0.0006, y = p.y + ((step % 20 < 10) and 0.0004 or -0.0004) } end
+      c.M.speed = 7
+      if i > 1 and step % 15 == i then CUR = c.name fire(c, "PLAYER_STARTED_MOVING") end
+    end
+    if s - t1 >= nf then
+      nf = nf + 40
+      fightN = fightN + 1
+      BASE.pcall(function() fight(main, MOBS[1 + fightN % 3], { xp = 360 }) end)
+      for _, c in ipairs(order) do CUR = c.name fire(c, "PLAYER_STARTED_MOVING") end
+    elseif step % 20 == 0 and bagF then
+      CUR = main.name
+      if bagF:IsShown() then bagF:Hide() fire(main, "BAG_CLOSED", 0) else bagF:Show() fire(main, "BAG_OPEN", 0) end
+      if rawget(main.env, "ToggleBackpack") then BASE.pcall(main.env.ToggleBackpack) end
+      tick(1)
+    else
+      friendLife(s)
+      tick(1)
+    end
+  end
+end
 while simSeconds() < total do
   local s = math.floor(simSeconds())
   if events[ev] and s >= events[ev].t then
@@ -1333,6 +1430,30 @@ if (perMod.Stats or 0) / nMin > BUDGET.kinstrStatsMin then
   fail(("cpu: Stats %.1f kinstr/min > %d"):format((perMod.Stats or 0) / nMin, BUDGET.kinstrStatsMin))
 end
 P(("  total addon  %7.0f kinstr/min"):format(totalMain / nMin))
+-- (4.2 FIX42) --walk: Show / Hide flapping of TreeAI frames (more than one toggle in 10 s)
+if opts.walk then
+  local byId, flaps = {}, {}
+  for _, e in ipairs(SH) do
+    if e.t - T0 >= 30 then local l = byId[e.id] or {} byId[e.id] = l l[#l + 1] = e end
+  end
+  local ids = {}
+  for id, l in pairs(byId) do
+    ids[#ids + 1] = id
+    local worst = 0
+    for i = 1, #l do
+      local n = 0
+      for j = i, #l do if l[j].t - l[i].t <= 10 then n = n + 1 else break end end
+      if n > worst then worst = n end
+    end
+    if worst > 2 then flaps[#flaps + 1] = { id = id, n = worst, total = #l } end
+  end
+  table.sort(ids, function(a, b) return #byId[a] > #byId[b] end)
+  P(("show/hide: %d transitions of %d addon frames after 30 s"):format(#SH, #ids))
+  for i = 1, math.min(12, #ids) do P(("  %-44s %4d"):format(ids[i], #byId[ids[i]])) end
+  table.sort(flaps, function(a, b) return a.n > b.n end)
+  for _, f in ipairs(flaps) do P(("FLAP %s : %d toggles within 10 s (%d in all)"):format(f.id, f.n, f.total)) end
+  if #flaps == 0 then P("flaps: none (no TreeAI frame toggles more than once per 10 s)") end
+end
 -- SPIKE: per-frame peaks (hitches) + allocation rate, main client
 do
   local c = {}
@@ -1373,9 +1494,24 @@ do
     for _, e in ipairs(w.jobs) do jp[#jp + 1] = ("%s=%d"):format(e.k, e.n) end
     P(("  worst#%d %4d kinstr @%6.1fs  %s  | jobs %s"):format(i, w.cost, w.t, table.concat(parts, " "), table.concat(jp, " ")))
   end
-  if (c[n] or 0) > BUDGET.frameWorstKinstr then fail(("hitch: worst frame %d kinstr > %d"):format(c[n], BUDGET.frameWorstKinstr)) end
-  if pct(0.99) > BUDGET.frameP99Kinstr then fail(("hitch: p99 frame %d kinstr > %d"):format(pct(0.99), BUDGET.frameP99Kinstr)) end
-  if phRatio > BUDGET.framePhaseRatio then fail(("hitch: 1-Hz pattern, frame phase ratio %.2f > %.2f"):format(phRatio, BUDGET.framePhaseRatio)) end
+  do   -- (4.2 FIX42) « micro-lag toutes les secondes » : la pire image de chaque seconde stable
+    local sm = {}
+    for _, v in pairs(FR.secMax) do sm[#sm + 1] = v end
+    table.sort(sm)
+    local k = #sm
+    local function sp(p) return k > 0 and sm[math.max(1, math.ceil(k * p))] or 0 end
+    local rate = opts.msRate or 50
+    local over = 0
+    for _, v in ipairs(sm) do if v > 2 * rate then over = over + 1 end end
+    P(("per-second worst frame (step %.3f s): p50 %d  p95 %d  max %d kinstr ≈ %.2f / %.2f / %.2f ms at %d kinstr/ms; seconds with a frame > 2 ms: %d / %d")
+      :format(STEP, sp(0.5), sp(0.95), sm[k] or 0, sp(0.5) / rate, sp(0.95) / rate, (sm[k] or 0) / rate, rate, over, k))
+  end
+  if opts.step and opts.step ~= 0.2 then
+    -- finer frames: the 0.2-s budgets do not apply (each budget frame held ~12 real frames)
+  elseif (c[n] or 0) > BUDGET.frameWorstKinstr then fail(("hitch: worst frame %d kinstr > %d"):format(c[n], BUDGET.frameWorstKinstr)) end
+  local stdStep = not (opts.step and opts.step ~= 0.2)   -- the frame budgets hold for the default 0.2-s step
+  if stdStep and pct(0.99) > BUDGET.frameP99Kinstr then fail(("hitch: p99 frame %d kinstr > %d"):format(pct(0.99), BUDGET.frameP99Kinstr)) end
+  if stdStep and phRatio > BUDGET.framePhaseRatio then fail(("hitch: 1-Hz pattern, frame phase ratio %.2f > %.2f"):format(phRatio, BUDGET.framePhaseRatio)) end
   if kbAvg > BUDGET.allocKBps then fail(("gc: %.1f KB/s allocated > %d"):format(kbAvg, BUDGET.allocKBps)) end
 end
 do  -- CHEAT25 : les avantages restent discrets (une ligne quand elle sert, rien sinon)
@@ -1529,7 +1665,7 @@ if blockedN > BUDGET.blockedMax then fail(("%d blocked actions > %d"):format(blo
 -- the session really happened
 local p = main.M.player
 P(("player: level %d, %d quests in log, %d free slots, money %d"):format(p.level, #main.M.quests, countFree(main.M), p.money))
-if p.level < 27 and not opts.idle then fail("no level-up happened") end
+if p.level < 27 and not opts.idle and not opts.walk then fail("no level-up happened") end
 if opts.verbose then for _, l in ipairs(S.nowLog) do P("  now " .. l) end end
 
 for _, e in ipairs(R.errors) do P(("ERROR [%s %s] x%d %s"):format(e.who, e.label, e.n, e.msg:sub(1, 400))) end

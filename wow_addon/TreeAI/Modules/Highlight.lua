@@ -1476,11 +1476,12 @@ do
     for _, n in ipairs(BAG_ROOTS) do add(rawget(G, n)) end
     return out
   end
-  --- nos cadres du premier niveau (enfants d'UIParent nommés TreeAI…), relevés au plus toutes les 3 s
-  local cache, cacheAt = nil, -10
+  --- nos cadres du premier niveau (enfants d'UIParent nommés TreeAI…), relevés au plus toutes les 30 s
+  --- (4.2 FIX42 : 3 s avant — un EnumerateFrames de toute l'interface toutes les 3 s tant que les sacs sont ouverts)
+  local cache, cacheAt = nil, -100
   local function ours()
     local t = try(G.GetTime) or 0
-    if cache and t - cacheAt < 3 then return cache end
+    if cache and t - cacheAt < 30 then return cache end
     local list, UIP = {}, G.UIParent
     cache, cacheAt = list, t
     local enum = rawget(G, "EnumerateFrames")

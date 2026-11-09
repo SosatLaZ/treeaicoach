@@ -25,7 +25,7 @@ local API = T.API or {}
 local M = T:RegisterModule("Prof", {
   title = "Métiers",
   defaults = { enabled = true, overtime = 0, target = 0, knownOnly = true, nowTip = true, gather = true,
-    squad = true, camp = true, steps = 4, plMode = "full", askAH = true, plCompass = true },
+    squad = true, camp = true, steps = 4, plMode = "full", askAH = true, plCompass = true, compsCard = true },
   charDefaults = { known = {}, target = {}, nodes = {}, cal = {}, pl = {} },
   options = {
     { key = "overtime", type = "range", label = "« Heures sup. » (Legacy) : rangs pris", min = 0, max = 5, step = 1, section = "Calcul" },
@@ -38,6 +38,8 @@ local M = T:RegisterModule("Prof", {
     { key = "camp", type = "toggle", label = "Astuces de camp (Forever)", section = "Affichage" },
     { key = "askAH", type = "toggle", label = "Session métier : me demander avant de prévoir un achat à l'HV", section = "Session métier" },
     { key = "plCompass", type = "toggle", label = "Session métier : la boussole va au PNJ de chaque étape", section = "Session métier" },
+    -- (4.2 FIX42) « Composants de métier » chez un marchand / un maître / à la banque (jamais pendant les quêtes)
+    { key = "compsCard", type = "toggle", label = "Composants de métier : petite carte chez le marchand, le maître, la banque", section = "Session métier" },
   },
 })
 if T.MODULE_TAB then T.MODULE_TAB.Prof = "prof" end

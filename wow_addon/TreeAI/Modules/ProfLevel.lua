@@ -235,6 +235,67 @@ function PL.Reserve()
   return out, why
 end
 
+-- ===================================================================== (4.2 FIX42) « ne vends pas ce dont tu as besoin »
+-- Ce qu'il faut GARDER de chaque objet : compos que tes plans de métier consomment (verdict des courses : besoin +
+-- réserve des quêtes) et objets demandés par les quêtes de ton journal (par nom d'objectif). Lu par l'HV (« Vendre tes
+-- sacs », mise en vente, achat-revente), la carte du marchand, les pastilles des sacs, la banque (« Sortir à vendre »).
+-- { [id] = { n = à garder, why = texte } } ; mémorisé jusqu'au prochain changement de sacs / journal (≤ 1 / 5 s).
+local keepMemo = { sig = nil, at = -100, map = {} }
+function PL.KeepMap()
+  local sig = tostring(API.BagGen and API.BagGen() or 0) .. ":" .. tostring(T.QuestGen and T:QuestGen() or 0) .. ":" .. ver.known .. ":" .. ver.bank
+  if keepMemo.sig == sig and now() - keepMemo.at < 60 then return keepMemo.map end
+  if keepMemo.sig and now() - keepMemo.at < 5 then return keepMemo.map end
+  local map = {}
+  local CR = T.CityRun
+  if CR and type(CR.Verdicts) == "function" then
+    local ok, vs = pcall(CR.Verdicts)
+    for id, v in pairs(ok and type(vs) == "table" and vs or {}) do
+      if type(v) == "table" and (v.need or 0) > 0 then
+        map[id] = { n = v.need, why = fmt("ton plan de métier en utilise %d", v.need) }
+      end
+    end
+  end
+  -- objets de quête du journal (objectif « objet » : le nombre demandé), par nom
+  local Q = T.modules and T.modules.Quests
+  local list = Q and Q.lastList
+  local want = {}
+  for _, q in ipairs(type(list) == "table" and list or {}) do
+    for _, o in ipairs(type(q) == "table" and type(q.obj) == "table" and q.obj or {}) do
+      if type(o) == "table" and o.t == "i" and type(o.name) == "string" and (tonumber(o.need) or 0) > 0 then
+        want[fold(o.name)] = { n = tonumber(o.need), title = q.title }
+      end
+    end
+  end
+  if next(want) and API.IterBags then
+    for _, _, it in API.IterBags() do
+      local id = it and num(it.itemID)
+      local nm = id and str((try(API.ItemInfo, id)))
+      local w = nm and want[fold(nm)]
+      if w then
+        local cur = map[id]
+        map[id] = { n = (cur and cur.n or 0) + w.n, why = fmt("quête « %s » (%d)", cut(w.title or "?", 28), w.n) }
+      end
+    end
+  end
+  keepMemo.sig, keepMemo.at, keepMemo.map = sig, now(), map
+  return map
+end
+--- à garder de cet objet : n (0 = tout est vendable), raison
+function PL.KeepOf(id)
+  id = num(id)
+  local e = id and PL.KeepMap()[id]
+  if e then return e.n, e.why end
+  return 0, nil
+end
+--- « garde 12, vends 18 » (have = ce que tu as) ou nil s'il n'y a rien à garder
+function PL.KeepText(id, have)
+  local k = PL.KeepOf(id)
+  if k <= 0 then return nil end
+  have = tonumber(have) or 0
+  if have <= k then return fmt("garde tout (%d, il en faut %d)", have, k) end
+  return fmt("garde %d, vends %d", k, have - k)
+end
+
 -- ===================================================================== prix
 local priceCache, priceAt = {}, -100
 --- prix unitaire d'une compo : marchand (exact), sinon HV (TreeAI, confiance ≥ 30 %) ou Auctionator ; jamais deviné
@@ -494,6 +555,7 @@ function PL.Compute(line, mode, target, assume)
     res = res, split = split, prep = prep, use = use2, have = have, reserve = reserve, why = why, unit = unit, known = known ~= nil,
     time = t + visits * 40, visits = visits, cost = floor(split.vendorCost + split.ahCost), at = now(), level = level }
   PL.cache[key] = plan
+  if line == ((PL.focus and PL.focus.line) or PL.Line()) then PL.lastBuys = #split.vendor + #split.ah end   -- bouton « Métiers »
   local order = PL.cacheOrder
   order[#order + 1] = key
   while #order > 6 do PL.cache[table.remove(order, 1)] = nil end
@@ -1142,20 +1204,10 @@ end
 
 -- ===================================================================== carte d'action sous les fenêtres du jeu
 local acard
-local function uiScale() local U = g("UIParent") return U and num(try(U.GetEffectiveScale, U)) or 1 end
 local function shown(f) return type(f) == "table" and try(f.IsVisible, f) and true or false end
-local function centerOf(f)
-  local x = num((try(f.GetCenter, f)))
-  if not x then return nil end
-  return x * (num(try(f.GetEffectiveScale, f)) or 1) / max(0.01, uiScale())
-end
-local function bottomOf(f)
-  local b = num((try(f.GetBottom, f)))
-  if not b then return nil end
-  return b * (num(try(f.GetEffectiveScale, f)) or 1) / max(0.01, uiScale())
-end
 local OWNERS = { merchant = { "MerchantFrame" }, bank = { "BankFrame", "BankPanel" }, trade = { "ProfessionsFrame", "TradeSkillFrame" },
-  ah = { "AuctionHouseFrame", "AuctionFrame" }, mail = { "MailFrame", "InboxFrame" } }
+  ah = { "AuctionHouseFrame", "AuctionFrame" }, mail = { "MailFrame", "InboxFrame" }, trainer = { "ClassTrainerFrame" },
+  taxi = { "TaxiFrame", "FlightMapFrame" }, gossip = { "GossipFrame" } }
 local function ownerOf(kind)
   for _, n in ipairs(OWNERS[kind] or {}) do local f = g(n) if shown(f) then return f end end
   return nil
@@ -1165,7 +1217,8 @@ local function ensureCard()
   if inCombat() then return nil end
   local Th, cf = T.Theme, g("CreateFrame")
   if type(cf) ~= "function" then return nil end
-  local f = (Th and Th.Frame and Th:Frame(g("UIParent"), "panel", 280, 96)) or try(cf, "Frame", nil, g("UIParent"))
+  -- (4.2 FIX42) petite carte accrochée à la fenêtre du jeu : fond transparent, liseré 1 px (Theme « small »)
+  local f = (Th and Th.Frame and Th:Frame(g("UIParent"), Th.KINDS and Th.KINDS.small and "small" or "panel", 280, 96)) or try(cf, "Frame", nil, g("UIParent"))
   if not f then return nil end
   try(f.SetSize, f, 280, 96)
   try(f.SetFrameStrata, f, "DIALOG")
@@ -1208,7 +1261,38 @@ local function ensureCard()
 end
 PL.GetCard = function() return acard end
 --- carte d'action sous une fenêtre du jeu visible (lue, jamais modifiée ni ancrée) : titre, liste, UN bouton
-function PL.ShowCard(owner, title, body, label, fn, tip)
+--- (4.2 FIX42) boutons en plus de la carte (« Vendre », « Réparer », « Session métier »…) : un clic = une action
+local function moreButton(f, i)
+  f.more = f.more or {}
+  if f.more[i] then return f.more[i] end
+  local Th, cf = T.Theme, g("CreateFrame")
+  local b
+  local function click(self)
+    if not self.fn then return end
+    if inCombat() then refuse("Après le combat.") return end
+    T:UserAction(self.fn)
+    PL.UpdateCard()
+  end
+  if Th and Th.Button then
+    b = Th:Button(f, "", 100, 20, function() click(b) end)
+  else
+    b = try(cf, "Button", nil, f)
+    if b then try(b.SetScript, b, "OnClick", click) end
+  end
+  if not b then return nil end
+  try(b.SetScript, b, "OnEnter", function(self)
+    local tt = g("GameTooltip")
+    if not (tt and self.tip) then return end
+    try(tt.SetOwner, tt, self, "ANCHOR_RIGHT")
+    for k, l in ipairs(self.tip) do if k == 1 then try(tt.SetText, tt, l) else try(tt.AddLine, tt, l, 0.9, 0.9, 0.9, true) end end
+    try(tt.Show, tt)
+  end)
+  try(b.SetScript, b, "OnLeave", function() local tt = g("GameTooltip") if tt then try(tt.Hide, tt) end end)
+  f.more[i] = b
+  return b
+end
+--- more = { {libellé, fn, infobulle}, … } : boutons à côté du principal (au plus 2)
+function PL.ShowCard(owner, title, body, label, fn, tip, more)
   if inCombat() then return nil end
   local f = ensureCard()
   if not f then return nil end
@@ -1217,19 +1301,41 @@ function PL.ShowCard(owner, title, body, label, fn, tip)
   if f.body then try(f.body.SetText, f.body, safe(body or "")) end
   local lines = 1
   for _ in tostring(body or ""):gmatch("\n") do lines = lines + 1 end
-  try(f.SetHeight, f, 30 + 14 * lines + (label and 30 or 0))
+  local nb = (label and 1 or 0) + (type(more) == "table" and min(2, #more) or 0)
+  try(f.SetHeight, f, 30 + 14 * lines + (nb > 0 and 30 or 0))
+  local bw = nb > 0 and floor((264 - (nb - 1) * 4) / nb) or 220
+  local x0 = 8
   if f.btn then
     if label then
       if f.btn.SetLabel then f.btn:SetLabel(safe(label)) else try(f.btn.SetText, f.btn, safe(label)) end
+      try(f.btn.SetSize, f.btn, bw, 22)
+      try(f.btn.ClearAllPoints, f.btn)
+      if nb > 1 then try(f.btn.SetPoint, f.btn, "BOTTOMLEFT", f, "BOTTOMLEFT", x0, 8) x0 = x0 + bw + 4
+      else try(f.btn.SetPoint, f.btn, "BOTTOM", f, "BOTTOM", 0, 8) end
       try(f.btn.Show, f.btn)
     else try(f.btn.Hide, f.btn) end
   end
+  for i = 1, 2 do
+    local m = type(more) == "table" and more[i] or nil
+    local b = (m or (f.more and f.more[i])) and moreButton(f, i) or nil
+    if b then
+      if m then
+        if b.SetLabel then b:SetLabel(safe(m[1])) else try(b.SetText, b, safe(m[1])) end
+        b.fn, b.tip = m[2], type(m[3]) == "table" and m[3] or (m[3] and { m[1], m[3] } or nil)
+        try(b.SetSize, b, bw, 22)
+        try(b.ClearAllPoints, b)
+        try(b.SetPoint, b, "BOTTOMLEFT", f, "BOTTOMLEFT", x0, 8)
+        x0 = x0 + bw + 4
+        try(b.Show, b)
+      else b.fn = nil try(b.Hide, b) end
+    end
+  end
   f.fn, f.tip, f.label = fn, tip, label
-  local x, y = owner and centerOf(owner), owner and bottomOf(owner)
+  -- (4.2 FIX42) accrochée SOUS la fenêtre du jeu (elle suit la fenêtre), sinon en haut au centre
   try(f.ClearAllPoints, f)
-  if x and y then try(f.SetPoint, f, "TOP", g("UIParent"), "BOTTOMLEFT", x, y - 6)
-  else try(f.SetPoint, f, "TOP", g("UIParent"), "TOP", 0, -140) end
-  try(f.Show, f)
+  if owner and not (pcall(f.SetPoint, f, "TOP", owner, "BOTTOM", 0, -4)) then owner = nil end
+  if not owner then try(f.SetPoint, f, "TOP", g("UIParent"), "TOP", 0, -140) end
+  if not try(f.IsShown, f) then try(f.Show, f) end
   return f
 end
 function PL.HideCard()
@@ -1311,6 +1417,48 @@ function PL.GlowBank(list)
   return glowN
 end
 
+-- (4.2 FIX42) un glow sur UN bouton du jeu (lu, jamais modifié) : la case à cliquer toi-même en mode sûr
+local function glowOn(btn)
+  PL.ClearGlows()
+  if inCombat() or not shown(btn) then return false end
+  local gl = glowFor(1)
+  if not gl then return false end
+  glowN = 1
+  try(gl.ClearAllPoints, gl)
+  try(gl.SetPoint, gl, "TOPLEFT", btn, "TOPLEFT", -8, 8)
+  try(gl.SetPoint, gl, "BOTTOMRIGHT", btn, "BOTTOMRIGHT", 8, -8)
+  try(gl.SetFrameStrata, gl, try(btn.GetFrameStrata, btn) or "HIGH")
+  try(gl.SetFrameLevel, gl, (num(try(btn.GetFrameLevel, btn)) or 1) + 5)
+  try(gl.Show, gl)
+  return true
+end
+--- (4.2 FIX42) mode sûr : montre l'objet n° index dans la fenêtre du marchand (surbrillance, ou la page à ouvrir) sans
+--- rien appeler ; txt = « 20 Fil grossier ». Renvoie false (rien n'a été acheté).
+function PL.ShowMerchantItem(index, txt)
+  index = num(index)
+  if not index then return false end
+  local per = num(g("MERCHANT_ITEMS_PER_PAGE")) or 10
+  local mf = g("MerchantFrame")
+  local page = (type(mf) == "table" and num(mf.page)) or 1
+  local want = ceil(index / per)
+  local lit = want == page and glowOn(g("MerchantItem" .. (index - (page - 1) * per) .. "ItemButton"))
+  if want == page then
+    say(fmt("%s : clic droit sur l'objet en surbrillance (Maj+clic droit = la quantité exacte).", txt))
+  else
+    PL.ClearGlows()
+    say(fmt("%s : page %d du marchand, puis clic droit sur l'objet (Maj+clic droit = la quantité).", txt, want))
+  end
+  PL.shownItem = { index = index, page = want, lit = lit and true or false }
+  return false
+end
+--- (4.2 FIX42) le chemin unique des actions du jeu (Core.ShopCall) ; sans cœur récent : appel direct, mêmes gardes
+local function shop(api, fn, ...)
+  if T.ShopCall then return T:ShopCall(api, fn, ...) end
+  if inCombat() then return false, "combat" end
+  return pcall(fn, ...)
+end
+PL.Shop = shop
+
 -- ------------------------------------------------------------------ marchand : achats exacts, un par clic
 PL.pendingBuy, PL.pendingBank, PL.pendingAH = {}, {}, {}
 --- ce qu'il reste à acheter CHEZ CE marchand : { {index, id, n, lot, maxStack, price, avail} }, puis ce qu'il ne vend pas
@@ -1369,7 +1517,9 @@ function PL.BuyNext()
   if cost > gold then say(fmt("Pas assez d'or pour %d %s (%s).", qty, matName(e.id), money(cost))) return false end
   local fn = g("BuyMerchantItem")
   if type(fn) ~= "function" then return false end
-  local ok = pcall(fn, e.index, qty)
+  local ok, why = shop("BuyMerchantItem", fn, e.index, qty)
+  if why == "safe" then return PL.ShowMerchantItem(e.index, fmt("%d %s", qty, matName(e.id))) end
+  if why == "noclick" then return false end
   if ok then
     PL.pendingBuy[e.id] = (PL.pendingBuy[e.id] or 0) + qty
     PL.bought = (PL.bought or 0) + 1
@@ -1405,7 +1555,13 @@ function PL.WithdrawNext()
   local CC = g("C_Container")
   local fn = (CC and CC.UseContainerItem) or g("UseContainerItem")
   if type(fn) ~= "function" then return false end
-  local ok = pcall(fn, pick.bag, pick.slot)
+  local ok, why = shop("UseContainerItem", fn, pick.bag, pick.slot)
+  if why == "safe" then
+    PL.GlowBank({ e })
+    say(fmt("%s : clic droit sur la case en surbrillance de ta banque.", matName(e.id)))
+    return false
+  end
+  if why == "noclick" then return false end
   if ok then
     PL.pendingBank[e.id] = (PL.pendingBank[e.id] or 0) + pick.n
     say(fmt("Retiré : %d %s%s", pick.n, matName(e.id), pick.n > e.n and fmt(" (il en fallait %d)", e.n) or ""))
@@ -1446,6 +1602,13 @@ function PL.TradeIndex(name)
   end
   return nil
 end
+--- (4.2 FIX42) mode sûr : la recette ouverte dans la fenêtre du métier (sélection du jeu), tu cliques « Créer »
+function PL.CraftSafeShow(x, n)
+  local C = g("C_TradeSkillUI")
+  if C and type(C.OpenRecipe) == "function" then try(C.OpenRecipe, x.spell) end
+  say(fmt("Clique « Créer » dans la fenêtre du métier : %s × %d (mode sûr).", cut(x.name, 30), n))
+  return false
+end
 --- UNE fabrication de N (dans le clic) : C_TradeSkillUI.CraftRecipe(recette, N) (Forever), DoTradeSkill (Era)
 function PL.CraftNow()
   if inCombat() then refuse("Fabrication : hors combat.") return false end
@@ -1459,13 +1622,15 @@ function PL.CraftNow()
   if n <= 0 then say("Il te manque des compos dans tes sacs pour " .. cut(x.name, 30) .. " (étapes d'avant).") return false end
   local C = g("C_TradeSkillUI")
   if C and type(C.CraftRecipe) == "function" then
-    local ok = pcall(C.CraftRecipe, x.spell, n)
+    local ok, why = shop("CraftRecipe", C.CraftRecipe, x.spell, n)
+    if why == "safe" then return PL.CraftSafeShow(x, n) end
     if ok then PL.crafting = { spell = x.spell, n = n, t = now() } say(fmt("Création : %d× %s", n, x.name)) end
     return ok
   end
   local idx, fn = PL.TradeIndex(x.name), g("DoTradeSkill")
   if idx and type(fn) == "function" then
-    local ok = pcall(fn, idx, n)
+    local ok, why = shop("DoTradeSkill", fn, idx, n)
+    if why == "safe" then return PL.CraftSafeShow(x, n) end
     if ok then PL.crafting = { spell = x.spell, n = n, t = now() } say(fmt("Création : %d× %s", n, x.name)) end
     return ok
   end
@@ -1504,12 +1669,16 @@ function PL.AHNext()
   end
   if s.state == "ready" then
     s.state = "starting"
-    try(AH.StartCommoditiesPurchase, s.id, s.qty)
-    return true
+    local ok, why = shop("StartCommoditiesPurchase", AH.StartCommoditiesPurchase, s.id, s.qty)
+    if why == "safe" then say(fmt("Mode sûr : achète toi-même %d %s dans l'HV (≤ %s/u).", s.qty, matName(s.id), money(s.maxUnit or 0))) end
+    if why == "safe" or why == "noclick" or why == "combat" then s.state = "ready" return false end
+    return ok
   end
   if s.state == "confirm" then
     s.state = "buying"
-    try(AH.ConfirmCommoditiesPurchase, s.id, s.qty)
+    local _, why = shop("ConfirmCommoditiesPurchase", AH.ConfirmCommoditiesPurchase, s.id, s.qty)
+    if why == "safe" then say(fmt("Mode sûr : achète toi-même %d %s dans l'HV (≤ %s/u).", s.qty, matName(s.id), money(s.maxUnit or 0))) end
+    if why == "safe" or why == "noclick" or why == "combat" then s.state = "confirm" return false end
     PL.pendingAH[s.id] = (PL.pendingAH[s.id] or 0) + s.qty
     return true
   end
@@ -1568,6 +1737,7 @@ end
 function PL.UpdateCard()
   local CR = T.CityRun   -- (4.1 CITYRUN) la carte est aux courses en ville pendant qu'elles tournent
   if not PL.focus and CR and type(CR.OwnsCard) == "function" and CR.OwnsCard() then return CR.UpdateCard() end
+  if not inCombat() and not PL.focus and PL.NpcCard() then return end
   if inCombat() or not PL.focus then PL.HideCard() PL.ClearGlows() return end
   local plan = PL.FocusPlan()
   if not plan then PL.HideCard() return end
@@ -1637,6 +1807,94 @@ function PL.UpdateCard()
   PL.HideCard()
 end
 
+--- (4.2 FIX42) hors session, UNE petite carte sous la fenêtre du PNJ ouverte, seulement s'il y a quelque chose à y
+--- faire : marchand (vendre les gris + ce qui est en trop, réparer, composants à acheter), banque (« Sortir à vendre »,
+--- composants à retirer), maître (recettes à apprendre maintenant / plus tard), boîte aux lettres (ce qui attend,
+--- contre-remboursement). Un clic = une action du jeu (ShopCall : dans le clic, hors combat, mode sûr possible).
+--- Option « Composants de métier » (compsCard) : coupée = rien. Vrai si la carte est montrée.
+local function cr() local c = T.CityRun return type(c) == "table" and c or nil end
+local function money0(c) return (tonumber(c) or 0) > 0 and money(c) or "" end
+function PL.NpcModel()
+  if PL.focus or inCombat() or (M.db and M.db.compsCard == false) then return nil end
+  local C = cr()
+  local kind = (PL.merchantOpen and "merchant") or (PL.bankOpen and "bank") or (PL.trainerOpen and "trainer")
+    or (PL.mailOpen and "mail") or nil
+  if not kind then return nil end
+  local lines, btn, more = {}, nil, {}
+  local comps = PL.ComponentLines()
+  if kind == "merchant" then
+    local stacks = (C and C.SellStacks and select(2, pcall(C.SellStacks))) or {}
+    stacks = type(stacks) == "table" and stacks or {}
+    local n, v, grey = 0, 0, 0
+    for _, x in ipairs(stacks) do
+      if not (C.pendingSell and C.pendingSell[x.bag .. ":" .. x.slot]) then
+        n = n + 1 v = v + (x.value or (x.sell or 0) * (x.n or 1)) if x.grey then grey = grey + 1 end
+      end
+    end
+    if n > 0 then
+      lines[#lines + 1] = fmt("À vendre : %d pile%s (%d grise%s, %d en trop) · %s", n, n > 1 and "s" or "", grey, grey > 1 and "s" or "",
+        n - grey, money0(v))
+      more[#more + 1] = { fmt("Vendre (%d)", n), function() C.SellNext() end,
+        { "Vendre", "Clic : une pile (les gris d'abord, puis ce qui est en trop pour tes métiers).",
+          "Jamais une compo dont ton plan a besoin, jamais un objet de quête (rachetable chez ce marchand)." } }
+    end
+    local canRep = pub(try(g("CanMerchantRepair")))
+    local cost = canRep and (num((try(g("GetRepairAllCost")))) or 0) or 0
+    if cost > 0 then
+      lines[#lines + 1] = "Réparer : " .. money(cost)
+      more[#more + 1] = { "Réparer", function() C.RepairNow() end, { "Réparer", "Clic : tout réparer (" .. money(cost) .. ")." } }
+    end
+  elseif kind == "bank" then
+    local out = C and C.BankSellList and select(2, pcall(C.BankSellList)) or {}
+    out = type(out) == "table" and out or {}
+    if #out > 0 then
+      local names = {}
+      for i, e in ipairs(out) do if i <= 3 then names[#names + 1] = fmt("%d %s", e.n, matName(e.id)) end end
+      lines[#lines + 1] = "En trop à la banque : " .. tconcat(names, ", ") .. (#out > 3 and fmt(" +%d", #out - 3) or "")
+      more[#more + 1] = { fmt("Sortir à vendre (%d)", #out), function() C.BankSellNext() end,
+        { "Sortir à vendre", "Clic : une pile en trop passe de la banque à tes sacs ; le marchand la vendra ensuite.",
+          "Seulement le surplus : ce que ton plan de métier ou tes quêtes demandent reste à la banque." } }
+    end
+  elseif kind == "mail" then
+    local nItems = num((try(g("GetInboxNumItems")))) or 0
+    local letters, objs, gold, cod = 0, 0, 0, {}
+    for i = 1, min(nItems, 50) do
+      local _, _, sender, subject, mny, codAmt, _, hasItem = try(g("GetInboxHeaderInfo"), i)
+      letters = letters + 1
+      gold = gold + (num(mny) or 0)
+      if num(hasItem) and num(hasItem) > 0 then objs = objs + num(hasItem) elseif hasItem == true then objs = objs + 1 end
+      if (num(codAmt) or 0) > 0 then cod[#cod + 1] = fmt("%s (%s)", cut(str(subject) or str(sender) or "?", 24), money(codAmt)) end
+    end
+    if letters > 0 then
+      lines[#lines + 1] = fmt("Courrier : %d lettre%s · %d objet%s%s", letters, letters > 1 and "s" or "", objs, objs > 1 and "s" or "",
+        gold > 0 and (" · " .. money(gold)) or "")
+    end
+    for i, c in ipairs(cod) do if i <= 2 then lines[#lines + 1] = "Contre-remboursement : " .. c .. " — tu paies en l'ouvrant" end end
+  end
+  for i, l in ipairs(comps) do if i <= 4 then lines[#lines + 1] = l end end
+  if #comps > 0 and kind ~= "mail" then
+    btn = { "Session métier", function() PL.StartFocus(PL.Line()) end,
+      { "Session métier", "Clic : TreeAI te guide étape par étape (achats exacts, banque, maître, fabrication).",
+        "Le trajet de quêtes est en pause pendant la session." } }
+  end
+  if #lines == 0 then return nil end
+  local title = ({ merchant = "Ici : marchand", bank = "Ici : banque", trainer = "Ici : maître", mail = "Ici : courrier" })[kind]
+  if #comps > 0 and kind ~= "mail" and #more == 0 then title = "Composants de métier" end
+  return { kind = kind, title = title, lines = lines, btn = btn, more = more }
+end
+function PL.NpcCard()
+  local m = PL.NpcModel()
+  if not m then return false end
+  local body = {}
+  for i, l in ipairs(m.lines) do if i <= 6 then body[#body + 1] = l end end
+  local b = m.btn
+  if not b and m.more[1] then b = table.remove(m.more, 1) end
+  local f = PL.ShowCard(ownerOf(m.kind), m.title, tconcat(body, "\n"), b and b[1], b and b[2], b and b[3], m.more)
+  PL.npcShown = f ~= nil and m.kind or nil
+  return f ~= nil
+end
+PL.ComponentsCard = PL.NpcCard
+
 -- ===================================================================== boucle (regroupée, seulement si utile)
 function PL.Soon(delay)
   if PL.pending then return end
@@ -1661,6 +1919,8 @@ function PL.Update()
       cardSoon()
       if M.Refresh then M.Refresh(0.2) end
     end
+    PL.UpdateCard()
+  elseif not inCombat() and (PL.ComponentsWanted() or PL.mailOpen or (acard and try(acard.IsShown, acard))) then
     PL.UpdateCard()
   end
   local Wn = T.Window
@@ -1689,12 +1949,12 @@ PL.On = {
   MERCHANT_SHOW = function()
     PL.merchantOpen, PL.bought, PL.pendingBuy = true, 0, {}
     pcall(PL.LearnVendor)
-    if PL.focus then PL.Soon(0.1) end
+    PL.Soon(0.1)
   end,
   MERCHANT_UPDATE = function() if PL.focus and PL.merchantOpen then PL.Soon(0.2) end end,
   MERCHANT_CLOSED = function()
     PL.merchantOpen, PL.pendingBuy = false, {}
-    if PL.focus then PL.Soon(0.1) end
+    PL.Soon(0.1)
   end,
   BANKFRAME_OPENED = function()
     PL.bankOpen, PL.pendingBank = true, {}
@@ -1704,7 +1964,7 @@ PL.On = {
   BANKFRAME_CLOSED = function()
     PL.bankOpen, PL.pendingBank = false, {}
     PL.ClearGlows()
-    if PL.focus then PL.Soon(0.1) end
+    PL.Soon(0.1)
   end,
   PLAYERBANKSLOTS_CHANGED = function() if PL.bankOpen then pcall(PL.ScanBank) end end,
   BAG_UPDATE_DELAYED = function()
@@ -1712,10 +1972,11 @@ PL.On = {
     if PL.bankOpen then pcall(PL.ScanBank) end
     if busy() then PL.Dirty("bags") end
   end,
-  MAIL_SHOW = function() PL.mailOpen = true end,
-  MAIL_INBOX_UPDATE = function() if PL.mailOpen then pcall(PL.ScanMail) end end,
-  MAIL_CLOSED = function() PL.mailOpen = false if PL.focus then PL.Soon(0.1) end end,
-  TRAINER_SHOW = function() T:After(0.2, function() pcall(PL.LearnTrainer) end) end,
+  MAIL_SHOW = function() PL.mailOpen = true PL.Soon(0.5) end,
+  MAIL_INBOX_UPDATE = function() if PL.mailOpen then pcall(PL.ScanMail) PL.Soon(0.3) end end,
+  MAIL_CLOSED = function() PL.mailOpen = false PL.Soon(0.1) end,
+  TRAINER_SHOW = function() PL.trainerOpen = true T:After(0.2, function() pcall(PL.LearnTrainer) PL.Soon(0.1) end) end,
+  TRAINER_CLOSED = function() PL.trainerOpen = false PL.Soon(0.1) end,
   TRAINER_UPDATE = function() pcall(PL.LearnTrainer) end,
   AUCTION_HOUSE_SHOW = function() PL.ahOpen, PL.ahState = true, nil if PL.focus then PL.Soon(0.2) end end,
   AUCTION_HOUSE_CLOSED = function()
@@ -1849,6 +2110,100 @@ function PL.TabLines()
   return lines
 end
 
+-- ===================================================================== « Composants de métier » (4.2 FIX42, étude §8.8)
+-- Une ligne par métier en cours : « Couture : 6 Étoffe de lin, 2 Fil grossier (marchand) » — les quantités du PLAN
+-- (ce qui manque vraiment pour la cible, sacs + banque + courrier déjà comptés, réserve des quêtes déduite), jamais
+-- « 28/271 ». SEULEMENT pendant une session métier ou chez un maître / un marchand / à la banque / à l'HV : jamais en
+-- permanence pendant les quêtes. Recette : « Apprends X chez ton maître » si ta compétence le permet, sinon
+-- « Apprendre X (dès N) ». Lu par la bande (bouton « Métiers »), la carte du marchand / de la banque, le Suivi.
+local SRC_FR = { vendor = "marchand", ah = "HV", bank = "banque", mail = "courrier", farm = "à farmer" }
+function PL.ComponentsWanted()
+  return (PL.focus or PL.merchantOpen or PL.bankOpen or PL.ahOpen or PL.trainerOpen) and true or false
+end
+--- les métiers concernés : la session, sinon tes métiers de fabrication (pas la récolte)
+local function componentLines()
+  if PL.focus then return { PL.focus.line } end
+  local out, d = {}, D()
+  for _, p in ipairs(M.profs or {}) do
+    local k = d and d.lines[p.line]
+    if k and k[1] ~= "g" and d.r[p.line] and #d.r[p.line] > 0 then out[#out + 1] = p.line end
+  end
+  return out
+end
+--- le plan d'un métier pour ces lignes (celui de la session s'il y en a une)
+local function linePlan(line)
+  if PL.focus and PL.focus.line == line then return PL.FocusPlan() end
+  local mode = PL.Mode()
+  return PL.Compute(line, mode, mode == "exact" and 300 or PL.Target(line, mode))
+end
+--- { {line, name, text, items = {{id, n, src}}, learn = {text}} } ; force = même hors session / hors PNJ (page)
+function PL.Components(force)
+  if not force and not PL.ComponentsWanted() then return {} end
+  local out = {}
+  for _, line in ipairs(componentLines()) do
+    local ok, plan = pcall(linePlan, line)
+    if ok and type(plan) == "table" and plan.split then
+      local sp, items = plan.split, {}
+      for _, v in ipairs(sp.vendor or {}) do items[#items + 1] = { id = v.id, n = v.buy or v.n, src = "vendor" } end
+      for _, v in ipairs(sp.ah or {}) do items[#items + 1] = { id = v.id, n = v.n, src = "ah" } end
+      for _, v in ipairs(listOf(sp.bank or {})) do items[#items + 1] = { id = v.id, n = v.n, src = "bank" } end
+      for _, v in ipairs(listOf(sp.mail or {})) do items[#items + 1] = { id = v.id, n = v.n, src = "mail" } end
+      for _, v in ipairs(sp.farm or {}) do items[#items + 1] = { id = v.id, n = v.n, src = "farm" } end
+      local learn = {}
+      for _, l in ipairs((plan.res and plan.res.learn) or {}) do
+        if #learn >= 2 then break end
+        if (l.at or 0) <= plan.skill then learn[#learn + 1] = fmt("Apprends %s chez ton maître", cut(l.name, 28))
+        else learn[#learn + 1] = fmt("Apprendre %s (dès %d)", cut(l.name, 28), l.at) end
+      end
+      if #items > 0 or #learn > 0 then
+        local parts, bySrc, order = {}, {}, {}
+        for _, it in ipairs(items) do
+          if (tonumber(it.n) or 0) > 0 then
+            if not bySrc[it.src] then bySrc[it.src] = {} order[#order + 1] = it.src end
+            local l = bySrc[it.src]
+            l[#l + 1] = fmt("%d %s", it.n, matName(it.id))
+          end
+        end
+        for _, src in ipairs(order) do
+          local l = bySrc[src]
+          local shown = {}
+          for i = 1, min(3, #l) do shown[i] = l[i] end
+          if #l > 3 then shown[#shown + 1] = fmt("+%d", #l - 3) end
+          parts[#parts + 1] = tconcat(shown, ", ") .. " (" .. SRC_FR[src] .. ")"
+        end
+        local reach = plan.res and plan.res.reached or plan.target
+        local txt = fmt("%s %d → %d : ", plan.name, plan.skill or 0, reach or 0) .. (#parts > 0 and tconcat(parts, " · ") or "rien à acheter")
+        out[#out + 1] = { line = line, name = plan.name, text = txt, items = items, learn = learn }
+      end
+    end
+  end
+  return out
+end
+--- lignes de texte prêtes (« Couture : … », puis « Apprends … ») ; vide hors session / hors PNJ
+function PL.ComponentLines(force)
+  local out = {}
+  for _, c in ipairs(PL.Components(force)) do
+    out[#out + 1] = c.text
+    for _, l in ipairs(c.learn) do out[#out + 1] = "  " .. l end
+  end
+  return out
+end
+--- achats en attente (badge du bouton « Métiers ») : objets à acheter au marchand / à l'HV dans le plan de la
+--- session (ou du métier choisi) — 0 sans métier de fabrication ; lu sur le plan en cache (aucun calcul si rien n'a
+--- changé : PL.Compute garde ses 6 derniers plans par version)
+-- (perf) hors session / hors PNJ : le dernier nombre connu (calculé par la page Métiers ou une session), aucun plan
+-- recalculé pendant les quêtes ; en session / chez un PNJ : relu au plus toutes les 5 s
+local pbAt = -100
+function PL.PendingBuys()
+  local line = (PL.focus and PL.focus.line) or PL.Line()
+  if not line then return 0 end
+  if not PL.ComponentsWanted() or now() - pbAt < 5 then return PL.lastBuys or 0 end
+  pbAt = now()
+  local ok, plan = pcall(linePlan, line)
+  if not (ok and type(plan) == "table" and plan.split) then return PL.lastBuys or 0 end
+  return #(plan.split.vendor or {}) + #(plan.split.ah or {})
+end
+
 -- ===================================================================== page « Métiers » de la fenêtre TreeAI
 local MODE_FR = { full = "Complet", exact = "Pile-poil" }
 local function rankName(pr) local r = E.RankOf(pr.max) return r and r[1] or "" end
@@ -1924,6 +2279,13 @@ local function renderPage(Ly)
     { "Demander avant l'HV : " .. (ask and "oui" or "non"), function() M.db.askAH = not ask PL.Dirty("focus") end,
       "Oui : la session te demande avant de prévoir un achat à l'hôtel des ventes." },
   }, 3)
+  -- (4.2 FIX42) achats / fabrications : un clic = un appel du jeu, ou « mode sûr » (TreeAI montre, tu cliques)
+  local safe = T.ShopSafe and T:ShopSafe() or false
+  Ly.buttons({
+    { "Achats : " .. (safe and "mode sûr (tu cliques)" or "un clic = un achat"), function() if T.SetShopSafe then T:SetShopSafe(not safe) end end,
+      safe and "Clic : les boutons TreeAI achètent / créent de nouveau d'un clic (jamais sans clic, jamais en combat)."
+        or "Clic : mode sûr — le bouton montre l'objet dans la fenêtre du jeu (surbrillance), tu achètes / crées toi-même. Autocontrôle : /tai bloque achats" },
+  }, 1)
   if mode == "full" then
     local tgt = PL.Target(line, mode)
     Ly.buttons({

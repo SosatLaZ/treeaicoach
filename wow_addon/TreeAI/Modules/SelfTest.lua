@@ -470,12 +470,27 @@ end
 T:RegisterSlash("test", function() M.Run(false) end, "autotest : API du jeu, modules, rapport pour TreeAI")
 T:RegisterSlash("erreurs", function() M.PrintErrors() end, "dernières erreurs Lua de TreeAI")
 T:RegisterSlash("bloque", function(arg)
-  if type(arg) == "string" and arg:lower():find("^%s*reset") then
+  local a = type(arg) == "string" and arg:lower() or ""
+  if a:find("^%s*reset") then
     if type(T.ResetBlocked) == "function" then T:ResetBlocked() end
     T:Print("Blocages remis à zéro.") M.PushTab() return
   end
+  -- (4.2 FIX42) autocontrôle des achats / fabrications : où, combien, blocage juste après ? mode sûr
+  if a:find("^%s*sur") or a:find("^%s*s\195\187r") then
+    if T.SetShopSafe then T:SetShopSafe(true) end
+    T:Print("Achats : mode sûr — TreeAI montre l'objet dans la fenêtre du jeu, tu cliques toi-même.") return
+  end
+  if a:find("^%s*normal") then
+    if T.SetShopSafe then T:SetShopSafe(false) end
+    T:Print("Achats : un clic sur le bouton TreeAI = un achat / une fabrication (jamais sans clic).") return
+  end
+  if a:find("^%s*achat") or a:find("^%s*metier") or a:find("^%s*m\195\169tier") then
+    for _, l in ipairs(T.ShopCheck and T:ShopCheck() or {}) do T:Print(l) end
+    return
+  end
   M.PrintBlocked()
-end, "bloque : actions refusées par le jeu (fonction, module, nombre) — capture pour TreeAI")
+  if T.ShopCheck then T:Print((T:ShopCheck())[1] .. " (détail : /tai bloque achats)") end
+end, "bloque : actions refusées par le jeu (fonction, module, nombre) ; « achats » : autocontrôle achats / fabrications ; « sur » / « normal » : mode sûr")
 T:RegisterSlash("demo", function()
   T:Suggest("core:test1", "Exemple : conseil d'information.", 1, { ttl = 20 })
   T:Suggest("core:test2", "Exemple : conseil utile.", 2, { ttl = 20 })

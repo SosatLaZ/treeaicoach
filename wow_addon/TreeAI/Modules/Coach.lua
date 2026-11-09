@@ -1390,6 +1390,9 @@ function M.RenderPage(Ly)
     end
   end
   if not any then Ly.text("Rien à corriger pour l'instant : chaque conseil apparaît ici et dans « Maintenant » quand il sert.", "S", "text", 6) end
+  -- (4.2 FIX42) chasseur : les aides en plus (justes sur Forever, règles Classic ; rien d'automatique), coupées par
+  -- défaut : un clic = ON / OFF ; les macros qui vont avec sont sur la page Macros
+  if isH then M.RenderHunterHelpers(Ly, W) end
   -- les 8 thèmes
   for _, th in ipairs(THEMES) do
     local tips, techs = {}, {}
@@ -1408,6 +1411,38 @@ function M.RenderPage(Ly)
         end
       end
     end
+  end
+end
+--- (4.2 FIX42) section « Chasseur : aides » (Conseils pro) : options du module Chasseur + macros conseillées
+M.HUNTER_HELPERS = {
+  { key = "fdTimer", text = "Feindre la mort : recharge de 30 s (petite barre)", tip = "Lue quand le jeu donne le sort (hors restriction « cast »)." },
+  { key = "trapBar", text = "Pièges : posé, temps qui reste, recharge de 15 s (petite barre)", tip = "Le déclenchement n'est pas lisible en combat sur Forever : jamais deviné." },
+  { key = "fleeAlert", text = "Alerte « ennemi qui fuit » : achève-le / Trait de choc avant qu'il ramène des amis", tip = "Émote du monstre (« … tente de fuir … ») quand le jeu la rend lisible." },
+  { key = "bar", text = "Barre de tir automatique (durée lue dans le jeu, même en combat)", tip = "Se tait si les barres de swing de Forever sont affichées (pas deux barres)." },
+}
+M.HUNTER_MACROS = {
+  { "TAI Pro Tir", "Pull en un bouton : cible, Marque, familier, tir auto, Morsure, Arcanes" },
+  { "TAI FD Piege", "En combat : Feindre la mort ; hors combat : Piège givrant (2e appui)" },
+  { "TAI Aspects", "Le bon aspect : Faucon en combat ou sur une cible hostile, sinon Guépard" },
+  { "TAI Pro Panique", "Feindre la mort + familier au pied (Maj : Piège givrant)" },
+}
+function M.RenderHunterHelpers(Ly, W)
+  local H = T.modules and T.modules.Hunter
+  local hdb = H and H.db
+  if not (hdb and Ly.header("Chasseur : aides", "coach:hunterhelp", #M.HUNTER_HELPERS, ICON .. "Ability_Hunter_BeastCall", true)) then return end
+  for _, h in ipairs(M.HUNTER_HELPERS) do
+    local on = hdb[h.key] and true or false
+    Ly.row({ text = h.text, right = on and "ON" or "OFF", kind = "info", tooltip = { h.tip, "Coupé par défaut : rien de plus à l'écran." },
+      clickHint = on and "Clic : couper" or "Clic : allumer",
+      onClick = function()
+        hdb[h.key] = not on
+        if H.OnOptionChanged then pcall(H.OnOptionChanged, H, h.key, hdb[h.key]) end
+      end })
+  end
+  for _, m in ipairs(M.HUNTER_MACROS) do
+    Ly.row({ text = "Macro « " .. m[1] .. " » : " .. m[2], right = "macro", kind = "info",
+      tooltip = { "Une touche = une action du jeu (pas d'automatisme).", "Clic : la page Macros (installer, choisir la touche)." },
+      clickHint = "Clic : la page Macros", onClick = function() if W and W.Open then W.Open("macros") end end })
   end
 end
 do

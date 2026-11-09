@@ -71,8 +71,10 @@ return function(M, ctx)
     function Ly.gap() end
     A.RenderPage(Ly, W)
     local tx = table.concat(rec, " | ")
-    check(tx:find("bénéfice possible maintenant", 1, true) and tx:find("en vente à l'HV", 1, true) and tx:find("gagné cette semaine", 1, true),
-      "page: the 3 numbers on top: " .. tx)
+    -- (4.2 FIX42) sacs et achat-revente : deux tuiles, jamais un total mélangé
+    check(tx:find("tile:Vendre tes sacs à l'HV : +", 1, true) and tx:find("tile:Acheter-revendre : +", 1, true)
+      and not tx:find("bénéfice possible", 1, true) and tx:find("en vente à l'HV", 1, true) and tx:find("gagné cette semaine", 1, true),
+      "page: the numbers on top (bags vs flips never mixed): " .. tx)
     check(tx:find("tile:Scanner", 1, true) and tx:find("tile:Acheter-revendre", 1, true) and tx:find("tile:Vendre mes sacs", 1, true)
       and tx:find("tile:Mes métiers", 1, true), "page: the 4 big buttons: " .. texts())
     check(tx:find("Ouvre l'HV et clique Scanner", 1, true), "empty state says what to do: " .. tx)

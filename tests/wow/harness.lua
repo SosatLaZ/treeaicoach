@@ -254,7 +254,11 @@ local function clickAll()
     local f = M.frames[i]
     -- (LITE) « Plus → Modules » rows (module on / off, profile) are left alone: the scenarios need their modules
     local id = type(f.entry) == "table" and type(f.entry.id) == "string" and f.entry.id or ""
-    if f.__scripts.OnClick and f.__kind ~= "GameTooltip" and not id:match("^mod:") and id ~= "core:profile" then
+    -- (4.2) the strip's « Métiers » opens the Métiers page, whose « Courses en ville » / « Session métier » buttons would
+    -- then start a focus mode for every scenario: left alone like the module rows (test_fix42 clicks it on purpose)
+    local fname = f.__name or ""
+    if f.__scripts.OnClick and f.__kind ~= "GameTooltip" and not id:match("^mod:") and id ~= "core:profile"
+        and fname ~= "TreeAIStrip_metiers" then
       f:Click("LeftButton")
     end
   end

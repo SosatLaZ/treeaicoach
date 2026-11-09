@@ -1115,10 +1115,22 @@ function M.Gold()
   return { total = total, reserve = reserve, parts = parts, free = free, budget = budget, cap = cap, spent = spent,
     listed = listed, held = held, invested = listed + held }
 end
+-- (4.2 FIX42) ce qu'il faut garder (ProfLevel.KeepOf : compos de tes plans de métier, objets de tes quêtes)
+local function keepOf(id)
+  local P = T.ProfLevel
+  if not (P and type(P.KeepOf) == "function") then return 0, nil end
+  local ok, n, why = pcall(P.KeepOf, id)
+  if ok then return n0(n), why end
+  return 0, nil
+end
+M.KeepOf = keepOf
 function M.Plan()
   local g = M.Gold()
+  -- (4.2 FIX42) jamais « acheter pour revendre » un objet que tes métiers / quêtes demandent : tu le garderais
+  local deals = {}
+  for _, d in ipairs(M.deals or {}) do if keepOf(d.id) <= 0 then deals[#deals + 1] = d end end
   -- règle dure : jamais plus de capGold % de TOUT ton or dans un même objet (reventes au marchand exclues)
-  local plan, spend, gain = F.allocate(M.deals, g.budget, nil, 4, max(1, F.itemCap(g.total, cfg("capGold", 20), g.budget)))
+  local plan, spend, gain = F.allocate(deals, g.budget, nil, 4, max(1, F.itemCap(g.total, cfg("capGold", 20), g.budget)))
   M.plan, M.planSpend, M.planGain = plan, spend, gain
   return plan, spend, gain
 end
@@ -1669,10 +1681,13 @@ function M.SellAdvice()
   end
   local out = {}
   for id, count in pairs(bag) do
-    if not M.Odd(id) and (M.Stats(id) or M.cur[id] or M.browse[id]) then
+    -- (4.2 FIX42) seulement le surplus : « garde 12, vends 18 » (compos de tes plans, objets de quête)
+    local keep, why = keepOf(id)
+    local spare = count - keep
+    if spare > 0 and not M.Odd(id) and (M.Stats(id) or M.cur[id] or M.browse[id]) then
       local stack = select(8, M.ItemInfo(id))
-      local s = M.PostPrice(id, min(count, max(1, n0(stack))))
-      s.have = count
+      local s = M.PostPrice(id, min(spare, max(1, n0(stack))))
+      s.have, s.keep, s.keepWhy = spare, keep > 0 and keep or nil, why
       if s.unit or s.vendor > 0 then out[#out + 1] = s end
     end
   end
@@ -1706,14 +1721,21 @@ function M.PostList()
     if id and not item.noValue and not item.locked and (item.quality or 1) >= 1 and not M.Odd(id) and (M.Stats(id) or M.cur[id] or M.browse[id]) then
       local have = max(1, n0(item.count))
       local liq = M.Liq(id)
-      if left[id] == nil then left[id] = { listed = listedOf(id) } end
-      local qty = F.postQty(have, liq.sold, hours(), left[id].listed)
+      if left[id] == nil then
+        -- (4.2 FIX42) ce que tes métiers / quêtes demandent reste dans les sacs : seul le surplus part en vente
+        local total = 0
+        for _, _, it2 in API.IterBags() do if it2 and it2.itemID == id then total = total + max(1, n0(it2.count)) end end
+        left[id] = { listed = listedOf(id), spare = total - keepOf(id) }
+      end
+      have = min(have, max(0, left[id].spare))
+      local qty = have > 0 and F.postQty(have, liq.sold, hours(), left[id].listed) or 0
       if qty > 0 then
         local s = M.PostPrice(id, qty)
         if s.split and s.split < qty then qty = s.split s = M.PostPrice(id, qty) end
         if s.unit and s.better == "ah" then
           s.bag, s.slot, s.have = bag, slot, have
           left[id].listed = left[id].listed + qty
+          left[id].spare = left[id].spare - qty
           out[#out + 1] = s
         end
       end
@@ -2526,15 +2548,22 @@ M.ScanSmart = scanHere
 function M.RenderPage(Ly, W)
   local m = M.PageModel()
   local week = n0(m.realized.week)
+  -- (4.2 FIX42) deux gains JAMAIS additionnés : vendre ce que tu as déjà (sacs) ≠ acheter pour revendre (de l'or engagé)
+  local nBags = #m.bags
   Ly.tiles({
-    { (m.possible > 0 and "+" or "") .. money(m.possible), "bénéfice possible maintenant", nil,
-      { ("Achats-reventes du plan : +%s"):format(money(m.planGain)), ("Sacs vendus à l'HV plutôt qu'au marchand : +%s"):format(money(m.bagGain)),
+    { "Vendre tes sacs à l'HV : +" .. money(m.bagGain), nBags > 0 and (nBags .. " objet" .. (nBags > 1 and "s" or "") .. " mieux payé" .. (nBags > 1 and "s" or "") .. " qu'au marchand")
+        or "rien de mieux qu'au marchand", function() M.view = "bags" end,
+      { "Ce que tu as déjà : vendu à l'HV plutôt qu'au marchand (net, risque d'invendu compris).",
         "Net : commission 5 % (15 % en HV neutre) et dépôt perdu si invendu déjà déduits." } },
+    { "Acheter-revendre : +" .. money(m.planGain), #m.groups > 0 and (#m.groups .. " achat" .. (#m.groups > 1 and "s" or "") .. " sûr" .. (#m.groups > 1 and "s" or ""))
+        or "rien de sûr pour l'instant", function() M.view = "flips" end,
+      { "De l'or engagé : acheté à l'HV, revendu plus cher (ventes mesurées entre tes scans).",
+        "Net : commission et dépôt déjà déduits. Jamais additionné à la vente de tes sacs." } },
     { ("%d vente%s · %s"):format(m.ownedN, m.ownedN > 1 and "s" or "", money(m.ownedV)), "en vente à l'HV", nil,
       { m.ahOpen and "Lu à l'instant" or ("Vu à l'HV " .. ago(m.ownedT)) } },
     { (week >= 0 and "+" or "") .. money(week), "gagné cette semaine", nil,
       { ("Aujourd'hui %s · total %s"):format(money(m.realized.today), money(m.realized.total)), "Lu dans le courrier de l'HV (ventes − achats)." } },
-  }, 3)
+  }, 2)
   local nBuy = #m.groups
   local view = M.view or "flips"
   local function pick(v) return function() M.view = v end end
@@ -2612,9 +2641,10 @@ function M.RenderBags(Ly, W, m)
     end
     for i, s in ipairs(m.bags) do
       if i > 12 then break end
-      Ly.row({ text = ("%s ×%d — HV ≈ %s/u (vendu ~%s/j) · net ≈ %s · marchand %s → +%s à l'HV"):format(itemName(s.id), s.count, money(s.unit),
-        soldShort(s.sold), money(s.ev), money(s.vendor), money(s.gain)), prio = 2,
-        tooltip = { ("Dépôt %s (perdu si invendu), commission déduite."):format(money(s.deposit)),
+      Ly.row({ text = ("%s ×%d — HV ≈ %s/u (vendu ~%s/j) · net ≈ %s · marchand %s → +%s à l'HV%s"):format(itemName(s.id), s.count, money(s.unit),
+        soldShort(s.sold), money(s.ev), money(s.vendor), money(s.gain), s.keep and (" · garde " .. s.keep) or ""), prio = 2,
+        tooltip = { s.keep and ("Garde %d : %s. Seul le surplus est compté."):format(s.keep, tostring(s.keepWhy or "tu en as besoin")) or nil,
+          ("Dépôt %s (perdu si invendu), commission déduite."):format(money(s.deposit)),
           s.proof and "Ventes mesurées entre tes scans." or "Peu de ventes mesurées : prix d'après les annonces.",
           "À l'HV : bouton « Poster » du panneau TreeAI (1 clic = 1 mise en vente)." } })
     end
