@@ -136,7 +136,7 @@ return function(M, ctx)
     while W.lastLay.rects[first] and W.lastLay.rects[first].kind ~= "tile" and first <= 3 do first = first + 1 end
   end
   while W.lastLay.rects[first] and W.lastLay.rects[first].kind == "tile" do first, nTiles = first + 1, nTiles + 1 end
-  check(nTiles == (TreeAI.QuestBrain and 4 or 0), "Quêtes : les 4 modes en tête (" .. nTiles .. ")")
+  check(nTiles == (TreeAI.QuestBrain and #TreeAI.QuestBrain.Modes() or 0), "Quêtes : les 4 modes en tête (" .. nTiles .. ")")
   check(W.lastLay.rects[first] and W.lastLay.rects[first].label == "Prochaine étape" and tostring(hero1):find("^Trajet"),
     "Quêtes : « Prochaine étape » sous les modes, puis le trajet (" .. tostring(W.lastLay.rects[first] and W.lastLay.rects[first].label) .. ")")
   check(win.action:IsShown() and win.action.label:GetText() == "Pause", "Quêtes : bouton « Pause » en bas à droite")

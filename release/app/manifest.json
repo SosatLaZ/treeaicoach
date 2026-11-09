@@ -1,25 +1,25 @@
 {
- "version": "4.3.4",
+ "version": "4.3.5",
  "exe": "TreeAICoach-app.exe",
- "sha256": "081172f707b7b1265c03c11ef0828b04c173b3b95dc22b6b5cbb03c802940b9d",
+ "sha256": "da904c6de8138fc640ff3dddac425384719bf276c5b421d0baae36ae8dea2be7",
  "chunks": [
   {
-   "name": "4.3.4/part-01.zip",
-   "size": 88058593,
-   "sha256": "66dd4c69cbd78853e805f1881228a042665b651641d0c4f9aa4c918f4bd2f0ad",
+   "name": "4.3.5/part-01.zip",
+   "size": 88058601,
+   "sha256": "beb9fed5a7703ce7167b632fb926d8651809381d1c300e2f33ed32225f784251",
    "files": 127
   },
   {
-   "name": "4.3.4/part-02.zip",
-   "size": 14194575,
-   "sha256": "d9c89f5eee63e9133a247d2a77bd0988a58a2e25b1a6768c2999862486e82844",
+   "name": "4.3.5/part-02.zip",
+   "size": 14201900,
+   "sha256": "bbf7e40c609989e91de8bdc37cc0fc378bd1f91308c67564053d9ab17e9fd879",
    "files": 688
   }
  ],
- "total_size": 102253168,
+ "total_size": 102260501,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "TreeAI 4.3.4 : plus de freeze \u00e0 chaque monstre de qu\u00eate tu\u00e9."
+ "notes": "TreeAI 4.3.5 : qu\u00eates prises v\u00e9rifi\u00e9es, qu\u00eates fant\u00f4mes retir\u00e9es, mode Monter vite, zone gard\u00e9e, XP/min, potions jamais vendues."
 }

@@ -1,6 +1,6 @@
 {
-  "version": "4.3.4",
+  "version": "4.3.5",
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334,
-  "notes": "TreeAI 4.3.4 : plus de freeze à chaque monstre de quête tué."
+  "notes": "TreeAI 4.3.5 : quêtes prises vérifiées, quêtes fantômes retirées, mode Monter vite, zone gardée, XP/min, potions jamais vendues."
 }
