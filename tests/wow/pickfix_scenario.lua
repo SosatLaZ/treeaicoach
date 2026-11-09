@@ -151,4 +151,33 @@ return function(M, ctx)
   check(gr2 and gr2.why:find("reposée", 1, true), "C: rested XP used (grinding × 2)")
   M.player.rested = 0
   QB.SetMode("zone")
+
+  -- ================================================================== D. a zone chosen by the player stays
+  local FW = Z.FallbackWhy
+  local exp1 = { quests = { { id = 1 } } }
+  check(FW({ zoneBy = "player", choice = 1 }, {}, { loin = 3, zone = 0 }, exp1), "D: far away (quests too far for now) → zone kept")
+  check(FW({ zoneBy = "player", choice = 1 }, {}, { ["élite"] = 2 }, exp1), "D: quests filtered by a setting → zone kept")
+  check(FW({ zoneBy = "player", choice = 1 }, {}, {}, { quests = {} }), "D: quest data not read yet → zone kept")
+  check(FW({ zoneBy = "player", choice = 1 }, { { q = 1, steps = {} } }, {}, exp1), "D: quests without a known place → zone kept")
+  check(FW({ zoneBy = "player", choice = 2, fallbackFor = 2 }, {}, {}, exp1), "D: never twice for one choice")
+  check(FW({ zoneBy = "player", choice = 1 }, {}, { zone = 4, loin = 0 }, exp1) == nil, "D: truly nothing doable → back to auto (once)")
+  check(FW({ zoneBy = "brain" }, {}, { loin = 3 }, exp1) == nil, "D: a zone chosen by the pilot: as before")
+  local c0 = tonumber(Z.char.choice) or 0
+  Z:PickZone(1440, "player")
+  check(Z.char.zoneBy == "player" and Z.char.choice == c0 + 1 and Z.char.mode == "zones", "D: PickZone(player) = a new choice")
+  Z:SetMode("auto")
+
+  -- ================================================================== E. green quests: real XP, XP/min, low ROI dropped
+  local Eg = P.Engine
+  local v = QB.Value(9501, { lv = 18, xp = 900, o = {}, s = { map = 1440, x = 50, y = 50 } },
+    { level = 24, group = 1, here = { map = 1440, x = 50, y = 50 }, cost = {}, log = {} })
+  check(v.green and v.xp == math.floor(900 * Eg.QuestXPFactor(24, 18) + 0.5), "E: green quest XP scaled by the level gap (" .. tostring(v.xp) .. ")")
+  local wj = table.concat(v.why, " · ")
+  check(wj:find("XP/min", 1, true) and wj:find("verte", 1, true), "E: why shows XP, XP/min and « verte » (" .. wj .. ")")
+  local kept = QB.DropLowGreens({ { questID = 1, score = 100 }, { questID = 2, score = 30, green = true, eta = 400 },
+    { questID = 3, score = 30, green = true, eta = 40 }, { questID = 4, score = 30, green = true, eta = 400, chain = true },
+    { questID = 5, score = 30, eta = 400 }, { questID = 6, score = 70, green = true, eta = 400 } })
+  local ks = {}
+  for _, e in ipairs(kept) do ks[#ks + 1] = e.questID end
+  check(table.concat(ks, ",") == "1,3,4,5,6", "E: low-ROI green dropped unless on the way / chain (" .. table.concat(ks, ",") .. ")")
 end

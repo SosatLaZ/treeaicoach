@@ -360,7 +360,11 @@ function QB.Value(q, rec, ctx, kind)
   if who > 0 and ctx.group > 1 then score = score * 1.25 end
   if (lv - ctx.level) >= 2 then score = score * 0.85 end
   local minutes = max(1, floor(sec / 60 + 0.5))
-  why[#why + 1] = fmt("%s%s XP en ~%d min", rec.learned and "≈ " or "", thousands(gain), minutes)
+  -- (4.3.5 PICKFIX) XP et XP / min affichées côte à côte ; verte (≥ 3 niveaux sous toi) : XP de quête réduite au-delà de
+  -- 5 niveaux (règle Classic : 80 / 60 / 40 / 20 / 10 %), monstres presque rien → dit
+  why[#why + 1] = fmt("%s%s XP en ~%d min (%s XP/min)", rec.learned and "≈ " or "", thousands(gain), minutes, thousands(score))
+  local green = lv > 0 and ctx.level - lv >= 3
+  if green then why[#why + 1] = fmt("verte (niveau %d) : XP réduite", lv) end
   if rec.learned then why[#why + 1] = "PNJ déjà rencontré" end
   if ctx.here and rec.s then
     local d = distYd(ctx.here, rec.s)
@@ -373,7 +377,22 @@ function QB.Value(q, rec, ctx, kind)
   if kind and kind.dungeon then why[#why + 1] = fmt("donjon (vous êtes %d)", ctx.group)
   elseif kind and kind.elite then why[#why + 1] = fmt("élite : à faire à %d", ctx.group) end
   if (lv - ctx.level) >= 2 then why[#why + 1] = fmt("niveau %d : un peu haute", lv) end
-  return { xp = floor(gain + 0.5), sec = sec, travel = travel, score = score, why = why, minutes = minutes }
+  return { xp = floor(gain + 0.5), sec = sec, travel = travel, score = score, why = why, minutes = minutes, green = green,
+    xpm = floor(score + 0.5) }
+end
+-- (4.3.5 PICKFIX) « il me donne des quêtes vertes pas rentables » : une verte qui rapporte moins de la moitié de l'XP / min
+-- de la meilleure quête est écartée, sauf en chemin (≤ 1 min de trajet) ou pour une suite de chaîne. Pure.
+QB.GREEN_ROI, QB.GREEN_ONWAY_S = 0.5, 60
+function QB.DropLowGreens(list)
+  local best = 0
+  for _, e in ipairs(list) do best = max(best, e.score or 0) end
+  local out = {}
+  for _, e in ipairs(list) do
+    if not (e.green and (e.score or 0) < QB.GREEN_ROI * best and not ((e.eta or huge) <= QB.GREEN_ONWAY_S) and not e.chain) then
+      out[#out + 1] = e
+    end
+  end
+  return out
 end
 
 local pickMemo
@@ -424,10 +443,12 @@ function QB.PickupList(n)
       local npc = rec.s and rec.s.name or nil
       list[#list + 1] = { questID = q, title = rec.t or questName(q) or ("quête " .. q), level = tonumber(rec.lv) or 0,
         npc = npc, map = rec.s.map, x = rec.s.x, y = rec.s.y, dist = distYd(hpos, rec.s), eta = v.travel, xp = v.xp,
-        why = tconcat(v.why, " · "), score = v.score, minutes = v.minutes, _b = bucket(v.score),
+        why = tconcat(v.why, " · "), score = v.score, minutes = v.minutes, _b = bucket(v.score), xpm = v.xpm, green = v.green,
+        chain = rec.nx and true or nil,
         elite = kind and kind.elite or nil, dungeon = kind and kind.dungeon or nil }
     end
   end
+  list = QB.DropLowGreens(list)
   tsort(list, function(a, b)
     if a._b ~= b._b then return a._b > b._b end
     local ra, rb = rank0[a.questID] or huge, rank0[b.questID] or huge
