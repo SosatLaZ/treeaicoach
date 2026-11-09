@@ -26,6 +26,12 @@ local function diag()
   local db = T.db or G.TreeAIDB
   if type(db) ~= "table" then return nil end
   db.diag = type(db.diag) == "table" and db.diag or {}
+  -- (4.3.2) nouvelle version : les erreurs et blocages des versions d'avant ne sont plus montrés comme actuels
+  local v = T.version
+  if v and db.diag.errV ~= v then
+    db.diag.errV, db.diag.errors = v, {}
+    db.diag.blockedTop, db.diag.blockedTotal, db.diag.blocked = {}, 0, {}
+  end
   return db.diag
 end
 

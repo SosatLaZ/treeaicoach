@@ -1,25 +1,25 @@
 {
- "version": "4.3.1",
+ "version": "4.3.2",
  "exe": "TreeAICoach-app.exe",
- "sha256": "8e9125c4fe8c419ee17f584cc9276d0488f48483c7c596f530e582272358131d",
+ "sha256": "c60460d4eb54fc7404e15a839769358c835c8235fa1d2cf857dd9b4ad767ade2",
  "chunks": [
   {
-   "name": "4.3.1/part-01.zip",
-   "size": 88058601,
-   "sha256": "7cfe93e83e37d26a2dd17d6c596fe709f1491c8ece4c1377b5599e7b68c59bf8",
+   "name": "4.3.2/part-01.zip",
+   "size": 88058592,
+   "sha256": "db8b18866c297c5f583b9045b5d6ab2bb7ffb4858339e6bb81fe67bcee880713",
    "files": 127
   },
   {
-   "name": "4.3.1/part-02.zip",
-   "size": 14193906,
-   "sha256": "8b5efffdb477ac89d916a16c74e106c4d82abd12801ff0e90b037ce1b0c85b16",
+   "name": "4.3.2/part-02.zip",
+   "size": 14194006,
+   "sha256": "2747d0f4dcc4e559ce85f509b00611d5505bddb349a46c5ac789f28d6395e776",
    "files": 688
   }
  ],
- "total_size": 102252507,
+ "total_size": 102252598,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "TreeAI 4.3.1 : tuto des macros, badge Auto/Fixe, glisser sur la barre, lier la touche."
+ "notes": "TreeAI 4.3.2 : le fichier d'erreurs repart \u00e0 z\u00e9ro \u00e0 chaque version."
 }

@@ -1,6 +1,6 @@
 {
-  "version": "4.3.1",
+  "version": "4.3.2",
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334,
-  "notes": "TreeAI 4.3.1 : tuto des macros, badge Auto/Fixe, glisser sur la barre, lier la touche."
+  "notes": "TreeAI 4.3.2 : le fichier d'erreurs repart à zéro à chaque version."
 }

@@ -3,6 +3,10 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 4.3.2 · 9 novembre 2026
+
+- Le fichier d'erreurs repart à zéro à chaque nouvelle version (les vieilles erreurs ne passent plus pour actuelles).
+
 ## 4.3.1 · 9 novembre 2026
 
 - **Macros : vrai tuto** (« Comment ça marche » en 4 étapes), badge Auto / Fixe, « Sert à » et « Où la mettre »,
