@@ -2167,10 +2167,47 @@ W.AddPage({ id = "talents", label = "Talents", icon = ICON .. "Ability_Marksmans
       return "Allumer Talents", function() T:SetModuleEnabled("Talents", true) end, "Clic : allume le conseiller de talents (sans /reload)"
     end
   end })
+-- (4.3 V43) Équipement : « Le meilleur maintenant » (un objet par emplacement, gain réel, coût, temps, clic = y aller)
+function W.GearNow(Ly)
+  local Gm = T.modules and T.modules.Gear
+  if not (Gm and Gm._active and Gm.NowRows) then return end
+  local ok, rows = pcall(Gm.NowRows)
+  if not (ok and type(rows) == "table") or #rows == 0 then return end
+  local keep = {}
+  for _, e in ipairs(rows) do if W.Match(e.text, e.sub) then keep[#keep + 1] = e end end
+  local tot = {}
+  if (rows.cost or 0) > 0 then tot[#tot + 1] = (T.Fmt and T.Fmt.Money and T.Fmt.Money(rows.cost)) or (rows.cost .. " pc") end
+  if (rows.min or 0) > 0 then tot[#tot + 1] = (W.MinutesText and W.MinutesText(rows.min * 60)) or fmt("%d min", rows.min) end
+  if Ly.header("Le meilleur maintenant" .. (#tot > 0 and (" · " .. tconcat(tot, " · ")) or ""), "gear:now", #keep, ICON .. "INV_Chest_Chain") then
+    for _, e in ipairs(keep) do Ly.row(e) end
+  end
+end
+function W.GearTop()
+  local Gm = T.modules and T.modules.Gear
+  if not (Gm and Gm._active) then return {} end
+  local out = { { "Recalculer", function() T:UserAction(function() Gm.MarkDirty() Gm:ScanNow() end) end,
+    "Clic : recalcule le meilleur objet par emplacement (hors combat)" } }
+  local ok, rows = pcall(Gm.NowRows)
+  local first = ok and type(rows) == "table" and rows[1]
+  if first then
+    out[#out + 1] = { "Aller au 1er objet", first.onClick, "Clic : " .. strip(first.text) .. " — " .. strip(first.sub) }
+  end
+  out[#out + 1] = { "Réparateur", function() W.GoRepair() end, "Clic : la boussole vers le réparateur le plus proche (connu)" }
+  return out
+end
+--- (4.3 V43) boussole vers le réparateur le plus proche (vu ou connu) ; faux si aucun
+function W.GoRepair()
+  local Q = T.QuickTravel
+  local svc = type(Q) == "table" and Q.FindService and select(2, pcall(Q.FindService, "repair"))
+  if type(svc) == "table" and Q.GoTo then pcall(Q.GoTo, svc) return true end
+  if W.Flash then W.Flash("Aucun réparateur connu ici : parle à un forgeron / armurier, TreeAI le retiendra.", 6) end
+  return false
+end
 W.AddPage({ id = "gear", label = "Équipement", short = "Équipement", icon = ICON .. "INV_Chest_Chain", title = "Équipement",
   desc = "Le meilleur objet par emplacement, où l'obtenir, réparations",
   top = function() return W.GearTop and W.GearTop() or {} end,
   render = function(Ly)
+    W.GearNow(Ly)
     W.RenderTab(Ly, "gear", modOff("Gear") and "Le module Équipement est coupé (fonction bêta) : « Allumer Équipement », en bas à droite."
       or "Rien de mieux pour l'instant : TreeAI regarde tes sacs, tes récompenses de quête et l'HV.")
   end,

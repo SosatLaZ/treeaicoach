@@ -15,7 +15,8 @@ return function(M, ctx)
   local plan = Gr:ScanNow()
   ctx.check(plan and plan.slots and plan.cur, "plan with the real 5 000-item table")
 
-  -- 2. deterministic run on a tiny fake table
+  -- 2. deterministic run on a tiny fake table (the harness click storm may have bumped the horizon)
+  Gr.db.horizon = 3
   local realItems, realCrafted = T.Data.Gear.items, T.Data.Gear.crafted
   T.Data.Gear.items = {
     [990001] = { 5, 25, 2, 4, 2, "3:12", 0, 0, 80, 2, 5000, "Gilet-test agile", 0 },     -- leather chest, vendor
@@ -69,6 +70,24 @@ return function(M, ctx)
     "head: quest reward (mage-only helm filtered by class mask)")
   local hands = best(10)
   ctx.check(hands and hands.src.kind == "bag", "gloves from the bags: equip now")
+  -- (4.3 V43) « le meilleur maintenant » : portable aujourd'hui, source faisable tout de suite, gain réel, clic = y aller
+  local nw = plan.now or {}
+  ctx.check(nw[5] and nw[5].id == 990001 and nw[5].nowSrc and nw[5].nowSrc.kind == "vendor", "now: chest at the vendor")
+  ctx.check(nw[18] and nw[18].nowSrc.kind == "boss", "now: the boss bow (Mortemines, doable with 4 at 27)")
+  for slot, cd in pairs(nw) do
+    if type(cd) == "table" and cd.need then ctx.check(cd.need <= plan.ctx.level, "now: wearable today, slot " .. tostring(slot)) end
+  end
+  ctx.check(nw[10] and nw[10].nowSrc.kind == "bag", "now: gloves from the bags")
+  local gt = Gr.GainText(nw[5], plan.cur[5], 5)
+  ctx.check(gt and gt:find("%+7 Agi"), "real gain vs the worn chest (12 - 5 Agi): " .. tostring(gt))
+  local rows = Gr.NowRows(plan)
+  ctx.check(#rows >= 3 and rows.cost >= 5000, "now rows + total cost (" .. #rows .. ", " .. tostring(rows.cost) .. ")")
+  local craftRow
+  for _, r in ipairs(rows) do
+    ctx.check(r.onClick and r.clickHint and r.right, "now row clickable with cost/time: " .. r.text)
+    if r.srcKind == "craft" then craftRow = r end
+  end
+  ctx.check(craftRow and Gr.GoSource(craftRow.src) == "prof", "craft row: click opens the Métiers page")
   -- hunter notes: ammo mismatch (bow + only bullets), mail at 40
   ctx.check(plan.hunter and plan.hunter.ammoNeed == 2 and plan.hunter.ammoOK == false, "ammo type mismatch detected")
   ctx.check(plan.hunter.mail and plan.hunter.mail:find("40"), "mail at 40 note")

@@ -557,19 +557,23 @@ function M.Sources(id, c)
     e.effort = e.min + (e.cost / c.copperPerMin)
     out[#out + 1] = e
   end
-  if bagItems[id] then add("bag", "dans tes sacs : équipe-le", 0, 0) end
+  if bagItems[id] then add("bag", "dans tes sacs : équipe-le", 0, 0, { now = true }) end
   local lr = logRewards[id]
-  if lr and opt("quests") then add("quest", "récompense de « " .. lr.title .. " » (dans ton journal)", 10, 0, { qid = lr.qid }) end
+  if lr and opt("quests") then add("quest", "récompense de « " .. lr.title .. " » (dans ton journal)", 10, 0, { qid = lr.qid, log = true, now = true }) end
   -- modules optionnels (contrats lus seulement s'ils existent)
   local Dg = mod("Dungeon")
   if Dg and Dg.ItemSource and opt("dungeons") then
     local s = try(Dg.ItemSource, id)
-    if type(s) == "table" and s.text then add("boss", s.text, tonumber(s.min) or 60, 0) end
+    if type(s) == "table" and s.text then
+      -- (4.3 V43) faisable à 4 : niveau ≥ minimum conseillé du donjon (- 2 à quatre)
+      add("boss", s.text, tonumber(s.min) or 60, 0, { dkey = s.key, dmin = s.dmin,
+        now = not tonumber(s.dmin) or c.level >= tonumber(s.dmin) - 2 })
+    end
   end
   local Pf = mod("Prof")
   if Pf and Pf.CraftInfo and opt("crafted") then
     local s = try(Pf.CraftInfo, id)
-    if type(s) == "table" and s.text then add("craft", s.text, tonumber(s.min) or 15, tonumber(s.cost) or 0) end
+    if type(s) == "table" and s.text then add("craft", s.text, tonumber(s.min) or 15, tonumber(s.cost) or 0, { now = s.can ~= false }) end
   end
   local db = questie()
   local qi = db and db.QueryItemSingle
@@ -580,7 +584,8 @@ function M.Sources(id, c)
           local ql = tonumber(db.QueryQuestSingle and try(db.QueryQuestSingle, qid, "requiredLevel")) or 1
           if ql <= c.level + c.horizon then
             local name = db.QueryQuestSingle and try(db.QueryQuestSingle, qid, "name") or ("quête " .. qid)
-            add("quest", ("récompense de « %s » (niv %d)"):format(name, ql), 30 + max(0, ql - c.level) * 20, 0, { qid = qid })
+            add("quest", ("récompense de « %s » (niv %d)"):format(name, ql), 30 + max(0, ql - c.level) * 20, 0,
+              { qid = qid, now = ql <= c.level })
           end
           break
         end
@@ -598,12 +603,12 @@ function M.Sources(id, c)
         if d then
           local far = max(0, d[2] - c.level)
           add("boss", ("%s — %s%s"):format(d[1], name, rank == 3 and " (boss)" or ""), 60 + far * 15, 0,
-            { dungeon = d[1], dmin = d[2], dmax = d[3] })
+            { dungeon = d[1], dmin = d[2], dmax = d[3], npc = npc, now = c.level >= d[2] - 2 })
         else
           local z = areaName(zone)
           local tag = (rank == 4 or rank == 2) and " (rare)" or (rank == 1 and " (élite)" or "")
           add("drop", ("butin de %s%s niv %d%s"):format(name, tag, nl, z and (" — " .. z) or ""),
-            (rank == 4 or rank == 2) and 45 or 25, 0)
+            (rank == 4 or rank == 2) and 45 or 25, 0, { npc = npc, now = nl <= c.level + 2 and rank ~= 1 })
         end
         if #out >= 6 then break end
       end
@@ -617,7 +622,7 @@ function M.Sources(id, c)
         local name = try(qn, npc, "name") or "un marchand"
         local z = areaName(tonumber((try(qn, npc, "zoneID"))))
         add("vendor", ("marchand %s%s%s"):format(name, z and (" — " .. z) or "", #vend > 1 and (" (+" .. (#vend - 1) .. ")") or ""),
-          10, r and r.buy or 0)
+          10, r and r.buy or 0, { npc = npc, now = (r and r.buy or 0) <= c.money })
       end
     end
   end
@@ -627,7 +632,9 @@ function M.Sources(id, c)
   if cr and opt("crafted") and not (Pf and Pf.CraftInfo) then
     local pname = (D.profs and D.profs[cr[1]]) or "artisanat"
     local have = craftSkills()[cr[1]]
-    if have and have >= cr[2] then add("craft", ("à fabriquer : %s ~%d (tu as %d)"):format(pname, cr[2], have), 15, 0)
+    local mate = M.GroupCrafter and M.GroupCrafter(pname, cr[2])
+    if have and have >= cr[2] then add("craft", ("à fabriquer : %s ~%d (tu as %d)"):format(pname, cr[2], have), 15, 0, { now = true })
+    elseif mate then add("craft", ("fabriqué par %s (%s, ton groupe)"):format(mate, pname), 15, 0, { now = true })
     elseif have then add("craft", ("%s ~%d requis (tu as %d)"):format(pname, cr[2], have), 15 + (cr[2] - have), 0)
     else add("craft", ("fabriqué par un artisan (%s ~%d) — ami / canal commerce"):format(pname, cr[2]), 25, 0) end
   end
@@ -636,7 +643,7 @@ function M.Sources(id, c)
   if opt("ah") and A and A.Stats and not (r and r.bind == 1) then
     local st = try(A.Stats, id)
     local p = type(st) == "table" and tonumber(st.market) or nil
-    if p and p > 0 then add("ah", "HV ≈ " .. money(p) .. (st.src and (" (" .. st.src .. ")") or ""), 5, p, { price = p }) end
+    if p and p > 0 then add("ah", "HV ≈ " .. money(p) .. (st.src and (" (" .. st.src .. ")") or ""), 5, p, { price = p, now = p <= c.money }) end
   end
   if #out == 0 then
     if r and r.bind ~= 1 then add("world", "butin aléatoire (monde) — surveille l'HV", 120, 0)
@@ -754,6 +761,11 @@ function M.Plan(yieldEvery)
   for _, slot in ipairs(SLOT_LIST) do
     local l = per[slot]
     table.sort(l, function(a, b) if a.pct ~= b.pct then return a.pct > b.pct end return a.id < b.id end)
+    -- (4.3 V43) « le meilleur maintenant » : les 6 plus gros gains portables dès aujourd'hui, à part (avant la coupe à 10)
+    local nowC = {}
+    for _, cd in ipairs(l) do if (cd.need or 0) <= c.level and #nowC < 6 then nowC[#nowC + 1] = cd end end
+    plan.now, plan.nowUsed = plan.now or {}, plan.nowUsed or {}
+    plan.now[slot] = M.BestNow(nowC, c, plan.nowUsed)
     while #l > 10 do table.remove(l) end
     local best = pickBest(l, c, max(1, tonumber(opt("maxPerSlot")) or 3) + 1)
     -- anneaux / bijoux : ne pas proposer le même objet (unique) pour les deux emplacements
@@ -785,6 +797,145 @@ function M.Shopping(plan)
     e.affordable = total <= budget
   end
   out.total = total
+  return out
+end
+
+-- (4.3 V43) ---------------------------------------------------------------- le meilleur objet atteignable MAINTENANT
+--- artisan du groupe (avec TreeAI) qui a le métier au rang voulu : son nom, sinon nil
+function M.GroupCrafter(pname, need)
+  local Gm = T.modules and T.modules.Group
+  local okL, list = pcall(function() return Gm and Gm._active and Gm.List and Gm:List() end)
+  for _, m in ipairs(okL and type(list) == "table" and list or {}) do
+    local pr = not m.me and type(m.st) == "table" and m.st.pr
+    for _, e in ipairs(type(pr) == "table" and pr or {}) do
+      local n, rk = tostring(e):match("^(.-) (%d+)$")
+      if n and n == pname and (tonumber(rk) or 0) >= (tonumber(need) or 0) and type(m.name) == "string" then return m.name end
+    end
+  end
+end
+--- parmi des candidats portables dès maintenant : le plus gros gain dont une source est faisable tout de suite
+--- (sacs, quête faisable, donjon faisable à 4, marchand / HV dans tes moyens, ton artisanat ou celui du groupe)
+function M.BestNow(cands, c, used)
+  local best
+  for _, cd in ipairs(cands) do
+    if not (used and used[cd.id]) then
+      local src
+      for _, e in ipairs(M.Sources(cd.id, c)) do if e.now then src = e break end end
+      if src and (not best or cd.pct > best.pct or (cd.pct == best.pct and src.effort < best.nowSrc.effort)) then
+        best = cd
+        best.nowSrc = src
+      end
+    end
+  end
+  if best and used and (best.inv == 11 or best.inv == 12 or best.invName == "INVTYPE_FINGER" or best.invName == "INVTYPE_TRINKET") then
+    used[best.id] = true
+  end
+  return best
+end
+local GAIN_KEYS = { { "AGI", "Agi" }, { "RAP", "PA dist." }, { "AP", "PA" }, { "STA", "Endu" }, { "HIT", "Toucher" },
+  { "CRIT", "Crit" }, { "INT", "Intel" }, { "STR", "Force" }, { "SPI", "Esprit" }, { "SP", "Puiss. sorts" } }
+--- gain réel en stats (« +3,2 DPS · +4 Agi · +10 PA dist. ») : objet proposé moins objet porté (données du client)
+function M.GainText(cd, worn, slot)
+  local a = cd and M.StatsOf(cd.id)
+  if not a then return nil end
+  local b = (worn and worn.id and M.StatsOf(worn.id)) or (worn and worn.link and itemStats(worn.link)) or {}
+  local out = {}
+  local function n(t, k) return tonumber(t[k]) or 0 end
+  local dd = n(a, S.DPS) - n(b, S.DPS)
+  if (slot == 18 or slot == 16) and math.abs(dd) >= 0.1 then
+    out[#out + 1] = ((dd > 0 and "+" or "") .. ("%.1f DPS"):format(dd)):gsub("%.", ",")
+  end
+  local w = M.Weights and M.Weights() or {}
+  for _, kk in ipairs(GAIN_KEYS) do
+    local k = S[kk[1]]
+    local d = n(a, k) - n(b, k)
+    if d ~= 0 and (tonumber(w[k]) or 0) > 0.1 then out[#out + 1] = ("%s%d %s"):format(d > 0 and "+" or "", d, kk[2]) end
+    if #out >= 4 then break end
+  end
+  local ar = n(a, S.ARMOR) - n(b, S.ARMOR)
+  if #out < 4 and ar >= 10 then out[#out + 1] = ("+%d armure"):format(ar) end
+  return #out > 0 and table.concat(out, " · ") or nil
+end
+--- position d'un PNJ (Questie, lecture seule) : { map, x, y } hors instance, sinon nil
+local function npcPoint(npc)
+  local X = T.modules and T.modules.Export
+  local db = X and X.Source and select(2, pcall(X.Source, X))
+  if not (type(db) == "table" and db.N and db.map and X.Cluster and npc) then return nil end
+  local okC, cl = pcall(X.Cluster, db.N(npc, "spawns"), db.map, db.dungeon)
+  for _, p in ipairs(okC and type(cl) == "table" and cl or {}) do if not p.inst then return p end end
+end
+M.NpcPoint = npcPoint
+--- PNJ de la quête : celui qui la rend (quête du journal) ou qui la donne
+local function questNpc(qid, log)
+  local db = questie()
+  local q = db and db.QueryQuestSingle
+  local by = q and try(q, qid, log and "finishedBy" or "startedBy")
+  local npcs = type(by) == "table" and by[1]
+  return type(npcs) == "table" and npcs[1] or nil
+end
+--- « où l'obtenir » : un clic mène à la source (boussole vers le PNJ, page Donjons, Métiers, HV) ; jamais d'achat
+function M.GoSource(src, cd)
+  if type(src) ~= "table" then return false end
+  local W = T.Window
+  local kind = src.kind
+  if kind == "boss" then
+    if W and W.char and src.dkey then W.char.dungeon = src.dkey end
+    if W and W.Open then W.Open("dungeon") end
+    return "dungeon"
+  elseif kind == "craft" then
+    if W and W.Open then W.Open("prof") end
+    return "prof"
+  elseif kind == "ah" then
+    local A = T.modules and T.modules.Auction
+    local f = rawget(G, "AuctionHouseFrame") or rawget(G, "AuctionFrame")
+    local open = type(f) == "table" and type(f.IsShown) == "function" and pass(pcall(f.IsShown, f))
+    if open and A and A.SearchItem and cd and try(A.SearchItem, cd.id) then return "ah" end
+    if W and W.Open then W.Open("hv") end
+    return "hv"
+  end
+  local npc = src.npc or (kind == "quest" and src.qid and questNpc(src.qid, src.log))
+  local pt = npc and npcPoint(npc)
+  local Cm = T.Compass
+  if pt and Cm and Cm.SetTarget then
+    try(Cm.SetTarget, Cm, { mapID = pt.map, x = pt.x, y = pt.y, label = (cd and cd.name) or src.text, source = "gear" })
+    return "compass"
+  end
+  return false
+end
+local KIND_FR = { bag = "sacs", quest = "quête", boss = "donjon", drop = "butin", vendor = "marchand", craft = "artisanat",
+  ah = "HV", world = "butin" }
+local GO_FR = { boss = "Clic : la page du donjon", craft = "Clic : la page Métiers", ah = "Clic : chercher à l'HV (ou y aller)",
+  bag = "Dans tes sacs : clic droit pour l'équiper" }
+--- lignes « Le meilleur maintenant » (page Équipement) : une par emplacement, gain réel, coût, temps, clic = y aller
+function M.NowRows(plan)
+  plan = plan or M.plan
+  local out = { cost = 0, min = 0 }
+  if not (plan and plan.now) then return out end
+  local c = plan.ctx
+  for _, slot in ipairs(SLOT_LIST) do
+    local cd = plan.now[slot]
+    local src = cd and cd.nowSrc
+    if src then
+      local worn = plan.cur[slot] or {}
+      local gain = M.GainText(cd, worn, slot) or pctText(cd.pct)
+      local where = tostring(src.text or "?")
+      local cost = (src.cost or 0) > 0 and money(src.cost) or nil
+      local tm = src.kind == "bag" and "maintenant" or (not NO_EFFORT[src.kind] and dur(src.min)) or nil
+      out.cost = out.cost + (src.cost or 0)
+      out.min = out.min + ((src.kind ~= "bag" and not NO_EFFORT[src.kind]) and (src.min or 0) or 0)
+      local right = cost and tm and (cost .. " · " .. tm) or cost or tm or KIND_FR[src.kind]
+      local tip = { ("%s : %s → %s"):format(SLOT_FR[slot] or slot, worn.name or "(vide)", cd.name or "?"),
+        "Gain : " .. gain .. " (" .. pctText(cd.pct) .. ")", "Où : " .. where }
+      for i, e in ipairs(cd.sources or M.Sources(cd.id, c)) do
+        if e ~= src and i <= 4 then tip[#tip + 1] = "  ou " .. e.text .. (e.now and "" or " (pas encore)") end
+      end
+      out[#out + 1] = { slot = slot, itemID = cd.id, src = src, srcKind = src.kind,
+        text = ("%s → %s · %s"):format(SLOT_FR[slot] or slot, cd.name or "?", gain),
+        sub = where, right = right, tooltip = tip, prio = (src.kind == "bag" or cd.pct >= BIG_GAIN) and 2 or 1,
+        clickHint = GO_FR[src.kind] or "Clic : la boussole t'y mène",
+        onClick = function() M.GoSource(src, cd) end }
+    end
+  end
   return out
 end
 

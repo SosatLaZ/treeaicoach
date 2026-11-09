@@ -1167,7 +1167,7 @@ function M.ItemSource(id)
   end
   local e = itemBoss[id]
   if not e then return nil end
-  return { text = fmt("butin de %s (%s, ≈)", e.b.n, e.d.n), min = 60 + 5 * e.b.index }
+  return { text = fmt("butin de %s (%s, ≈)", e.b.n, e.d.n), min = 60 + 5 * e.b.index, key = e.d.key, dmin = e.d.min }
 end
 
 ---------------------------------------------------------------------------------------------------
