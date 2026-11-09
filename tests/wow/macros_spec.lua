@@ -124,9 +124,9 @@ assert(fam:find("item:", 1, true), "pet food in Familier: " .. fam)
 assert(macros["TAI Repas"].body:find("item:2287", 1, true), macros["TAI Repas"].body)
 assert(macros["TAI Survie"].body:find("item:858", 1, true), macros["TAI Survie"].body)
 assert(macros["TAI Munitions"].body:find("/equip item:2512", 1, true))
-local pieges = macros["TAI Pieges"].body
+local pieges = macros["TAI Pièges"].body
 assert(pieges:find("Piège givrant", 1, true) and not pieges:find("Piège de givre", 1, true), pieges)
-assert(macros["TAI FD Piege"] == nil, "FD not known yet")
+assert(macros["TAI Feindre"] == nil, "FD not known yet")
 assert(macros["TAI Marqueur"] == nil, "non default not installed")
 for name, m in pairs(macros) do
   assert(not m.body:find("[{}]"), "unresolved token in " .. name .. ": " .. m.body)

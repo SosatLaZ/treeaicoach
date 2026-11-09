@@ -1439,7 +1439,7 @@ M.HUNTER_HELPERS = {
 }
 M.HUNTER_MACROS = {
   { "TAI Pro Tir", "Pull en un bouton : cible, Marque, familier, tir auto, Morsure, Arcanes" },
-  { "TAI FD Piege", "En combat : Feindre la mort ; hors combat : Piège givrant (2e appui)" },
+  { "TAI Feindre", "En combat : Feindre la mort ; hors combat : Piège givrant (2e appui)" },
   { "TAI Aspects", "Le bon aspect : Faucon en combat ou sur une cible hostile, sinon Guépard" },
   { "TAI Pro Panique", "Feindre la mort + familier au pied (Maj : Piège givrant)" },
 }

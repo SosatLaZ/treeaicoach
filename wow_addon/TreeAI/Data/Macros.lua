@@ -920,7 +920,7 @@ D.classes.PALADIN = {
   }},
 }
 D.classes.HUNTER = {
-  {n="TAI Tir", d="Tir auto + familier + Invocation de faucon (Maj : Flèches multiples)", k="1", i="INV_Misc_QuestionMark", def=true, c="spell", s={"bete"}, x="", l=1,
+  {n="TAI Tir", d="Tir auto + familier + Invocation de faucon (Maj : Flèches multiples)", k="1", i="INV_Weapon_Bow_02", def=true, c="spell", s={"bete"}, x="", l=1,
    w="Un seul bouton à marteler : « !Tir automatique » relance le tir auto sans jamais le couper, le familier attaque ta cible (Alt = il reste), puis ton tir instantané. Invocation de faucon (talent Bêtes) partage la recharge du Tir des arcanes : elle le remplace, Ctrl garde l'Arcane. Sans Aspect du faucon, il revient dès que le tir est en recharge.",
    sp=true, pr=false, f="mpg", vl={"Invocation de faucon (Ctrl : Arcanes)", "Tir des arcanes", "Tir auto seul"},
    o="Case 1 de la barre principale : le bouton que tu cliques le plus, en boucle.", v={
@@ -928,7 +928,7 @@ D.classes.HUNTER = {
     {b="#showtooltip\n/cast ?[mod:shift] {2643}; {3044}\n?/cast !{13165}\n/cast !{75}\n/petattack [harm,nodead,nomod:alt]", r={3044, 75}, it={}},
     {b="#showtooltip\n/cast !{75}\n/petattack [harm,nodead,nomod:alt]", r={75}, it={}},
   }},
-  {n="TAI Tir", d="Tir auto + familier + Tir des arcanes (Maj : multiples, Ctrl : Visée)", k="1", i="INV_Misc_QuestionMark", def=true, c="spell", s={"precision", "survie"}, x="", l=1,
+  {n="TAI Tir", d="Tir auto + familier + Tir des arcanes (Maj : multiples, Ctrl : Visée)", k="1", i="INV_Weapon_Bow_02", def=true, c="spell", s={"precision", "survie"}, x="", l=1,
    w="« !Tir automatique » relance le tir auto sans jamais le couper, le familier part sur ta cible (Alt = il reste). Visée (Ctrl) se lance juste après un tir auto pour ne pas le décaler. Sans Aspect du faucon, il revient dès que le tir est en recharge.",
    sp=true, pr=false, f="mpg", vl={"Tir des arcanes (Ctrl : Visée)", "Tir auto seul"},
    o="Case 1 de la barre principale : le bouton que tu cliques le plus, en boucle.", v={
@@ -959,17 +959,17 @@ D.classes.HUNTER = {
    o="Barre principale, à côté du Tir : seulement quand un monstre est collé à toi.", v={
     {b="#showtooltip\n/startattack\n/cast ?[mod:shift] {2974}; ?[mod:ctrl] {19306}; ?[mod:alt] {1317257}; ?{1495}\n/cast {2973}", r={2973}, it={}},
   }},
-  {n="TAI Pieges", d="Piège givrant (Maj : givre, Alt : explosif, Ctrl : immolation)", k="E", i="INV_Misc_QuestionMark", def=true, c="spell", s={}, x="", l=16,
-   w="Tous les pièges partagent une recharge : un seul bouton, le modificateur choisit. Hors combat uniquement : pose-le puis attire le monstre dessus (en combat, TAI FD Piege).",
+  {n="TAI Pièges", d="Piège givrant (Maj : givre, Alt : explosif, Ctrl : immolation)", k="E", i="Spell_Frost_ChainsOfIce", def=true, c="spell", s={}, x="", l=16,
+   w="Tous les pièges partagent une recharge : un seul bouton, le modificateur choisit. Hors combat uniquement : pose-le puis attire le monstre dessus (en combat, TAI Feindre).",
    sp=true, pr=true, f="m",
    o="Barre principale : à poser AVANT le pull (les pièges ne se posent que hors combat).", v={
     {b="#showtooltip\n/cast ?[mod:shift] {13809}; ?[mod:alt] {13812}; ?[mod:ctrl] {13795}; {1499}", r={1499}, it={}},
     {b="#showtooltip\n/cast {13795}", r={13795}, it={}},
   }},
-  {n="TAI FD Piege", d="En combat : Feindre la mort ; hors combat : Piège givrant", k="Maj+E", i="INV_Misc_QuestionMark", def=true, c="spell", s={}, x="", l=30,
+  {n="TAI Feindre", d="En combat : Feindre la mort ; hors combat : Piège givrant", k="Maj+E", i="Ability_Rogue_FeignDeath", def=true, c="spell", s={}, x="", l=30,
    w="1er clic : coupe ta Salve, rappelle le familier et fait le mort (tu sors du combat). 2e clic, maintenant hors combat : Piège givrant à tes pieds. Sans séquence : jamais bloquée, même si Feindre la mort est résisté (le 2e clic retente alors Feindre la mort).",
    sp=true, pr=false, f="p",
-   o="À côté de TAI Pieges : clique 2 fois de suite quand un add arrive.", v={
+   o="À côté de TAI Pièges : clique 2 fois de suite quand un add arrive.", v={
     {b="#showtooltip\n/stopcasting [combat]\n/petfollow [combat]\n/cast [combat] {5384}; {1499}", r={5384, 1499}, it={}},
   }},
   {n="TAI Aspects", d="Le bon aspect : Faucon en combat ou sur une cible hostile, sinon Guépard", k="X", i="INV_Misc_QuestionMark", def=true, c="spell", s={}, x="", l=4,
@@ -992,7 +992,7 @@ D.classes.HUNTER = {
    o="Barre de côté : un clic en entrant / sortant d'un groupe.", v={
     {b="/petautocastoff [group] {2649}\n/petautocaston [nogroup] {2649}", r={}, it={}},
   }},
-  {n="TAI Familier", d="Appel / Ressusciter / Guérison (Maj : ressusciter, Ctrl : nourrir)", k="V", i="INV_Misc_QuestionMark", def=true, c="spell", s={}, x="", l=10,
+  {n="TAI Familier", d="Appel / Ressusciter / Guérison (Maj : ressusciter, Ctrl : nourrir)", k="V", i="Ability_Hunter_BeastCall", def=true, c="spell", s={}, x="", l=10,
    w="Appel s'il est absent, Ressusciter s'il est mort, Guérison sinon. Si l'Appel répond « familier mort » (corps disparu), Maj+clic ressuscite. Ctrl le nourrit avec la nourriture du sac adaptée à son régime (choisie hors combat quand ton sac change).",
    sp=true, pr=true, f="m",
    o="Barre principale : la seule touche dont ton familier a besoin.", v={

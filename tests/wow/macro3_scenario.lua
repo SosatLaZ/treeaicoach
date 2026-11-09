@@ -179,7 +179,7 @@ return function(M, ctx)
     check(su.code == "user" and su.badge == "muted", "edited by hand: grey « gardée telle quelle »")
     click(function() Mc:UpdateAll() end)
     check(body("TAI Morsure") == "/say perso", "« Tout mettre à jour » never overwrites a hand edit")
-    local sl = state("TAI FD Piege")
+    local sl = state("TAI Feindre")
     check(sl and sl.code == "later" and sl.text:find("30", 1, true), "Feign Death at 30: grey « au niveau 30 » "
       .. tostring(sl and sl.code) .. " " .. tostring(sl and sl.text))
   end

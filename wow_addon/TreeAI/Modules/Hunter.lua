@@ -773,7 +773,7 @@ function M:OnLeaveCombat()
     local cdLeft = trap and trap.cdUntil and (trap.cdUntil - now()) or 0
     if cdLeft <= 1 then
       suggest("fd", "Feindre la mort a marché : pose ton piège maintenant", 2, 10,
-        { ttl = 8, tooltip = "Macro « TAI FD Piege » (panneau Macros) : 2e clic = Piège givrant à tes pieds." })
+        { ttl = 8, tooltip = "Macro « TAI Feindre » (panneau Macros) : 2e clic = Piège givrant à tes pieds." })
     end
   end
   fdAt = nil

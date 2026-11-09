@@ -86,10 +86,10 @@ def test_hunter_macros_expert_patterns():
     tir = _hunter("TAI Tir", level=28)
     assert "/cast !Tir automatique" in tir and "/petattack [harm,nodead,nomod:alt]" in tir
     assert tir.startswith("#showtooltip\n/cast ")
-    fd = _hunter("TAI FD Piege", level=30)
+    fd = _hunter("TAI Feindre", level=30)
     assert "/cast [combat] Feindre la mort; Piège givrant" in fd and "castsequence" not in fd
     assert "/petfollow [combat]" in fd and "/stopcasting [combat]" in fd
-    assert _hunter("TAI FD Piege", level=28) is None            # Feign Death is learned at 30
+    assert _hunter("TAI Feindre", level=28) is None            # Feign Death is learned at 30
     asp = _hunter("TAI Aspects", level=40)
     # (MACRO3) smart: Hawk in combat / on a hostile target, else Cheetah; every aspect cast with « ! »
     assert "[combat][harm,nodead] !Aspect du faucon; !Aspect du guépard" in asp

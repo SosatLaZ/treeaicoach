@@ -145,7 +145,7 @@ def test_pro_macros():
     assert "[@focus,harm,nodead]" in _body("TAI Pro Focus")
     assert _body("TAI Pro Rare") == "/click TreeAIMacro_rare" and _body("TAI Pro Quete") == "/click TreeAIMacro_quest"
     # replaced by a Pro macro in the « Pro » preset; still in Complet / Simple
-    for name in ("TAI Tir", "TAI Marque", "TAI Melee", "TAI Pet", "TAI Burst", "TAI FD Piege"):
+    for name in ("TAI Tir", "TAI Marque", "TAI Melee", "TAI Pet", "TAI Burst", "TAI Feindre"):
         m = _m(name)
         assert m.default and not m.in_pro, name
 

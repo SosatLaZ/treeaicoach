@@ -62,7 +62,7 @@ return function(M, ctx)
       "Tir: « !Tir automatique » never toggles Auto Shot off + pet attack")
     local asp = seen["TAI Aspects"]
     ctx.check(asp and not asp.body:find("[^!]Aspect du") , "Aspects: every aspect cast with « ! »")
-    local fd = seen["TAI FD Piege"]
+    local fd = seen["TAI Feindre"]
     ctx.check(fd and fd.body:find("/cast [combat] Feindre la mort; Piège givrant", 1, true)
       and not fd.body:find("castsequence", 1, true), "Feign Death + trap: [combat] switch, no sequence")
     local pet = seen["TAI Familier"]

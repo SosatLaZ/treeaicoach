@@ -130,6 +130,7 @@ T.Macros = M
 local function data() return T.Data and T.Data.Macros end
 local function db() return M.db or {} end
 local charOK   -- (MACRO3, perf) la table déjà vérifiée : char() est appelé à chaque tour des boucles de rafraîchissement
+M.RENAMED = { ["TAI Pieges"] = "TAI Pièges", ["TAI FD Piege"] = "TAI Feindre" }
 local function char()
   local c = M.char
   if c ~= nil and c == charOK and c.installed and c.bodies and c.opts and c.stamps then return c end
@@ -140,6 +141,25 @@ local function char()
   -- un réglage par macro = une table (rien d'autre ne passe les lectures rapides de M:Opt / M:IsOn / M:Opts)
   for k, o in pairs(c.opts) do if type(o) ~= "table" then c.opts[k] = nil end end
   if type(c.stamps) ~= "table" then c.stamps = {} end
+  -- (4.3.6 V5H) macros renommées : réglages et texte suivent ; la macro du jeu est renommée au prochain clic
+  -- (M:Write), son icône fixe posée une fois
+  if not c.v5h then
+    c.v5h = true
+    c.renamedFrom = type(c.renamedFrom) == "table" and c.renamedFrom or {}
+    for old, new in pairs(M.RENAMED) do
+      for _, k in ipairs({ "installed", "bodies", "stamps", "opts" }) do
+        if c[k][old] ~= nil and c[k][new] == nil then c[k][new] = c[k][old] end
+        c[k][old] = nil
+      end
+      if c.installed[new] then c.renamedFrom[new] = old end
+    end
+    for _, n in ipairs({ "TAI Tir", "TAI Familier", "TAI Pièges", "TAI Feindre" }) do
+      if c.installed[n] then
+        if type(c.opts[n]) ~= "table" then c.opts[n] = {} end
+        c.opts[n].iconDirty = true
+      end
+    end
+  end
   charOK = c
   return c
 end
@@ -945,9 +965,11 @@ local PRESETS = {
   pro = { label = "Pro", mods = true, mo = true,
     tip = "Complet + les macros « Pro » qui tirent le maximum de chaque touche (pull en un bouton, burst, panique…)." },
   -- (4.3.1 MACROFIX) chasseur débutant : 5 macros seulement, une touche = une chose (sans Maj/Ctrl/Alt ni survol)
+  -- (4.3.6 V5H) « macros horribles » : 5 macros fortes, icônes fixes et noms clairs (Tir, Familier, Pièges, Aspects,
+  -- Feindre)
   essentiel = { label = "Mes 5 macros essentielles", mods = false, mo = false, class = "HUNTER",
-    only = { ["TAI Tir"] = 1, ["TAI Marque"] = 2, ["TAI Morsure"] = 3, ["TAI Familier"] = 4, ["TAI Aspects"] = 5 },
-    tip = "Seulement Tir (touche 1), Marque (2), Morsure (3), Familier (V) et Aspects (X) : le minimum pour bien jouer." },
+    only = { ["TAI Tir"] = 1, ["TAI Familier"] = 2, ["TAI Pièges"] = 3, ["TAI Aspects"] = 4, ["TAI Feindre"] = 5 },
+    tip = "Seulement Tir (touche 1), Familier (V), Pièges (E), Aspects (X) et Feindre (Maj+E) : le minimum pour bien jouer." },
 }
 M.PRESETS = PRESETS
 M.PRESET_ORDER = { "simple", "complet", "pro", "essentiel" }
@@ -1198,6 +1220,14 @@ function M:Write(def, body, force)
   M._lastWrite = now()
   local gn = gname(def)
   local idx = macroIndex(gn)
+  local was = not idx and type(ch.renamedFrom) == "table" and ch.renamedFrom[def.n]
+  if was and macroIndex(was) then
+    -- (V5H) ancienne macro TreeAI (« TAI FD Piege »…) : renommée sur place, elle garde sa case de barre
+    pcall(_G.EditMacro, macroIndex(was), gn, nil, nil)
+    invalidateIndex()
+    idx = macroIndex(gn)
+  end
+  if idx and was then ch.renamedFrom[def.n] = nil end
   -- (MACRO3) icône : rien (le jeu garde la sienne) sauf icône fixe choisie ou changement d'icône demandé
   local iconWanted = (self:Opt(def, "icon") == "fixed" or self:Opt(def, "iconDirty")) and self:IconArg(def) or nil
   if idx then

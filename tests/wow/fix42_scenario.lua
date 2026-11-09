@@ -221,7 +221,7 @@ return function(M, ctx)
     local Ly = { header = function() return true end, row = function(e) rows[#rows + 1] = e.text .. " [" .. tostring(e.right) .. "]" end }
     Co.RenderHunterHelpers(Ly, T.Window)
     local txt = table.concat(rows, "\n")
-    check(txt:find("Feindre la mort", 1, true) and txt:find("fuit", 1, true) and txt:find("TAI FD Piege", 1, true), "Conseils pro: hunter helpers + macros")
+    check(txt:find("Feindre la mort", 1, true) and txt:find("fuit", 1, true) and txt:find("TAI Feindre", 1, true), "Conseils pro: hunter helpers + macros")
     check(not txt:find("Feindre la mort[^\n]*%[ON%]"), "helpers OFF by default")
     out("conseils pro : " .. #rows .. " lignes chasseur")
   end

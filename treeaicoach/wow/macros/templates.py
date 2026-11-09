@@ -513,7 +513,7 @@ _PET_MO = "/petattack [@mouseover,harm,nodead,nomod:alt][harm,nodead,nomod:alt]"
 HUNTER = [
     M("TAI Tir", "Tir auto + familier + Invocation de faucon (Maj : Flèches multiples)", "1",
       _SHOT.format(main="?[mod:ctrl] {arcane_shot}; {summon_hawk}"),
-      _SHOT.format(main="{arcane_shot}"), _SHOT_LOW, specs="bete", simple=True, pro_off=True,
+      _SHOT.format(main="{arcane_shot}"), _SHOT_LOW, specs="bete", simple=True, pro_off=True, icon="INV_Weapon_Bow_02",
       labels=("Invocation de faucon (Ctrl : Arcanes)", "Tir des arcanes", "Tir auto seul"),
       where="Case 1 de la barre principale : le bouton que tu cliques le plus, en boucle.",
       why="Un seul bouton à marteler : « !Tir automatique » relance le tir auto sans jamais le couper, "
@@ -522,7 +522,7 @@ HUNTER = [
           "Sans Aspect du faucon, il revient dès que le tir est en recharge."),
     M("TAI Tir", "Tir auto + familier + Tir des arcanes (Maj : multiples, Ctrl : Visée)", "1",
       _SHOT.format(main="?[mod:ctrl] {aimed_shot}; {arcane_shot}"), _SHOT_LOW,
-      specs=("precision", "survie"), simple=True, pro_off=True,
+      specs=("precision", "survie"), simple=True, pro_off=True, icon="INV_Weapon_Bow_02",
       labels=("Tir des arcanes (Ctrl : Visée)", "Tir auto seul"),
       where="Case 1 de la barre principale : le bouton que tu cliques le plus, en boucle.",
       why="« !Tir automatique » relance le tir auto sans jamais le couper, le familier part sur ta cible "
@@ -561,21 +561,21 @@ HUNTER = [
       why="Attaque du raptor remplace ton prochain coup (hors temps de recharge global) : elle part avec "
           "Mangouste (après une esquive) dans le même clic. Maj : Coupure d'ailes pour reprendre tes "
           "distances, puis reviens au Tir."),
-    M("TAI Pieges", "Piège givrant (Maj : givre, Alt : explosif, Ctrl : immolation)", "E", """
+    M("TAI Pièges", "Piège givrant (Maj : givre, Alt : explosif, Ctrl : immolation)", "E", """
 #showtooltip
 /cast ?[mod:shift] {frost_trap}; ?[mod:alt] {explosive_trap}; ?[mod:ctrl] {immolation_trap}; {freezing_trap}
 """, """
 #showtooltip
 /cast {immolation_trap}
-""", simple=True, where="Barre principale : à poser AVANT le pull (les pièges ne se posent que hors combat).",
+""", simple=True, icon="Spell_Frost_ChainsOfIce", where="Barre principale : à poser AVANT le pull (les pièges ne se posent que hors combat).",
       why="Tous les pièges partagent une recharge : un seul bouton, le modificateur choisit. Hors combat "
-          "uniquement : pose-le puis attire le monstre dessus (en combat, TAI FD Piege)."),
-    M("TAI FD Piege", "En combat : Feindre la mort ; hors combat : Piège givrant", "Maj+E", """
+          "uniquement : pose-le puis attire le monstre dessus (en combat, TAI Feindre)."),
+    M("TAI Feindre", "En combat : Feindre la mort ; hors combat : Piège givrant", "Maj+E", """
 #showtooltip
 /stopcasting [combat]
 /petfollow [combat]
 /cast [combat] {feign_death}; {freezing_trap}
-""", simple=True, pro_off=True, where="À côté de TAI Pieges : clique 2 fois de suite quand un add arrive.",
+""", simple=True, pro_off=True, icon="Ability_Rogue_FeignDeath", where="À côté de TAI Pièges : clique 2 fois de suite quand un add arrive.",
       why="1er clic : coupe ta Salve, rappelle le familier et fait le mort (tu sors du combat). 2e clic, "
           "maintenant hors combat : Piège givrant à tes pieds. Sans séquence : jamais bloquée, même si "
           "Feindre la mort est résisté (le 2e clic retente alors Feindre la mort)."),
@@ -619,7 +619,7 @@ HUNTER = [
 """, """
 #showtooltip
 /cast [mod:shift][@pet,dead] {revive_pet}; {call_pet}
-""", simple=True, where="Barre principale : la seule touche dont ton familier a besoin.",
+""", simple=True, icon="Ability_Hunter_BeastCall", where="Barre principale : la seule touche dont ton familier a besoin.",
       why="Appel s'il est absent, Ressusciter s'il est mort, Guérison sinon. Si l'Appel répond « familier "
           "mort » (corps disparu), Maj+clic ressuscite. Ctrl le nourrit avec la nourriture du sac adaptée "
           "à son régime (choisie hors combat quand ton sac change)."),
