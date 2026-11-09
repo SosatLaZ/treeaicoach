@@ -719,6 +719,15 @@ function CR.ExtraList()
   return out
 end
 --- piles à vendre (sacs) : gris + compos en trop, jamais une pile qui contient du « besoin » (pas de découpe)
+function CR.IsConsumable(id)
+  local CI = g("C_Item")
+  local f = (CI and CI.GetItemInfoInstant) or g("GetItemInfoInstant")
+  if type(f) ~= "function" then return true end   -- dans le doute : on ne vend pas
+  local ok, _, _, _, _, _, classID = pcall(f, id)
+  if not ok then return true end
+  classID = num(classID)
+  return classID == nil or classID == 0
+end
 function CR.SellStacks()
   local out, left = {}, {}
   for _, e in ipairs(CR.ExtraList()) do left[e.id] = e.bags end
@@ -733,7 +742,8 @@ function CR.SellStacks()
       local sell = num(select(11, try(API.ItemInfo, id))) or 0
       if q == 0 and not pub(it.noValue) and sell > 0 then
         out[#out + 1] = { bag = bag, slot = slot, id = id, n = num(it.count) or 1, value = sell * (num(it.count) or 1), grey = true }
-      elseif left[id] and left[id] > 0 then
+      elseif left[id] and left[id] > 0 and not CR.IsConsumable(id) then
+        -- (4.3.5) jamais une potion / nourriture / bandage / élixir (classe « Consommable ») : le joueur en a besoin
         stacks[#stacks + 1] = { bag = bag, slot = slot, id = id, n = num(it.count) or 1, sell = sell }
       end
     end
