@@ -494,7 +494,7 @@ return function(M, ctx)
       header = function(s) headers[#headers + 1] = s return true end,
       row = function(e) rows[#rows + 1] = e end, buttons = function() end, gap = function() end }
     C.RenderPage(Ly)
-    check(headers[1] == "En ce moment" and #headers == (hunter and 9 or 8),
+    check(headers[1] == "En ce moment" and #headers >= (hunter and 9 or 8) and #headers <= (hunter and 10 or 8),
       "page : « En ce moment » + les thèmes (Familier : chasseurs) (" .. #headers .. ")")
     local now1, tipRow, techN = nil, nil, 0
     for _, r in ipairs(rows) do

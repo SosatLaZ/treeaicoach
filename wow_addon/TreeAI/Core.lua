@@ -16,7 +16,7 @@ local TreeAI = _G.TreeAI or {}
 _G.TreeAI = TreeAI
 
 TreeAI.name = ADDON_NAME
-TreeAI.version = "4.1.5"
+TreeAI.version = "4.2.0"
 TreeAI.SCHEMA = 1
 TreeAI.PREFIX = "TREEAI"
 TreeAI.PRIO_INFO, TreeAI.PRIO_TIP, TreeAI.PRIO_URGENT = 1, 2, 3

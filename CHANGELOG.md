@@ -3,6 +3,20 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 4.2.0 · 9 novembre 2026
+
+- **Trajet** : étapes chronométrées dont la somme fait l'en-tête ; quêtes prises en passant (« Prends ici : 3
+  quêtes ») ; « Achète X » mène au marchand ; « part dans m:ss » pour les bateaux déjà vus ; une ville ou une zone
+  vide choisie revient à ta zone (dit une fois) ; la cible de la boussole ne saute plus.
+- **Carte** : points et chemin dans la vraie carte (zoom, glisser), chemin doré vers le PNJ à voir.
+- **Suivi TreeAI** (si tu l'allumes) accroché sous le suivi du jeu, jamais caché.
+- **Corrigés** : barre de tir auto juste en combat ; micro-lag réparti ; plus rien qui clignote ; « Composants de
+  métier » seulement chez un PNJ ou en session.
+- **Métiers / HV** : bouton « Métiers » dans la rangée ; jamais proposer de vendre ce dont tu as besoin ; « Vendre
+  tes sacs » et « Acheter-revendre » séparés ; cartes chez le marchand, la banque (« Sortir à vendre ») et le
+  courrier ; achats et fabrications en mode sûr (`/tai bloque achats`).
+- Petits cadres plus transparents ; aides chasseur en plus (coupées d'office, page Conseils pro / Macros).
+
 ## 4.1.5 · 9 novembre 2026
 
 - **Boussole plus propre** : plus d'encadré bleu lumineux (« Objectif proche » = une petite ligne discrète), fond plus

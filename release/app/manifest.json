@@ -1,25 +1,25 @@
 {
- "version": "4.1.5",
+ "version": "4.2.0",
  "exe": "TreeAICoach-app.exe",
- "sha256": "6e8183cd6bab523eb038ae5ad2ae121e53f87eb48198f5a9f2b664c67c6f4d82",
+ "sha256": "fffd927130e2d062b0a06b9b8a67cd88b293cff8a282d07c9ee3da35e3609719",
  "chunks": [
   {
-   "name": "4.1.5/part-01.zip",
-   "size": 88057303,
-   "sha256": "e00e3c85f2d42ba185494d08f1796ca96ca6c649ed63961e61c87ed92508a429",
+   "name": "4.2.0/part-01.zip",
+   "size": 88058592,
+   "sha256": "be3b24990f510eb8579d5841f6c02b8e168e5ba8767d5325fa415b372015c195",
    "files": 127
   },
   {
-   "name": "4.1.5/part-02.zip",
-   "size": 14157450,
-   "sha256": "45bd42e367abfa177c2a21802b507e19cbed89250520ad9f049dad305499da6b",
+   "name": "4.2.0/part-02.zip",
+   "size": 14185782,
+   "sha256": "5654853058334d000afc4353b9f2ae5baf9388807b58c8d4dcdaa91b30a23d99",
    "files": 688
   }
  ],
- "total_size": 102214753,
+ "total_size": 102244374,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "TreeAI 4.1.5 : boussole plus propre (plus d'encadr\u00e9 bleu, plus transparente, plus petite)."
+ "notes": "TreeAI 4.2 : trajet chronom\u00e9tr\u00e9 et qu\u00eates prises en passant, carte native, zone bloqu\u00e9e corrig\u00e9e, HV li\u00e9e aux m\u00e9tiers, bouton M\u00e9tiers, moins de lag."
 }
