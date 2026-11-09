@@ -888,7 +888,7 @@ local function hookItemInfo()
       local ok, text, details, r = pcall(GG.TooltipText, it.link or it.id, { bag = c.bag ~= nil, bound = c.bound,
         tradeable = c.bag and tradeableAt(c.bag, c.slot) })
       if ok and text then
-        o.label, o.tone, o.text = "Groupe", "info", text
+        o.label, o.tone, o.text = "Pour ton groupe", "info", text
         for _, d in ipairs(details or {}) do o.details[#o.details + 1] = d end
         if c.bag and type(r) == "table" and type(st) == "table" and not st.keep then   -- « Valeur : Donne-le à Bravo »
           for _, n in ipairs(r.need) do if not n.m.me then st.give = n.m.name break end end

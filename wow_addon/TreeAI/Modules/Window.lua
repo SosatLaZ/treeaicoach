@@ -2182,6 +2182,21 @@ function W.GearNow(Ly)
     for _, e in ipairs(keep) do Ly.row(e) end
   end
 end
+--- (4.3 V43) réparations : l'usure la plus forte (lue dans le jeu), clic = la boussole vers le réparateur
+function W.RepairRow(Ly)
+  local Inv = T.modules and T.modules.Inventory
+  local okD, p, broken = false, nil, 0
+  if Inv and Inv.Durability then okD, p, broken = pcall(Inv.Durability) end
+  p = okD and tonumber(p) or nil
+  if not p or (p > 80 and (tonumber(broken) or 0) == 0) or W.Query() ~= "" then return end
+  local txt = (tonumber(broken) or 0) > 0 and fmt("Réparations : %d pièce%s cassée%s (plus de stats) — répare vite", broken,
+    broken > 1 and "s" or "", broken > 1 and "s" or "") or fmt("Réparations : équipement à %d %%", p)
+  Ly.row({ id = "gear:repair", text = txt, kind = ((tonumber(broken) or 0) > 0 or p <= 30) and "warn" or "info",
+    prio = ((tonumber(broken) or 0) > 0 or p <= 30) and 3 or 1, icon = ICON .. "Trade_BlackSmithing",
+    tooltip = { "Le prix exact s'affiche chez un marchand qui répare (jamais estimé).",
+      "Une pièce à 0 % ne donne plus ses stats." },
+    clickHint = "Clic : la boussole vers le réparateur le plus proche", onClick = function() W.GoRepair() end })
+end
 function W.GearTop()
   local Gm = T.modules and T.modules.Gear
   if not (Gm and Gm._active) then return {} end
@@ -2207,6 +2222,7 @@ W.AddPage({ id = "gear", label = "Équipement", short = "Équipement", icon = IC
   desc = "Le meilleur objet par emplacement, où l'obtenir, réparations",
   top = function() return W.GearTop and W.GearTop() or {} end,
   render = function(Ly)
+    W.RepairRow(Ly)
     W.GearNow(Ly)
     W.RenderTab(Ly, "gear", modOff("Gear") and "Le module Équipement est coupé (fonction bêta) : « Allumer Équipement », en bas à droite."
       or "Rien de mieux pour l'instant : TreeAI regarde tes sacs, tes récompenses de quête et l'HV.")

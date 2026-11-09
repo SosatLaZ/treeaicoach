@@ -297,13 +297,13 @@ return function(M, ctx)
       return table.concat(out, "\n")
     end
     local t1 = tip(99501, { bag = 0, slot = 1 })
-    check(t1:find("Groupe : Mieux pour : Bravo (≈ +", 1, true), "infobulle (sac) : « Mieux pour : Bravo (≈ +… %) »\n" .. t1)
+    check(t1:find("Pour ton groupe : Mieux pour : Bravo (≈ +", 1, true), "infobulle (sac) : « Mieux pour : Bravo (≈ +… %) »\n" .. t1)
     local t2 = tip(99502, { bag = 0, slot = 2 })
     check(t2:find("Mieux pour : Charlie (emplacement vide, torse)", 1, true), "infobulle : Charlie, emplacement vide\n" .. t2)
     local t3 = tip(99503, {})
     check(t3:find("Besoin pour Delta", 1, true), "infobulle (butin / lien) : Besoin pour Delta\n" .. t3)
     local t4 = tip(99506, { bag = 0, slot = 6, bound = true })
-    check(not t4:find("Mieux pour", 1, true), "objet lié non échangeable : pas de « Mieux pour »\n" .. t4)
+    check(not t4:find("Mieux pour :", 1, true), "objet lié non échangeable : pas de « Mieux pour »\n" .. t4)
   end
 
   -- jet de butin : la ligne du groupe nomme qui y gagne (jamais de jet)

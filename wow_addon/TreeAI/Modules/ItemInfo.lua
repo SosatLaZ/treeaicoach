@@ -398,7 +398,8 @@ function SEC.upgrade(it, c, o, st)
     end
   end
   if it.minLevel > level() then extra = extra .. fmt(" · niv %d requis", it.minLevel) end
-  o.label = (word == "emplacement vide" and "Mieux") or (word == "équivalent" and "Pareil") or (word:gsub("^%l", string.upper))
+  -- (4.3 V43) « … pour toi » : la ligne du dessous dit « Pour ton groupe »
+  o.label = ((word == "emplacement vide" and "Mieux") or (word == "équivalent" and "Pareil") or (word:gsub("^%l", string.upper))) .. " pour toi"
   o.tone = (kind == "good" and "good") or (kind == "bad" and "bad") or "info"
   o.text = tconcat(parts, ", ") .. extra
   if kind == "good" then st.keep, st.upgrade = st.keep or "amélioration", pct end
@@ -583,7 +584,7 @@ function SEC.group(it, c, o, st)
       if not n.m.me and not other then other = who end
     end
   end
-  o.label, o.tone = "Groupe", "info"
+  o.label, o.tone = "Pour ton groupe", "info"
   if c.bag then
     -- déjà dans tes sacs : pas de jet ; seulement si un AMI en a besoin (ton gain est la ligne du dessus)
     if #others == 0 then o.label = nil return end
