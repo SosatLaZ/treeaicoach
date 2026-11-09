@@ -108,7 +108,7 @@ return function(M, ctx)
   -- (JOURNAL 4.0.1) « Journal » (nettoyer mon journal) juste après « Quêtes »
   -- (PROFLEVEL 4.0.2) « Métiers » juste après « HV »
   -- (4.1 LAYOUT) 7 pages : Quêtes, Groupe, Donjons, Personnage, HV, Conseils pro, Réglages ; les anciennes rangées dedans
-  check(table.concat(ids, ","):find("^quests,group,dungeon,perso,hv,coach,settings,"),
+  check(table.concat(ids, ","):find("^quests,route,group,dungeon,gear,prof,hv,hunter,coach,binds,settings,"),
     "navigation : Quêtes / Groupe / Donjons / Personnage / HV / Conseils pro / Réglages (" .. table.concat(ids, ",") .. ")")
   for _, pg in ipairs(W.PAGES) do
     W.Select(pg.id)
@@ -124,7 +124,7 @@ return function(M, ctx)
   W.Select("quests")
   local kinds = {}
   for _, r in ipairs(W.lastLay.rects) do kinds[r.kind] = (kinds[r.kind] or 0) + 1 end
-  check(kinds.hero == 1 and (kinds.step or 0) >= 3 and (kinds.quest or 0) >= 1, "Quêtes : trajet + étapes + quêtes du journal")
+  check(kinds.hero == 1 and (kinds.step or 0) >= 1 and (kinds.quest or 0) >= 1, "Quêtes : trajet (arrêts sur la page Trajet) + prochaine étape + quêtes du journal")
   local hero1
   for _, r in ipairs(W.lastLay.rects) do if r.kind == "hero" then hero1 = r.label break end end
   -- (4.1 LAYOUT41) en tête les 4 modes de T.QuestBrain (gros boutons), puis « Prochaine étape », puis le trajet

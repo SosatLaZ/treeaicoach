@@ -101,7 +101,7 @@ def test_card_notice_never_steals_another_notice():
 
 
 def test_page_and_options_family():
-    assert 'W.AddPage({ id = "coach", label = "Conseils pro"' in SRC
+    assert 'W.AddPage({ id = "coach", label = "Conseils"' in SRC
     assert 'if p.id == "tools" then at = i + 1 break end' in SRC          # after « Outils » in the navigation
     assert "T.OPTIONS_FAMILY[2]" in SRC and '"Coach"' in SRC
 

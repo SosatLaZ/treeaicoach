@@ -1040,20 +1040,20 @@ function W.GetCard() return card end
 local win
 W.PAGES = {}       -- { id, label, icon, render(ctx), action(ctx) -> label, fn, tip }
 W.pageIndex = {}
--- (4.1 LAYOUT) « les quêtes d'abord, moins de pages » : 7 pages dans la navigation, dans cet ordre ; les anciennes
--- pages (Trajet, Journal, Outils, Fonctions, Options, Maintenant, Macros, Métiers…) sont rangées dedans et gardent
--- leur id : W.Open("route" / "journal" / "tools" / "macros" / "prof"…) mène toujours au bon endroit.
-W.NAV = { "quests", "group", "dungeon", "perso", "hv", "coach", "settings" }
+-- (4.3 V43) menu re-trié en 11 catégories claires, chacune avec ses 1 à 3 actions en tête : Quêtes · Trajet · Groupe ·
+-- Donjons · Équipement · Métiers · HV · Chasseur (familier, talents) · Conseils · Macros & touches · Réglages. Les
+-- anciennes pages gardent leur id : W.Open("perso" / "journal" / "tools" / "macros" / "keys"…) mène au bon endroit.
+W.NAV = { "quests", "route", "group", "dungeon", "gear", "prof", "hv", "hunter", "coach", "binds", "settings" }
 -- ancienne page fondue dans une autre (même contenu, même endroit)
-W.ALIAS = { now = "quests", route = "quests" }
+W.ALIAS = { now = "quests", perso = "gear" }
 -- page rangée sous une page de la navigation (hors navigation, surlignée sous sa page mère)
 W.PARENT = { journal = "quests", brain = "quests",
-  macros = "perso", talents = "perso", gear = "perso", prof = "perso",
-  keys = "settings", display = "settings", modules = "settings", addons = "settings", options = "settings",
+  pet = "hunter", talents = "hunter", macros = "binds", keys = "binds",
+  display = "settings", modules = "settings", addons = "settings", options = "settings",
   tools = "settings", navlog = "settings", tab = "settings" }
 -- sous-pages montrées en onglets en haut de la page mère (dans cet ordre) ; la mère ouvre la dernière choisie
-W.SUBS = { perso = { "macros", "talents", "gear", "prof" },
-  settings = { "keys", "display", "modules", "addons", "options", "tools" } }
+W.SUBS = { hunter = { "pet", "talents" }, binds = { "macros", "keys" },
+  settings = { "display", "modules", "addons", "options", "tools" } }
 --- id demandé → id de la page réellement dessinée (alias résolus, page mère → sa sous-page)
 function W.Resolve(id)
   id = W.ALIAS[id] or id
@@ -2118,9 +2118,45 @@ local function mother(id)
     Ly.empty("Rien ici pour l'instant : les fonctions de cette page sont coupées (Réglages → Fonctions).")
   end
 end
-W.AddPage({ id = "perso", label = "Personnage", icon = ICON .. "INV_Chest_Chain_10", title = "Personnage",
-  desc = "Macros, talents, équipement, métiers", render = mother("perso") })
+-- (4.3 V43) Chasseur (familier, talents) et Macros & touches : deux pages mères au lieu de « Personnage »
+W.AddPage({ id = "hunter", label = "Chasseur", icon = ICON .. "Ability_Hunter_BeastCall", title = "Chasseur",
+  desc = "Familier, aides de chasseur, talents", render = mother("hunter") })
+W.AddPage({ id = "binds", label = "Macros & touches", short = "Macros", icon = ICON .. "INV_Misc_Key_14", title = "Macros & touches",
+  desc = "Macros prêtes, toutes les touches de TreeAI", render = mother("binds") })
 local function modOff(name) local m = T.modules and T.modules[name] return not (m and m._active) end
+--- (4.3 V43) Chasseur → Familier : l'état du familier (lu dans le jeu), les aides de chasseur et les conseils
+--- « Familier » de Conseils pro ; rien d'automatique (nourrir, appeler = tes touches)
+function W.PetLines()
+  local out = {}
+  local function sv(v) if v == nil or (G.issecretvalue and G.issecretvalue(v)) then return nil end return v end
+  local has = sv(try(G.UnitExists, "pet"))
+  if not has then
+    out[#out + 1] = { text = "Pas de familier appelé : Appel du familier (ou Ressusciter le familier s'il est mort).", kind = "warn" }
+  else
+    local nm = sv(try(G.UnitName, "pet"))
+    local hp, hpm = tonumber(sv(try(G.UnitHealth, "pet"))), tonumber(sv(try(G.UnitHealthMax, "pet")))
+    local dead = sv(try(G.UnitIsDead, "pet"))
+    out[#out + 1] = { text = fmt("Familier : %s%s", type(nm) == "string" and nm or "?",
+      dead and " (mort)" or ((hp and hpm and hpm > 0) and fmt(" · vie %d %%", floor(hp * 100 / hpm + 0.5)) or "")),
+      kind = dead and "warn" or "info" }
+    local hap = tonumber(sv(try(G.GetPetHappiness)))
+    if hap then
+      local txt = ({ "Mécontent : nourris-le (dégâts -25 %, il peut s'enfuir)", "Content : nourris-le bientôt",
+        "Heureux : dégâts +25 %" })[hap]
+      if txt then out[#out + 1] = { text = "Humeur : " .. txt, kind = hap < 3 and "warn" or "info" } end
+    end
+  end
+  return out
+end
+W.AddPage({ id = "pet", label = "Familier", icon = ICON .. "Ability_Hunter_BeastCall", title = "Familier",
+  desc = "Ton familier, ses besoins, les aides de chasseur", render = function(Ly)
+    for _, e in ipairs(W.PetLines()) do Ly.row({ text = e.text, kind = e.kind, icon = ICON .. "Ability_Hunter_BeastCall" }) end
+    local C = T.modules and T.modules.Coach
+    if C and C.RenderPage then
+      local ok, err = pcall(C.RenderPage, Ly, "pet")
+      if not ok and T.Debug then T:Debug("Window", err) end
+    end
+  end })
 W.AddPage({ id = "talents", label = "Talents", icon = ICON .. "Ability_Marksmanship", title = "Talents",
   desc = "Où mettre tes points", render = function(Ly)
     W.RenderTab(Ly, "talents", modOff("Talents") and "Le conseiller de talents est coupé (fonction bêta) : « Allumer Talents », en bas à droite."
@@ -2132,7 +2168,9 @@ W.AddPage({ id = "talents", label = "Talents", icon = ICON .. "Ability_Marksmans
     end
   end })
 W.AddPage({ id = "gear", label = "Équipement", short = "Équipement", icon = ICON .. "INV_Chest_Chain", title = "Équipement",
-  desc = "Améliorations par emplacement, récompenses de quête", render = function(Ly)
+  desc = "Le meilleur objet par emplacement, où l'obtenir, réparations",
+  top = function() return W.GearTop and W.GearTop() or {} end,
+  render = function(Ly)
     W.RenderTab(Ly, "gear", modOff("Gear") and "Le module Équipement est coupé (fonction bêta) : « Allumer Équipement », en bas à droite."
       or "Rien de mieux pour l'instant : TreeAI regarde tes sacs, tes récompenses de quête et l'HV.")
   end,
@@ -2142,7 +2180,7 @@ W.AddPage({ id = "gear", label = "Équipement", short = "Équipement", icon = IC
     end
   end })
 W.AddPage({ id = "settings", label = "Réglages", icon = TAB_ICON.options, title = "Réglages",
-  desc = "Raccourcis, ce qui est à l'écran, fonctions, mes addons, tous les réglages", render = mother("settings") })
+  desc = "Ce qui est à l'écran, fonctions, mes addons, tous les réglages, outils", render = mother("settings") })
 
 -- -------------------------------------------------- Réglages → Raccourcis : toutes les touches de TreeAI
 local KEY_FR = { ALT = "Alt", CTRL = "Ctrl", SHIFT = "Maj", META = "Cmd", BUTTON3 = "Clic milieu", MOUSEWHEELUP = "Molette haut",
@@ -2638,7 +2676,7 @@ function W:OnEnable()
   if T.HUB_EXTRA and not W._hub then
     W._hub = true
     table.insert(T.HUB_EXTRA, 1, { group = "jeu", id = "window", title = "Fenêtre TreeAI", icon = ICON .. "INV_Misc_Book_09",
-      tip = "Clic : la fenêtre TreeAI (Quêtes, Groupe, Donjons, Personnage, HV, Conseils pro, Réglages)", fn = function() W.Toggle() end })
+      tip = "Clic : la fenêtre TreeAI (Quêtes, Trajet, Groupe, Donjons, Équipement, Métiers, HV, Chasseur, Conseils, Macros & touches, Réglages)", fn = function() W.Toggle() end })
   end
 end
 function W:OnDisable()

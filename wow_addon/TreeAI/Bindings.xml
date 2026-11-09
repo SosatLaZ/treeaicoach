@@ -26,7 +26,7 @@
 	<Binding name="TREEAI_MODE_NEXT" header="TREEAI" category="ADDONS">
 		if TreeAI and TreeAI.StripAction then TreeAI.StripAction("mode") end
 	</Binding>
-	<!-- (4.2) Métiers : la page Personnage → Métiers (bouton « Métiers » de la bande). Sans touche par défaut. -->
+	<!-- (4.2) Métiers : la page Métiers (bouton « Métiers » de la bande). Sans touche par défaut. -->
 	<Binding name="TREEAI_STRIP_METIERS" header="TREEAI" category="ADDONS">
 		if TreeAI and TreeAI.StripAction then TreeAI.StripAction("metiers") end
 	</Binding>

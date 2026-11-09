@@ -36,7 +36,7 @@ return function(M, ctx)
     for _, pg in ipairs(W.PAGES) do ids[#ids + 1] = pg.id end
     local nav = table.concat(ids, ",")
     -- (4.1 LAYOUT) « Conseils pro » : 6e page de la navigation, avant « Réglages »
-    check(nav:find("^quests,group,dungeon,perso,hv,coach,settings"), "page « Conseils pro » avant Réglages (" .. nav .. ")")
+    check(nav:find("^quests,route,group,dungeon,gear,prof,hv,hunter,coach,binds,settings"), "page « Conseils pro » avant Réglages (" .. nav .. ")")
   end
 
   -- ------------------------------------------------------------------ moteur pur

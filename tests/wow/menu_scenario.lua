@@ -312,7 +312,7 @@ return function(M, ctx)
       end
       check(table.concat(heads, ",") == "jeu,outils,reglages", "menu : Jeu / Outils / Réglages (" .. table.concat(heads, ",") .. ")")
       -- (4.1 LAYOUT) « Maintenant » est fondu dans « Quêtes » ; les 7 pages de la navigation (Personnage, Réglages…)
-      for _, id in ipairs({ "tab:quests", "tab:group", "tab:perso", "tab:settings", "options", "erreurs", "bloque", "profil", "macros" }) do
+      for _, id in ipairs({ "tab:quests", "tab:route", "tab:group", "tab:gear", "tab:hunter", "tab:binds", "tab:settings", "options", "erreurs", "bloque", "profil", "macros" }) do
         check(items[id], "menu : entrée « " .. id .. " »")
       end
       local okW = true

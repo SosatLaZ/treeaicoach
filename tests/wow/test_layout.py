@@ -60,8 +60,8 @@ def test_clean_screen_defaults() -> None:
 
 def test_window_navigation_declared() -> None:
     src = _src("Window.lua")
-    assert 'W.NAV = { "quests", "group", "dungeon", "perso", "hv", "coach", "settings" }' in src
-    assert 'W.ALIAS = { now = "quests", route = "quests" }' in src
+    assert 'W.NAV = { "quests", "route", "group", "dungeon", "gear", "prof", "hv", "hunter", "coach", "binds", "settings" }' in src
+    assert 'W.ALIAS = { now = "quests", perso = "gear" }' in src
     # first opening: the right half, never the centre
     assert 'anchorTo(win, "CENTER", 0, 40)' not in src
     assert 'anchorTo(f, "RIGHT", -W.FIRST.right, W.FIRST.y)' in src

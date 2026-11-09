@@ -1361,7 +1361,8 @@ local function tipRow(tp, W, Ly)
     clickHint = on and "Clic : couper ce conseil" or "Clic : rallumer ce conseil" })
   return true
 end
-function M.RenderPage(Ly)
+--- (4.3 V43) only = id d'un thème (« pet ») : la page Chasseur → Familier ne montre que ce thème et les aides de chasseur
+function M.RenderPage(Ly, only)
   local W = T.Window
   if not W then return end
   if not M._active then
@@ -1371,7 +1372,17 @@ function M.RenderPage(Ly)
   end
   M.RunAll()
   local lvl, isH = level(), hunter()
-  Ly.text("Le geste d'un joueur expert au bon moment, chiffres à l'appui. Un seul conseil à la fois dans « Maintenant » ; "
+  if only then
+    if isH then M.RenderHunterHelpers(Ly, W) end
+    for _, tp in ipairs(TIPS) do
+      local r = active[tp.key]
+      if tp.theme == only and r and opt(tp.key) and eligible(tp) and W.Match(r.text) then
+        Ly.row({ text = r.text, icon = THEME[only] and THEME[only].icon, kind = "warn", tooltip = tipLines(r),
+          clickHint = "Le pourquoi est dans l'infobulle" })
+      end
+    end
+  end
+  if not only then Ly.text("Le geste d'un joueur expert au bon moment, chiffres à l'appui. Un seul conseil à la fois dans « Maintenant » ; "
     .. "ici, tout ce qui est vrai en ce moment, chaque conseil (clic = ON / OFF) et les techniques à appliquer.", "S", "muted")
   -- en ce moment
   local live = {}
@@ -1392,9 +1403,15 @@ function M.RenderPage(Ly)
   if not any then Ly.text("Rien à corriger pour l'instant : chaque conseil apparaît ici et dans « Maintenant » quand il sert.", "S", "text", 6) end
   -- (4.2 FIX42) chasseur : les aides en plus (justes sur Forever, règles Classic ; rien d'automatique), coupées par
   -- défaut : un clic = ON / OFF ; les macros qui vont avec sont sur la page Macros
-  if isH then M.RenderHunterHelpers(Ly, W) end
+  -- (4.3 V43) les aides de chasseur : sur la page Chasseur → Familier (une seule place)
+  if isH then
+    Ly.row({ text = "Aides de chasseur (familier, pièges, Feindre la mort) : page Chasseur", kind = "info",
+      icon = ICON .. "Ability_Hunter_BeastCall", clickHint = "Clic : la page Chasseur → Familier",
+      onClick = function() if W.Open then W.Open("pet") end end })
+  end
+  end
   -- les 8 thèmes
-  for _, th in ipairs(THEMES) do
+  for _, th in ipairs(THEMES) do if not only or th.id == only then
     local tips, techs = {}, {}
     for _, tp in ipairs(TIPS) do if tp.theme == th.id and (not tp.hunter or isH) then tips[#tips + 1] = tp end end
     for _, tc in ipairs(TECH) do if tc.theme == th.id and visibleTech(tc, isH) then techs[#techs + 1] = tc end end
@@ -1411,7 +1428,7 @@ function M.RenderPage(Ly)
         end
       end
     end
-  end
+  end end
 end
 --- (4.2 FIX42) section « Chasseur : aides » (Conseils pro) : options du module Chasseur + macros conseillées
 M.HUNTER_HELPERS = {
@@ -1448,7 +1465,7 @@ end
 do
   local W = T.Window
   if W and W.AddPage and not (W.pageIndex and W.pageIndex.coach) then
-    W.AddPage({ id = "coach", label = "Conseils pro", icon = ICON .. "INV_Misc_Book_11", title = "Conseils pro",
+    W.AddPage({ id = "coach", label = "Conseils", icon = ICON .. "INV_Misc_Book_11", title = "Conseils pro",
       desc = "Le geste d'un expert au bon moment, et les techniques à appliquer",
       sub = function()
         local n = 0

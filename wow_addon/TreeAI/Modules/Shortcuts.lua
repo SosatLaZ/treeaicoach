@@ -83,14 +83,14 @@ local DEFS = {
     title = "Nettoyer mon journal",
     tip = "Les quêtes à abandonner (grises, trop loin, impossibles seul), en un coup d'œil." },
   -- (4.2 FIX42) « Métiers » : seulement si tu as un métier de fabrication ; pastille = achats en attente du plan ;
-  -- clic = Personnage → Métiers, clic droit = lancer / quitter la session métier (le trajet de quêtes en pause)
+  -- clic = page Métiers, clic droit = lancer / quitter la session métier (le trajet de quêtes en pause)
   { id = "metiers", label = "Métiers", icon = ICON .. "Trade_LeatherWorking", bind = "TREEAI_STRIP_METIERS", page = "prof",
     title = "Métiers",
-    tip = "Clic : Personnage → Métiers (le plan pour monter ton métier). Clic droit : lancer ou quitter la session métier.",
+    tip = "Clic : la page Métiers (le plan pour monter ton métier). Clic droit : lancer ou quitter la session métier.",
     optional = true },
   { id = "fenetre", label = "TreeAI", icon = ICON .. "INV_Misc_Book_09", bind = "TREEAI_MAIN",
     title = "Fenêtre TreeAI",
-    tip = "Ouvre ou ferme la fenêtre TreeAI (Quêtes, Groupe, Donjons, Personnage, HV, Conseils pro, Réglages)." },
+    tip = "Ouvre ou ferme la fenêtre TreeAI (Quêtes, Trajet, Groupe, Donjons, Équipement, Métiers, HV, Chasseur, Conseils, Macros & touches, Réglages)." },
 }
 S.DEFS = DEFS
 local DEF = {}

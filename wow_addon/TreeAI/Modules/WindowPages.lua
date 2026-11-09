@@ -170,7 +170,8 @@ function W.RouteSub()
   local A = Zp and Zp.IsEnabled and Zp:IsEnabled() and try(Zp.Allowed, Zp)
   return A and A.label and ("Zone de travail : " .. A.label) or "Le chemin le plus rapide entre tes étapes"
 end
-function W.RenderRoute(Ly)
+--- compact (page Quêtes) : la carte du trajet et ses réglages ; les arrêts sont sur la page Trajet (4.3 V43)
+function W.RenderRoute(Ly, compact)
     local R, P = routeOn(), T.Planner
     if not (R and P and P.steps and P.cursor) then
       local Zp = T.ZonePlan
@@ -252,6 +253,11 @@ function W.RenderRoute(Ly)
         "Clic : la boussole et la carte reprennent tes étapes" })
       return
     end
+    if compact and W.Query() == "" then
+      Ly.buttons({ { fmt("Voir les %d arrêts", nStops), function() W.Select("route") end,
+        "Clic : la page Trajet (tous les arrêts dans l'ordre, les zones à faire)" } }, 2)
+      return
+    end
     if Ly.header("Arrêts", nil, nStops, W.TAB_ICON.route) then
       -- (ZONEFIX) la MÊME ligne que la carte « Prochaine étape » (W.StopItem) : un seul format, plus de « ≈ ≈ »
       local shown, via = 0, false
@@ -319,7 +325,7 @@ function W.ModeTiles(Ly)
       if m.active then sub = "● " .. sub end
       local id = m.id
       tiles[#tiles + 1] = { m.label or m.short or id, sub, function() pcall(B.SetMode, id) end,
-        { m.tip, key and ("Touche : " .. key) or "Pas de touche : Réglages → Raccourcis" },
+        { m.tip, key and ("Touche : " .. key) or "Pas de touche : Macros & touches → Raccourcis" },
         m.active and true or false, m.active and "Mode en cours" or "Clic : passer à ce mode (le trajet suit tout de suite)" }
     end
   end
@@ -595,7 +601,7 @@ W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = 
     end
     -- 4. « Rendre mes quêtes » (mode actif) puis le trajet
     W.TurnInRows(Ly)
-    W.RenderRoute(Ly)
+    W.RenderRoute(Ly, true)
     -- 5. à prendre près de toi
     W.PickupRows(Ly, 5)
     -- 6. ménage + journal
@@ -618,6 +624,25 @@ W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = 
     local cap = tonumber(try(G.C_QuestLog and G.C_QuestLog.GetMaxNumQuestsCanAccept)) or 20
     return fmt("Journal : %d/%d", n, cap)
   end,
+})
+
+-- ===================================================================== (4.3 V43) page « Trajet » : tous les arrêts
+W.AddPage({ id = "route", label = "Trajet", icon = W.TAB_ICON.route, title = "Trajet",
+  desc = "Tous les arrêts dans l'ordre, la zone de travail, les zones à faire",
+  sub = function() return W.RouteSub() end,
+  top = function()
+    local out = {}
+    local Zp = T.ZonePlan
+    if Zp and Zp.Recalc and Zp.IsEnabled and Zp:IsEnabled() then
+      out[#out + 1] = { "Recalculer", function() Zp:Recalc() end, "Clic : TreeAI refait l'ordre des arrêts" }
+    end
+    out[#out + 1] = { "Choisir ma zone", function() W.OpenZonePicker(true) end,
+      "Clic : la liste des zones (Automatique ou la tienne)" }
+    out[#out + 1] = { "Conseille-moi", function() W.ShowAdvice(true) end, "Où aller maintenant et pourquoi" }
+    return out
+  end,
+  render = function(Ly) W.RenderRoute(Ly) end,
+  action = function() return W.RouteAction() end,
 })
 
 -- ===================================================================== Donjons (façon Journal des donjons)

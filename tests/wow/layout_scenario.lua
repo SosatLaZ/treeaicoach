@@ -183,16 +183,17 @@ return function(M, ctx)
   -- navigation
   local ids = {}
   for _, p in ipairs(W.PAGES) do if not p.hidden then ids[#ids + 1] = p.id end end
-  check(table.concat(ids, ",") == "quests,group,dungeon,perso,hv,coach,settings",
-    "navigation : Quêtes · Groupe · Donjons · Personnage · HV · Conseils pro · Réglages (" .. table.concat(ids, ",") .. ")")
+  check(table.concat(ids, ",") == "quests,route,group,dungeon,gear,prof,hv,hunter,coach,binds,settings",
+    "navigation : 11 catégories (" .. table.concat(ids, ",") .. ")")
   local labels = {}
   for _, p in ipairs(W.PAGES) do if not p.hidden then labels[#labels + 1] = p.label end end
-  check(table.concat(labels, ",") == "Quêtes,Groupe,Donjons,Personnage,HV,Conseils pro,Réglages", "libellés : " .. table.concat(labels, ","))
+  check(table.concat(labels, ",") == "Quêtes,Trajet,Groupe,Donjons,Équipement,Métiers,HV,Chasseur,Conseils,Macros & touches,Réglages", "libellés : " .. table.concat(labels, ","))
   -- old ids land on the right place
-  local REDIR = { now = { "quests", "quests" }, route = { "quests", "quests" }, journal = { "journal", "quests" },
+  local REDIR = { now = { "quests", "quests" }, route = { "route", "route" }, journal = { "journal", "quests" },
     brain = { "brain", "quests" }, tools = { "tools", "settings" }, modules = { "modules", "settings" },
-    options = { "options", "settings" }, addons = { "addons", "settings" }, macros = { "macros", "perso" },
-    prof = { "prof", "perso" }, talents = { "talents", "perso" }, gear = { "gear", "perso" }, keys = { "keys", "settings" },
+    options = { "options", "settings" }, addons = { "addons", "settings" }, macros = { "macros", "binds" },
+    prof = { "prof", "prof" }, talents = { "talents", "hunter" }, gear = { "gear", "gear" }, keys = { "keys", "binds" },
+    perso = { "gear", "gear" }, pet = { "pet", "hunter" },
     display = { "display", "settings" }, group = { "group", "group" }, dungeon = { "dungeon", "dungeon" }, hv = { "hv", "hv" },
     coach = { "coach", "coach" } }
   for old, want in pairs(REDIR) do
@@ -209,18 +210,19 @@ return function(M, ctx)
   -- slash commands of the strip / old shortcuts still open the right page
   W.Close()
   T.ToggleMain("route")
-  check(W.IsOpen() and W.CurrentPage() == "quests", "touche « Trajet » : page Quêtes")
-  -- Personnage / Réglages : sub-page tabs, the last one reopened
+  check(W.IsOpen() and W.CurrentPage() == "route", "touche « Trajet » : page Trajet")
+  -- Macros & touches / Réglages : sub-page tabs, the last one reopened
+  W.Select("keys")
   W.Select("macros")
-  W.Select("perso")
-  check(W.CurrentPage() == "macros", "Personnage rouvre la dernière sous-page (Macros)")
+  W.Select("binds")
+  check(W.CurrentPage() == "macros", "Macros & touches rouvre la dernière sous-page (Macros)")
   local tabs = {}
   for _, rr in ipairs(W.lastLay.rects) do if rr.kind == "tab" then tabs[#tabs + 1] = rr.label:gsub(" %(%d+%)$", "") end end
-  check(table.concat(tabs, ",") == "Macros,Talents,Équipement,Métiers", "Personnage : onglets Macros · Talents · Équipement · Métiers (" .. table.concat(tabs, ",") .. ")")
+  check(table.concat(tabs, ",") == "Macros,Raccourcis", "Macros & touches : onglets Macros · Raccourcis (" .. table.concat(tabs, ",") .. ")")
   W.Select("settings")
   tabs = {}
   for _, rr in ipairs(W.lastLay.rects) do if rr.kind == "tab" then tabs[#tabs + 1] = rr.label:gsub(" %(%d+%)$", "") end end
-  check(table.concat(tabs, ","):find("^Raccourcis,Affichage,Fonctions,Mes addons,Options,Outils"), "Réglages : onglets (" .. table.concat(tabs, ",") .. ")")
+  check(table.concat(tabs, ","):find("^Affichage,Fonctions,Mes addons,Options,Outils"), "Réglages : onglets (" .. table.concat(tabs, ",") .. ")")
   -- Quêtes : the 4 modes on top, next step, route, « À prendre près de toi » with the elite badge
   W.Select("quests")
   local Ly = W.lastLay
@@ -340,7 +342,7 @@ return function(M, ctx)
     geo.SetUIScale(geo.finalScale * scale)
     M.Advance(0.5, 0.1)
     for id in pairs(W.pageIndex) do
-      if id ~= "tab" and id ~= "perso" and id ~= "settings" then
+      if id ~= "tab" and id ~= "hunter" and id ~= "binds" and id ~= "settings" then
         W.Select(id)
         local L2 = W.lastLay
         local ok, msg = noOverlap(L2, ("échelle %.2f, page %s"):format(scale, id))
