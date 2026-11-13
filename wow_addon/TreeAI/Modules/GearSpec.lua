@@ -383,7 +383,7 @@ local function scheduleDeep(cls)
     local before = SP.cur and SP.cur.tree
     SP.dirty = true
     local s = M.Spec()
-    if s and s.tree ~= before then M.OnSpecChanged() end
+    if s and s.tree ~= before then M.OnSpecChanged() elseif M.ResetWeights then M.ResetWeights() end
     -- la ligne « Spé : … » (lecture en cours → lue / à choisir) et la question unique
     if M.plan and M.Publish then M._pubSig = nil pcall(M.Publish, M, M.plan) elseif M.AskSpecOnce then M.AskSpecOnce() end
   end
@@ -422,7 +422,7 @@ function M.Spec()
   s.class = cls
   remember(s)
   SP.cur = s
-  SP.dirty = (s.pending or s.stale) and true or false
+  SP.dirty = false   -- en attente de la lecture longue : ce résultat sert tel quel ; c'est elle qui redemandera
   return s
 end
 --- n° de l'arbre (1..3) ou nil : pour les tables de poids
@@ -444,7 +444,7 @@ end
 
 function M.OnSpecChanged()
   if M.ResetWeights then M.ResetWeights() end
-  if M.MarkDirty then M.MarkDirty() end
+  if M.plan and M.MarkDirty then M.MarkDirty() end   -- (pas de premier plan pour un changement de spé)
   if T.ItemInfo and T.ItemInfo.Invalidate then T.ItemInfo.Invalidate() end
   if T.Fire then pcall(T.Fire, T, "GEAR_SPEC_CHANGED", M.Spec()) end
 end
@@ -463,6 +463,7 @@ end
 --- événement de talents / de sorts : relire à la prochaine demande (rien n'est calculé ici)
 function M.SpecDirty(deep)
   SP.dirty = true
+  if M.ResetWeights then M.ResetWeights() end   -- les poids suivent la spé : relus à la prochaine demande
   if deep then SP.deep, SP.deepCls, SP.ranks = nil, nil, nil end
 end
 
@@ -521,22 +522,22 @@ function M.SpecProbe()
   return out
 end
 
+--- fin de combat (appelé par le rappel unique de Gear.lua) : la lecture longue remise à plus tard peut se faire
+function M.SpecCombatEnd()
+  if SP.deepWanted then SP.deepWanted = false SP.dirty = true end
+end
 --- branché par Gear:OnEnable
 function M.SpecEnable()
-  local function soft() M.SpecDirty(false) if M.MarkDirty then M.MarkDirty() end end
   local function hard()
     M.SpecDirty(true)
     if M.ResetWeights then M.ResetWeights() end
-    if M.MarkDirty then M.MarkDirty() end
+    if M.plan and M.MarkDirty then M.MarkDirty() end
   end
   for _, ev in ipairs({ "PLAYER_TALENT_UPDATE", "CHARACTER_POINTS_CHANGED", "ACTIVE_TALENT_GROUP_CHANGED", "TRAIT_CONFIG_UPDATED",
       "ACTIVE_COMBAT_CONFIG_CHANGED", "TRAIT_TREE_CURRENCY_INFO_UPDATED", "ACTIVE_PLAYER_SPECIALIZATION_CHANGED" }) do
     M:RegisterEvent(ev, hard)
   end
-  M:RegisterEvent("PLAYER_LEVEL_UP", soft)
-  M:On("COMBAT_END", function()
-    if SP.deepWanted then SP.deepWanted = false SP.dirty = true end
-  end)
+  -- (un module = UN rappel par événement / message : PLAYER_LEVEL_UP et COMBAT_END sont branchés dans Gear.lua)
   if T.RegisterSlash then
     T:RegisterSlash("spe", function(rest)
       rest = norm(rest)

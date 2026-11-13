@@ -194,6 +194,8 @@ return function(M, ctx)
   -------------------------------------------------------------------------------------------------
   local realItems, realCrafted = T.Data.Gear.items, T.Data.Gear.crafted
   T.Data.Gear.items, T.Data.Gear.crafted = {}, {}
+  -- E0. zero at rest: nothing was planned by the login alone (the first plan waits for a reason to exist)
+  check(Gr.WantPlan and Gr.AutoRefresh == nil, "E0 no AutoRefresh method (Gear is out of the core refresh cycle)")
   local function item(id, name, loc, classID, sub, stats, extra)
     local t = { name = name, classID = classID, subclassID = sub, equipLoc = loc, quality = 2, stats = stats, sellPrice = 100 }
     for k, v in pairs(extra or {}) do t[k] = v end
@@ -266,6 +268,53 @@ return function(M, ctx)
     check(Gr.Score(hitRing).kind ~= "good", "B more hit over the cap is not an upgrade")
     wear(11, nil) wear(12, nil)
     equipEvent()
+    -- weapon skill to learn: bows known (the worn one), guns not → said, never hidden
+    learn(264, "Arcs")
+    V.ResetSkills()
+    T.Data.Gear.items[980040] = { 26, 20, 2, 2, 3, "", 26, 2.9, 0, 2, 0, "Fusil-test", 0 }
+    local gun = item(980040, "Fusil-test", "INVTYPE_RANGEDRIGHT", 2, 3, { [DPS] = 26 })
+    local sgun = Gr.Score(gun)
+    check(sgun.kind == "good" and sgun.train and select(2, Gr.ScoreLine(sgun)):find("arme à apprendre", 1, true), "B gun better but the skill is not learnt → « arme à apprendre »")
+    say("B fusil", select(1, Gr.ScoreLine(sgun)) .. " : " .. select(2, Gr.ScoreLine(sgun)))
+    -- thrown weapon: never instead of the bow (a hunter's shots need a bow / gun / crossbow)
+    local thrown = item(980041, "Sacoche-test de bombes", "INVTYPE_THROWN", 2, 16, { [DPS] = 40 })
+    local sth = Gr.Score(thrown)
+    check(sth.usable == false and tostring(sth.why):find("arme de jet", 1, true), "B thrown weapon refused for a hunter: " .. tostring(sth.why))
+    -- scope on the worn bow (enchant in the link, read in the tooltip): counted against the swap, or said if unreadable
+    local base = Gr.Score(better).dps
+    local realLink = GetInventoryItemLink
+    rawset(_G, "GetInventoryItemLink", function(unit, slot)
+      local l = realLink(unit, slot)
+      if slot == 18 and l and unit == "player" then return (l:gsub("item:(%d+):", "item:%1:664", 1)) end
+      return l
+    end)
+    local LT = Enum and Enum.TooltipDataLineType
+    rawset(_G, "C_TooltipInfo", { GetInventoryItem = function(unit, slot)
+      if slot == 18 then return { lines = { { leftText = "Arc-test rapide" }, { leftText = "Lunette (+3 points de dégâts)", type = LT and LT.ItemEnchantmentPermanent or nil } } } end
+      if slot == 5 then return { lines = { { leftText = "Gilet-test porté" }, { leftText = "Atours-test du pisteur (2/5)" } } } end
+    end, GetHyperlink = function(link)
+      if tostring(link):find("item:980031", 1, true) then return { lines = { { leftText = "Anneau-test plafond" }, { leftText = "Unique" } } } end
+    end })
+    equipEvent()
+    local sc2 = Gr.Score(better)
+    local joined = table.concat(sc2.lines, " | ")
+    if LT and LT.ItemEnchantmentPermanent then
+      check(math.abs((base - sc2.dps) - 3 / 2.0) < 0.01 and joined:find("Lunette", 1, true), "B scope of the worn bow counted (3 dmg / 2,0 s = 1,5 DPS): " .. joined)
+    else
+      check(joined:find("enchanté", 1, true), "B enchant on the worn bow said when unreadable: " .. joined)
+    end
+    say("B lunette", joined)
+    local sset = Gr.Score(agi)
+    check(table.concat(sset.lines, " | "):find("ensemble « Atours-test du pisteur » (2/5)", 1, true), "B worn set piece: warned before breaking the bonus")
+    -- unique: the ring already worn is not an « upgrade » for the other finger
+    wear(11, 980031)
+    equipEvent()
+    local su = Gr.Score(M.ItemLink(980031))
+    check(su.usable == false and tostring(su.why):find("unique", 1, true), "B unique ring already worn: " .. tostring(su.why))
+    wear(11, nil)
+    rawset(_G, "GetInventoryItemLink", realLink)
+    rawset(_G, "C_TooltipInfo", nil)
+    equipEvent()
   elseif cls == "WARRIOR" then
     item(981001, "Hache-test 2M", "INVTYPE_2HWEAPON", 2, 1, { [DPS] = 30 })
     local big = item(981002, "Épée-test 2M", "INVTYPE_2HWEAPON", 2, 8, { [DPS] = 38 })
@@ -335,6 +384,8 @@ return function(M, ctx)
   ctx.fire("PLAYER_EQUIPMENT_CHANGED", 6)
   local tip = V.Tip(ghost)
   check(tip and tip.st[STA] == 7 and tip.st[AGI] == 3 and tip.unique and tip.dur == 20 and tip.durMax == 30, "B tooltip scan: stats, unique, durability")
+  local sg2 = Gr.Score(ghost)
+  check(sg2.known and sg2.src == "infobulle", "B stats read from the tooltip when the stats API has nothing → scored, source said")
   rawset(_G, "C_TooltipInfo", nil)
 
   -------------------------------------------------------------------------------------------------
@@ -369,6 +420,7 @@ return function(M, ctx)
   M.SetBagItem(0, 2, 984002, 3)
   ctx.fire("BAG_UPDATE_DELAYED")
   Gr.db.horizon = 3
+  Gr._resetIndex()   -- (rows added to the client table by this test: never happens in game)
   Gr.SetMountReserve(0)
   M.player.money = 100000   -- 10 po
   Gr.MarkDirty()
@@ -473,7 +525,8 @@ return function(M, ctx)
       "D1 tooltip « Mieux pour toi : <nombre> (remplace X) »: " .. up)
     local bad = tipOf(tonumber(badLink:match("item:(%d+)")))
     check(bad:find("Moins bien pour toi", 1, true), "D1 tooltip « Moins bien »: " .. bad)
-    local unk = tipOf(983001)
+    item(983002, "Objet-test jamais lu", "INVTYPE_WAIST", 4, cls == "WARRIOR" and 3 or (cls == "HUNTER" and 2 or 1), nil)
+    local unk = tipOf(983002)
     check(unk:find("inconnu", 1, true) and not unk:find("mieux", 1, true), "D1 tooltip of an unreadable item: « inconnu »: " .. unk)
     say("D1 infobulle +", up)
     say("D1 infobulle -", bad)
@@ -495,6 +548,21 @@ return function(M, ctx)
   say("D2 récompense", rw and rw.text)
   ctx.fire("QUEST_FINISHED")
   M.questChoices = {}
+  -- D2b. loot roll: one line with MY gain when nobody else is known; never a roll
+  local Grp, GG = T.modules.Group, T.GroupGear
+  if Grp and Grp._active and Grp._test and Grp._test.news and GG and GG._active and M.group and #M.group > 0 then
+    local rolled = false
+    local oldLink, oldRoll, oldInst = rawget(_G, "GetLootRollItemLink"), rawget(_G, "RollOnLoot"), rawget(_G, "IsInInstance")
+    rawset(_G, "GetLootRollItemLink", function(id) if id == 9 then return upLink end end)
+    rawset(_G, "RollOnLoot", function() rolled = true end)
+    ctx.fire("START_LOOT_ROLL", 9, 60000)
+    M.Advance(1, 0.5)
+    local roll
+    for _, e in ipairs(Grp._test.news()) do if e.key == "roll9" then roll = e.text end end
+    check(roll and (roll:find("mieux pour toi (", 1, true) or roll:find("Besoin pour", 1, true)) and not rolled, "D2b roll line with my gain, never rolled: " .. tostring(roll))
+    say("D2b jet", roll)
+    rawset(_G, "GetLootRollItemLink", oldLink) rawset(_G, "RollOnLoot", oldRoll) rawset(_G, "IsInInstance", oldInst)
+  end
   -- D3. keeper for BAGS: upgrades are never sold (guarded registration)
   local keeper
   local oldBags = T.Bags
@@ -571,7 +639,8 @@ return function(M, ctx)
   -- E. cost and rules
   -------------------------------------------------------------------------------------------------
   -- E1. a plain bag change (loot) does not start a plan; the verdicts stay cached
-  settle(12)
+  for _ = 1, 160 do if not Gr.Pending() then break end M.Advance(0.5) end   -- the slot replans asked above are done
+  check(not Gr.Pending(), "E1 pending replans finish by themselves (one timer, no AutoRefresh)")
   local before = Gr.plan
   local r0 = Gr.Rent()
   M.SetBagItem(0, 3, 984002, 1)
@@ -585,7 +654,7 @@ return function(M, ctx)
   settle(14)
   check(Gr.plan == before, "E2 no plan in combat")
   M.LeaveCombat()
-  for _ = 1, 60 do M.Advance(0.5) Gr:AutoRefresh() end
+  for _ = 1, 60 do M.Advance(0.5) end
   check(Gr.plan ~= before and not Gr.Busy(), "E2 equipment change → new plan after combat")
   -- E3. nothing in chat, no blocked action
   check(#M.output == out0, "E3 nothing in chat (" .. (#M.output - out0) .. " lines)")

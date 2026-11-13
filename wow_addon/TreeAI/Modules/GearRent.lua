@@ -101,32 +101,63 @@ local function isEquip(id, link)
   equipKnown[id] = e
   return e
 end
---- améliorations portables (maintenant ou bientôt) dans les sacs → { list = { {bag, slot, id, link, sc} }, bySlot, keep }
-function M.BagUpgrades(force)
-  local gen = (API.BagGen and API.BagGen() or 0) * 7 + (V.EquipGen and V.EquipGen() or 0) * 100003 + (V.Gen and V.Gen() or 0)
-  if not force and not M._bagStale and bagUp.gen == gen then return bagUp end
-  M._bagStale = nil
-  local out = { list = {}, bySlot = {}, keep = {}, gen = gen, n = 0 }
-  local iter, st, ctl = try(API.IterBagsShared or API.IterBags)
-  if type(iter) == "function" then
-    local lv = level()
-    for bag, slot, info in iter, st, ctl do
-      local id = info and (info.itemID or info.id)
-      local link = info and str(info.hyperlink or info.link)
-      if id and link and isEquip(id, link) then
+local perBag, dirtyBags, bagsKey = {}, nil, nil   -- par sac : ses améliorations ; dirtyBags = nil → tout relire
+--- un sac a changé (BAG_UPDATE) : lui seul sera relu au prochain relevé regroupé
+function M.BagDirty(bag)
+  bag = tonumber(bag)
+  if dirtyBags and bag and bag >= 0 and bag <= 12 then dirtyBags[bag] = true else dirtyBags = nil end
+end
+local function scanBag(bag, lv)
+  local list = {}
+  local n = API.BagSlots and tonumber((try(API.BagSlots, bag))) or 0
+  for slot = 1, n do
+    local info = API.BagItem and API.BagItem(bag, slot)
+    local id = info and info.itemID
+    if id and equipKnown[id] ~= false then
+      local link = str(info.link)
+      if link and isEquip(id, link) then
         local sc = M.Score(link)
         if sc and sc.known and sc.usable and sc.kind == "good" and (sc.delta or 0) > 0 then
-          local e = { bag = bag, slot = slot, id = id, link = link, sc = sc, wait = sc.req }
-          out.list[#out.list + 1] = e
-          if not sc.req then
-            local cur = out.bySlot[sc.slot]
-            if not cur or (sc.delta or 0) > (cur.sc.delta or 0) then out.bySlot[sc.slot] = e end
-          end
-          out.keep[id] = sc.req and ("amélioration au niveau " .. sc.req) or "amélioration pour toi"
-          out.n = out.n + 1
+          list[#list + 1] = { bag = bag, slot = slot, id = id, link = link, sc = sc, wait = sc.req }
         elseif sc and sc.usable == false and sc.later and sc.later - lv <= 5 then
-          out.keep[id] = "portable au niveau " .. sc.later   -- mailles / plaques proches : ne pas vendre
+          list[#list + 1] = { bag = bag, slot = slot, id = id, link = link, later = sc.later }
         end
+      end
+    end
+  end
+  return list
+end
+--- améliorations portables (maintenant ou bientôt) dans les sacs → { list = { {bag, slot, id, link, sc} }, bySlot, keep }
+--- Coût : seuls les sacs touchés depuis le dernier relevé sont relus ; verdict en cache par lien (GearValue).
+function M.BagUpgrades(force)
+  local key = (V.EquipGen and V.EquipGen() or 0) * 100003 + (V.Gen and V.Gen() or 0)
+  local gen = (API.BagGen and API.BagGen() or 0)
+  if not force and not M._bagStale and bagUp.gen == gen and bagsKey == key then return bagUp end
+  local all = force or M._bagStale or bagsKey ~= key or dirtyBags == nil or next(dirtyBags) == nil
+  M._bagStale = nil
+  local lv = level()
+  local nb = API.NumBags and tonumber((try(API.NumBags))) or 4
+  if all then
+    perBag = {}
+    for bag = 0, nb do perBag[bag] = scanBag(bag, lv) end
+  else
+    for bag in pairs(dirtyBags) do perBag[bag] = scanBag(bag, lv) end
+  end
+  dirtyBags, bagsKey = {}, key
+  local out = { list = {}, bySlot = {}, keep = {}, gen = gen, n = 0 }
+  for bag = 0, nb do
+    for _, e in ipairs(perBag[bag] or {}) do
+      if e.sc then
+        local sc = e.sc
+        out.list[#out.list + 1] = e
+        if not sc.req then
+          local cur = out.bySlot[sc.slot]
+          if not cur or (sc.delta or 0) > (cur.sc.delta or 0) then out.bySlot[sc.slot] = e end
+        end
+        out.keep[e.id] = sc.req and ("amélioration au niveau " .. sc.req) or "amélioration pour toi"
+        out.n = out.n + 1
+      elseif e.later then
+        out.keep[e.id] = "portable au niveau " .. e.later   -- mailles / plaques proches : ne pas vendre
       end
     end
   end
@@ -216,7 +247,7 @@ local FREE = { quest = true, boss = true, drop = true, bag = true }
 local function gainOf(cd, slot)
   if cd.cmp == nil then cd.cmp = (M.CompareCand and M.CompareCand(cd, slot)) or false end
   local cmp = cd.cmp
-  if cmp and cmp.text then return cmp.text, cmp end
+  if cmp and cmp.text then return cmp.text .. (cmp.comfortOnly and " (survie)" or ""), cmp end
   return (M.Verdict(cd.pct)) or "mieux", nil
 end
 local function lifeText(cd, c)
@@ -225,7 +256,8 @@ local function lifeText(cd, c)
 end
 local function srcShort(src)
   local t = tostring(src.text or "?")
-  return (t:gsub("^récompense de ", ""):gsub(" %(dans ton journal%)", ""))
+  if src.kind == "craft" then return t:match("%(([^()]-~%d+)[^()]*%)") or (t:gsub(" — .*$", "")) end
+  return (t:gsub("^récompense de ", ""):gsub(" %(dans ton journal%)", ""):gsub(" — .*$", ""))
 end
 --- le verdict d'un emplacement → ligne { slot, action, text, right, tooltip, onClick, ratio, … }
 local function verdictFor(slot, plan, bud, bags)
@@ -323,7 +355,7 @@ local function verdictFor(slot, plan, bud, bags)
       or (src.kind == "quest" and "quête pas encore faisable") or (src.kind == "craft" and "artisan à trouver") or "pas encore faisable"
     tip[#tip + 1] = when:gsub("^%l", string.upper) .. "."
     if src.kind == "craft" then
-      return done("later", fmt("%s : à faire fabriquer — %s · %s (%s)", head, later.name or "?", gain, tostring(src.text):gsub(" — .*$", "")), nil, tip,
+      return done("later", fmt("%s : à faire fabriquer — %s · %s (%s)", head, later.name or "?", gain, srcShort(src)), nil, tip,
         function() M.GoSource(src, later) end, "Clic : la page Métiers", 0, 0, 0, 1)
     end
     return done("later", fmt("%s : plus tard — %s · %s (%s)", head, later.name or "?", gain, when), nil, tip,
@@ -559,7 +591,8 @@ local function budgetRow(Ly, rows)
 end
 
 local function emptyState(Ly)
-  local jobText = (M.Busy and M.Busy()) and "TreeAI regarde tes objets… (quelques secondes, hors combat)"
+  local jobText = (M.Busy and M.Busy()) and "TreeAI regarde tes objets… (quelques secondes)"
+    or inCombat() and "En combat : TreeAI regardera tes objets juste après."
     or "Pas encore calculé : clic sur « Recalculer »."
   Ly.empty(jobText, { "Recalculer", function() M.MarkDirty() M:Start() end, "Clic : compare ton équipement aux objets du jeu" })
 end
@@ -575,7 +608,12 @@ function M.RenderPage(Ly)
   if q == "" then specBlock(Ly) end
   if w.RepairRow then pcall(w.RepairRow, Ly) end
   local plan = M.plan
-  if not plan then emptyState(Ly) return end
+  if not plan then
+    -- première ouverture : le plan se calcule maintenant (par tranches, hors combat), la page se remplit ensuite
+    if not (M.Busy and M.Busy()) and not inCombat() then M.MarkDirty() M:Start() end
+    emptyState(Ly)
+    return
+  end
   local function match(...) return not w.Match or w.Match(...) end
   if M.view == "doll" then
     if Ly.header("Mon équipement — les plus faibles d'abord", nil, nil, ICON .. "INV_Chest_Chain") then
@@ -623,7 +661,7 @@ function M.RenderPage(Ly)
       or "Rien de mieux pour l'instant : ton équipement est le meilleur atteignable à ton niveau.",
       later > 0 and { "Stuff rentable", function() setView("rent") end, "Clic : voir les pistes à venir" } or nil)
   elseif later > 0 then
-    Ly.text(fmt("%d autre%s piste%s (attendre un niveau, trop cher) dans « Stuff rentable ».", later, later > 1 and "s" or "", later > 1 and "s" or ""), "S", "muted")
+    Ly.text(fmt("%d autre%s piste%s pour plus tard dans « Stuff rentable ».", later, later > 1 and "s" or "", later > 1 and "s" or ""), "S", "muted")
   end
   if w.PotionRow then pcall(w.PotionRow, Ly) end
   local h = plan.hunter
@@ -663,6 +701,7 @@ function M.RentEnable()
   else
     M._ownBags = true
   end
+  M:RegisterEvent("BAG_UPDATE", function(_, _, bag) M.BagDirty(bag) end)   -- note le sac touché, rien d'autre
   if M._ownBags then   -- repli : notre propre regroupement (0,5 s après le dernier événement, jamais dans son image)
     local queued = false
     M:RegisterEvent("BAG_UPDATE_DELAYED", function()
@@ -671,12 +710,15 @@ function M.RentEnable()
       T:After(0.5, function() queued = false if not inCombat() then pcall(onBags) else M._bagsLater = true end end)
     end)
   end
-  M:On("COMBAT_END", function() if M._bagsLater then M._bagsLater = false T:After(1, function() pcall(onBags) end) end end)
+  -- (fin de combat : rappel unique dans Gear.lua → M.RentCombatEnd)
   if type(G.hooksecurefunc) == "function" and not M._bagHooks then
     M._bagHooks = true
     for _, fn in ipairs({ "ToggleBag", "OpenBag", "OpenAllBags", "ToggleAllBags", "OpenBackpack", "ToggleBackpack", "CloseAllBags", "CloseBackpack" }) do
       if type(rawget(G, fn)) == "function" then pcall(G.hooksecurefunc, fn, function() if M._active then arrowsSoon() end end) end
     end
   end
+end
+function M.RentCombatEnd()
+  if M._bagsLater and M.OnBagsChanged then M._bagsLater = false T:After(1, function() pcall(M.OnBagsChanged) end) end
 end
 function M.RentDisable() hideArrows() end

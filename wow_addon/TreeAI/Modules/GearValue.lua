@@ -147,8 +147,12 @@ function V.RatingPct(stat, kind)
 end
 
 local equipGen = 0
+local wCache_baseMissing   -- (défini plus bas, avec le cache des poids)
+local wValid = false   -- les poids en mémoire sont bons tant qu'aucun événement ne les a périmés (zéro appel au jeu)
 --- l'équipement porté a changé (ou le niveau) : dégâts de base, plafond de toucher et verdicts sont à relire
-function V.EquipChanged() equipGen = equipGen + 1 end
+function V.EquipChanged() equipGen = equipGen + 1 wValid = false end
+--- fin de combat : si les dégâts de base n'avaient pas pu être lus sur la fiche (secrets en combat), on les relira
+function V.CombatEnd() if wValid and wCache_baseMissing and wCache_baseMissing() then wValid = false end end
 function V.EquipGen() return equipGen end
 local baseCache
 --- tes dégâts de base (tir auto / coup blanc), lus sur la fiche hors combat ; en combat : le dernier relevé
@@ -232,7 +236,8 @@ function V.Tip(link, slot)
     if left then
       local lt = num(line.type)
       if right and (right:find(pSpeed, 1, true) or right:find("Speed", 1, true)) then out.speed = tipNum(right) end
-      local d = left:match(pDps) or left:match("%(([%d%.,]+) d[ée]g[âa]ts par seconde%)") or left:match("%(([%d%.,]+) damage per second%)")
+      -- (les lettres accentuées font 2 octets : « d[^%s]-g[^%s]-ts » = dégâts / degats)
+      local d = left:match(pDps) or left:match("%(([%d%.,]+) d[^%s]-g[^%s]-ts par seconde%)") or left:match("%(([%d%.,]+) damage per second%)")
       if d then out.dps = tipNum(d) end
       if left == uniq or left == uniqE or left:find("^Unique") then out.unique = true end
       local a, b = left:match(pDur)
@@ -243,7 +248,7 @@ function V.Tip(link, slot)
       end
       if lt and LT.ItemEnchantmentPermanent and lt == LT.ItemEnchantmentPermanent then
         out.ench = left
-        local dmg = left:match("%+(%d+) points? de d[ée]g[âa]ts") or left:match("%+(%d+) d[ée]g[âa]ts") or left:match("%+(%d+) [Dd]amage")
+        local dmg = left:match("%+(%d+) points? de d[^%s]-g[^%s]-ts") or left:match("%+(%d+) d[^%s]-g[^%s]-ts") or left:match("%+(%d+) [Dd]amage")
         if dmg then out.enchDmg = tonumber(dmg) end
         local v, nm = left:match("^%+(%d+) (.+)$")
         if not v then nm, v = left:match("^(.+) %+(%d+)$") end
@@ -331,7 +336,7 @@ function V.Item(x)
       bind = r.bind, st = M.StatsOf(id), src = "données", known = true, complete = true,
       speed = (r.speed or 0) > 0 and r.speed or nil, ench = 0 }
   end
-  if it.complete then
+  if it.complete and it.known then   -- un objet encore illisible sera relu (ses stats peuvent arriver)
     if itemN >= 4000 then items, itemN = {}, 0 end
     items[x], itemN = it, itemN + 1
   end
@@ -343,7 +348,8 @@ end
 ---------------------------------------------------------------------------------------------------
 local wCache, wKey, wGen = nil, nil, 0
 local hitCache = {}
-function M.ResetWeights() wCache, wKey = nil, nil ratingCache = {} hitCache = {} end
+function M.ResetWeights() wCache, wKey, wValid = nil, nil, false ratingCache = {} hitCache = {} end
+wCache_baseMissing = function() return wCache ~= nil and wCache.unit == "dps" and wCache.baseSrc ~= "fiche" end
 function V.Gen() return wGen end
 local function inGroup() return pub(try(g("IsInGroup"))) and true or false end
 --- % de toucher apporté par l'équipement porté (somme des scores, convertie)
@@ -437,21 +443,27 @@ local function dpsWeights(prof, lvl, cls, grouped)
 end
 --- poids de TA spé maintenant (table réutilisée tant que rien ne change) ; clés = stats du jeu + MDPS / RDPS / OHDPS
 function V.Weights()
+  if wValid and wCache then return wCache end
   local cls = class()
   if not cls then return nil end
   local lvl, tree, grouped = level(), M.SpecTree and M.SpecTree() or nil, inGroup()
   local prof, used = V.Profile(cls, tree)
   local b = prof.unit == "dps" and V.Base(prof.kind) or nil
-  local key = cls .. ":" .. tostring(used) .. ":" .. lvl .. ":" .. (grouped and 1 or 0) .. ":" .. tostring(b and b.dps)
-    .. ":" .. equipGen
-  if wCache and wKey == key then return wCache end
+  local bdps = b and b.dps or false
+  local wc = wCache   -- (comparaison champ par champ : aucune chaîne construite quand rien n'a changé)
+  if wc and wKey == equipGen and wc.cls == cls and wc.tree == used and wc.level == lvl and wc.grouped == grouped and wc.bdps == bdps then
+    wValid = true
+    return wc
+  end
   local w = prof.unit == "dps" and dpsWeights(prof, lvl, cls, grouped) or ptsWeights(prof, lvl, cls)
-  w.tree, w.level, w.grouped, w.profile = used, lvl, grouped, prof
-  -- le plafond de toucher peut basculer sans que rien d'autre ne change : il fait partie de l'identité des poids
-  local id = key .. ":" .. (w.hitCapped and 1 or 0) .. ":" .. tostring(w.b)
-  if not (wCache and wCache.id == id) then wGen = wGen + 1 end
+  w.tree, w.level, w.grouped, w.profile, w.bdps, w.cls = used, lvl, grouped, prof, bdps, cls
+  -- identité des VALEURS des poids (sans la génération d'équipement) : le plafond de toucher et les dégâts de base
+  -- peuvent basculer quand l'équipement change ; tant qu'elle ne change pas, les verdicts et le plan restent valables
+  local id = cls .. ":" .. tostring(used) .. ":" .. lvl .. ":" .. (grouped and 1 or 0) .. ":" .. tostring(b and b.dps)
+    .. ":" .. (w.hitCapped and 1 or 0) .. ":" .. tostring(w.b)
+  if id ~= V._lastId then wGen = wGen + 1 V._lastId = id end
   w.id, w.gen = id, wGen
-  wCache, wKey = w, key
+  wCache, wKey, wValid = w, equipGen, true
   return w
 end
 --- phrase courte qui dit COMMENT on compte (infobulle, page) — les règles du jeu utilisées
@@ -582,7 +594,7 @@ function M.ScoreReset() scoreCache, scoreN = {}, 0 end
 local function partLines(parts, w, newIt, oldIts, slot)
   local list = {}
   for k, x in pairs(parts) do
-    if abs(x) >= 0.005 then list[#list + 1] = { k = k, x = x } end
+    if abs(x) >= 0.05 then list[#list + 1] = { k = k, x = x } end   -- « +0,0 » ne dit rien : pas de ligne
   end
   table.sort(list, function(a, b) if abs(a.x) ~= abs(b.x) then return abs(a.x) > abs(b.x) end return a.k < b.k end)
   local out = {}
@@ -644,6 +656,7 @@ function V.Compare(it, olds, slot, w)
     text = (w.unit == "dps" and hard >= 0.05) and ("≈ " .. signed(hard) .. " DPS (emplacement vide)") or "emplacement vide"
   elseif w.unit == "dps" and abs(hard) >= 0.05 then text = "≈ " .. signed(hard) .. " DPS" .. (trade and ", mais plus de survie" or "")
   elseif pct >= 100 and pct < 999 then text = "vaut " .. dec(new / old) .. " fois la pièce portée"
+  elseif abs(pct) < 0.5 then text = nil   -- mêmes stats (ou presque) : « pareil », pas « +0 % »
   elseif pct < 999 then text = ("%s%d %%"):format(pct >= 0 and "+" or "-", floor(abs(pct) + 0.5)) end
   local lines = partLines(parts, w, it, olds, slot)
   if enchText then
@@ -652,10 +665,17 @@ function V.Compare(it, olds, slot, w)
   elseif enchUnknown then
     lines[#lines + 1] = "Ton objet porté est enchanté : l'enchantement n'est pas compté (illisible)."
   end
+  for _, o in ipairs(olds) do
+    local tw = o.link and V.Tip(o.link, o.slot) or nil
+    if tw and tw.set and (tw.setHave or 0) >= 2 then
+      lines[#lines + 1] = ("Ton objet fait partie de l'ensemble « %s » (%d/%d) : regarde son bonus avant de changer (non compté)."):format(
+        tw.set, tw.setHave, tw.setMax or tw.setHave)
+    end
+  end
   local req = (it.minLevel or 0) > level() and it.minLevel or nil
   return { known = true, equip = true, usable = true, slot = slot, replaces = names, delta = delta, dps = (w.unit == "dps") and hard or nil,
     pct = pct, unit = w.unit, kind = kind, big = pct >= BIG_GAIN and kind == "good", trade = trade or nil, text = text or "pareil", lines = lines, new = new, old = old,
-    src = it.src, req = req, item = it, comfortOnly = (w.unit == "dps" and abs(hard) < 0.05 and abs(delta) >= 0.01) or nil }
+    src = it.src, req = req, item = it, comfortOnly = (w.unit == "dps" and abs(hard) < 0.05 and abs(delta - hard) >= 0.05) or nil }
 end
 
 --- le verdict d'un objet (lien) pour TOI, comparé à ce que tu portes. Toujours une table :
@@ -685,10 +705,22 @@ function M.Score(link)
     else
       local w = V.Weights()
       local olds, slot = replacedBy(it, w)
-      res = w and V.Compare(it, olds or {}, slot, w) or nil
+      local dup
+      if it.equipLoc == "INVTYPE_FINGER" or it.equipLoc == "INVTYPE_TRINKET" or it.equipLoc == "INVTYPE_WEAPON" then
+        for _, s in ipairs(ENG.EQUIP_SLOTS[it.equipLoc]) do
+          local l = wornLink(s)
+          if l and itemID(l) == it.id then dup = true end
+        end
+      end
+      local tipU = dup and type(link) == "string" and V.Tip(link) or nil
+      if tipU and tipU.unique then
+        res = { known = true, equip = true, usable = false, why = "unique : tu le portes déjà", item = it }
+      else
+        res = w and V.Compare(it, olds or {}, slot, w) or nil
+      end
       if not res then
         res = { known = false, equip = true, usable = true, text = "inconnu", why = "ton objet porté ne se lit pas encore", item = it }
-      else
+      elseif res.usable ~= false then
         res.why = why
         local lines = res.lines
         if it.classID == 2 and V.WeaponSkill(it.subID) == false then
@@ -698,7 +730,7 @@ function M.Score(link)
       end
     end
   end
-  if it.complete then
+  if it.complete and res.known ~= false then
     if scoreN >= 500 then scoreCache, scoreN = {}, 0 end
     scoreCache[link], scoreN = res, scoreN + 1
   end
