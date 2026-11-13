@@ -20,10 +20,11 @@ HERE = Path(__file__).parent
 ROOT = HERE.parents[1]
 ADDON = ROOT / "wow_addon" / "TreeAI"
 PHASES = ("login", "ville", "hub", "bg", "butin", "quetes", "repos")
-# whole-phase budgets, kinstr of TreeAI work per second (50 = 1 ms / s): what the 4.3.6 code measured on the same
-# simulation was ville 513, quetes 300, butin 196, login 530, hub 178, bg 145
-PER_SECOND = {"sur": {"login": 420, "ville": 150, "hub": 170, "bg": 110, "butin": 110, "quetes": 215, "repos": 22},
-              "tout": {"login": 620, "ville": 260, "hub": 300, "bg": 230, "butin": 200, "quetes": 330, "repos": 40}}
+# whole-phase budgets, kinstr of TreeAI work per second (50 = 1 ms / s) = measured in 5.0 + ~15 %. The 4.3.6 code on
+# the same simulation (profile « sur »): login 530, ville 513, hub 178, bg 145, butin 196, quetes 300, and images over
+# 4 ms in every phase but bg (worst 7,7 ms).
+PER_SECOND = {"sur": {"login": 430, "ville": 150, "hub": 165, "bg": 100, "butin": 96, "quetes": 213, "repos": 13},
+              "tout": {"login": 515, "ville": 220, "hub": 210, "bg": 325, "butin": 118, "quetes": 237, "repos": 16}}
 
 pytestmark = pytest.mark.skipif(not shutil.which("lua5.1"), reason="lua5.1 not installed")
 

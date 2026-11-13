@@ -1398,6 +1398,12 @@ function M.Install(flavor)
       GetItemNameByID = function(id) local it = M.items[id] return it and it.name end,
       GetItemStats = function(link) return G.GetItemStats(link) end,
     }
+    -- text, objectiveType, finished, numFulfilled, numRequired (no table: the cheap way to watch the log for changes)
+    G.GetQuestObjectiveInfo = function(id, idx)
+      local q = qAt(id)
+      local o = q and q.objectives and q.objectives[idx]
+      if o then return o.text, o.type or "monster", o.done and true or false, o.have, o.need end
+    end
     G.C_QuestLog = {
       GetNumQuestLogEntries = function()
         local q = 0
@@ -1413,6 +1419,8 @@ function M.Install(flavor)
           suggestedGroup = q.group or 0 }
       end,
       IsComplete = function(id) local q = qAt(id) return q and q.complete or false end,
+      -- (5.0 STABLE) as on the real client: objectives readable without a table (GetQuestObjectiveInfo below)
+      GetNumQuestObjectives = function(id) local q = qAt(id) return q and #(q.objectives or {}) or 0 end,
       GetQuestObjectives = function(id)
         local q = qAt(id)
         local out = {}

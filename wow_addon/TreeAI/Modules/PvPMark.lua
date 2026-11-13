@@ -227,14 +227,27 @@ local function paint(f, e)
   f:SetAlpha(1)
 end
 
+-- (5.0 STABLE) un repère retiré en combat ne peut être que rendu transparent (cadre protégé) : il restait AFFICHÉ à
+-- alpha 0 pour toujours. Retenu ici, vraiment caché à la sortie du combat (sauf s'il a resservi entre-temps).
+local ghost = setmetatable({}, { __mode = "k" })
 local function unmark(unit)
   local plate = plateOf[unit]
   local f = plate and marks[plate]
   if f then
     f:SetAlpha(0)
-    if not inCombat() and not locked(f) then f:Hide() end
+    if not inCombat() and not locked(f) then f:Hide() ghost[f] = nil else ghost[f] = true end
   end
 end
+local function flushGhosts()
+  for f in pairs(ghost) do
+    if not locked(f) then
+      local a = f.GetAlpha and f:GetAlpha() or 0
+      if a == 0 then f:Hide() end   -- (alpha remis à 1 = repris par une autre unité : il reste)
+      ghost[f] = nil
+    end
+  end
+end
+PM.Ghosts = function() return ghost end
 
 ---------------------------------------------------------------------------------------------------
 -- liste de secours en combat (notre cadre sur UIParent : jamais protégé)
@@ -274,7 +287,19 @@ function PM.ListLine(e, band)
   return s
 end
 
+-- (5.0 STABLE) champ de bataille : UNIT_TARGET / UNIT_HEALTH de 40 joueurs ennemis refaisaient la liste de secours à
+-- chaque événement (150 écritures de texte / s). La première tout de suite, puis au plus 4 fois par seconde.
+local listAt, listPending = -100, false
+function PM:ListSoon()
+  local t = now()
+  if t - listAt >= 0.25 then return self:UpdateList() end
+  if listPending then return end
+  listPending = true
+  local function later() listPending = false if PM._active then PM:UpdateList() end end
+  if T.After then T:After(0.25, later) else later() end
+end
 function PM:UpdateList()
+  listAt = now()
   local rows = {}
   if inCombat() and opt("list") and opt("mark") then
     for unit in pairs(noMark) do
@@ -401,7 +426,7 @@ function PM:OnEnable()
       for unit in pairs(us) do s:UpdateUnit(unit) end
       s:UpdateList()
     end, function(s, unit)
-      if units[unit] or plateOf[unit] then s:RemoveUnit(unit) s:UpdateList() end
+      if units[unit] or plateOf[unit] then s:RemoveUnit(unit) s:ListSoon() end
     end)
   else
     self:RegisterEvent("NAME_PLATE_UNIT_ADDED", function(s, _, unit) s:UpdateUnit(unit) s:UpdateList() end)
@@ -411,19 +436,26 @@ function PM:OnEnable()
   end
   local function one(s, _, unit)
     if unit == "player" then s:RefreshAll() return end
-    if type(unit) == "string" and (units[unit] or unit:match("^nameplate%d+$")) then s:UpdateUnit(unit) s:UpdateList() end
+    if type(unit) == "string" and (units[unit] or unit:match("^nameplate%d+$")) then s:UpdateUnit(unit) s:ListSoon() end
   end
   self:RegisterEvent("UNIT_FACTION", one)
   self:RegisterEvent("PLAYER_FLAGS_CHANGED", one)
   -- qui cible qui : seulement les joueurs ennemis déjà suivis
+  -- (5.0 STABLE) rien à refaire si « te cible » n'a pas changé (un champ de bataille en envoie des dizaines par seconde)
+  local targetOf = {}
   self:RegisterEvent("UNIT_TARGET", function(s, _, unit)
-    if units[unit] then s:UpdateUnit(unit) s:UpdateList() end
+    local e = units[unit]
+    if not e then return end
+    local tu = targetOf[unit]
+    if not tu then tu = unit .. "target" targetOf[unit] = tu end
+    local tm = _ns(call("UnitIsUnit", tu, "player")) and true or false
+    if tm ~= (e.targetsMe and true or false) then s:UpdateUnit(unit) s:ListSoon() end
   end)
   -- mort d'un joueur suivi (UNIT_HEALTH filtré : une recherche de table pour les autres unités)
   self:RegisterEvent("UNIT_HEALTH", function(s, _, unit)
-    if units[unit] and _ns(call("UnitIsDeadOrGhost", unit)) then s:RemoveUnit(unit) s:UpdateList() end
+    if units[unit] and _ns(call("UnitIsDeadOrGhost", unit)) then s:RemoveUnit(unit) s:ListSoon() end
   end)
-  self:RegisterEvent("PLAYER_REGEN_ENABLED", function(s) s:RefreshAll() end)   -- repères manqués en combat
+  self:RegisterEvent("PLAYER_REGEN_ENABLED", function(s) flushGhosts() s:RefreshAll() end)   -- repères manqués en combat
   self:RegisterEvent("PLAYER_REGEN_DISABLED", function(s) s:UpdateList() end)
   self:RegisterEvent("ZONE_CHANGED_NEW_AREA", function(s) s:RefreshAll() end)
   self:RegisterEvent("PLAYER_ENTERING_WORLD", function(s) s:RefreshAll() end)

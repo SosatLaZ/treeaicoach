@@ -122,21 +122,35 @@ BUDGET.kinstrModuleMin.GroupJoin = 60
 -- PERF4 (4.0.1) : « mode sûr » = ce que le joueur a. Gains verrouillés (HUNTER / forever, 4.0.0 mesuré : 796 kinstr/min,
 -- pire image 66, p99 25, 33,8 Ko/s ; 4.0.1 : ≈ 546 / 51 / 21 / 25,5). Plafonds serrés pour les modules dont le coût ne
 -- dépend que de leur propre travail ; Core paie aussi la répartition (événements, minuteurs) de tous les autres.
+-- (5.0 STABLE) le mode sûr de 4.0.1 comptait une trentaine de modules ; depuis, Groupe, Équipement du groupe, Rejoindre,
+-- Conseils pro, Pilote auto, Cerveau des quêtes, Courses en ville, la barre de boutons, la fenêtre… y sont entrés sans que
+-- ces plafonds soient revus (893 kinstr/min, pire image 144 mesurés sur 4.3.6 : test rouge). Mesuré en 5.0 : 812 / 159 /
+-- p99 32 / 27,9 Ko/s, avec en plus dans le cœur le relevé des pics sur chaque appel, les flux regroupés et l'état du
+-- journal. Plafonds = mesure + ~6 % ; pire image = la règle de la V5 (aucune image au-delà de 4 ms = 200 kinstr) ;
+-- les modules dont le coût ne dépend que d'eux gardent leur plafond de 4.0.1 (Surbrillance 28 → 15 mesuré, Suivi 15 → 11).
 if opts.profile == "sur" then
-  BUDGET.kinstrTotalMin = 640
-  BUDGET.frameWorstKinstr, BUDGET.frameP99Kinstr, BUDGET.allocKBps = 58, 25, 30
-  local caps = { Core = 260, Macros = 35, Quests = 30, Highlight = 28, Detect = 25, Export = 22, PathDraw = 16, Tracker = 15,
+  BUDGET.kinstrTotalMin = 860
+  BUDGET.frameWorstKinstr, BUDGET.frameP99Kinstr, BUDGET.allocKBps = 200, 36, 30
+  local caps = { Core = 370, Macros = 35, Quests = 30, Highlight = 20, Detect = 25, Export = 40, PathDraw = 16, Tracker = 15,
     Todo = 10, Window = 8, Speed = 6, Tour = 3, Glow = 3, ItemInfo = 8 }
   for k, v in pairs(caps) do BUDGET.kinstrModuleMin[k] = v end
 end
 -- PERF4 : 10 min sans RIEN (--idle : immobile, hors combat, aucun événement) : ce qui attend un changement ne travaille
 -- pas. 4.0.0 : 600 kinstr/min ; 4.0.1 : ≈ 285, dont ≈ 0 pour les modules à événements (≤ 2 chacun). Le reste : l'ordonnanceur
 -- (Core) et les minuteurs à la seconde de la boussole, du trajet et du placement (Compass, Route, Planner, UI).
+-- (5.0 STABLE) 4.3.6 mesurait 366 (test rouge : un seul module sans « autoIdleSafe » faisait tourner TOUS les
+-- :AutoRefresh() toutes les 3 s à l'arrêt). 5.0 : le calme se juge par module → 295 mesuré, plafond 320 (avant : 340).
+-- Le cœur (ordonnanceur + relevé des pics) et les aides de géométrie d'Export, appelées par le trajet / le groupe, ont
+-- leur plafond à la mesure ; le motif « 1 Hz » ne se juge pas sur ~2 kinstr par image.
+-- Sans --ms-rate, le budget de l'ordonnanceur lit l'horloge RÉELLE : d'un lancement à l'autre le cœur mesure 128 à 138
+-- et la pire image 32 à 39 kinstr (0,6 à 0,8 ms, le premier tour complet à 32 s : Groupe + Rejoindre). Plafonds =
+-- le haut de la fourchette + ~10 % (cœur 150 ; 4.3.6 : 177) et 48 kinstr (≈ 1 ms, quatre fois sous la règle des 4 ms).
 if opts.idle then
-  BUDGET.kinstrTotalMin = 340
-  BUDGET.frameWorstKinstr, BUDGET.frameP99Kinstr, BUDGET.allocKBps = 32, 12, 22
+  BUDGET.kinstrTotalMin = 320
+  BUDGET.frameWorstKinstr, BUDGET.frameP99Kinstr, BUDGET.allocKBps = 48, 12, 22
+  BUDGET.framePhaseRatio = 2.0
   -- (Detect et Export : appelés par la boussole et le trajet ; PathDraw : une passe au plus toutes les 30 s, puis dort)
-  local caps = { Core = 115, Export = 10, Detect = 8, PathDraw = 6, Quests = 4, Tracker = 4, Todo = 4, Speed = 3,
+  local caps = { Core = 150, Export = 26, Detect = 8, PathDraw = 6, Quests = 4, Tracker = 4, Todo = 4, Speed = 3,
     Highlight = 2, Macros = 2, Window = 2, Tour = 1, Glow = 1, Hub = 1, Shortcuts = 1, Bugs = 1, ItemInfo = 1,
     QuestPins = 1, Watch = 1, Addons = 1, Brain = 1 }   -- REPLACE : rien à l'arrêt (carte fermée, joueur immobile)
   for k, v in pairs(caps) do BUDGET.kinstrModuleMin[k] = v end

@@ -1653,6 +1653,8 @@ function M:OnEnable()
       end
     end)
   end
+  -- (5.0 STABLE) immobile : le coup d'œil 3 fois moins souvent (le cœur le ramène à 1 s dès que tu bouges)
+  if M.ticker and M.ticker.IdleStretch then M.ticker:IdleStretch(3) end
   -- (PERF4, si le cœur l'offre) réveil dès que tu te remets à bouger : la flèche repart sans attendre le coup d'œil
   if T.OnMotion then T:OnMotion("Compass", function() if frame and frame:IsShown() then M.Glance() end end) end
   T:After(2, function() pcall(M.Rebuild, "init") M.Refresh() end)

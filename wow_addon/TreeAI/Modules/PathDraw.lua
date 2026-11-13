@@ -849,11 +849,13 @@ local driver
 local acc = 0
 PD.idleN = 0
 -- (4.0.1) par image : une addition (pas d'appel) tant que la prochaine passe n'est pas due
+local guardedTick   -- (5.0 STABLE) la passe (pas l'addition par image) comptée dans /tai perf et /tai pics
 function PD.OnUpdate(_, el)
   acc = acc + (el or 0)
   if acc < last.step then return end
   acc = 0
-  PD.MinimapTick()
+  if not guardedTick then guardedTick = T.Guard and T:Guard(PD, "minimap (tracé)", function() PD.MinimapTick() end) or PD.MinimapTick end
+  guardedTick()
 end
 -- (4.0.1) immobile : plus d'OnUpdate du tout ; réveillé par le coup d'œil du cœur (T:OnMotion), les événements de
 -- zone / zoom / réglage, le cycle des :AutoRefresh() (il tourne dès qu'un événement arrive) et les options

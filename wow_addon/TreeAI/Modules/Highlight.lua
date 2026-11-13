@@ -1465,7 +1465,19 @@ function M:OnEnable()
   self:RegisterEvent("QUEST_REMOVED", function() schedule("rebuild", 0.8) end)
   -- (4.0.1) 0,8 s : après la relecture du journal par Quêtes (0,5 s), dans une autre image
   self:RegisterEvent("UNIT_QUEST_LOG_CHANGED", function(_, _, u) if u == "player" then logChanged() end end)
-  self:RegisterEvent("GET_ITEM_INFO_RECEIVED", function() kindCache = {} schedule("bags", 0.3) schedule("tab", 2) end)
+  -- (5.0 STABLE) infos d'objet : par dizaines quand un autre addon balaie l'HV / la banque / inspecte. Regroupées par
+  -- le cœur, et seulement si l'un de ces objets a déjà été classé ici (dans tes sacs / le butin) — sinon rien
+  if T.OnItemInfo then
+    T:OnItemInfo(M, function(_, info)
+      local hit = info.many
+      if not hit then for id in pairs(info.items or {}) do if kindCache[id] ~= nil then hit = true break end end end
+      if not hit then return end
+      kindCache = {}
+      schedule("bags", 0.05) schedule("tab", 2)
+    end)
+  else
+    self:RegisterEvent("GET_ITEM_INFO_RECEIVED", function() kindCache = {} schedule("bags", 0.3) schedule("tab", 2) end)
+  end
   if not (T.Lite and T:Lite()) then   -- (LITE) barres de nom / cible : seulement hors profil essentiel
     -- (5.0 STABLE) barres de nom regroupées par le cœur (T:OnPlates) : les nouvelles ensemble, 0,1 s après ; une barre
     -- qui part cache notre icône tout de suite (le jeu réutilise la barre pour une autre unité)

@@ -243,6 +243,8 @@ end
 ---------------------------------------------------------------------------------------------------
 -- cycle de vie
 ---------------------------------------------------------------------------------------------------
+-- (5.0 STABLE) au calme (aucun événement, joueur immobile) : rien à refaire — le cycle complet du cœur (30 s) suffit
+M.autoIdleSafe = true
 function M:AutoRefresh() if not inCombat() then hpOOC = pct("player") M.CheckPrePull() end end
 
 function M:OnEnable()

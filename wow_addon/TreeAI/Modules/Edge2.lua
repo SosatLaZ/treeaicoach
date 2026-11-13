@@ -460,6 +460,8 @@ local function run(fn, ...) return pcall(fn, ...) end
 local tick = 0
 --- une seule petite vérification par passage ; rien en combat (AutoRefresh n'y tourne pas)
 local ROT = { "CheckContest", "CheckLuck", "CheckLoot", "CheckEscort", "CheckTracking", "CheckBreadcrumb" }
+-- (5.0 STABLE) au calme (aucun événement, joueur immobile) : rien à refaire — le cycle complet du cœur (30 s) suffit
+M.autoIdleSafe = true
 function M:AutoRefresh()
   tick = tick + 1
   if inCombat() then return end

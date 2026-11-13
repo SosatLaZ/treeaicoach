@@ -1222,6 +1222,9 @@ M.Mark = mark
 -- (4.4 SMART) rien de marqué (aucun événement utile) : le conseil de fond tourne au plus toutes les 10 s (avant : 3 s)
 M.IDLE_EVERY = 10
 local idleAt = -1e9
+-- (5.0 STABLE) au calme (aucun événement, joueur immobile) : rien à évaluer — ses drapeaux viennent des événements ; le
+-- conseil de fond reprend au cycle complet du cœur (30 s) ou dès que quelque chose bouge
+M.autoIdleSafe = true
 function M:AutoRefresh()
   if not next(dirty) and now() - idleAt < M.IDLE_EVERY then return end
   idleAt = now()

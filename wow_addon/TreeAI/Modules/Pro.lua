@@ -835,6 +835,8 @@ end
 -- les événements (butin, combat fini, quête vue…) gardent leur recalcul immédiat (M.Refresh)
 M.IDLE_EVERY = 30
 local autoAt, autoGen = -1e9, nil
+-- (5.0 STABLE) au calme (aucun événement, joueur immobile) : rien à refaire — le cycle complet du cœur (30 s) suffit
+M.autoIdleSafe = true
 function M:AutoRefresh()
   if inCombat() then return end
   local qg = T.QuestGen and T:QuestGen()

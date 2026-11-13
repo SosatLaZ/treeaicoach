@@ -393,6 +393,8 @@ function M.Refresh(delay)
   pending = true
   T:After(delay or 1, function() pending = false pcall(M.Update) end)
 end
+-- (5.0 STABLE) au calme (aucun événement, joueur immobile) : rien à refaire — le cycle complet du cœur (30 s) suffit
+M.autoIdleSafe = true
 function M:AutoRefresh()
   if now() - lastRun >= 30 then pcall(M.Update) end
 end

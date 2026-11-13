@@ -323,6 +323,25 @@ return function(M, ctx)
     "le relevé dit qui est en pause")
   WD.WakeAll()
   M.Advance(1, 0.05)
+  -- in combat: events and timers stop at once (no frame is touched), OnDisable waits for the end of the fight
+  local disabledAt
+  function Pm:OnDisable() disabledAt = M.inCombat and "combat" or "calme" end
+  M.Advance(70, 1)
+  M.EnterCombat()
+  slowMs = 60
+  for _ = 1, 4 do T:Fire("ZZ_WORK") M.Advance(0.5, 0.05) end
+  slowMs = 0
+  M.Advance(0.5, 0.05)
+  reset()
+  M.FireEvent("UNIT_HEALTH", "player")
+  check(Pm._asleep == "slow" and Pm._suspended and n("HP") == 0 and disabledAt == nil,
+    "pause en combat : événements coupés tout de suite, OnDisable pas encore (" .. tostring(disabledAt) .. ")")
+  M.LeaveCombat()
+  M.Advance(1, 0.05)
+  check(disabledAt == "calme" and not Pm._active, "… OnDisable à la sortie du combat (" .. tostring(disabledAt) .. ")")
+  Pm.OnDisable = nil
+  WD.WakeAll()
+  M.Advance(1, 0.05)
   -- a guarded hook (tooltip / OnUpdate) is timed and silenced the same way
   local hookN = 0
   local hook = T:Guard(Pm, "crochet", function() hookN = hookN + 1 end)
@@ -333,6 +352,27 @@ return function(M, ctx)
   check(hookN == 2, "T:Guard : module coupé = crochet muet")
   T:SetModuleEnabled("ZzProbe", true)
   M.Advance(1, 0.05)
+
+  -- ------------------------------------------------------------------ 7 bis. the auto-refresh cycle at rest, per module
+  -- (4.3.6: ONE module without « autoIdleSafe » made every :AutoRefresh() run every 3 s while nothing happened)
+  local ar = { safe = 0, plain = 0 }
+  local Ps = T:RegisterModule("ZzCalme", { title = "Sonde calme", defaults = { enabled = true }, autoIdleSafe = true,
+    AutoRefresh = function() ar.safe = ar.safe + 1 end })
+  local Pp = T:RegisterModule("ZzCycle", { title = "Sonde cycle", defaults = { enabled = true },
+    AutoRefresh = function() ar.plain = ar.plain + 1 end })
+  T:SetModuleEnabled("ZzCalme", true) T:SetModuleEnabled("ZzCycle", true)
+  M.speed = 0
+  M.Advance(40, 0.2)                       -- settle: the last events of the sections above are behind
+  ar.safe, ar.plain = 0, 0
+  M.Advance(25, 0.2)                       -- 25 s of nothing: no event, no movement
+  check(ar.plain >= 2, "au calme : un module sans « autoIdleSafe » garde son cycle (étiré) (" .. ar.plain .. ")")
+  check(ar.safe <= 1, "au calme : un module « autoIdleSafe » n'est pas appelé, même si un autre ne l'est pas (" .. ar.safe .. ")")
+  ar.safe = 0
+  M.FireEvent("PLAYER_MONEY")
+  M.Advance(8, 0.2)
+  check(ar.safe >= 1, "un événement : il est rappelé au cycle suivant (" .. ar.safe .. ")")
+  T:SetModuleEnabled("ZzCalme", false) T:SetModuleEnabled("ZzCycle", false)
+  check(Ps and Pp, "sondes du cycle")
 
   -- ------------------------------------------------------------------ 8. quest guide
   local function activeGuide()

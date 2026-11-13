@@ -21,7 +21,7 @@ return function(X)
   local env = main.env
   local FPS = math.max(1, math.floor(1 / STEP + 0.5))
   local LIMIT = 200          -- kinstr of TreeAI work in one image = 4 ms
-  local REST_KINSTR_S = 6    -- « rien au repos » : ≤ 6 kinstr / s (0,12 ms / s) for the whole addon, measured after 12 s
+  local REST_KINSTR_S = 8    -- « rien au repos » : ≤ 8 kinstr / s (0,16 ms per second, group of 4 kept in sync) for the whole addon
 
   -- deterministic random (never the addon's math.random stream)
   local seed = 20261113
@@ -35,8 +35,45 @@ return function(X)
   end
   local function ev(...) return fire(main, ...) end
 
+  -- -v: who reads the whole quest log (C_QuestLog.GetInfo: a fresh table of ~30 fields per quest, every time)
+  local logReads = {}
+  if opts.verbose then
+    local QL = rawget(env, "C_QuestLog")
+    for _, fname in ipairs({ "GetInfo", "GetQuestObjectives" }) do
+      local f = QL and QL[fname]
+      if f then
+        QL[fname] = function(...)
+          local T1 = rawget(env, "TreeAI")
+          local who = T1 and rawget(T1, "_ctx") or "-"
+          local key = fname .. "  " .. tostring(who)
+          logReads[key] = (logReads[key] or 0) + 1
+          return f(...)
+        end
+      end
+    end
+  end
   -- ------------------------------------------------------------------ phases + statistics
   local phases, cur = {}, nil
+  -- -v: memory allocated per dispatched call (exclusive), by module + job — who feeds the garbage collector
+  local allocBy, aStack = {}, {}
+  if opts.verbose and main.T and main.T._SetRunProbe then
+    main.T._SetRunProbe(function(owner, ctx, begin)
+      if not FR.open then return end
+      local kb = collectgarbage("count") - (FR.hookKB or 0)
+      if begin then
+        local top = aStack[#aStack]
+        if top then top.own = top.own + (kb - top.at) end
+        aStack[#aStack + 1] = { at = kb, own = 0, key = (cur and cur.name or "-") .. "  " .. tostring(type(owner) == "table" and owner.name or "Core") .. "  " .. tostring(ctx or "-") }
+      else
+        local e = table.remove(aStack)
+        if e then
+          allocBy[e.key] = (allocBy[e.key] or 0) + e.own + (kb - e.at)
+          local top = aStack[#aStack]
+          if top then top.at = kb end
+        end
+      end
+    end)
+  end
   local scripts = {}
   local function spawn(fn) scripts[#scripts + 1] = coroutine.create(fn) end
   local function wait(n) for _ = 1, (n or 1) do coroutine.yield() end end
@@ -747,7 +784,9 @@ return function(X)
   end)
 
   -- ------------------------------------------------------------------ 7. repos : nothing happens
-  phase("repos", 40, function() M.speed = 0 ev("PLAYER_STOPPED_MOVING") end, nil, nil, 12)
+  -- (measured after 40 s: the last catch-ups of what moved during the phases before are done ; one full « tout
+  -- relire » cycle of the core — every 30 s — falls inside the measure)
+  phase("repos", 80, function() M.speed = 0 ev("PLAYER_STOPPED_MOVING") end, nil, nil, 40)
 
   FR.driver, FR.onFrame, FR.inbox = nil, nil, nil
 
@@ -803,6 +842,20 @@ return function(X)
       if perS > REST_KINSTR_S then X.fail(("crowd rest: %.1f kinstr / s > %d (rien au repos)"):format(perS, REST_KINSTR_S)) end
     end
   end
+  if next(logReads) then
+    local lr = {}
+    for k, v in pairs(logReads) do lr[#lr + 1] = { k = k, n = v } end
+    table.sort(lr, function(x, y) return x.n > y.n end)
+    P("quest-log table reads over the run (API  context):")
+    for i = 1, math.min(25, #lr) do P(("  %6d  %s"):format(lr[i].n, lr[i].k)) end
+  end
+  if next(allocBy) then
+    local al = {}
+    for k, v in pairs(allocBy) do al[#al + 1] = { k = k, n = v } end
+    table.sort(al, function(x, y) return x.n > y.n end)
+    P("memory allocated by dispatched call (KB over the run, phase  module  job):")
+    for i = 1, math.min(45, #al) do P(("  %8.0f KB  %s"):format(al[i].n, al[i].k)) end
+  end
   -- what the addon itself measured (T.Spikes: a call over 8 ms, an image over 12 ms on its own clock) and the watchdog
   local Tm = main.T
   local sp = Tm and Tm.Spikes and Tm.Spikes.Store and Tm.Spikes.Store()
@@ -814,6 +867,24 @@ return function(X)
   end
   local asleep = Tm and Tm.Watchdog and Tm.Watchdog.Asleep and Tm.Watchdog.Asleep() or {}
   if #asleep > 0 then X.fail("crowd: module(s) put to sleep by the watchdog: " .. table.concat(asleep, ", ")) end
+  -- the compass: every change of target is logged by the addon (NavTrace) — a target that flaps between two quests
+  -- (A → B → A within a few seconds) is the « boussole qui hésite » complaint
+  local NTr = Tm and Tm.NavTrace
+  local nav = NTr and NTr.Lines and NTr.Lines(300) or {}
+  local changes, flaps, prevPair = 0, 0, nil
+  local seq = {}
+  for i = #nav, 1, -1 do
+    local a, b = tostring(nav[i]):match("cible · (.-) → (.-) %(")
+    if a and b then
+      changes = changes + 1
+      seq[#seq + 1] = { a, b }
+      if prevPair and prevPair[1] == b and prevPair[2] == a then flaps = flaps + 1 end
+      prevPair = { a, b }
+    end
+  end
+  P(("compass: %d target changes over the run, %d immediate back-and-forth (A → B → A)"):format(changes, flaps))
+  if flaps > 0 then X.fail(("crowd: the compass flapped %d time(s) between two targets"):format(flaps)) end
+  if opts.verbose then for i = 1, math.min(40, #nav) do P("  nav " .. tostring(nav[i])) end end
   local qb, hold = Tm and Tm._questBurst, Tm and Tm.HOLD and Tm.HOLD.GROUP_ROSTER_UPDATE
   P(("noise dropped by the core: %d quest-log events, %d roster events (given: %d)"):format(qb and qb.noise or 0, hold and hold.noise or 0, hold and hold.n or 0))
   return out

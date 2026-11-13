@@ -488,9 +488,12 @@ X.TagFlags = tagFlags
 -- ZonePlan et l'export le lisaient 3 à 6 fois dans le même rafraîchissement. Lecture seule pour tous.
 local snapT, snapG, snapOut, snapN = nil, nil, nil, 0
 local logSnapshotRaw
+X.SNAP_TTL = 2
 local function logSnapshot()
   local t, g = now(), T.QuestGen and T:QuestGen() or nil
-  if snapOut and g and t == snapT and g == snapG then return snapOut, snapN end
+  -- (5.0 STABLE) T:QuestGen() n'avance plus que si le journal a vraiment changé : le relevé vaut jusqu'au prochain
+  -- changement (au plus SNAP_TTL s — filet), au lieu d'être refait à chaque image où quelqu'un le demande
+  if snapOut and g and g == snapG and t >= snapT and t - snapT < X.SNAP_TTL then return snapOut, snapN end
   local out, n = logSnapshotRaw()
   snapT, snapG, snapOut, snapN = t, g, out, n
   return out, n
@@ -1127,7 +1130,8 @@ function X:Rebuild()
   if not driver then
     local CF = G("CreateFrame")
     driver = CF and try(CF, "Frame")
-    if driver then driver:SetScript("OnUpdate", resume) end
+    -- (5.0 STABLE) tranches comptées dans /tai perf et /tai pics, arrêtées si le module est coupé / mis en pause
+    if driver then driver:SetScript("OnUpdate", T.Guard and T:Guard(X, "export (tranche)", resume) or resume) end
   end
   if driver then driver:Show() else while co do resume() end end
   return true
