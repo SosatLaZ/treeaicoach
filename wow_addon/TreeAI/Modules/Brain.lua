@@ -1295,6 +1295,9 @@ function B.UpdateNotice()
   for _, n in ipairs(S.needs or {}) do if n.urgent then urgent = n break end end
   local a = S.announce
   if a and now() - a.at > 90 then S.announce, a = nil, nil end
+  -- (5.0 INTEG) guide de quêtes coupé : plus aucun avis sur le trajet (« Trajet en mode Groupe », pierre de foyer pour rendre)
+  local noGuide = T.QuestGuideOn and not T:QuestGuideOn() or false
+  if noGuide and a and a.kind == "style" then S.announce, a = nil, nil end
   if urgent and opt("errands") and c.main ~= "dead" and c.main ~= "ghost" and c.main ~= "dungeon" then
     local st
     for _, s in ipairs(stops()) do if not s.done and s.key == "errand:" .. urgent.kind then st = s end end
@@ -1308,7 +1311,7 @@ function B.UpdateNotice()
     if nx then cand = { "En vol : à l'arrivée, " .. cut(nx, 40), "le trajet reprend à l'atterrissage", 1, "always" } end
   elseif c.main == "city" and S.errandText and S.errandText ~= "" and opt("errands") then
     cand = { "Courses ici : " .. cut(S.errandText, 40), "clic : la boussole vise le PNJ le plus proche", 1, nil, cityClick }
-  elseif S.hearth then
+  elseif S.hearth and not noGuide then
     cand = { fmt("Pierre de foyer : %s à rendre à %s", plural(S.hearth.turns, "quête", "quêtes"), S.hearth.name),
       fmt("≈ %d min gagnées · plus rien d'autre ici", floor((S.hearth.gain or 0) / 60 + 0.5)), 1 }
   end
@@ -1558,6 +1561,7 @@ function B:OnEnable()
     if S.afterCombat then S.afterCombat = false due("ctx", 1) else due("ctx", 2) end
   end)
   self:On("GROUP_INTENT", function() due("follow", 0.5) end)
+  self:On("QUEST_GUIDE_CHANGED", function() due("notice", 0.1) end)   -- (5.0 INTEG) l'avis de trajet part avec le guide
   -- (4.0.4) fin d'une session métier : le pilote reprend où il en était
   self:On("FOCUS_CHANGED", function(_, _, kind) if not kind then due("park", 1) due("errand", 1.5) due("zone", 2) end end)
   self:On("SUMMARY", function() pcall(B.WriteSummary) end)

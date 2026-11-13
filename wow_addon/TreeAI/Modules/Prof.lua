@@ -1087,6 +1087,8 @@ function M.Build()
   local d = D()
   local lines, out = {}, { profs = {}, plans = {} }
   M.profs = M.ScanProfessions()
+  -- (5.0 INTEG) métiers relus : le gardien « Métiers » des sacs refait son relevé s'ils ont changé (compétence, métier)
+  if M.Level and M.Level.KeepCheck then pcall(M.Level.KeepCheck) end
   if #M.profs == 0 then return lines, out end
   if not d then
     lines[1] = { text = "Données de recettes absentes (Data/Recipes.lua).", prio = 1 }

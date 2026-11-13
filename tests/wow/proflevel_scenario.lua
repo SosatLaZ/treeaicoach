@@ -219,8 +219,9 @@ return function(M, ctx)
   while card and card:IsShown() and card.label and card.label:find("^Acheter") and n < 8 do
     card.btn:Click()
     M.FireEvent("BAG_UPDATE_DELAYED")
-    M.Advance(0.5)
+    M.Advance(0.8, 0.1)   -- (5.0: bag changes are coalesced, the cards are redrawn one job per image)
     n = n + 1
+    card = PL.GetCard()
   end
   check(#M.bought >= 1 and #M.bought == n and violations() == 0, ("merchant: %d click(s) = %d purchase(s), violations %d"):format(n, #M.bought, violations()))
   check(T.API.ItemCount(2321) >= (thread and thread.n or 1), "fine thread in the bags: " .. tostring(T.API.ItemCount(2321)))

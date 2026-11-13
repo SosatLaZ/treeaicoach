@@ -2373,6 +2373,9 @@ function CR.ProposeNow(map0)
   local n = 0
   for _, e in ipairs(plan.errands) do if e.kind ~= "sell" then n = n + 1 end end
   if n < 2 then return end
+  -- (5.0 INTEG) aucun arrêt placé (PNJ de cette ville jamais vus) : « 5 courses, 0 arrêt · < 1 min » ne guide vers
+  -- rien et annonce une durée fausse → pas de proposition (la page « Courses en ville » dit quoi demander à un garde)
+  if #plan.stops == 0 then return end
   CR.proposedFor = p.mapID
   CR.lastPlan = plan
   CR:Suggest("propose", fmt("Courses en ville : %d courses, %d arrêt%s · %s", n, #plan.stops, #plan.stops > 1 and "s" or "", minutes(plan.sec)), 2,

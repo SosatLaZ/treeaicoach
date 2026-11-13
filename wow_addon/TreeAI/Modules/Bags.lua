@@ -1301,17 +1301,24 @@ function M.MissingText()
 end
 local function resting() return pub(try(g("IsResting"))) and true or false end
 function M.UpdateStock()
+  -- (5.0 INTEG) la ligne n'est reposée / retirée que si elle change (avant : à chaque changement de sac en ville, et
+  -- chaque fois le panneau se redessinait pour rien)
   if not (M._active and opt("stock")) or inCombat() or not (resting() or M.merchantOpen) then
-    M:Clear("stock")
+    if M._stockShown ~= false then M._stockShown = false M:Clear("stock") end
     if not M.merchantOpen and not resting() then M._stockHidden = nil end   -- reparti : la ligne reviendra à la prochaine ville
     return nil
   end
   local text = M.MissingText()
-  if not text or M._stockHidden then M:Clear("stock") return nil end
+  if not text or M._stockHidden then
+    if M._stockShown ~= false then M._stockShown = false M:Clear("stock") end
+    return nil
+  end
+  if M._stockShown == text and now() - (M._stockAt or -1e9) < 600 then return text end
+  M._stockShown, M._stockAt = text, now()
   M:Suggest("stock", text, 1, { ttl = 900, cooldown = 300, sound = false,
     tooltip = { "Stock conseillé pour ton niveau (compté dans tes sacs).",
       "Le détail et pourquoi : /tai sacs (fenêtre TreeAI, « HV » puis « Sacs »).", "Clic : ranger jusqu'à la prochaine ville" },
-    onClick = function() M._stockHidden = true M:Clear("stock") end })
+    onClick = function() M._stockHidden = true M._stockShown = false M:Clear("stock") end })
   return text
 end
 

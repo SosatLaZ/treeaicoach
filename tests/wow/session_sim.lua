@@ -132,12 +132,15 @@ BUDGET.kinstrModuleMin.GroupJoin = 60
 -- journal. Plafonds = mesure + ~6 % ; pire image = la règle de la V5 (aucune image au-delà de 4 ms = 200 kinstr) ;
 -- les modules dont le coût ne dépend que d'eux gardent leur plafond de 4.0.1 (Surbrillance 28 → 15 mesuré, Suivi 15 → 11).
 if opts.profile == "sur" then
-  BUDGET.kinstrTotalMin = 860
-  -- (5.0 INTEG) fusion des cinq branches : 855 kinstr/min mesurés (cœur 361, Sacs 19, Équipement du groupe 30 après
-  -- son minuteur étiré au repos : 52 avant), pire image 121, p99 34 — tous sous les plafonds de STABLE, inchangés.
-  -- Seule l'allocation est re-mesurée : 30,5 Ko/s (STABLE seul : 28,0) — le nouveau module Sacs relève les sacs et garde
-  -- un avis par objet quand ils changent en ville / chez le marchand, les vrais gardiens Équipement / Métiers gardent
-  -- leurs réponses. Plafond 30 → 33 (mesure + ~8 %).
+  -- (5.0 INTEG) fusion des cinq branches, re-mesurée (6 lancements) : 855 à 864 kinstr/min — STABLE seul : 812 à 821.
+  -- D'où vient l'écart (table par module, même session) : Sacs, nouveau module du mode sûr, 20 ; le cœur +24 (361 à
+  -- 364 : ses flux regroupés de sacs / de journal ont maintenant des abonnés — Sacs, Équipement, Métiers, la bande) ;
+  -- l'interface +10 (lignes des nouveaux modules) ; Métiers +2, Équipement +1 (vrais gardiens). Repris en échange :
+  -- Équipement du groupe 52 → 30 (minuteur étiré au repos), lecture du journal partagée par le flux de quêtes.
+  -- Pire image 121 à 129 kinstr (2,6 ms), p99 34 à 35 : sous les plafonds de STABLE, inchangés, comme le cœur (370).
+  -- Plafond total 860 → 890 (haut de la fourchette mesurée + 3 %). Allocation : 30,5 Ko/s mesurés (STABLE seul :
+  -- 28,0 — relevé des sacs et un avis par objet quand ils changent en ville / chez le marchand) → plafond 30 → 33.
+  BUDGET.kinstrTotalMin = 890
   BUDGET.frameWorstKinstr, BUDGET.frameP99Kinstr, BUDGET.allocKBps = 200, 36, 33
   local caps = { Core = 370, Macros = 35, Quests = 30, Highlight = 20, Detect = 25, Export = 40, PathDraw = 16, Tracker = 15,
     Todo = 10, Window = 8, Speed = 6, Tour = 3, Glow = 3, ItemInfo = 8 }

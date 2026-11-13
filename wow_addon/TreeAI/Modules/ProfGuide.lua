@@ -432,9 +432,19 @@ end
 local keep = { map = nil, sig = nil, busy = false, at = -100 }
 PL._keep = keep   -- (tests)
 local function keepSig()
+  -- (appelée pour chaque objet des sacs : une seule construction par image)
+  local t = now()
+  if keep.sigT == t and keep.sigNow then return keep.sigNow end
   local v = PL.ver or {}
-  return tostring(API.BagGen and API.BagGen() or 0) .. ":" .. tostring(v.known) .. ":" .. tostring(v.bank) .. ":" .. tostring(v.prices)
-    .. ":" .. tostring(T.QuestGen and T:QuestGen() or 0)
+  local CRs = T.CityRun
+  local sig = tostring(API.BagGen and API.BagGen() or 0) .. ":" .. tostring(v.known) .. ":" .. tostring(v.bank) .. ":" .. tostring(v.prices)
+    .. ":" .. tostring(T.QuestGen and T:QuestGen() or 0) .. ":" .. tostring(v.bags) .. ":" .. tostring(CRs and CRs.choiceGen or 0)
+    .. ":" .. tostring(num(try(g("UnitLevel"), "player")) or 0)
+  -- (5.0 INTEG) tes métiers et leur compétence en font partie : un relevé fait avant que le jeu les ait donnés (connexion)
+  -- restait « valable » et le cuir de ton plan n'était réclamé par personne
+  for _, p in ipairs(M.profs or {}) do sig = sig .. ":" .. tostring(p.line) .. "=" .. tostring(p.rank) end
+  keep.sigT, keep.sigNow = t, sig
+  return sig
 end
 local function craftLines()
   local out, d = {}, D()
@@ -483,18 +493,19 @@ function PL.KeepRebuild()
     -- (5.0 INTEG) l'avis a changé : Sacs refait SEULEMENT les objets touchés (tout, la première fois)
     local B = T.Bags
     if PL.keeperOn and type(B) == "table" and type(B.Invalidate) == "function" then
-      if not before then pcall(B.Invalidate)
+      local changed = false
+      if not before then pcall(B.Invalidate) changed = true
       else
         for id, e in pairs(acc) do
           local o = before[id]
-          if not o or o.n ~= e.n then pcall(B.Invalidate, id) end
+          if not o or o.n ~= e.n then pcall(B.Invalidate, id) changed = true end
         end
-        for id in pairs(before) do if not acc[id] then pcall(B.Invalidate, id) end end
-        for id, w in pairs(surplus) do if beforeS[id] ~= w then pcall(B.Invalidate, id) end end
-        for id in pairs(beforeS) do if not surplus[id] then pcall(B.Invalidate, id) end end
+        for id in pairs(before) do if not acc[id] then pcall(B.Invalidate, id) changed = true end end
+        for id, w in pairs(surplus) do if beforeS[id] ~= w then pcall(B.Invalidate, id) changed = true end end
+        for id in pairs(beforeS) do if not surplus[id] then pcall(B.Invalidate, id) changed = true end end
       end
-      -- marchand / banque ouverts : sa carte se remet à jour (avis refaits par petits paquets)
-      if (B.merchantOpen or B.bankOpen) and type(B.Refresh) == "function" then pcall(B.Refresh) end
+      -- un avis a VRAIMENT changé : la carte du marchand / les pièces des sacs ouverts se remettent à jour (rien sinon)
+      if changed and type(B.Refresh) == "function" then pcall(B.Refresh) end
     end
   end
   local function step()
@@ -573,6 +584,10 @@ function PL.KeepFor(id)
   local w = keep.surplus and keep.surplus[id]
   if w then return 0, w end                                -- avis explicite « en trop » (voir KeepRebuild)
   return 0, nil
+end
+--- les métiers viennent d'être relus (Prof.Update) : relevé refait seulement si sa signature a changé
+function PL.KeepCheck()
+  if PL.keeperOn and keep.map and keep.sig ~= keepSig() then PL.KeepSoon() end
 end
 function PL.KeepSoon()
   if PL.keepPending or keep.busy then return end
@@ -699,6 +714,8 @@ function PL.OnEnable()
     end) and true or false
   end
   if not PL.keeperOn then T:After(3, function() PL.RegisterKeeper() end) end   -- Bags chargé après nous
+  -- (5.0 INTEG) un regard, une fois, quand la connexion est finie (métiers, sacs et recettes lus) : relevé refait s'il date
+  T:After(12, function() pcall(PL.KeepCheck) end)
   -- (5.0 INTEG, contrat LOOK) le bouton « Métiers » de la bande : un clic = la session guidée (lancer / quitter) ;
   -- pastille = achats en attente du plan ; allumé pendant la session ; infobulle = la prochaine étape
   local Sc = T.Shortcuts

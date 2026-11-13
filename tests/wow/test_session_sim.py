@@ -6,7 +6,7 @@ HUNTER, MAGE, WARRIOR × modern / legacy API in the default « essentiel » modu
 gets: ≤ 1.5 M Lua instructions / min for the whole addon), + HUNTER and MAGE with every module on (« tout »:
 ≤ 4 M / min), + HUNTER on the faithful WoW: Forever mock (essentiel and tout, same budgets), + PERF4 (4.0.1): HUNTER /
 Forever in « mode sûr » (what the player runs: 4.0.0 measured 796 kinstr/min with ~30 modules; 4.3.6: 893 with Groupe,
-Conseils pro, Pilote, Courses… in the safe profile; 5.0: ≤ 860, no frame over 4 ms) and 10 minutes of pure idle in
+Conseils pro, Pilote, Courses… in the safe profile; 5.0: ≤ 890, no frame over 4 ms) and 10 minutes of pure idle in
 « mode sûr » (nothing happens: event-driven modules ≈ 0, whole addon ≤ 320, 4.0.0 measured 600). The sessions run in
 parallel. Fake names only.
 """
@@ -33,7 +33,10 @@ EXTRA = {"sur-idle": ["--profile", "sur", "--idle", "--minutes", "10"]}
 # kilo-instructions / simulated minute, whole addon (main client); 3.9.9: +50 for 10 new light modules (session_sim.lua)
 # 5.0 STABLE: « sur » re-based on what the safe profile contains today (see session_sim.lua: 4.3.6 measured 893, 5.0
 # measures 812), « sur-idle » tightened (4.3.6: 366, 5.0: 295)
-BUDGET = {"essentiel": 2450, "tout": 4600, "sur": 860, "sur-idle": 320}
+# 5.0 INTEG: « sur » 860 → 890 — the five merged branches measure 855 to 864 (STABLE alone: 812 to 821); the gap is
+# listed module by module in session_sim.lua (Sacs is a new module of the safe profile, the core's coalesced flows now
+# have subscribers). No frame over 4 ms, per-module caps unchanged.
+BUDGET = {"essentiel": 2450, "tout": 4600, "sur": 890, "sur-idle": 320}
 
 pytestmark = pytest.mark.skipif(not shutil.which("lua5.1"), reason="lua5.1 not installed")
 
