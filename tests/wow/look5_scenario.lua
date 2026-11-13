@@ -364,7 +364,8 @@ return function(M, ctx)
   local hasBags = W.pageIndex.bags ~= nil
   if not hasBags then
     check(W.Resolve("bags") == "gear" and W.Resolve("sacs") == "gear", "page Sacs pas encore inscrite : redirigée vers Équipement")
-    W.AddPage({ id = "bags", label = "Sacs", icon = Th.ICONS.bags, title = "Sacs", desc = "Page d'essai",
+    -- (inscrite comme avant la 5.0 : sous-page cachée de l'HV — la navigation lui donne quand même sa place)
+    W.AddPage({ id = "bags", hidden = true, parent = "hv", label = "Sacs", icon = Th.ICONS.bags, title = "Sacs", desc = "Page d'essai",
       top = function() return { { "Vendre (sûr)", function() end, "essai", icon = Th.ICONS.bags, sub = "3 objets", count = 3 },
         { "Ranger", function() end, "essai" }, { "Réparer", function() end, "essai" }, { "Quatrième", function() end, "essai" } } end,
       render = function(Ly) Ly.note("Note d'essai.", "info") Ly.card("Carte", { "Ligne 1", "Ligne 2" }) Ly.kv("Places libres", "12")
@@ -508,6 +509,8 @@ return function(M, ctx)
   check(wr.l + wr.w / 2 > SW / 2, "W.ResetPlace : revenue à droite")
   -- reopened during its closing fade: stays open
   W.Close()
+  M.Advance(0.05, 0.05)
+  check(Th:IsAnimating(win), "fermeture : fondu en cours")
   W.Open("quests")
   M.Advance(0.5, 0.05)
   check(W.IsOpen() and (win:GetAlpha() or 1) > 0.9, "rouverte pendant le fondu de fermeture : elle reste ouverte")
@@ -520,7 +523,9 @@ return function(M, ctx)
   check(T:ShowWizard(1), "réglage ouvert")
   local wz = T:GetWizard()
   local zr = geo.Rect(wz)
-  check(wz:IsShown() and geo.OnScreen(wz, 2) and zr.l + zr.w / 2 > SW / 2, "réglage : à droite de l'écran, jamais au milieu")
+  check(wz:IsShown() and geo.OnScreen(wz, 2) and zr.b + zr.h / 2 > SH / 2, "réglage : à l'écran, au-dessus du centre")
+  -- never where the bags open (bottom right) nor over the party frames (left)
+  check(zr.l > SW * 0.2 and zr.l + zr.w < SW * 0.8 and zr.b > SH * 0.3, "réglage : ni sur les sacs (bas droite) ni sur le groupe (gauche)")
   for step = 1, 3 do
     out(("étape %d — %s"):format(step, plain(wz.title:GetText())))
     out("   " .. plain(wz.body:GetText()):gsub("\n+", " / "))

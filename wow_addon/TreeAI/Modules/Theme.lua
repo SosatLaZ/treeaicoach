@@ -1092,32 +1092,50 @@ function Th:ActionButton(parent, opts)
   b.push = meth(b, "CreateTexture", nil, "OVERLAY")
   if b.push then meth(b.push, "SetAllPoints", b); setColorTex(b.push, self:Color("pressed")); meth(b.push, "Hide") end
   b.icon = meth(b, "CreateTexture", nil, "ARTWORK")
-  local isz = opts.iconSize or (kind == "tile" and K.tile.icon or kind == "icon" and (h - 8) or K.button.icon)
-  if b.icon then
-    meth(b.icon, "SetSize", isz, isz)
-    if kind == "tile" then meth(b.icon, "SetPoint", "TOP", b, "TOP", 0, -4)
-    elseif kind == "icon" then meth(b.icon, "SetPoint", "CENTER", b, "CENTER", 0, 0)
-    else meth(b.icon, "SetPoint", "LEFT", b, "LEFT", K.button.pad - 2, 0) end
-  end
-  if kind ~= "icon" then
-    b.label = self:Text(b, opts.font or (kind == "tile" and "N" or "M"), "text")
-    if b.label then
-      meth(b.label, "SetWordWrap", false)
-      if kind == "tile" then meth(b.label, "SetPoint", "BOTTOM", b, "BOTTOM", 0, 3); meth(b.label, "SetJustifyH", "CENTER")
-      else meth(b.label, "SetPoint", "LEFT", b, "LEFT", K.button.pad + isz + 2, 0); meth(b.label, "SetJustifyH", "LEFT") end
-    end
-  end
+  b.label = self:Text(b, opts.font or (kind == "bar" and "M" or "N"), "text")
+  if b.label then meth(b.label, "SetWordWrap", false) end
   b.keyText = meth(b, "CreateFontString", nil, "OVERLAY", "NumberFontNormalSmallGray")
-  if b.keyText then
-    if kind == "bar" then meth(b.keyText, "SetPoint", "RIGHT", b, "RIGHT", -K.button.pad + 2, 0)
-    else meth(b.keyText, "SetPoint", "TOPLEFT", b, "TOPLEFT", 2, -2) end
-    meth(b.keyText, "SetTextColor", self:Color("key"))
-  end
+  if b.keyText then meth(b.keyText, "SetTextColor", self:Color("key")) end
   b.badge = self:CountBadge(b)
-  if b.badge then
-    if kind == "bar" then meth(b.badge, "SetPoint", "TOPLEFT", b.icon or b, "TOPRIGHT", -5, 4)
-    else meth(b.badge, "SetPoint", "TOPRIGHT", b, "TOPRIGHT", -1, -1) end
+  --- forme du bouton : "tile" (icône + mot dessous), "icon" (icône seule, compact), "bar" (icône + mot à droite).
+  --- Le même bouton change de forme (la bande passe en mode compact sans créer un 2e jeu de boutons).
+  function b.SetLayout(self2, k2)
+    local st = self2.__st
+    k2 = (k2 == "icon" or k2 == "bar") and k2 or "tile"
+    if st.laid == k2 then return end
+    st.kind, st.laid = k2, k2
+    local isz = opts.iconSize or (k2 == "tile" and K.tile.icon or k2 == "icon" and (K.tile.compact - 8) or K.button.icon)
+    st.isz = isz
+    meth(self2, "SetHeight", opts.h or (k2 == "tile" and K.tile.h or k2 == "icon" and K.tile.compact or K.button.h))
+    if self2.icon then
+      meth(self2.icon, "ClearAllPoints")
+      meth(self2.icon, "SetSize", isz, isz)
+      if k2 == "tile" then meth(self2.icon, "SetPoint", "TOP", self2, "TOP", 0, -4)
+      elseif k2 == "icon" then meth(self2.icon, "SetPoint", "CENTER", self2, "CENTER", 0, 0)
+      else meth(self2.icon, "SetPoint", "LEFT", self2, "LEFT", K.button.pad - 2, 0) end
+    end
+    if self2.label then
+      meth(self2.label, "ClearAllPoints")
+      if k2 == "icon" then meth(self2.label, "Hide")
+      elseif k2 == "tile" then
+        meth(self2.label, "SetPoint", "BOTTOM", self2, "BOTTOM", 0, 3); meth(self2.label, "SetJustifyH", "CENTER"); meth(self2.label, "Show")
+      else
+        meth(self2.label, "SetPoint", "LEFT", self2, "LEFT", K.button.pad + isz + 2, 0); meth(self2.label, "SetJustifyH", "LEFT"); meth(self2.label, "Show")
+      end
+    end
+    if self2.keyText then
+      meth(self2.keyText, "ClearAllPoints")
+      if k2 == "bar" then meth(self2.keyText, "SetPoint", "RIGHT", self2, "RIGHT", -K.button.pad + 2, 0)
+      else meth(self2.keyText, "SetPoint", "TOPLEFT", self2, "TOPLEFT", 2, -2) end
+    end
+    if self2.badge then
+      meth(self2.badge, "ClearAllPoints")
+      if k2 == "bar" then meth(self2.badge, "SetPoint", "TOPLEFT", self2.icon or self2, "TOPRIGHT", -5, 4)
+      else meth(self2.badge, "SetPoint", "TOPRIGHT", self2, "TOPRIGHT", -1, -1) end
+    end
+    if st.painted then Th:PaintAction(self2) end
   end
+  b:SetLayout(kind)
   meth(b, "SetScript", "OnMouseDown", function(self2) if self2.push and not self2.__st.disabled then meth(self2.push, "Show") end end)
   meth(b, "SetScript", "OnMouseUp", function(self2) if self2.push then meth(self2.push, "Hide") end end)
   meth(b, "SetScript", "OnHide", function(self2) if self2.push then meth(self2.push, "Hide") end end)
@@ -1142,15 +1160,24 @@ function Th:ActionButton(parent, opts)
   --- largeur utile (mot mesuré par le jeu, sinon estimé) ; min = largeur plancher
   function b.Fit(self2, minW)
     local st = self2.__st
-    local tw = self2.label and tonumber(meth(self2.label, "GetStringWidth")) or 0
-    if not tw or tw <= 0 then
-      local _, n = tostring(st.label or ""):gsub("[^\128-\191]", "")
-      tw = n * (kind == "tile" and 5.6 or 6.2)
+    local k2 = st.kind
+    if k2 == "icon" then
+      local need = minW or K.tile.compact
+      meth(self2, "SetWidth", need)
+      return need
+    end
+    -- largeur du mot : mesurée par le jeu une fois par libellé (gardée), sinon estimée
+    if st.twFor ~= st.label then
+      local tw = self2.label and tonumber(meth(self2.label, "GetStringWidth")) or 0
+      if not tw or tw <= 0 then
+        local _, n = tostring(st.label or ""):gsub("[^\128-\191]", "")
+        tw = n * (k2 == "tile" and 5.6 or 6.2)
+      end
+      st.tw, st.twFor = tw, st.label
     end
     local need
-    if kind == "tile" then need = math.max(minW or K.tile.w, math.floor(tw + 8 + 0.5))
-    elseif kind == "icon" then need = minW or K.tile.compact
-    else need = math.max(minW or 0, math.floor(K.button.pad + isz + 2 + tw + K.button.pad + 0.5)) end
+    if k2 == "tile" then need = math.max(minW or K.tile.w, math.floor(st.tw + 8 + 0.5))
+    else need = math.max(minW or 0, math.floor(K.button.pad + (st.isz or K.button.icon) + 2 + st.tw + K.button.pad + 0.5)) end
     meth(self2, "SetWidth", need)
     return need
   end
@@ -1269,12 +1296,14 @@ function Th:Legend(parent, items, cols, w)
   meth(f, "SetSize", w, math.max(1, math.ceil(n / cols)) * 16 + 2)
   return f
 end
---- la même légende en lignes de texte (infobulles, page Affichage) : « |cff…■|r À vendre au marchand »
+--- la même légende en lignes de texte (infobulles) : un carré de couleur + « À vendre au marchand — … »
 function Th:LegendLines(items)
   local out = {}
   for _, it in ipairs(type(items) == "table" and items or {}) do
-    out[#out + 1] = "|c" .. self:Hex(it.token or "text") .. "■|r " .. tostring(it.label or "") ..
-      (it.tip and (" — " .. it.tip) or "")
+    -- (un carré de couleur dessiné par le jeu : les polices de WoW n'ont pas de glyphe « carré plein »)
+    local r, g, b = self:Color(it.token or "text")
+    out[#out + 1] = ("|TInterface\\Buttons\\WHITE8X8:10:10:0:0:8:8:0:8:0:8:%d:%d:%d|t "):format(math.floor(r * 255 + 0.5),
+      math.floor(g * 255 + 0.5), math.floor(b * 255 + 0.5)) .. tostring(it.label or "") .. (it.tip and (" — " .. it.tip) or "")
   end
   return out
 end

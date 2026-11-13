@@ -1085,8 +1085,12 @@ end
 function W.AddPage(p)
   if type(p) ~= "table" or not p.id then return end
   if W.PARENT[p.id] then p.parent, p.hidden = W.PARENT[p.id], true end
+  -- (5.0) une catégorie de la navigation (W.NAV : « bags »…) y a sa place, même si son module l'inscrit encore comme
+  -- sous-page cachée d'une autre (« parent = "hv", hidden = true » d'avant la 5.0)
+  for _, n in ipairs(W.NAV) do if n == p.id then p.parent, p.hidden = nil, nil end end
   if W.pageIndex[p.id] then
     for k, v in pairs(p) do W.pageIndex[p.id][k] = v end
+    for _, n in ipairs(W.NAV) do if n == p.id then W.pageIndex[p.id].parent, W.pageIndex[p.id].hidden = nil, nil end end
     return
   end
   -- (MACRO3) p.before = id d'une page : insérée juste avant elle (sinon à la fin)
@@ -1541,8 +1545,9 @@ local function newLay(width, x0)
         meth(b.t, "SetTextColor", tok("gold", 1, 0.82, 0.2)); meth(b.icon, "SetDesaturated", false)
       end
       b.fn, b.titleText = it[2], it[1]
-      b.tipL = hasSub and { it.sub } or nil
-      b.hint = it[3] or (it[2] and "Clic : " .. strip(it[1])) or nil
+      local tip3 = it[3]   -- une phrase (le geste) ou des lignes (contrat des lignes d'onglet : tooltip = { … })
+      b.tipL = (type(tip3) == "table" and tip3) or (hasSub and { it.sub }) or nil
+      b.hint = (type(tip3) == "string" and tip3) or (it[2] and "Clic : " .. strip(it[1])) or nil
       local x = PAD + c * (bw + 8)
       at(b, x, Ly.y)
       rec("action", x, Ly.y, bw, bh, it[1])
@@ -1806,6 +1811,7 @@ function W.TopActions(Ly, p)
   local keep = {}
   for _, it in ipairs(list) do if type(it) == "table" and it[1] and it[2] and #keep < 3 then keep[#keep + 1] = it end end
   if #keep > 0 then Ly.actions(keep, #keep) end   -- (5.0) ≤ 3 grosses tuiles d'action en tête de page
+  Ly.topN = #keep
   return #keep
 end
 --- (5.0 LOOK) la recherche trouve N'IMPORTE QUELLE action et N'IMPORTE QUEL réglage : pages, actions rapides de la
@@ -1960,10 +1966,21 @@ function W.RenderTab(Ly, tabId, emptyText, skip, emptyAction)
   local ctrls = {}
   for _, e in ipairs(lines) do
     if e.control and e.onClick then
-      ctrls[#ctrls + 1] = { e.label or strip(e.text), function() W.Run(e) end, e.tooltip }
+      ctrls[#ctrls + 1] = { e.label or strip(e.text), function() W.Run(e) end, e.tooltip, icon = e.icon, sub = e.sub }
     end
   end
-  if #ctrls > 0 then Ly.buttons(ctrls, min(3, #ctrls)); Ly.gap(sp().s) end
+  if #ctrls > 0 then
+    -- (5.0 LOOK) une page sans tuiles d'action à elle : ses 3 premiers boutons deviennent les grosses tuiles du haut
+    -- (une icône quand la ligne en donne une) ; le reste en boutons, comme avant
+    if (Ly.topN or 0) == 0 and query == "" then
+      local big, rest = {}, {}
+      for i, c in ipairs(ctrls) do if i <= 3 then big[#big + 1] = c else rest[#rest + 1] = c end end
+      Ly.topN = Ly.actions(big, #big)
+      if #rest > 0 then Ly.buttons(rest, min(3, #rest)); Ly.gap(sp().s) end
+    else
+      Ly.buttons(ctrls, min(3, #ctrls)); Ly.gap(sp().s)
+    end
+  end
   local shown, open, secN = 0, true, 0
   for _, e in ipairs(lines) do
     if e.header then
@@ -2437,14 +2454,21 @@ function W.Open(id)
     id = W.Resolve(id)
     if W.pageIndex[id] then remember(id) end
   end
-  -- (5.0) rouverte pendant son fondu de fermeture : le fondu est coupé (sinon elle se refermait toute seule)
+  -- (5.0) rouverte pendant son fondu de fermeture (un clic « fermer » puis un clic sur la bande dans le dixième de
+  -- seconde) : le fondu est coupé, sinon elle se refermait toute seule. Dans la même image que la fermeture (aucun
+  -- joueur ne clique deux fois par image), la fermeture en cours garde la main.
   local th = Th()
-  if th and th.StopAnim then th:StopAnim(win, 1) end
+  if th and th.StopAnim and W._closeAt and ((try(G.GetTime) or 0) - W._closeAt) > 0.001 then th:StopAnim(win, 1) end
   local was = meth(win, "IsShown")
   meth(win, "Show")
   if was then W.Render() end      -- fenêtre cachée : son OnShow la dessine déjà (pas deux rendus)
 end
-function W.Close() if win then local th = Th() if th then th:FadeOut(win) else meth(win, "Hide") end end end
+function W.Close()
+  if not win then return end
+  W._closeAt = try(G.GetTime) or 0
+  local th = Th()
+  if th then th:FadeOut(win) else meth(win, "Hide") end
+end
 function W.Toggle(id)
   if win and meth(win, "IsShown") and (not id or selectedPage() == W.Resolve(id)) then W.Close() else W.Open(id) end
 end
@@ -2966,7 +2990,7 @@ W.AddPage({ id = "display", label = "Affichage", icon = ICON .. "INV_Misc_Spygla
     end
     local Sc = T.Shortcuts
     if Sc and type(Sc.ResetInterface) == "function" then
-      out[#out + 1] = { "Tout remettre en place", function() Sc.ResetInterface() end,
+      out[#out + 1] = { "Tout remettre en place", function() Sc.ResetInterface("reset") end,
         "Clic : chaque cadre TreeAI revient à sa place et à sa taille d'origine (/tai interface reset)",
         icon = "Interface\\Buttons\\UI-RefreshButton", sub = "/tai interface reset" }
     end
@@ -3370,7 +3394,7 @@ function W:OnEnable()
   if T.HUB_EXTRA and not W._hub then
     W._hub = true
     table.insert(T.HUB_EXTRA, 1, { group = "jeu", id = "window", title = "Fenêtre TreeAI", icon = ICON .. "INV_Misc_Book_09",
-      tip = "Clic : la fenêtre TreeAI (Quêtes, Trajet, Groupe, Donjons, Équipement, Métiers, HV, Chasseur, Conseils, Macros & touches, Réglages)", fn = function() W.Toggle() end })
+      tip = "Clic : la fenêtre TreeAI (Quêtes, Trajet, Groupe, Donjons, Équipement, Sacs, Métiers, HV, Chasseur, Conseils, Réglages)", fn = function() W.Toggle() end })
   end
 end
 function W:OnDisable()

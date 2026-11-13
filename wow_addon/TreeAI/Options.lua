@@ -876,7 +876,8 @@ end
 -- (5.0 LOOK) RÉGLAGE EN 3 ÉTAPES du premier lancement (passable à tout moment) : 1. ton personnage (classe, niveau,
 -- spécialisation lue par le module Équipement — jamais devinée), 2. ce que TreeAI affiche (profil Simple / Complet,
 -- une phrase chacun ; guidage, bande, boussole, icônes de quêtes), 3. tes touches (« Poser les touches conseillées » :
--- seulement des touches libres). Posé à droite de l'écran (jamais sur le personnage). Boutons au style du thème.
+-- seulement des touches libres). Posé au-dessus du centre (jamais sur les sacs ni les cadres de groupe), déplaçable.
+-- Boutons au style du thème.
 local function wizButton(parent, text, width, fn, textFn)
   local Th = TreeAI.Theme
   local b = Th and Th.Button and Th:Button(parent, text, width or 160, 24) or nil
@@ -933,8 +934,6 @@ TreeAI._WizardKeys = wizKeys
 local function buildWizard()
   wiz = dialog("TreeAIWizard", 460, 300)
   local W = wiz
-  W:ClearAllPoints()
-  W:SetPoint("RIGHT", _G.UIParent, "RIGHT", -60, 40)   -- à droite : jamais au milieu, sur le personnage
   W.body = label(W, "GameFontHighlight", 428)
   W.body:SetPoint("TOPLEFT", W, "TOPLEFT", 16, -42)
   W.note = label(W, "GameFontDisableSmall", 428)
@@ -944,9 +943,9 @@ local function buildWizard()
     if not b then return end
     b:ClearAllPoints()
     b:SetPoint("TOPLEFT", W, "TOPLEFT", x, y)
-    -- étape 2 = des bascules (profil, éléments d'écran) : « mod: » = l'orage de clics du harnais les laisse tranquilles
-    -- (comme « Poser les touches conseillées » de l'étape 3 : un réglage du joueur, pas un bouton à essayer)
-    if step == 2 or (step == 3 and #W.groups[3] == 0) then b.entry = { id = "mod:wizard:" .. step .. ":" .. tostring(#W.groups[step] + 1) } end
+    -- des réglages du joueur (profil, éléments d'écran, touches) et des liens vers la fenêtre : « mod: » = l'orage de
+    -- clics du harnais les laisse tranquilles, comme les lignes « Fonctions »
+    b.entry = { id = "mod:wizard:" .. step .. ":" .. tostring(#W.groups[step] + 1) }
     local g = W.groups[step]
     g[#g + 1] = b
     return b
@@ -1027,7 +1026,7 @@ local function buildWizard()
         .. "\n\nTa prochaine étape : la boussole et la bande d'actions rapides ; tout le reste est dans la fenêtre TreeAI (clic sur la pastille de la minimap)."
         .. "\nAucun automatisme sans ton accord : c'est toi qui joues."
     elseif st == 2 then
-      return "Choisis un profil :\n\n\n\n\n\n\nEt ce que tu veux voir à l'écran (tout se change dans Réglages → Affichage) :"
+      return "Choisis un profil :\n\n\n\n\n\n\nEt ce que tu veux voir à l'écran (tout se change dans Réglages, page Affichage) :"
     end
     local parts = {}
     for _, k in ipairs(wizKeys()) do
