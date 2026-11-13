@@ -1043,20 +1043,30 @@ W.pageIndex = {}
 -- (4.3 V43) menu re-trié en 11 catégories claires, chacune avec ses 1 à 3 actions en tête : Quêtes · Trajet · Groupe ·
 -- Donjons · Équipement · Métiers · HV · Chasseur (familier, talents) · Conseils · Macros & touches · Réglages. Les
 -- anciennes pages gardent leur id : W.Open("perso" / "journal" / "tools" / "macros" / "keys"…) mène au bon endroit.
-W.NAV = { "quests", "route", "group", "dungeon", "gear", "prof", "hv", "hunter", "coach", "binds", "settings" }
--- ancienne page fondue dans une autre (même contenu, même endroit)
-W.ALIAS = { now = "quests", perso = "gear" }
+-- (5.0 LOOK) 11 catégories au plus, chacune avec son icône : Quêtes · Trajet · Groupe · Donjons · Équipement · Sacs ·
+-- Métiers · HV · Chasseur · Conseils · Réglages. Une catégorie n'apparaît que si son module a inscrit sa page
+-- (W.AddPage depuis son fichier) : « Sacs » arrive avec le module Sacs. « Macros & touches » est rangé dans Réglages.
+W.NAV = { "quests", "route", "group", "dungeon", "gear", "bags", "prof", "hv", "hunter", "coach", "settings" }
+-- ancienne page fondue dans une autre (même contenu, même endroit) + noms français tapés à la main (/tai fenetre sacs)
+W.ALIAS = { now = "quests", perso = "gear", binds = "keys", sacs = "bags", inventory = "bags", inventaire = "bags",
+  equipement = "gear", metiers = "prof", trajet = "route", groupe = "group", donjons = "dungeon", quetes = "quests",
+  reglages = "settings", affichage = "display", touches = "keys", profil = "profile", conseils = "coach" }
+-- page pas (encore) inscrite par son module → la page la plus proche qui existe (jamais une fenêtre vide)
+W.FALLBACK = { bags = "gear", profile = "display" }
 -- page rangée sous une page de la navigation (hors navigation, surlignée sous sa page mère)
 W.PARENT = { journal = "quests", brain = "quests",
-  pet = "hunter", talents = "hunter", macros = "binds", keys = "binds", spellkeys = "binds",
-  display = "settings", modules = "settings", addons = "settings", options = "settings",
+  pet = "hunter", talents = "hunter", macros = "settings", keys = "settings", spellkeys = "settings",
+  display = "settings", profile = "settings", modules = "settings", addons = "settings", options = "settings",
   tools = "settings", navlog = "settings", tab = "settings" }
--- sous-pages montrées en onglets en haut de la page mère (dans cet ordre) ; la mère ouvre la dernière choisie
-W.SUBS = { hunter = { "pet", "talents" }, binds = { "macros", "keys", "spellkeys" },
-  settings = { "display", "modules", "addons", "options", "tools" } }
---- id demandé → id de la page réellement dessinée (alias résolus, page mère → sa sous-page)
+-- sous-pages de la page mère (dans cet ordre) ; la mère ouvre la dernière choisie. Onglets en haut de page, sauf
+-- W.SIDE : sous-liste à gauche façon Leatrix Plus (Réglages)
+W.SUBS = { hunter = { "pet", "talents" },
+  settings = { "display", "profile", "keys", "macros", "spellkeys", "modules", "addons", "options", "tools" } }
+W.SIDE = { settings = true }
+--- id demandé → id de la page réellement dessinée (alias résolus, page absente → la plus proche, page mère → sa sous-page)
 function W.Resolve(id)
   id = W.ALIAS[id] or id
+  if not W.pageIndex[id] and W.FALLBACK[id] and W.pageIndex[W.FALLBACK[id]] then id = W.FALLBACK[id] end
   local subs = W.SUBS[id]
   if subs then
     local last = W.char and type(W.char.sub) == "table" and W.char.sub[id]
@@ -1075,8 +1085,12 @@ end
 function W.AddPage(p)
   if type(p) ~= "table" or not p.id then return end
   if W.PARENT[p.id] then p.parent, p.hidden = W.PARENT[p.id], true end
+  -- (5.0) une catégorie de la navigation (W.NAV : « bags »…) y a sa place, même si son module l'inscrit encore comme
+  -- sous-page cachée d'une autre (« parent = "hv", hidden = true » d'avant la 5.0)
+  for _, n in ipairs(W.NAV) do if n == p.id then p.parent, p.hidden = nil, nil end end
   if W.pageIndex[p.id] then
     for k, v in pairs(p) do W.pageIndex[p.id][k] = v end
+    for _, n in ipairs(W.NAV) do if n == p.id then W.pageIndex[p.id].parent, W.pageIndex[p.id].hidden = nil, nil end end
     return
   end
   -- (MACRO3) p.before = id d'une page : insérée juste avant elle (sinon à la fin)
@@ -1105,8 +1119,14 @@ W._pool = pool
 
 -- -------------------------------------------------- moteur de mise en page (vertical, une colonne, sans chevauchement)
 -- Lay.y avance à chaque widget ; Lay.rects garde chaque rectangle (le harnais vérifie : rien ne se chevauche).
-local function newLay(width)
-  local Ly = { y = 8, W = width, col = width - 2 * PAD, rects = {} }
+-- (5.0 LOOK) x0 = décalage de la colonne (la sous-liste des Réglages est à gauche) ; tous les widgets en héritent.
+-- API stable (les pages des autres modules l'utilisent) : gap, text, header, row, hero, step, quest, buttons, empty,
+-- tabs, tiles + V5 : actions (grosses tuiles), toggle (bascule), choice, card, note, kv, legend.
+local function newLay(width, x0)
+  x0 = tonumber(x0) or 0
+  local PAD0 = PAD
+  local PAD = PAD0 + x0   -- luacheck: ignore (masque voulu : la marge gauche de CETTE mise en page)
+  local Ly = { y = 8, W = width, col = width - x0 - 2 * PAD0, rects = {}, x0 = x0, pad = PAD }
   local function rec(kind, x, y, w, h, label) Ly.rects[#Ly.rects + 1] = { kind = kind, x = x, y = y, w = w, h = h, label = strip(label) } end
   local function at(f, x, y) meth(f, "ClearAllPoints"); meth(f, "SetPoint", "TOPLEFT", content, "TOPLEFT", x, -y) end
   Ly.at, Ly.rec = at, rec
@@ -1340,6 +1360,13 @@ local function newLay(width)
     cols = cols or min(3, #list)
     if cols < 1 or #list == 0 then return end
     local bw = floor((Ly.col - (cols - 1) * 8) / cols)
+    -- (5.0) jamais un mot coupé : colonne étroite (sous-liste des Réglages, petite fenêtre) → moins de boutons par ligne
+    local need = 0
+    for _, it in ipairs(list) do need = max(need, ulen(it[1]) * 6.2 + 8) end
+    while cols > 1 and bw < need do
+      cols = cols - 1
+      bw = floor((Ly.col - (cols - 1) * 8) / cols)
+    end
     local p = pool("button", function()
       local th = Th()
       local f = th and th:Button(content, "", 120, 24) or newButton(content)
@@ -1454,6 +1481,293 @@ local function newLay(width)
     end
     Ly.y = Ly.y + th + sp().m
   end
+  -- ================================================================ (5.0 LOOK) widgets V5 — hérités par toutes les pages
+  -- GROSSES TUILES D'ACTION (≤ 3 par ligne) : list = { { titre, fn, infobulle, icon = , sub = , count = , active = ,
+  -- disabled = }, … } — les 3 premiers champs sont ceux de Ly.buttons (compatibles). Un clic = l'action.
+  function Ly.actions(list, cols)
+    local keep = {}
+    for _, it in ipairs(type(list) == "table" and list or {}) do if type(it) == "table" and it[1] then keep[#keep + 1] = it end end
+    if #keep == 0 then return 0 end
+    cols = max(1, min(cols or 3, #keep, 3))
+    local bw = floor((Ly.col - (cols - 1) * 8) / cols)
+    local bh = 44
+    local p = pool("action", function()
+      local f = newButton(content)
+      f.icon = meth(f, "CreateTexture", nil, "ARTWORK")
+      meth(f.icon, "SetSize", 24, 24)
+      meth(f.icon, "SetPoint", "LEFT", f, "LEFT", 10, 0)
+      f.t = text(f, "M", "gold")
+      meth(f.t, "SetWordWrap", false)
+      f.s = text(f, "S", "muted")
+      meth(f.s, "SetWordWrap", false)
+      f.n = text(f, "S", "text")
+      meth(f.n, "SetJustifyH", "RIGHT")
+      meth(f.n, "SetPoint", "TOPRIGHT", f, "TOPRIGHT", -8, -6)
+      meth(f, "SetScript", "OnClick", function(self)
+        if self.off or not meth(self, "IsShown") then return end   -- (tuile rangée dans la réserve : plus d'action)
+        if self.fn then T:UserAction(self.fn) W.Dirty() W.Render() end
+      end)
+      meth(f, "SetScript", "OnEnter", function(self) W.Tooltip(self, self.titleText, self.tipL, self.hint) end)
+      meth(f, "SetScript", "OnLeave", hideTip)
+      return f
+    end)
+    for i, it in ipairs(keep) do
+      local c = (i - 1) % cols
+      if c == 0 and i > 1 then Ly.y = Ly.y + bh + 8 end
+      local b = acquire(p)
+      local icon = it.icon
+      meth(b, "SetSize", bw, bh)
+      meth(b.icon, "SetTexture", icon)
+      if icon then
+        meth(b.icon, "Show")
+        if tostring(icon):find("Icons\\", 1, true) then meth(b.icon, "SetTexCoord", 0.08, 0.92, 0.08, 0.92) else meth(b.icon, "SetTexCoord", 0, 1, 0, 1) end
+      else meth(b.icon, "Hide") end
+      local tx = icon and 42 or 12
+      local hasSub = type(it.sub) == "string" and it.sub ~= ""
+      meth(b.t, "ClearAllPoints"); meth(b.s, "ClearAllPoints")
+      meth(b.t, "SetPoint", "TOPLEFT", b, "TOPLEFT", tx, hasSub and -8 or -15)
+      meth(b.s, "SetPoint", "TOPLEFT", b, "TOPLEFT", tx, -25)
+      local cnt = tonumber(it.count)
+      local cw = (cnt and cnt > 0) and 26 or 0
+      meth(b.t, "SetWidth", max(20, bw - tx - 8 - cw)); meth(b.s, "SetWidth", max(20, bw - tx - 8))
+      meth(b.t, "SetText", safe(it[1]))
+      meth(b.s, "SetText", hasSub and safe(it.sub) or "")
+      meth(b.n, "SetText", (cnt and cnt > 0) and tostring(cnt) or "")
+      b.off = it.disabled and true or false
+      if b.off then
+        color(b.bg, tok("button", 0.14, 0.15, 0.19, 0.45)); border(b, 0, 0, 0, 0)
+        meth(b.t, "SetTextColor", tok("disabled", 0.5, 0.5, 0.52)); meth(b.icon, "SetDesaturated", true)
+      elseif it.active then
+        color(b.bg, 0.40, 0.30, 0.05, 0.75); border(b, tok("gold", 1, 0.82, 0.2, 0.9))
+        meth(b.t, "SetTextColor", tok("text", 1, 1, 1)); meth(b.icon, "SetDesaturated", false)
+      else
+        color(b.bg, tok("button", 0.14, 0.15, 0.19, 0.95)); border(b, tok("borderSoft", 0.78, 0.62, 0.28, 0.35))
+        meth(b.t, "SetTextColor", tok("gold", 1, 0.82, 0.2)); meth(b.icon, "SetDesaturated", false)
+      end
+      b.fn, b.titleText = it[2], it[1]
+      local tip3 = it[3]   -- une phrase (le geste) ou des lignes (contrat des lignes d'onglet : tooltip = { … })
+      b.tipL = (type(tip3) == "table" and tip3) or (hasSub and { it.sub }) or nil
+      b.hint = (type(tip3) == "string" and tip3) or (it[2] and "Clic : " .. strip(it[1])) or nil
+      local x = PAD + c * (bw + 8)
+      at(b, x, Ly.y)
+      rec("action", x, Ly.y, bw, bh, it[1])
+    end
+    Ly.y = Ly.y + bh + sp().m
+    return #keep
+  end
+  -- BASCULE façon Leatrix : case + libellé + UNE ligne d'explication + « allumé / coupé » à droite.
+  -- e = { label, desc, on = bool, set = fn(bool), id, disabled, tip = { lignes } }
+  function Ly.toggle(e)
+    if type(e) ~= "table" then return end
+    local b = acquire(pool("toggle", function()
+      local f = newButton(content)
+      f.box = meth(f, "CreateTexture", nil, "ARTWORK")
+      meth(f.box, "SetSize", 14, 14)
+      meth(f.box, "SetPoint", "TOPLEFT", f, "TOPLEFT", 8, -8)
+      f.boxIn = meth(f, "CreateTexture", nil, "OVERLAY")
+      meth(f.boxIn, "SetSize", 8, 8)
+      meth(f.boxIn, "SetPoint", "CENTER", f.box, "CENTER", 0, 0)
+      f.t = text(f, "M", "text")
+      meth(f.t, "SetPoint", "TOPLEFT", f, "TOPLEFT", 30, -6)
+      meth(f.t, "SetWordWrap", false)
+      f.s = text(f, "S", "muted")
+      meth(f.s, "SetPoint", "TOPLEFT", f, "TOPLEFT", 30, -22)
+      meth(f.s, "SetWordWrap", false)
+      f.r = text(f, "S", "muted")
+      meth(f.r, "SetJustifyH", "RIGHT")
+      meth(f.r, "SetPoint", "TOPRIGHT", f, "TOPRIGHT", -8, -8)
+      meth(f, "SetScript", "OnClick", function(self)
+        local en = self.entry
+        if not en or en.disabled or type(en.set) ~= "function" or not meth(self, "IsShown") then return end
+        if inCombat() and not en.combatOK then W.Flash("Impossible en combat : réessaie après.") return end
+        T:UserAction(function() en.set(not self.on) end)
+        W.Dirty() W.Render()
+      end)
+      meth(f, "SetScript", "OnEnter", function(self)
+        local en = self.entry
+        if not en then return end
+        local lines = {}
+        if en.desc then lines[#lines + 1] = en.desc end
+        for _, l in ipairs(type(en.tip) == "table" and en.tip or {}) do lines[#lines + 1] = l end
+        W.Tooltip(self, en.label, lines, en.disabled and (en.why or "Indisponible pour l'instant") or (self.on and "Clic : couper" or "Clic : allumer"))
+      end)
+      meth(f, "SetScript", "OnLeave", hideTip)
+      return f
+    end))
+    local on = e.on and true or false
+    b.entry, b.on = e, on
+    -- (même contrat que les lignes Ly.row : text / right / onClick — ce que lisent la recherche, la visite et les tests)
+    e.text = e.text or e.label
+    e.right = e.state or (on and "allumé" or "coupé")
+    if type(e.set) == "function" then e.onClick = function() e.set(not on) end end
+    -- (« mod: » : une bascule — l'orage de clics du harnais la laisse tranquille, comme les lignes « Fonctions »)
+    e.id = tostring(e.id or ("toggle:" .. tostring(e.label)))
+    if not e.id:find("^mod:") then e.id = "mod:" .. e.id end
+    local hasDesc = type(e.desc) == "string" and e.desc ~= ""
+    local h = hasDesc and 38 or 28
+    meth(b, "SetSize", Ly.col, h)
+    color(b.bg, tok("button", 0.14, 0.15, 0.19, 0.55))
+    color(b.box, tok(on and "on" or "off", 0.5, 0.5, 0.5, 1))
+    if on then color(b.boxIn, 0.04, 0.05, 0.07, 0) else color(b.boxIn, 0.05, 0.06, 0.08, 1) end
+    meth(b.t, "SetWidth", max(40, Ly.col - 30 - 70)); meth(b.s, "SetWidth", max(40, Ly.col - 38))
+    meth(b.t, "SetText", safe(e.label or ""))
+    meth(b.t, "SetTextColor", tok(e.disabled and "disabled" or "text", 0.92, 0.92, 0.92))
+    meth(b.s, "SetText", hasDesc and safe(e.desc) or "")
+    meth(b.r, "SetText", e.state or (on and "allumé" or "coupé"))
+    meth(b.r, "SetTextColor", tok(on and "on" or "off", 0.5, 0.5, 0.5))
+    at(b, PAD, Ly.y)
+    rec("toggle", PAD, Ly.y, Ly.col, h, e.label)
+    Ly.y = Ly.y + h + 2
+    return b
+  end
+  -- CHOIX (2 ou 3 grandes cases, une phrase d'explication chacune) : list = { { titre, phrase, fn, active = } }
+  function Ly.choice(list)
+    local n = type(list) == "table" and #list or 0
+    if n == 0 then return end
+    local cols = min(n, 3)
+    local bw = floor((Ly.col - (cols - 1) * 8) / cols)
+    local p = pool("choice", function()
+      local f = newButton(content)
+      f.dot = meth(f, "CreateTexture", nil, "ARTWORK")
+      meth(f.dot, "SetSize", 10, 10)
+      meth(f.dot, "SetPoint", "TOPLEFT", f, "TOPLEFT", 10, -11)
+      f.t = text(f, "L", "gold")
+      meth(f.t, "SetPoint", "TOPLEFT", f, "TOPLEFT", 28, -7)
+      meth(f.t, "SetWordWrap", false)
+      f.s = text(f, "S", "text")
+      meth(f.s, "SetPoint", "TOPLEFT", f, "TOPLEFT", 10, -30)
+      meth(f.s, "SetWordWrap", true)
+      meth(f, "SetScript", "OnClick", function(self) if self.fn and meth(self, "IsShown") then T:UserAction(self.fn) W.Dirty() W.Render() end end)
+      meth(f, "SetScript", "OnEnter", function(self) W.Tooltip(self, self.titleText, self.subL, self.on and "Choisi" or "Clic : choisir") end)
+      meth(f, "SetScript", "OnLeave", hideTip)
+      return f
+    end)
+    local hs, used = 0, {}
+    for i = 1, cols do
+      local it = list[i]
+      local b = acquire(p)
+      used[i] = b
+      meth(b.s, "SetWidth", bw - 20)
+      meth(b.s, "SetText", safe(it[2] or ""))
+      hs = max(hs, measure(b.s, safe(it[2] or ""), bw - 20, "S"))
+    end
+    local bh = 30 + hs + 10
+    for i = 1, cols do
+      local it, b = list[i], used[i]
+      local on = it.active and true or false
+      meth(b, "SetSize", bw, bh)
+      meth(b.t, "SetWidth", bw - 36)
+      meth(b.t, "SetText", safe(it[1]))
+      b.fn, b.titleText, b.subL, b.on = it[3], it[1], it[2] and { it[2] } or nil, on
+      b.entry = { id = "mod:choice:" .. tostring(it[1]) }   -- (un choix de profil : l'orage de clics du harnais le laisse)
+      if on then
+        color(b.bg, 0.40, 0.30, 0.05, 0.75); border(b, tok("gold", 1, 0.82, 0.2, 0.9)); color(b.dot, tok("on", 0.3, 0.85, 0.4, 1))
+      else
+        color(b.bg, tok("button", 0.14, 0.15, 0.19, 0.95)); border(b, tok("borderSoft", 0.78, 0.62, 0.28, 0.35)); color(b.dot, tok("off", 0.58, 0.58, 0.6, 1))
+      end
+      local x = PAD + (i - 1) * (bw + 8)
+      at(b, x, Ly.y)
+      rec("choice", x, Ly.y, bw, bh, it[1])
+    end
+    Ly.y = Ly.y + bh + sp().m
+  end
+  -- CARTE (liseré 1 px, titre or, lignes de texte) : Ly.card(titre, { lignes }[, { tokens par ligne }])
+  function Ly.card(title, lines, tokens)
+    lines = type(lines) == "table" and lines or { tostring(lines or "") }
+    local f = acquire(pool("card", function()
+      local c = G.CreateFrame("Frame", nil, content)
+      c.bg = meth(c, "CreateTexture", nil, "BACKGROUND")
+      meth(c.bg, "SetAllPoints", c)
+      c.t = text(c, "M", "gold")
+      meth(c.t, "SetPoint", "TOPLEFT", c, "TOPLEFT", 10, -8)
+      meth(c.t, "SetWordWrap", false)
+      c.lines = {}
+      return c
+    end))
+    color(f.bg, tok("button", 0.14, 0.15, 0.19, 0.55))
+    border(f, tok("borderSoft", 0.78, 0.62, 0.28, 0.35))
+    local w = Ly.col
+    local y = 8
+    if title and title ~= "" then
+      meth(f.t, "SetWidth", w - 20); meth(f.t, "SetText", safe(title)); meth(f.t, "Show")
+      y = y + 18
+    else meth(f.t, "Hide") end
+    for i, l in ipairs(lines) do
+      local fs = f.lines[i]
+      if not fs then fs = text(f, "S", "text") meth(fs, "SetWordWrap", true) f.lines[i] = fs end
+      local str = safe(l)
+      meth(fs, "ClearAllPoints")
+      meth(fs, "SetPoint", "TOPLEFT", f, "TOPLEFT", 10, -y)
+      meth(fs, "SetWidth", w - 20)
+      meth(fs, "SetText", str)
+      meth(fs, "SetTextColor", tok(type(tokens) == "table" and tokens[i] or "text", 0.9, 0.9, 0.9))
+      meth(fs, "Show")
+      y = y + measure(fs, str, w - 20, "S") + 3
+    end
+    for i = #lines + 1, #f.lines do meth(f.lines[i], "Hide") end
+    local h = y + 6
+    meth(f, "SetSize", w, h)
+    at(f, PAD, Ly.y)
+    rec("card", PAD, Ly.y, w, h, title or lines[1])
+    Ly.y = Ly.y + h + sp().m
+    return f
+  end
+  -- NOTE (une barre de couleur à gauche + une phrase) : kind = "info" | "warn" | "good"
+  function Ly.note(str, kind)
+    local f = acquire(pool("note", function()
+      local c = G.CreateFrame("Frame", nil, content)
+      c.bg = meth(c, "CreateTexture", nil, "BACKGROUND")
+      meth(c.bg, "SetAllPoints", c)
+      c.bar = meth(c, "CreateTexture", nil, "ARTWORK")
+      meth(c.bar, "SetWidth", 3)
+      meth(c.bar, "SetPoint", "TOPLEFT", c, "TOPLEFT", 0, 0)
+      meth(c.bar, "SetPoint", "BOTTOMLEFT", c, "BOTTOMLEFT", 0, 0)
+      c.t = text(c, "S", "text")
+      meth(c.t, "SetPoint", "TOPLEFT", c, "TOPLEFT", 10, -6)
+      meth(c.t, "SetWordWrap", true)
+      return c
+    end))
+    str = safe(str)
+    color(f.bg, tok("button", 0.14, 0.15, 0.19, 0.45))
+    color(f.bar, tok(kind == "warn" and "warn" or kind == "good" and "on" or "key", 0.55, 0.8, 1, 1))
+    meth(f.t, "SetWidth", Ly.col - 18)
+    meth(f.t, "SetText", str)
+    local h = measure(f.t, str, Ly.col - 18, "S") + 12
+    meth(f, "SetSize", Ly.col, h)
+    at(f, PAD, Ly.y)
+    rec("note", PAD, Ly.y, Ly.col, h, str)
+    Ly.y = Ly.y + h + sp().s
+    return f
+  end
+  -- DEUX COLONNES « nom … valeur » (une ligne, sans clic)
+  function Ly.kv(label, value, tokName)
+    return Ly.row({ text = tostring(label or ""), right = tostring(value or ""), kind = "info", prio = tokName == "muted" and 1 or 2 })
+  end
+  -- LÉGENDE (carré de couleur + mot + explication) : items = Theme.LEGEND.bags
+  function Ly.legend(items)
+    local th = Th()
+    for _, it in ipairs(type(items) == "table" and items or {}) do
+      local f = acquire(pool("legend", function()
+        local c = G.CreateFrame("Frame", nil, content)
+        c.sw = meth(c, "CreateTexture", nil, "ARTWORK")
+        meth(c.sw, "SetSize", 10, 10)
+        meth(c.sw, "SetPoint", "LEFT", c, "LEFT", 8, 0)
+        c.t = text(c, "S", "text")
+        meth(c.t, "SetPoint", "LEFT", c, "LEFT", 26, 0)
+        meth(c.t, "SetWordWrap", false)
+        return c
+      end))
+      if th then color(f.sw, th:Color(it.token or "text")) else color(f.sw, 1, 1, 1, 1) end
+      local str = safe(tostring(it.label or "") .. (it.tip and ("  —  " .. it.tip) or ""))
+      meth(f.t, "SetWidth", Ly.col - 34)
+      meth(f.t, "SetText", str)
+      meth(f, "SetSize", Ly.col, 18)
+      at(f, PAD, Ly.y)
+      rec("legend", PAD, Ly.y, Ly.col, 18, it.label)
+      Ly.y = Ly.y + 18
+    end
+    Ly.y = Ly.y + sp().s
+  end
   function Ly.finish() meth(content, "SetHeight", Ly.y + 16); meth(content, "SetWidth", Ly.W) end
   return Ly
 end
@@ -1466,7 +1780,12 @@ function W.SubBar(Ly, id)
   local par = p and p.parent
   if not par then return end
   local subs = W.SUBS[par]
-  if subs then
+  if W.SIDE[par] then
+    -- (5.0) Réglages : la sous-liste est à gauche (W.SideList) ; « Tous les réglages » a sa propre liste → un retour
+    local pp = W.pageIndex[par]
+    Ly.buttons({ { "← " .. tostring(pp and pp.label or par), function() W.Select("display") end,
+      "Clic : revenir aux réglages simples (Affichage, Profil, Touches…)" } }, 3)
+  elseif subs then
     local list = {}
     local inList = false
     for _, c in ipairs(subs) do
@@ -1491,23 +1810,78 @@ function W.TopActions(Ly, p)
   if not (ok and type(list) == "table") then return 0 end
   local keep = {}
   for _, it in ipairs(list) do if type(it) == "table" and it[1] and it[2] and #keep < 3 then keep[#keep + 1] = it end end
-  if #keep > 0 then Ly.buttons(keep, #keep) Ly.gap(sp().s) end
+  if #keep > 0 then Ly.actions(keep, #keep) end   -- (5.0) ≤ 3 grosses tuiles d'action en tête de page
+  Ly.topN = #keep
   return #keep
 end
---- (4.1 LAYOUT) la recherche trouve n'importe quelle action : pages, éléments d'écran, menu de la pastille
-function W.SearchElsewhere(Ly, cur)
+--- (5.0 LOOK) la recherche trouve N'IMPORTE QUELLE action et N'IMPORTE QUEL réglage : pages, actions rapides de la
+--- bande, éléments d'écran (case allumer / couper), profil, chaque réglage de chaque fonction, outils de la pastille.
+--- W.SearchHits(cur) → { { text, icon, kind, onClick, clickHint, _k } } triés (actions d'abord) ; cur = page en cours
+--- (ses propres lignes sont déjà filtrées au-dessus).
+function W.SearchHits(cur)
   local hits = {}
+  if W.Query() == "" then return hits end
+  local Sc = T.Shortcuts
+  if type(Sc) == "table" and type(Sc.DEFS) == "table" and type(Sc.Do) == "function" then
+    for _, d in ipairs(Sc.DEFS) do
+      if W.Match(d.label, d.title, d.tip, "action rapide") then
+        local id = d.id
+        hits[#hits + 1] = { text = "Action : " .. tostring(d.title or d.label), icon = d.icon, kind = "info",
+          clickHint = "Clic : le faire tout de suite", tooltip = d.tip, onClick = function() Sc.Do(id) end, _k = "0" .. tostring(d.label) }
+      end
+    end
+    if type(Sc.ToggleGuide) == "function" and W.Match("guidage des quêtes suivi de quêtes allumer couper désactiver", "guide") then
+      hits[#hits + 1] = { text = "Action : guidage des quêtes — " .. (Sc.GuideOn() and "le couper" or "le rallumer"),
+        icon = ICON .. "Ability_Tracking", kind = "info", clickHint = "Clic : allumer / couper tout le guidage de quêtes",
+        onClick = function() Sc.ToggleGuide() end, _k = "0 guidage" }
+    end
+  end
   for id, pg in pairs(W.pageIndex) do
-    if id ~= cur and id ~= "tab" and W.Match(pg.label, pg.title, pg.desc) then
+    if id ~= cur and id ~= "tab" and not (pg.hidden and not pg.parent) and W.Match(pg.label, pg.title, pg.desc, pg.side) then
       local par = pg.parent and W.pageIndex[pg.parent]
-      hits[#hits + 1] = { text = (par and (par.label .. " → ") or "") .. tostring(pg.label), icon = pg.icon, kind = "info",
+      hits[#hits + 1] = { text = "Page : " .. (par and (par.label .. " → ") or "") .. tostring(pg.label), icon = pg.icon, kind = "info",
         clickHint = "Clic : ouvrir", onClick = function() W.Select(id) end, _k = "1" .. tostring(pg.label) }
     end
   end
-  for _, d in ipairs(W.DISPLAY or {}) do
-    if W.Match(d.label, d.preview) then
-      hits[#hits + 1] = { text = "Réglages → Affichage : " .. d.label, kind = "info", clickHint = "Clic : la page Affichage",
-        onClick = function() W.Select("display") end, _k = "2" .. d.label }
+  if cur ~= "display" then
+    for _, d in ipairs(W.DISPLAY or {}) do
+      if W.Match(d.label, d.preview, "affichage écran") then
+        local okOn, on = pcall(d.on)
+        on = okOn and on and true or false
+        hits[#hits + 1] = { text = "Affichage : " .. d.label .. (on and "  (à l'écran)" or "  (coupé)"), kind = "info",
+          icon = on and "Interface\\RaidFrame\\ReadyCheck-Ready" or "Interface\\RaidFrame\\ReadyCheck-NotReady",
+          tooltip = { d.preview }, clickHint = on and "Clic : le couper" or "Clic : l'afficher", id = "mod:search:" .. d.id,
+          onClick = function() if inCombat() and not d.combatOK then W.Flash("Impossible en combat : réessaie après.") return end pcall(d.set, not on) end,
+          _k = "2" .. d.label }
+      end
+    end
+  end
+  if cur ~= "profile" then
+    for _, pr in ipairs(W.PROFILES or {}) do
+      if W.Match(pr.label, pr.text, "profil") then
+        local id = pr.id
+        hits[#hits + 1] = { text = "Profil : " .. pr.label .. (W.Profile() == id and "  (choisi)" or ""), kind = "info",
+          icon = ICON .. "INV_Misc_EngGizmos_20", tooltip = { pr.text }, clickHint = "Clic : la page Profil",
+          onClick = function() W.Select("profile") end, _k = "2 profil " .. pr.label }
+      end
+    end
+  end
+  -- chaque réglage de chaque fonction (libellé de l'option) → la page de réglages de sa fonction
+  if cur ~= "options" then
+    local n = 0
+    for _, e in ipairs(T.OptionEntries and T:OptionEntries() or {}) do
+      local mod = e.module and T.modules and T.modules[e.module]
+      if mod and type(mod.options) == "table" then
+        for _, o in ipairs(mod.options) do
+          if n < 20 and type(o.label) == "string" and W.Match(o.label, o.section) then
+            n = n + 1
+            local key = e.key
+            hits[#hits + 1] = { text = "Réglage : " .. tostring(e.label) .. " → " .. o.label, kind = "info", icon = ICON .. "INV_Misc_Gear_01",
+              clickHint = "Clic : ouvrir ce réglage", onClick = function() if W.char then W.char.optPage = key end W.Select("options") end,
+              _k = "3" .. tostring(e.label) .. o.label }
+          end
+        end
+      end
     end
   end
   local H = T.Hub
@@ -1517,16 +1891,31 @@ function W.SearchElsewhere(Ly, cur)
     local ok, list = pcall(H.Entries)
     H.mode = m
     for _, e in ipairs(ok and type(list) == "table" and list or {}) do
-      if e.fn and e.title and not tostring(e.id or ""):find("^tab:") and W.Match(e.title, e.desc, e.tip) then
-        hits[#hits + 1] = { text = "Outils : " .. tostring(e.title), icon = e.icon, kind = "info", clickHint = e.tip or "Clic : ouvrir",
-          onClick = function() e.fn() end, _k = "3" .. tostring(e.title) }
+      if e.fn and e.title and not tostring(e.id or ""):find("^tab:") and e.group ~= "rapide" and W.Match(e.title, e.desc, e.tip) then
+        hits[#hits + 1] = { text = "Outil : " .. tostring(e.title), icon = e.icon, kind = "info", clickHint = e.tip or "Clic : ouvrir",
+          onClick = function() e.fn() end, _k = "4" .. tostring(e.title) }
       end
     end
   end
+  -- le mot cherché en début de mot du nom passe devant (« rendre » : « Rendre mes quêtes » avant « Quêtes à prendre »)
+  local q = W.Fold(W.Query()):match("%S+") or ""
+  for _, e in ipairs(hits) do
+    local name = " " .. W.Fold((tostring(e.text):gsub("^[^:]+: ", "")))
+    e._r = (q ~= "" and name:find(" " .. q, 1, true)) and 0 or 1
+  end
+  tsort(hits, function(a, b)
+    local ca, cb = a._k:sub(1, 1), b._k:sub(1, 1)
+    if ca ~= cb then return ca < cb end
+    if a._r ~= b._r then return a._r < b._r end
+    return a._k < b._k
+  end)
+  return hits
+end
+function W.SearchElsewhere(Ly, cur)
+  local hits = W.SearchHits(cur)
   if #hits == 0 then return end
-  tsort(hits, function(a, b) return a._k < b._k end)
-  if Ly.header("Ailleurs dans TreeAI", nil, #hits, ICON .. "INV_Misc_Spyglass_02") then
-    for i, e in ipairs(hits) do if i <= 12 then Ly.row(e) end end
+  if Ly.header("Partout dans TreeAI", nil, #hits, ICON .. "INV_Misc_Spyglass_02") then
+    for i, e in ipairs(hits) do if i <= 14 then Ly.row(e) end end
   end
 end
 --- (4.1 LAYOUT) les avis non demandés d'un module (Core : ownPage) : seulement sur SA page, en tête
@@ -1550,7 +1939,9 @@ function W.ClearSearch()
 end
 --- vrai si le texte correspond à la recherche (mots, accents et casse ignorés)
 local ACC = { ["à"] = "a", ["â"] = "a", ["ä"] = "a", ["é"] = "e", ["è"] = "e", ["ê"] = "e", ["ë"] = "e", ["î"] = "i",
-  ["ï"] = "i", ["ô"] = "o", ["ö"] = "o", ["ù"] = "u", ["û"] = "u", ["ü"] = "u", ["ç"] = "c", ["œ"] = "oe" }
+  ["ï"] = "i", ["ô"] = "o", ["ö"] = "o", ["ù"] = "u", ["û"] = "u", ["ü"] = "u", ["ç"] = "c", ["œ"] = "oe",
+  -- (5.0) majuscules accentuées (« Équipement » : string.lower ne les connaît pas)
+  ["É"] = "e", ["È"] = "e", ["Ê"] = "e", ["À"] = "a", ["Â"] = "a", ["Ç"] = "c", ["Î"] = "i", ["Ô"] = "o", ["Û"] = "u", ["Œ"] = "oe" }
 local function fold(s)
   s = low(s)
   for k, v in pairs(ACC) do s = s:gsub(k, v) end
@@ -1575,10 +1966,21 @@ function W.RenderTab(Ly, tabId, emptyText, skip, emptyAction)
   local ctrls = {}
   for _, e in ipairs(lines) do
     if e.control and e.onClick then
-      ctrls[#ctrls + 1] = { e.label or strip(e.text), function() W.Run(e) end, e.tooltip }
+      ctrls[#ctrls + 1] = { e.label or strip(e.text), function() W.Run(e) end, e.tooltip, icon = e.icon, sub = e.sub }
     end
   end
-  if #ctrls > 0 then Ly.buttons(ctrls, min(3, #ctrls)); Ly.gap(sp().s) end
+  if #ctrls > 0 then
+    -- (5.0 LOOK) une page sans tuiles d'action à elle : ses 3 premiers boutons deviennent les grosses tuiles du haut
+    -- (une icône quand la ligne en donne une) ; le reste en boutons, comme avant
+    if (Ly.topN or 0) == 0 and query == "" then
+      local big, rest = {}, {}
+      for i, c in ipairs(ctrls) do if i <= 3 then big[#big + 1] = c else rest[#rest + 1] = c end end
+      Ly.topN = Ly.actions(big, #big)
+      if #rest > 0 then Ly.buttons(rest, min(3, #rest)); Ly.gap(sp().s) end
+    else
+      Ly.buttons(ctrls, min(3, #ctrls)); Ly.gap(sp().s)
+    end
+  end
   local shown, open, secN = 0, true, 0
   for _, e in ipairs(lines) do
     if e.header then
@@ -1597,6 +1999,9 @@ end
 
 -- -------------------------------------------------- construction
 local navButtons = {}
+local navSig
+local SIDE_W = 132        -- sous-liste des Réglages (façon Leatrix Plus)
+W.SIDE_W = SIDE_W
 local function selectedPage()
   local id = W.Resolve(W.char and W.char.page or "quests")
   return W.pageIndex[id] and id or (W.pageIndex.quests and "quests") or (W.PAGES[1] and W.PAGES[1].id)
@@ -1616,6 +2021,113 @@ function W.NavPages()
   for _, p in ipairs(out) do W.PAGES[#W.PAGES + 1] = p end
   for _, p in ipairs(rest) do W.PAGES[#W.PAGES + 1] = p end
   return out
+end
+--- (5.0) une page est-elle montrable ? (inscrite par son module, pas cachée, garde éventuelle p.guard() vraie)
+function W.PageOn(p)
+  if type(p) ~= "table" or p.hidden then return false end
+  if type(p.guard) == "function" then local ok, v = pcall(p.guard) if not (ok and v) then return false end end
+  return true
+end
+--- (5.0) boutons de la navigation : icône + nom + pastille ; refaits seulement quand la liste des pages change
+function W.BuildNav()
+  if not (win and win.nav) then return end
+  local pages = W.NavPages()
+  local ids = {}
+  for _, p in ipairs(pages) do ids[#ids + 1] = p.id end
+  local sig = tconcat(ids, ",")
+  if sig == navSig then return end
+  navSig = sig
+  local nav = win.nav
+  local y = 72
+  for i, p in ipairs(pages) do
+    local b = navButtons[i]
+    if not b then
+      b = newButton(nav)
+      meth(b, "SetSize", NAV_W - 16, 26)
+      -- liseré gauche or quand la page est choisie (comme les listes de Leatrix / ElvUI)
+      b.mark = meth(b, "CreateTexture", nil, "ARTWORK")
+      meth(b.mark, "SetWidth", 3)
+      meth(b.mark, "SetPoint", "TOPLEFT", b, "TOPLEFT", 0, 0)
+      meth(b.mark, "SetPoint", "BOTTOMLEFT", b, "BOTTOMLEFT", 0, 0)
+      color(b.mark, tok("gold", 1, 0.82, 0.2, 1))
+      b.icon = meth(b, "CreateTexture", nil, "ARTWORK")
+      meth(b.icon, "SetSize", 18, 18)
+      meth(b.icon, "SetPoint", "LEFT", b, "LEFT", 8, 0)
+      meth(b.icon, "SetTexCoord", 0.08, 0.92, 0.08, 0.92)
+      b.t = text(b, "M", "text")
+      meth(b.t, "SetPoint", "LEFT", b, "LEFT", 32, 0)
+      meth(b.t, "SetWordWrap", false)
+      b.badge = text(b, "S", "prio3")
+      meth(b.badge, "SetPoint", "RIGHT", b, "RIGHT", -6, 0)
+      meth(b, "SetScript", "OnClick", function(self) if self.page then W.Select(self.page) end end)
+      meth(b, "SetScript", "OnEnter", function(self)
+        local pg = W.pageIndex[self.page or ""]
+        if pg then W.Tooltip(self, pg.label, pg.desc and { pg.desc } or nil, "Clic : ouvrir la page") end
+      end)
+      meth(b, "SetScript", "OnLeave", hideTip)
+      navButtons[i] = b
+    end
+    meth(b, "ClearAllPoints")
+    meth(b, "SetPoint", "TOPLEFT", nav, "TOPLEFT", 8, -y)
+    meth(b.icon, "SetTexture", p.icon)
+    meth(b.t, "SetText", p.label)
+    meth(b.t, "SetWidth", NAV_W - 16 - 32 - 22)
+    b.page = p.id
+    meth(b, "Show")
+    y = y + 28
+    if p.gapAfter then y = y + 8 end
+  end
+  for i = #pages + 1, #navButtons do meth(navButtons[i], "Hide") navButtons[i].page = nil end
+  W.navCount = #pages
+end
+--- la page mère à sous-liste (Réglages) de `id`, ou nil — « Tous les réglages » a déjà sa liste : pas de 2e colonne
+function W.SideOf(id)
+  local p = W.pageIndex[id]
+  local par = p and p.parent
+  if par and W.SIDE[par] and id ~= "options" and id ~= "tab" and id ~= "navlog" then return par end
+  return nil
+end
+--- (5.0) sous-liste à gauche façon Leatrix Plus : une ligne par sous-page, la page choisie surlignée
+function W.SideList(Ly, par, cur)
+  local p = pool("side", function()
+    local f = newButton(content)
+    meth(f, "SetHeight", 24)
+    f.mark = meth(f, "CreateTexture", nil, "ARTWORK")
+    meth(f.mark, "SetWidth", 2)
+    meth(f.mark, "SetPoint", "TOPLEFT", f, "TOPLEFT", 0, 0)
+    meth(f.mark, "SetPoint", "BOTTOMLEFT", f, "BOTTOMLEFT", 0, 0)
+    color(f.mark, tok("gold", 1, 0.82, 0.2, 1))
+    f.t = text(f, "S", "text")
+    meth(f.t, "SetPoint", "LEFT", f, "LEFT", 8, 0)
+    meth(f.t, "SetWordWrap", false)
+    f.n = text(f, "S", "prio3")
+    meth(f.n, "SetPoint", "RIGHT", f, "RIGHT", -4, 0)
+    meth(f, "SetScript", "OnClick", function(self) if self.page and meth(self, "IsShown") then W.Select(self.page) end end)
+    meth(f, "SetScript", "OnEnter", function(self) W.Tooltip(self, self.labelText, self.desc and { self.desc } or nil, "Clic : ouvrir") end)
+    meth(f, "SetScript", "OnLeave", hideTip)
+    return f
+  end)
+  local y = 8
+  for _, c in ipairs(W.SUBS[par] or {}) do
+    local cp = W.pageIndex[c]
+    if cp then
+      local b = acquire(p)
+      local on = c == cur
+      local label = cp.side or cp.short or cp.label
+      meth(b, "SetWidth", SIDE_W)
+      meth(b.t, "SetWidth", SIDE_W - 28)
+      meth(b.t, "SetText", safe(label))
+      meth(b.t, "SetTextColor", tok(on and "gold" or "text", 0.92, 0.92, 0.92))
+      if on then color(b.bg, tok("selected", 0.78, 0.62, 0.28, 0.30)) meth(b.mark, "Show") else color(b.bg, 0, 0, 0, 0) meth(b.mark, "Hide") end
+      local n = W.Badge(c)
+      meth(b.n, "SetText", n and tostring(n) or "")
+      b.page, b.labelText, b.desc = c, cp.label, cp.desc
+      Ly.at(b, PAD, y)
+      Ly.rec("side", PAD, y, SIDE_W, 24, label)
+      y = y + 26
+    end
+  end
+  return y
 end
 local function contentWidth()
   local sw = tonumber(meth(scroll, "GetWidth"))
@@ -1643,6 +2155,17 @@ function W.PlaceFirstTime(f)
   local w, h = W.FirstRect()
   meth(f, "SetSize", w, h)
   anchorTo(f, "RIGHT", -W.FIRST.right, W.FIRST.y)
+end
+--- (5.0) « /tai interface reset » : la fenêtre oublie sa place et sa taille (elle rouvrira à droite, taille d'origine)
+function W.ResetPlace()
+  local th = Th()
+  local st = th and th:WindowState("main")
+  if st then st.point, st.x, st.y, st.w, st.h = nil, nil, nil, nil, nil end
+  if win then
+    W.PlaceFirstTime(win)
+    if meth(win, "IsShown") then W.Render() end
+  end
+  return true
 end
 local function buildWindow()
   if win or not G.CreateFrame then return win end
@@ -1677,7 +2200,7 @@ local function buildWindow()
   meth(nav, "SetWidth", NAV_W)
   nav.bg = meth(nav, "CreateTexture", nil, "BACKGROUND")
   meth(nav.bg, "SetAllPoints", nav)
-  color(nav.bg, 0, 0, 0, 0.35)
+  color(nav.bg, 0, 0, 0, 0.45)
   win.nav = nav
   local drag = function(f)
     meth(f, "EnableMouse", true)
@@ -1693,12 +2216,22 @@ local function buildWindow()
     end)
   end
   drag(nav)
+  win.logo = meth(nav, "CreateTexture", nil, "ARTWORK")
+  meth(win.logo, "SetSize", 32, 32)
+  meth(win.logo, "SetPoint", "TOPLEFT", nav, "TOPLEFT", PAD - 4, -14)
+  meth(win.logo, "SetTexture", ICON .. "Ability_Hunter_BeastCall")
+  meth(win.logo, "SetTexCoord", 0.08, 0.92, 0.08, 0.92)
   win.title = text(nav, "H", "gold")
-  meth(win.title, "SetPoint", "TOPLEFT", nav, "TOPLEFT", PAD, -16)
+  meth(win.title, "SetPoint", "TOPLEFT", nav, "TOPLEFT", PAD + 34, -13)
   meth(win.title, "SetText", "TreeAI")
   win.ver = text(nav, "S", "muted")
-  meth(win.ver, "SetPoint", "TOPLEFT", win.title, "BOTTOMLEFT", 1, -4)
+  meth(win.ver, "SetPoint", "TOPLEFT", win.title, "BOTTOMLEFT", 1, -2)
   meth(win.ver, "SetText", "Coach · v" .. version())
+  local navRule = meth(nav, "CreateTexture", nil, "ARTWORK")
+  meth(navRule, "SetHeight", 1)
+  meth(navRule, "SetPoint", "TOPLEFT", nav, "TOPLEFT", 8, -60)
+  meth(navRule, "SetPoint", "TOPRIGHT", nav, "TOPRIGHT", -8, -60)
+  color(navRule, tok("borderSoft", 0.78, 0.62, 0.28, 0.35))
   local sep = meth(win, "CreateTexture", nil, "ARTWORK")
   meth(sep, "SetWidth", 1)
   meth(sep, "SetPoint", "TOPLEFT", nav, "TOPRIGHT", 0, 0)
@@ -1711,8 +2244,20 @@ local function buildWindow()
   meth(top, "SetHeight", TOP_H)
   drag(top)
   win.top = top
+  top.bg = meth(top, "CreateTexture", nil, "BACKGROUND")
+  meth(top.bg, "SetAllPoints", top)
+  color(top.bg, 0, 0, 0, 0.25)
+  local topRule = meth(top, "CreateTexture", nil, "ARTWORK")
+  meth(topRule, "SetHeight", 1)
+  meth(topRule, "SetPoint", "BOTTOMLEFT", top, "BOTTOMLEFT", 0, 0)
+  meth(topRule, "SetPoint", "BOTTOMRIGHT", top, "BOTTOMRIGHT", 0, 0)
+  color(topRule, tok("borderSoft", 0.78, 0.62, 0.28, 0.35))
+  win.pageIcon = meth(top, "CreateTexture", nil, "ARTWORK")
+  meth(win.pageIcon, "SetSize", 28, 28)
+  meth(win.pageIcon, "SetPoint", "TOPLEFT", top, "TOPLEFT", PAD, -13)
+  meth(win.pageIcon, "SetTexCoord", 0.08, 0.92, 0.08, 0.92)
   win.pageTitle = text(top, "L", "gold")
-  meth(win.pageTitle, "SetPoint", "TOPLEFT", top, "TOPLEFT", PAD, -12)
+  meth(win.pageTitle, "SetPoint", "TOPLEFT", top, "TOPLEFT", PAD + 36, -12)
   meth(win.pageTitle, "SetWordWrap", false)
   win.pageSub = text(top, "S", "muted")
   meth(win.pageSub, "SetPoint", "TOPLEFT", win.pageTitle, "BOTTOMLEFT", 0, -3)
@@ -1730,7 +2275,7 @@ local function buildWindow()
   local ok, eb = pcall(G.CreateFrame, "EditBox", "TreeAIMainSearch", top, "InputBoxTemplate")
   if not ok or not eb then ok, eb = pcall(G.CreateFrame, "EditBox", "TreeAIMainSearch", top) end
   if ok and eb then
-    meth(eb, "SetSize", 200, 24)
+    meth(eb, "SetSize", 220, 24)
     meth(eb, "SetPoint", "TOPRIGHT", close, "TOPLEFT", -16, 0)
     meth(eb, "SetAutoFocus", false)
     meth(eb, "SetMaxLetters", 40)
@@ -1740,7 +2285,7 @@ local function buildWindow()
     end
     eb.hint = text(eb, "S", "muted")
     meth(eb.hint, "SetPoint", "LEFT", eb, "LEFT", 6, 0)
-    meth(eb.hint, "SetText", "Rechercher…")
+    meth(eb.hint, "SetText", "Rechercher une action, un réglage…")
     meth(eb, "SetScript", "OnTextChanged", function(self)
       local v = meth(self, "GetText") or ""
       if v ~= "" then meth(self.hint, "Hide") else meth(self.hint, "Show") end
@@ -1785,38 +2330,8 @@ local function buildWindow()
   meth(act, "SetScript", "OnLeave", hideTip)
   win.action = act
   meth(win.status, "SetPoint", "RIGHT", act, "LEFT", -10, 0)
-  -- navigation
-  local y = 80
-  local i = 0
-  for _, p in ipairs(W.NavPages()) do do
-    i = i + 1
-    local b = newButton(nav)
-    meth(b, "SetSize", NAV_W - 16, 24)
-    meth(b, "SetPoint", "TOPLEFT", nav, "TOPLEFT", 8, -y)
-    -- liseré gauche or quand la page est choisie (comme les listes de Leatrix / ElvUI)
-    b.mark = meth(b, "CreateTexture", nil, "ARTWORK")
-    meth(b.mark, "SetWidth", 2)
-    meth(b.mark, "SetPoint", "TOPLEFT", b, "TOPLEFT", 0, 0)
-    meth(b.mark, "SetPoint", "BOTTOMLEFT", b, "BOTTOMLEFT", 0, 0)
-    color(b.mark, tok("gold", 1, 0.82, 0.2, 1))
-    b.icon = meth(b, "CreateTexture", nil, "ARTWORK")
-    meth(b.icon, "SetSize", 16, 16)
-    meth(b.icon, "SetPoint", "LEFT", b, "LEFT", 6, 0)
-    meth(b.icon, "SetTexture", p.icon)
-    meth(b.icon, "SetTexCoord", 0.08, 0.92, 0.08, 0.92)
-    b.t = text(b, "M", "gold")
-    meth(b.t, "SetPoint", "LEFT", b, "LEFT", 28, 0)
-    meth(b.t, "SetText", p.label)
-    b.badge = text(b, "S", "prio3")
-    meth(b.badge, "SetPoint", "RIGHT", b, "RIGHT", -6, 0)
-    meth(b, "SetScript", "OnClick", function() W.Select(p.id) end)
-    meth(b, "SetScript", "OnEnter", function(self) W.Tooltip(self, p.label, p.desc and { p.desc } or nil, "Clic : ouvrir la page") end)
-    meth(b, "SetScript", "OnLeave", hideTip)
-    b.page = p.id
-    navButtons[i] = b
-    y = y + 28
-    if p.gapAfter then y = y + 12 end
-  end end
+  -- navigation : boutons créés / relus par buildNav (une page inscrite plus tard par son module y entre)
+  W.BuildNav()
   meth(win, "SetScript", "OnShow", function() W.Render() end)
   meth(win, "SetScript", "OnHide", function() hideTip(); if win.search then meth(win.search, "ClearFocus") end end)
   return win
@@ -1842,8 +2357,8 @@ local function paintNav(cur)
     local on = b.page == cur or b.page == navCur
     if on then color(b.bg, tok("selected", 0.78, 0.62, 0.28, 0.30)) else color(b.bg, 0, 0, 0, 0) end
     if on then meth(b.mark, "Show") else meth(b.mark, "Hide") end
-    meth(b.t, "SetTextColor", tok(on and "text" or "gold", 1, 0.82, 0.2))
-    local n = W.Badge(b.page)
+    meth(b.t, "SetTextColor", tok(on and "gold" or "text", 1, 0.82, 0.2))
+    local n = b.page and W.Badge(b.page) or nil
     meth(b.badge, "SetText", n and tostring(n) or "")
   end
 end
@@ -1864,15 +2379,22 @@ function W.Render()
   if type(ttl) == "function" then ttl = try(ttl) end
   meth(win.pageTitle, "SetText", ttl or p.label)
   meth(win.pageSub, "SetText", p.sub and (type(p.sub) == "function" and (try(p.sub) or "") or p.sub) or "")
+  local navPage = W.pageIndex[W.NavOf(id)]
+  meth(win.pageIcon, "SetTexture", p.icon or (navPage and navPage.icon) or (ICON .. "INV_Misc_Book_09"))
+  W.BuildNav()
   paintNav(id)
-  local Ly = newLay(contentWidth())
+  -- (5.0) Réglages : sous-liste à gauche (façon Leatrix Plus), la page à droite ; ailleurs : onglets / lien de retour
+  local side = W.SideOf(id)
+  local Ly = newLay(contentWidth(), side and (SIDE_W + 8) or 0)
   W.lastLay = Ly
-  W.SubBar(Ly, id)
+  local sideY = 0
+  if side then sideY = W.SideList(Ly, side, id) else W.SubBar(Ly, id) end
   W.OwnNotices(Ly, id)
   W.TopActions(Ly, p)
   local ok, err = pcall(p.render, Ly)
   if not ok then Ly.text("|cffff5555Erreur d'affichage : " .. tostring(err) .. "|r") if T.Debug then T:Debug("Window", err) end end
   if query ~= "" then pcall(W.SearchElsewhere, Ly, id) end
+  if Ly.y < sideY then Ly.y = sideY end
   Ly.finish()
   -- bouton d'action de la page (un seul, en bas à droite)
   local label, fn, tip
@@ -1932,11 +2454,21 @@ function W.Open(id)
     id = W.Resolve(id)
     if W.pageIndex[id] then remember(id) end
   end
+  -- (5.0) rouverte pendant son fondu de fermeture (un clic « fermer » puis un clic sur la bande dans le dixième de
+  -- seconde) : le fondu est coupé, sinon elle se refermait toute seule. Dans la même image que la fermeture (aucun
+  -- joueur ne clique deux fois par image), la fermeture en cours garde la main.
+  local th = Th()
+  if th and th.StopAnim and W._closeAt and ((try(G.GetTime) or 0) - W._closeAt) > 0.001 then th:StopAnim(win, 1) end
   local was = meth(win, "IsShown")
   meth(win, "Show")
   if was then W.Render() end      -- fenêtre cachée : son OnShow la dessine déjà (pas deux rendus)
 end
-function W.Close() if win then local th = Th() if th then th:FadeOut(win) else meth(win, "Hide") end end end
+function W.Close()
+  if not win then return end
+  W._closeAt = try(G.GetTime) or 0
+  local th = Th()
+  if th then th:FadeOut(win) else meth(win, "Hide") end
+end
 function W.Toggle(id)
   if win and meth(win, "IsShown") and (not id or selectedPage() == W.Resolve(id)) then W.Close() else W.Open(id) end
 end
@@ -2121,8 +2653,6 @@ end
 -- (4.3 V43) Chasseur (familier, talents) et Macros & touches : deux pages mères au lieu de « Personnage »
 W.AddPage({ id = "hunter", label = "Chasseur", icon = ICON .. "Ability_Hunter_BeastCall", title = "Chasseur",
   desc = "Familier, aides de chasseur, talents", render = mother("hunter") })
-W.AddPage({ id = "binds", label = "Macros & touches", short = "Macros", icon = ICON .. "INV_Misc_Key_14", title = "Macros & touches",
-  desc = "Macros prêtes, toutes les touches de TreeAI", render = mother("binds") })
 local function modOff(name) local m = T.modules and T.modules[name] return not (m and m._active) end
 --- (4.3 V43) Chasseur → Familier : l'état du familier (lu dans le jeu), les aides de chasseur et les conseils
 --- « Familier » de Conseils pro ; rien d'automatique (nourrir, appeler = tes touches)
@@ -2301,12 +2831,15 @@ function W.Bindings()
   return out
 end
 local function stripApi() local Sc = T.Shortcuts return type(Sc) == "table" and Sc or nil end
-W.AddPage({ id = "keys", label = "Raccourcis", icon = ICON .. "INV_Misc_Key_14", title = "Raccourcis",
+W.AddPage({ id = "keys", label = "Touches", icon = ICON .. "INV_Misc_Key_14", title = "Touches",
   top = function()
     local Sc = stripApi()
     if Sc and type(Sc.SuggestKeys) == "function" then
-      return { { "Raccourcis conseillés", function() Sc.SuggestKeys() W.Dirty() end,
-        "Clic : une touche libre pour chaque bouton rapide (Alt-1…), jamais une touche déjà prise ; hors combat" } }
+      local miss = type(Sc.MissingKeys) == "function" and #Sc.MissingKeys() or 0
+      return { { "Touches conseillées", function() Sc.SuggestKeys() W.Dirty() end,
+        "Clic : une touche libre pour chaque action rapide (Alt-1…), jamais une touche déjà prise ; hors combat",
+        icon = ICON .. "INV_Misc_Key_03", sub = miss > 0 and fmt("%d action%s sans touche", miss, miss > 1 and "s" or "") or "Toutes les actions ont une touche",
+        count = miss } }
     end
   end,
   desc = "Chaque touche de TreeAI, et les raccourcis conseillés en un clic",
@@ -2315,7 +2848,7 @@ W.AddPage({ id = "keys", label = "Raccourcis", icon = ICON .. "INV_Misc_Key_14",
     local list = W.Bindings()
     local free = 0
     for _, b in ipairs(list) do if not b.key1 then free = free + 1 end end
-    Ly.text(fmt("%d raccourcis TreeAI, %d sans touche. « Raccourcis conseillés » pose une touche libre sur les plus utiles "
+    Ly.text(fmt("%d raccourcis TreeAI, %d sans touche. « Touches conseillées » pose une touche libre sur les plus utiles "
       .. "(jamais une touche déjà prise).", #list, free), "S", "muted")
     local shown = 0
     if Ly.header("Toutes les touches", "keys:all", #list, ICON .. "INV_Misc_Key_14") then
@@ -2335,12 +2868,12 @@ W.AddPage({ id = "keys", label = "Raccourcis", icon = ICON .. "INV_Misc_Key_14",
   action = function()
     local Sc = stripApi()
     if Sc and type(Sc.SuggestKeys) == "function" then
-      return "Raccourcis conseillés", function() Sc.SuggestKeys() W.Dirty() end,
-        "Clic : une touche libre pour chaque bouton rapide (Alt-1…), jamais une touche déjà prise ; hors combat"
+      return "Touches conseillées", function() Sc.SuggestKeys() W.Dirty() end,
+        "Clic : une touche libre pour chaque action rapide (Alt-1…), jamais une touche déjà prise ; hors combat"
     end
     local B = T.modules and T.modules.Binds
     if B and B.Refresh then
-      return "Raccourcis conseillés", function() T:SetModuleEnabled("Binds", true) W.OpenTab("binds") end,
+      return "Touches conseillées", function() T:SetModuleEnabled("Binds", true) W.OpenTab("binds") end,
         "Clic : les touches conseillées pour tes sorts et macros (Sorts & barres)"
     end
   end })
@@ -2364,12 +2897,26 @@ local function dbOf(name) local m = T.modules and T.modules[name] return m and m
 local function setMod(name, on) if T.SetModuleEnabled and T.modules and T.modules[name] then T:SetModuleEnabled(name, on) end end
 --- éléments d'écran : { id, label, preview, on(), set(bool) } — l'ordre = de haut en bas de l'écran
 W.DISPLAY = {
-  { id = "strip", label = "Boutons rapides (en haut à gauche)", preview = "Rendre · À prendre · Suivant · Zone · Groupe · Journal · TreeAI",
+  { id = "guide", sec = "main", label = "Guidage des quêtes", preview = "Trajet, boussole et repères de quêtes : tout allumer ou tout couper d'un clic",
+    on = function() local Sc = T.Shortcuts return not (Sc and Sc.GuideOn) or Sc.GuideOn() end,
+    set = function(v) local Sc = T.Shortcuts if Sc and Sc.SetGuide then Sc.SetGuide(v) end end, combatOK = true },
+  { id = "strip", sec = "main", label = "Bande d'actions rapides", preview = "Rendre · Prendre · Suivant · Zone · Vite | Sacs · Équipement · Métiers | Groupe | TreeAI",
     on = function() local d = dbOf("Shortcuts") return modOn("Shortcuts") and not (d and d.strip == false) end,
     set = function(v) local d = dbOf("Shortcuts") if v and not modOn("Shortcuts") then setMod("Shortcuts", true) end
       if d then d.strip = v and true or false end
       local Sc = T.Shortcuts if Sc and Sc.OnOptionChanged then pcall(Sc.OnOptionChanged, Sc, "strip") end end },
-  { id = "compass", label = "Boussole (en haut, au centre)", preview = "flèche + « 708 m · 2 min » + une ligne",
+  { id = "stripCompact", sec = "main", label = "Bande en mode compact", preview = "Icônes seules, sans les mots (elle prend deux fois moins de place)",
+    on = function() local d = dbOf("Shortcuts") return (d and d.text == false) and true or false end,
+    set = function(v) local d = dbOf("Shortcuts") if d then d.text = not v end
+      local Sc = T.Shortcuts if Sc and Sc.OnOptionChanged then pcall(Sc.OnOptionChanged, Sc, "text") end end, combatOK = true },
+  { id = "stripCombat", sec = "main", label = "Cacher la bande en combat", preview = "Elle s'efface quand le combat commence et revient à la fin",
+    on = function() local d = dbOf("Shortcuts") return (d and d.hideCombat) and true or false end,
+    set = function(v) local d = dbOf("Shortcuts") if d then d.hideCombat = v and true or false end
+      local Sc = T.Shortcuts if Sc and Sc.OnOptionChanged then pcall(Sc.OnOptionChanged, Sc, "hideCombat") end end, combatOK = true },
+  { id = "alert", sec = "main", label = "Alertes (une à la fois, 8 à 15 s)", preview = "Danger, mort, sacs pleins, quête finie : une ligne qui s'efface seule",
+    on = function() local a = T.settings and T.settings.alert return not (a and a.enabled == false) end,
+    set = function(v) local a = T.settings and T.settings.alert if a then a.enabled = v and true or false end end, combatOK = true },
+  { id = "compass", sec = "main", label = "Boussole (en haut, au centre)", preview = "flèche + « 708 m · 2 min » + une ligne",
     on = function() local d = dbOf("Compass") return modOn("Compass") and not (d and d.shown == false) end,
     set = function(v) local d = dbOf("Compass") if v and not modOn("Compass") then setMod("Compass", true) end
       if d then d.shown = v and true or false end
@@ -2401,36 +2948,126 @@ W.DISPLAY = {
     set = function(v) local d = dbOf("Radar") if v and not modOn("Radar") then setMod("Radar", true) end
       local Rd = T.modules and T.modules.Radar
       if Rd and type(Rd.Show) == "function" then pcall(Rd.Show, v) elseif d then d.shown = v and true or false end end },
-  { id = "minimap", label = "Pastille de la minimap", preview = "clic : cette fenêtre",
+  { id = "minimap", sec = "map", label = "Pastille de la minimap", preview = "clic : cette fenêtre ; clic droit : le menu",
     on = function() local d = dbOf("Hub") return modOn("Hub") and not (d and d.button == false) end,
     set = function(v) local d = dbOf("Hub") if d then d.button = v and true or false end
       local H = T.Hub if H and H.OnOptionChanged then pcall(H.OnOptionChanged, H, "button") end end },
-  { id = "pins", label = "Icônes de quêtes (« ! » à prendre, « ? » à rendre)", preview = "carte + minimap ; muettes si Questie dessine",
+  { id = "pins", sec = "map", label = "Icônes de quêtes (« ! » à prendre, « ? » à rendre)", preview = "carte + minimap ; muettes si Questie dessine",
     on = function() return modOn("QuestPins") end, set = function(v) setMod("QuestPins", v) end },
-  { id = "minipins", label = "Points en plus sur la minimap", preview = "rares, élites, maîtres de vol, services",
+  { id = "bagglow", sec = "bags", label = "Surbrillance dans les sacs", preview = "Objets de quête, à vendre, à garder : un liseré de couleur sur l'objet",
+    on = function() return modOn("Highlight") end, set = function(v) setMod("Highlight", v) end },
+  { id = "tooltips", sec = "bags", label = "Lignes TreeAI dans les infobulles d'objets", preview = "Amélioration, valeur, quête, métier : sous l'infobulle du jeu",
+    on = function() return modOn("ItemInfo") end, set = function(v) setMod("ItemInfo", v) end },
+  { id = "minipins", sec = "map", label = "Points en plus sur la minimap", preview = "rares, élites, maîtres de vol, services",
     on = function() return modOn("MinimapPins") end, set = function(v) setMod("MinimapPins", v) end },
-  { id = "path", label = "Chemin pointillé (carte + minimap)", preview = "le trajet appris, en pointillés",
+  { id = "path", sec = "map", label = "Chemin pointillé (carte + minimap)", preview = "le trajet appris, en pointillés",
     on = function() return modOn("PathDraw") end, set = function(v) setMod("PathDraw", v) end },
 }
+-- sections de la page Affichage (sec d'un élément ; sans sec : « En plus »)
+W.DISPLAY_SECTIONS = {
+  { "main", "Toujours à l'écran", ICON .. "INV_Misc_Spyglass_02" },
+  { "map", "Carte et minimap", ICON .. "INV_Misc_Map_01" },
+  { "bags", "Sacs et infobulles", ICON .. "INV_Misc_Bag_08" },
+  { "more", "En plus (coupés d'office)", ICON .. "INV_Misc_EngGizmos_20" },
+}
+--- (5.0) l'état de chaque élément d'écran : { { id, label, on } } (tests, visite, research/look5.md)
+function W.DisplayState()
+  local out = {}
+  for _, d in ipairs(W.DISPLAY) do
+    local okOn, on = pcall(d.on)
+    out[#out + 1] = { id = d.id, label = d.label, on = okOn and on and true or false, sec = d.sec or "more" }
+  end
+  return out
+end
 W.AddPage({ id = "display", label = "Affichage", icon = ICON .. "INV_Misc_Spyglass_02", title = "Affichage",
-  desc = "Ce qui est à l'écran : un clic pour l'allumer ou le couper",
-  sub = "D'office : boutons rapides, boussole, pastille et ses repères. Le reste à un clic.",
+  desc = "Chaque élément que TreeAI pose à l'écran : une case pour l'allumer ou le couper",
+  sub = "Une case par élément. D'office : guidage, bande d'actions, boussole, pastille et ses repères.",
+  top = function()
+    local out = {}
+    if T.SetEditMode then
+      out[#out + 1] = { "Déplacer les cadres", function() T:SetEditMode(not T:IsEditMode()) end,
+        "Clic : mode édition (glisser les cadres, molette = taille)", icon = ICON .. "INV_Misc_Wrench_01", sub = "Glisser, molette = taille" }
+    end
+    local Sc = T.Shortcuts
+    if Sc and type(Sc.ResetInterface) == "function" then
+      out[#out + 1] = { "Tout remettre en place", function() Sc.ResetInterface("reset") end,
+        "Clic : chaque cadre TreeAI revient à sa place et à sa taille d'origine (/tai interface reset)",
+        icon = "Interface\\Buttons\\UI-RefreshButton", sub = "/tai interface reset" }
+    end
+    return out
+  end,
   render = function(Ly)
-    for _, d in ipairs(W.DISPLAY) do
-      local okOn, on = pcall(d.on)
-      on = okOn and on and true or false
-      if W.Match(d.label, d.preview) then
-        -- (« mod: » : comme les lignes « Fonctions », une bascule de module — l'orage de clics du harnais la laisse)
-        Ly.row({ id = "mod:display:" .. d.id, text = d.label .. "\n|cff9a9a9a" .. d.preview .. "|r", right = on and "à l'écran" or "coupé",
-          kind = on and "info" or "quest", icon = on and "Interface\\RaidFrame\\ReadyCheck-Ready" or "Interface\\RaidFrame\\ReadyCheck-NotReady",
-          tooltip = { d.preview }, clickHint = on and "Clic : le couper" or "Clic : l'afficher",
-          onClick = function() if inCombat() then W.Flash("Impossible en combat : réessaie après.") return end pcall(d.set, not on) end })
+    local shown = 0
+    for _, sec in ipairs(W.DISPLAY_SECTIONS) do
+      local items = {}
+      for _, d in ipairs(W.DISPLAY) do
+        if (d.sec or "more") == sec[1] and W.Match(d.label, d.preview) then items[#items + 1] = d end
       end
+      if #items > 0 and Ly.header(sec[2], "display:" .. sec[1], #items, sec[3], sec[4]) then
+        for _, d in ipairs(items) do
+          local okOn, on = pcall(d.on)
+          on = okOn and on and true or false
+          shown = shown + 1
+          Ly.toggle({ id = "display:" .. d.id, label = d.label, desc = d.preview, on = on, combatOK = d.combatOK,
+            state = on and "à l'écran" or "coupé", set = function(v) pcall(d.set, v) end })
+        end
+        if sec[1] == "bags" then
+          local th = Th()
+          if th and th.LEGEND and W.Query() == "" then
+            Ly.text("Légende des couleurs dans les sacs :", "S", "muted")
+            Ly.legend(th.LEGEND.bags)
+          end
+        end
+      end
+    end
+    if shown == 0 and W.Query() ~= "" then Ly.empty("Rien ne correspond à « " .. W.Query() .. " ».") end
+  end })
+
+-- -------------------------------------------------- Réglages → Profil : Simple / Complet, une phrase chacun
+W.PROFILES = {
+  { id = "sur", label = "Simple",
+    text = "Seulement ce qui est fiable et utile tout le temps : quêtes, trajet, boussole, bande d'actions, métiers, groupe. Rien de bêta, écran léger." },
+  { id = "tout", label = "Complet",
+    text = "Tout TreeAI, fonctions bêta comprises (HV, combat, radar, conseils avancés…) : plus d'aides, plus de choses à lire et à l'écran." },
+}
+--- le profil en cours : « sur » (Simple) | « tout » (Complet) | « essentiel » (léger : réglage avancé)
+function W.Profile() return T.ModuleProfile and T:ModuleProfile() or "tout" end
+function W.SetProfile(id)
+  if inCombat() then W.Flash("Impossible en combat : réessaie après.") return false end
+  if not (T.SetModuleProfile and (id == "sur" or id == "tout" or id == "essentiel")) then return false end
+  T:SetModuleProfile(id)
+  W.Flash(id == "sur" and "Profil Simple : seules les fonctions fiables tournent." or id == "tout"
+    and "Profil Complet : tout est allumé, fonctions bêta comprises." or "Profil léger : seul l'essentiel tourne.")
+  return true
+end
+W.AddPage({ id = "profile", label = "Profil", side = "Profil : Simple / Complet", icon = ICON .. "INV_Misc_EngGizmos_20", title = "Profil",
+  desc = "Simple ou Complet : ce que TreeAI fait tourner",
+  sub = "Deux profils. Tu peux changer quand tu veux, sans recharger.",
+  render = function(Ly)
+    local cur = W.Profile()
+    local list = {}
+    for _, pr in ipairs(W.PROFILES) do
+      if W.Match(pr.label, pr.text) then
+        local id = pr.id
+        list[#list + 1] = { pr.label, pr.text, function() W.SetProfile(id) end, active = cur == id }
+      end
+    end
+    if #list > 0 then Ly.choice(list) end
+    if cur == "essentiel" and W.Query() == "" then
+      Ly.note("Profil léger en cours (réglage avancé) : seul l'essentiel tourne. Choisis Simple ou Complet pour en sortir.", "info")
+    end
+    if W.Query() == "" then
+      Ly.text("Une fonction précise ? « Fonctions », à gauche : une ligne par fonction, un clic pour l'allumer ou la couper.", "S", "muted")
+      local n, on = 0, 0
+      for _, name in ipairs(T.moduleOrder or {}) do
+        local m = T.modules[name]
+        if m and m._classOK ~= false then n = n + 1 if m._active then on = on + 1 end end
+      end
+      Ly.kv("Fonctions allumées", fmt("%d sur %d", on, n))
     end
   end,
   action = function()
-    if T.SetEditMode then return "Déplacer les cadres", function() T:SetEditMode(not T:IsEditMode()) end,
-      "Clic : mode édition (glisser les cadres, molette = taille)" end
+    return "Voir les fonctions", function() W.Select("modules") end, "Clic : la liste des fonctions, une par une"
   end })
 
 -- Outils : le lanceur de la pastille, en cartes (icône + titre + description), groupé
@@ -2515,9 +3152,9 @@ W.AddPage({ id = "modules", label = "Fonctions", icon = ICON .. "INV_Misc_EngGiz
   render = function(Ly)
     -- (4.0 QA) l'intro suit le profil en cours (pas « Mode sûr… » quand tout est allumé)
     local prof = T.ModuleProfile and T:ModuleProfile()
-    local intro = (prof == "tout" and "Tout est allumé, fonctions bêta comprises (testées hors du jeu seulement).")
+    local intro = (prof == "tout" and "Profil Complet. Tout est allumé, fonctions bêta comprises (testées hors du jeu seulement).")
       or (prof == "essentiel" and "Profil léger : seul l'essentiel tourne.")
-      or "Mode sûr : seules les fonctions fiables tournent. Les fonctions « bêta » sont testées hors du jeu : allume-les une par une."
+      or "Profil Simple (mode sûr) : seules les fonctions fiables tournent. Les fonctions « bêta » sont testées hors du jeu : allume-les une par une."
     Ly.text(intro, "S", "muted")
     if W._perf then   -- « Coût des fonctions » (Options, ligne de cette page) : ici, jamais dans le chat
       local t = try(G.GetTime) or 0
@@ -2533,10 +3170,10 @@ W.AddPage({ id = "modules", label = "Fonctions", icon = ICON .. "INV_Misc_EngGiz
   action = function()
     local prof = T.ModuleProfile and T:ModuleProfile()
     if prof == "sur" then
-      return "Tout allumer", function() T:SetModuleProfile("tout") end,
+      return "Profil Complet (tout allumer)", function() T:SetModuleProfile("tout") end,
         "Clic : allumer toutes les fonctions bêta (les automatismes de quête restent à cocher dans Options > Barre de quête)"
     end
-    return "Revenir au mode sûr", function() T:SetModuleProfile("sur") end, "Clic : seulement les fonctions fiables"
+    return "Profil Simple (mode sûr)", function() T:SetModuleProfile("sur") end, "Clic : seulement les fonctions fiables"
   end })
 --- (4.0 QA) « Coût des fonctions » : la page « Fonctions » de la fenêtre le montre (au lieu du chat)
 function W.ShowPerf()
@@ -2614,7 +3251,7 @@ W.AddPage({ id = "options", label = "Options", icon = TAB_ICON.options, title = 
     if shown == 0 then Ly.empty("Aucun réglage ne correspond à « " .. query .. " ».") return end
     if type(sel) ~= "table" then sel = first end
     -- page choisie : construite une fois par le moteur TIDY (même rythme, rien ne se chevauche)
-    local pw = max(300, Ly.W - listW - PAD * 2)
+    local pw = max(260, min(max(300, Ly.W - listW - PAD * 2), Ly.W - (PAD + listW + 4) - 4))   -- (5.0) jamais hors de la colonne
     local key = sel.key .. ":" .. pw
     local f = optFrames[key]
     if not f and sel.builder then
@@ -2757,7 +3394,7 @@ function W:OnEnable()
   if T.HUB_EXTRA and not W._hub then
     W._hub = true
     table.insert(T.HUB_EXTRA, 1, { group = "jeu", id = "window", title = "Fenêtre TreeAI", icon = ICON .. "INV_Misc_Book_09",
-      tip = "Clic : la fenêtre TreeAI (Quêtes, Trajet, Groupe, Donjons, Équipement, Métiers, HV, Chasseur, Conseils, Macros & touches, Réglages)", fn = function() W.Toggle() end })
+      tip = "Clic : la fenêtre TreeAI (Quêtes, Trajet, Groupe, Donjons, Équipement, Sacs, Métiers, HV, Chasseur, Conseils, Réglages)", fn = function() W.Toggle() end })
   end
 end
 function W:OnDisable()

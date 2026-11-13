@@ -60,8 +60,9 @@ def test_clean_screen_defaults() -> None:
 
 def test_window_navigation_declared() -> None:
     src = _src("Window.lua")
-    assert 'W.NAV = { "quests", "route", "group", "dungeon", "gear", "prof", "hv", "hunter", "coach", "binds", "settings" }' in src
-    assert 'W.ALIAS = { now = "quests", perso = "gear" }' in src
+    # (5.0 LOOK) 11 categories at most: « Sacs » joins when its module registers the page, Macros & touches → Réglages
+    assert 'W.NAV = { "quests", "route", "group", "dungeon", "gear", "bags", "prof", "hv", "hunter", "coach", "settings" }' in src
+    assert 'W.ALIAS = { now = "quests", perso = "gear", binds = "keys",' in src
     # first opening: the right half, never the centre
     assert 'anchorTo(win, "CENTER", 0, 40)' not in src
     assert 'anchorTo(f, "RIGHT", -W.FIRST.right, W.FIRST.y)' in src

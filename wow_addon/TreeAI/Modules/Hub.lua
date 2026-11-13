@@ -145,7 +145,9 @@ local function tab(id)
   end)
 end
 H.GROUPS = {
-  { id = "jeu", title = "Jeu", icon = ICON .. "INV_Misc_Map_01" },
+  -- (5.0 LOOK) d'abord les actions rapides (les mêmes que la bande, un clic = l'action) et le guidage ON / OFF
+  { id = "rapide", title = "Actions rapides", icon = ICON .. "Ability_Rogue_Sprint" },
+  { id = "jeu", title = "Pages", icon = ICON .. "INV_Misc_Map_01" },
   { id = "outils", title = "Outils", icon = ICON .. "INV_Misc_Wrench_01" },
   { id = "reglages", title = "Réglages", icon = ICON .. "INV_Misc_Gear_01" },
   { id = "beta", title = "Fonctions bêta", icon = ICON .. "INV_Misc_EngGizmos_20" },
@@ -203,6 +205,28 @@ H.TAB_ICON, H.TAB_DESC = TAB_ICON, TAB_DESC   -- (UIREDO) mêmes icônes / descr
 function H.Entries()
   if H.mode == "beta" then return H.BetaEntries() end
   local out = {}
+  -- (5.0 LOOK) actions rapides : le guidage des quêtes (ON / OFF, le menu reste ouvert) puis les actions de la bande
+  local Sc = T.Shortcuts
+  if type(Sc) == "table" and Sc._active and type(Sc.State) == "function" and type(Sc.Do) == "function" then
+    local okS, states = pcall(Sc.State)
+    if okS and type(states) == "table" then
+      local on = type(Sc.GuideOn) == "function" and Sc.GuideOn()
+      out[#out + 1] = { group = "rapide", id = "guide", keep = true, title = "Guidage des quêtes", icon = ICON .. "Ability_Tracking",
+        state = on and "|cff4dd966ON|r" or "|cff949499OFF|r", on = on and true or false,
+        tip = on and "Clic : couper tout le guidage de quêtes (trajet, boussole, repères)" or "Clic : rallumer le guidage de quêtes",
+        fn = function() T:UserAction(function() Sc.Do("guide") end) end }
+      for _, st in ipairs(states) do
+        if st.id ~= "fenetre" and st.id ~= "suivant" then
+          local id = st.id
+          local n = tonumber(st.count)
+          out[#out + 1] = { group = "rapide", id = "strip:" .. id, title = tostring(st.modeLabel or st.title or st.label), icon = st.icon,
+            state = (n and n > 0) and tostring(n) or (st.active and "|cffffd133choisi|r") or nil, on = not st.disabled,
+            tip = "Clic : " .. tostring(st.tip or st.title or st.label) .. (st.key and ("  (touche : " .. st.key .. ")") or ""),
+            fn = act(function() Sc.Do(id) end) }
+        end
+      end
+    end
+  end
   local Wn = T.Window
   local hasWin = Wn and Wn._active and Wn.Open and type(Wn.PAGES) == "table"
   if hasWin then

@@ -265,14 +265,20 @@ M.STEPS = {
     can = function() return fromRegistry("compass") ~= nil or visible(movable("compass")) or visible(rawget(G, "TreeAICompassFrame")) end,
     find = function() return fromRegistry("compass") or firstVisible(movable("compass"), rawget(G, "TreeAICompassFrame")) end,
     text = function() return "La flèche vise ta prochaine étape, avec la distance et le temps de trajet." end },
-  { id = "quick", title = "Les raccourcis",
+  { id = "quick", title = "Les actions rapides",
     can = function()
       return fromRegistry("quick") ~= nil or firstVisible(movable("quick"), movable("quickfight"), movable("quicktravel")) ~= nil
     end,
     find = function()
       return fromRegistry("quick") or firstVisible(movable("quick"), movable("quickfight"), movable("quicktravel"))
     end,
-    text = function() return "Des boutons qui n'apparaissent que s'ils servent. Un clic, une action." end },
+    text = function()
+      local Sc = T.Shortcuts
+      if type(Sc) == "table" and type(Sc.Strip) == "function" and visible(Sc.Strip()) then
+        return "Un clic, une action : rendre, prendre, étape suivante, zone, sacs, équipement, groupe. La pastille « Guidage quêtes » allume ou coupe tout le guidage."
+      end
+      return "Des boutons qui n'apparaissent que s'ils servent. Un clic, une action."
+    end },
   { id = "beta", title = "Fonctions bêta", hub = true,
     can = function() return M.targets.beta ~= nil or hasHubEntry("profil") end,
     prepare = function(a) if not fromRegistry("beta") then openHub(a) end end,
@@ -1055,6 +1061,20 @@ function M:OnEnable()
   if (tonumber(st.calmV) or 0) < 1 then
     st.calmV = 1
     if M.db then M.db.tips = false end
+  end
+  -- (5.0 LOOK) le réglage en 3 étapes (personnage · affichage · touches) est proposé UNE fois à ceux qui avaient déjà
+  -- fini l'ancien assistant : au premier moment calme (même garde que le 1er lancement), « Passer » = plus jamais
+  local db = T.db
+  if type(db) == "table" and (tonumber(db.setupV) or 0) < 5 then
+    local had = db.onboarded
+    db.setupV = 5
+    if had and type(T._MaybeWizard) == "function" and type(T.ShowWizard) == "function" then
+      db.onboarded = nil
+      T:After(6, function()
+        local wz = T.GetWizard and T:GetWizard()
+        if T.db and not T.db.onboarded and not (wz and meth(wz, "IsShown")) then T:_MaybeWizard(0) end   -- (déjà ouvert par le cœur : rien)
+      end)
+    end
   end
   M._loginAt = now()
   M._calmSince, M._waitN, kickAt = nil, nil, nil

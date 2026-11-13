@@ -310,9 +310,11 @@ return function(M, ctx)
         if e.kind == "header" then heads[#heads + 1] = e.group end
         if e.kind == "item" then items[e.id] = e end
       end
-      check(table.concat(heads, ",") == "jeu,outils,reglages", "menu : Jeu / Outils / Réglages (" .. table.concat(heads, ",") .. ")")
+      -- (5.0 LOOK) d'abord les actions rapides (guidage ON / OFF + les actions de la bande), puis les pages
+      check(table.concat(heads, ",") == "rapide,jeu,outils,reglages", "menu : Actions rapides / Pages / Outils / Réglages (" .. table.concat(heads, ",") .. ")")
+      check(items["guide"] and items["strip:rendre"] and items["strip:sacs"], "menu : guidage des quêtes, Rendre, Sacs en actions rapides")
       -- (4.1 LAYOUT) « Maintenant » est fondu dans « Quêtes » ; les 7 pages de la navigation (Personnage, Réglages…)
-      for _, id in ipairs({ "tab:quests", "tab:route", "tab:group", "tab:gear", "tab:hunter", "tab:binds", "tab:settings", "options", "erreurs", "bloque", "profil", "macros" }) do
+      for _, id in ipairs({ "tab:quests", "tab:route", "tab:group", "tab:gear", "tab:hunter", "tab:settings", "options", "erreurs", "bloque", "profil", "macros" }) do
         check(items[id], "menu : entrée « " .. id .. " »")
       end
       local okW = true

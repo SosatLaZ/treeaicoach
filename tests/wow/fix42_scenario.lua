@@ -189,14 +189,15 @@ return function(M, ctx)
     out("bande : " .. dump)
     check(dump:find("Métiers", 1, true), "strip: « Métiers » shown with a crafting profession")
     local W = T.Window
-    S.Do("metiers", "LeftButton")
+    -- (5.0 LOOK) un clic FAIT la chose : la session métier démarre / s'arrête ; clic droit = la page Métiers
+    S.Do("metiers", "RightButton")
     check(W and W.IsOpen and W.IsOpen() and W.CurrentPage and (W.CurrentPage() == "prof" or W.CurrentPage() == "perso"),
-      "click: Personnage → Métiers (" .. tostring(W and W.CurrentPage and W.CurrentPage()) .. ")")
+      "right click: the Métiers page (" .. tostring(W and W.CurrentPage and W.CurrentPage()) .. ")")
     if W and W.Close then W.Close() end
-    S.Do("metiers", "RightButton")
-    check(PL.focus ~= nil, "right click: the profession session starts")
-    S.Do("metiers", "RightButton")
-    check(PL.focus == nil, "right click again: the session stops")
+    S.Do("metiers", "LeftButton")
+    check(PL.focus ~= nil, "click: the profession session starts")
+    S.Do("metiers", "LeftButton")
+    check(PL.focus == nil, "click again: the session stops")
   end
 
   -- ------------------------------------------------------------------ 6. scheduler: heavy deferred jobs spread

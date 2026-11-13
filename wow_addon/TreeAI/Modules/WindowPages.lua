@@ -309,14 +309,46 @@ end
 W.QB = QB
 local MODE_COUNT = { turnin = { "%d à rendre", "rien à rendre" }, pickup = { "%d à prendre", "rien à prendre ici" },
   zone = { "%d en cours ici", "rien en cours ici" }, group = { "%d en commun", "rien en commun" } }
-function W.ModeTiles(Ly)
+-- (5.0 LOOK) les 3 modes de tous les jours = les 3 grosses tuiles d'action en tête de la page Quêtes
+W.TOP_MODES = { "turnin", "pickup", "zone" }
+local TOP_ICON = { turnin = "Interface\\GossipFrame\\ActiveQuestIcon", pickup = "Interface\\GossipFrame\\AvailableQuestIcon",
+  zone = ICON .. "INV_Misc_Map_01" }
+--- (5.0) les tuiles d'action de la page Quêtes : { { titre, fn, infobulle, icon, sub, count, active } } (≤ 3)
+function W.QuestTop()
+  local B = QB()
+  if not B then return {} end
+  local ok, list = pcall(B.Modes)
+  if not (ok and type(list) == "table") then return {} end
+  local by = {}
+  for _, m in ipairs(list) do if type(m) == "table" and m.id then by[m.id] = m end end
+  local Sc = T.Shortcuts
+  local off = type(Sc) == "table" and type(Sc.GuideOn) == "function" and not Sc.GuideOn()
+  local out = {}
+  for _, id in ipairs(W.TOP_MODES) do
+    local m = by[id]
+    if m then
+      local n = tonumber(m.count) or 0
+      local cw = MODE_COUNT[id] or { "%d", "0" }
+      local sub = n > 0 and fmt(cw[1], n) or cw[2]
+      local key = m.key and (W.KeyText and W.KeyText(m.key) or m.key)
+      if key then sub = sub .. " · " .. key end
+      out[#out + 1] = { m.label or m.short or id, function() pcall(B.SetMode, id) end,
+        off and "Guidage des quêtes coupé : rallume-le d'abord (la case juste dessous)"
+          or (m.active and "Mode en cours" or "Clic : passer à ce mode (le trajet suit tout de suite)"),
+        icon = TOP_ICON[id], sub = sub, count = (id ~= "zone") and n or nil, active = m.active and not off, disabled = off }
+    end
+  end
+  return out
+end
+--- les tuiles de mode ; skip = { id = true } : sans ces modes (la page Quêtes met les 3 premiers en tuiles d'action)
+function W.ModeTiles(Ly, skip)
   local B = QB()
   if not B then return false end
   local ok, list = pcall(B.Modes)
   if not (ok and type(list) == "table" and #list > 0) then return false end
   local tiles = {}
   for _, m in ipairs(list) do
-    if type(m) == "table" and m.id then
+    if type(m) == "table" and m.id and not (skip and skip[m.id]) then
       local n = tonumber(m.count) or 0
       local cw = MODE_COUNT[m.id] or { "%d", "0" }
       local sub = n > 0 and fmt(cw[1], n) or cw[2]
@@ -325,10 +357,11 @@ function W.ModeTiles(Ly)
       if m.active then sub = "● " .. sub end
       local id = m.id
       tiles[#tiles + 1] = { m.label or m.short or id, sub, function() pcall(B.SetMode, id) end,
-        { m.tip, key and ("Touche : " .. key) or "Pas de touche : Macros & touches → Raccourcis" },
+        { m.tip, key and ("Touche : " .. key) or "Pas de touche : Réglages → Touches → « Touches conseillées »" },
         m.active and true or false, m.active and "Mode en cours" or "Clic : passer à ce mode (le trajet suit tout de suite)" }
     end
   end
+  if #tiles == 0 then return false end
   Ly.tiles(tiles, 2)
   return true
 end
@@ -541,6 +574,7 @@ function W.RenderZonePicker(Ly)
 end
 W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = "Quêtes",
   desc = "Rendre, prendre, tout faire ici, avec le groupe : la prochaine étape, le trajet, le journal",
+  top = function() return W.QuestTop() end,
   -- (ZONEPICK) « Mode : Tout faire ici · Zone : Mille pointes · trajet prévu 54 min » : chaque nombre dit ce qu'il est
   sub = function()
     local B = QB()
@@ -572,16 +606,41 @@ W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = 
     end
     -- (ZONEPICK) le choix de zone ouvert : lui seul (filtres, « Automatique », les zones classées)
     if W.zonePick and W.Query() == "" and W.RenderZonePicker(Ly) then return end
-    -- 0. la zone de travail (« Changer ») + « Conseille-moi »
-    W.ZoneBarShown = W.Query() == "" and W.ZoneBar(Ly) or false
-    -- 1. les 4 modes
-    W.ModeTilesShown = W.ModeTiles(Ly)
-    -- 2. prochaine étape (mort / donjon : la course au corps / le donjon d'abord, dans les actions)
-    if not (ps.dead or ps.ghost or W.InDungeon()) then
+    -- (5.0 LOOK) en tête : les 3 tuiles d'action (Rendre · Prendre · Tout faire ici : W.QuestTop), puis UNE case
+    -- « Guidage des quêtes » — tout le guidage de quêtes s'allume ou se coupe ici, d'un clic
+    local Sc = T.Shortcuts
+    local guideOn = true
+    if type(Sc) == "table" and type(Sc.GuideOn) == "function" and type(Sc.SetGuide) == "function"
+        and W.Match("guidage des quêtes suivi trajet boussole") then
+      guideOn = Sc.GuideOn()
+      Ly.toggle({ id = "quests:guide", label = "Guidage des quêtes", on = guideOn, combatOK = true,
+        desc = guideOn and "Trajet, boussole et repères de quêtes allumés. Décoche : TreeAI te laisse jouer à ta façon."
+          or "Coupé : plus de trajet, de boussole ni de repères de quêtes. Coche pour les retrouver.",
+        set = function(v) Sc.SetGuide(v) end })
+    end
+    -- 1. prochaine étape (mort / donjon : la course au corps / le donjon d'abord, dans les actions)
+    if guideOn and not (ps.dead or ps.ghost or W.InDungeon()) then
       local nx = W.NextItem()
       if nx and W.Match(nx.title, nx.sub) then
         Ly.header("Prochaine étape", nil, nil, ICON .. "INV_Misc_Book_09")
         Ly.step(nx, true)
+      end
+    end
+    -- 2. la zone de travail (« Changer ») + « Conseille-moi », repliable
+    W.ZoneBarShown = false
+    if W.Query() == "" and zpBrain() and Ly.header("Ma zone", "quests:zone", nil, ICON .. "INV_Misc_Map_01") then
+      W.ZoneBarShown = W.ZoneBar(Ly) or false
+    end
+    -- 3. les autres façons de jouer (Avec le groupe, Monter vite…), repliable ; sans les tuiles d'action : tous les modes
+    local topN = #W.QuestTop()
+    W.ModeTilesShown = false
+    if QB() and W.Query() == "" then
+      local skip = {}
+      if topN > 0 then for _, id in ipairs(W.TOP_MODES) do skip[id] = true end end
+      local n = 0
+      for _, m in ipairs(select(2, pcall(QB().Modes)) or {}) do if type(m) == "table" and m.id and not skip[m.id] then n = n + 1 end end
+      if n > 0 and Ly.header(topN > 0 and "Autres façons de jouer" or "Façons de jouer", "quests:modes", n, ICON .. "Spell_Holy_PrayerOfHealing") then
+        W.ModeTilesShown = W.ModeTiles(Ly, skip)
       end
     end
     -- 3. au plus 3 actions utiles (danger, mort, courses) ; jamais d'avis non demandé

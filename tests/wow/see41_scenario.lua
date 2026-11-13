@@ -267,11 +267,13 @@ return function(M, ctx)
   S.Refresh(true)
   local dump = S.Dump()
   see("BANDE " .. table.concat(dump, " · "))
-  local want = { "Rendre", "À prendre", "Suivant", "Zone", "Groupe", "Journal", "TreeAI" }
+  -- (5.0 LOOK) la bande : la pastille du guidage, puis Quêtes · Perso · Groupe · TreeAI
+  local want = { "Guidage quêtes : ON", "Rendre", "Prendre", "Suivant", "Zone", "Vite", "Sacs", "Équipement" }
   for i, l in ipairs(want) do check(dump[i] and dump[i]:sub(1, #l) == l, ("bouton %d = « %s » (%s)"):format(i, l, tostring(dump[i]))) end
+  check(dump[#dump] == "TreeAI" or tostring(dump[#dump]):find("^TreeAI"), "… TreeAI à la fin (" .. tostring(dump[#dump]) .. ")")
   local QB = T.QuestBrain
   local nTurn = #QB.TurnInList()
-  check(dump[1]:find("(" .. nTurn .. ")", 1, true), ("Rendre (%d) = les quêtes finies du journal (%s)"):format(nTurn, dump[1]))
+  check(dump[2]:find("(" .. nTurn .. ")", 1, true), ("Rendre (%d) = les quêtes finies du journal (%s)"):format(nTurn, dump[2]))
   check(nTurn == 6, "6 quêtes finies dans 5 zones (" .. nTurn .. ")")
   for _, st in ipairs(S.lastState or {}) do
     see(("BOUTON %s : %s · touche %s%s"):format(st.label, strip(st.title), tostring(st.key or "aucune"), st.active and " · choisi" or ""))
@@ -320,14 +322,17 @@ return function(M, ctx)
   end
   W.Select("quests")
   M.Advance(1, 0.1)
-  local nTiles = 0
-  for _, r in ipairs(W.lastLay.rects) do if r.kind == "tile" then nTiles = nTiles + 1 end end
-  -- (4.1 ZONEPICK) en tête : la zone (« Changer ») + « Choisir ma zone » / « Conseille-moi », puis les 4 modes
+  -- (5.0 LOOK) en tête : 3 tuiles d'action (Rendre · Prendre · Tout faire ici) + la case « Guidage des quêtes » ; la
+  -- zone (« Changer ») dans « Ma zone » ; les 2 autres modes dans « Autres façons de jouer »
+  local nTiles, nAct, zoneRow = 0, 0, nil
+  for _, r in ipairs(W.lastLay.rects) do
+    if r.kind == "tile" then nTiles = nTiles + 1 end
+    if r.kind == "action" then nAct = nAct + 1 end
+    if r.kind == "row" and r.label:find("^Zone : ") then zoneRow = r end
+  end
   local r1 = W.lastLay.rects[1]
-  local firstTile
-  for i, r in ipairs(W.lastLay.rects) do if r.kind == "tile" then firstTile = i break end end
-  check(nTiles == 5 and r1 and r1.kind == "row" and r1.label:find("^Zone : ") and firstTile and firstTile <= 4,
-    "Quêtes : la zone puis les 5 modes en tête (" .. tostring(r1 and r1.label) .. ")")
+  check(nAct == 3 and nTiles == 2 and r1 and r1.kind == "action" and r1.label == "Rendre mes quêtes" and zoneRow,
+    "Quêtes : 3 tuiles d'action en tête, 2 autres modes, la ligne de zone (" .. tostring(r1 and r1.label) .. ", " .. nAct .. " + " .. nTiles .. ")")
 
   -- ------------------------------------------------------------------ 5. the Groupe page
   W.Select("group")

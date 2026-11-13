@@ -108,8 +108,9 @@ return function(M, ctx)
   -- (JOURNAL 4.0.1) « Journal » (nettoyer mon journal) juste après « Quêtes »
   -- (PROFLEVEL 4.0.2) « Métiers » juste après « HV »
   -- (4.1 LAYOUT) 7 pages : Quêtes, Groupe, Donjons, Personnage, HV, Conseils pro, Réglages ; les anciennes rangées dedans
-  check(table.concat(ids, ","):find("^quests,route,group,dungeon,gear,prof,hv,hunter,coach,binds,settings,"),
-    "navigation : Quêtes / Groupe / Donjons / Personnage / HV / Conseils pro / Réglages (" .. table.concat(ids, ",") .. ")")
+  -- (5.0 LOOK) 11 catégories au plus ; « Sacs » entre quand son module inscrit sa page ; Macros & touches → Réglages
+  check(table.concat(ids, ","):gsub(",bags", ""):find("^quests,route,group,dungeon,gear,prof,hv,hunter,coach,settings,"),
+    "navigation : Quêtes / Trajet / Groupe / Donjons / Équipement / Métiers / HV / Chasseur / Conseils / Réglages (" .. table.concat(ids, ",") .. ")")
   for _, pg in ipairs(W.PAGES) do
     W.Select(pg.id)
     check(W.CurrentPage() == W.Resolve(pg.id), "page " .. pg.id)
@@ -127,18 +128,21 @@ return function(M, ctx)
   check(kinds.hero == 1 and (kinds.step or 0) >= 1 and (kinds.quest or 0) >= 1, "Quêtes : trajet (arrêts sur la page Trajet) + prochaine étape + quêtes du journal")
   local hero1
   for _, r in ipairs(W.lastLay.rects) do if r.kind == "hero" then hero1 = r.label break end end
-  -- (4.1 LAYOUT41) en tête les 4 modes de T.QuestBrain (gros boutons), puis « Prochaine étape », puis le trajet
-  -- (4.1 ZONEPICK) tout en haut : « Zone : … · Changer » + « Choisir ma zone » / « Conseille-moi »
+  -- (5.0 LOOK) en tête : 3 grosses tuiles d'action (Rendre · Prendre · Tout faire ici), la case « Guidage des
+  -- quêtes », puis « Prochaine étape », « Ma zone », les autres modes, le trajet
   local first, nTiles = 1, 0
-  local zr = W.lastLay.rects[1]
-  if TreeAI.QuestBrain and TreeAI.QuestBrain.ZoneNow and TreeAI.QuestBrain.ZoneNow() then
-    check(zr and zr.kind == "row" and zr.label:find("^Zone : "), "Quêtes : la zone en tête (" .. tostring(zr and zr.label) .. ")")
-    while W.lastLay.rects[first] and W.lastLay.rects[first].kind ~= "tile" and first <= 3 do first = first + 1 end
-  end
-  while W.lastLay.rects[first] and W.lastLay.rects[first].kind == "tile" do first, nTiles = first + 1, nTiles + 1 end
-  check(nTiles == (TreeAI.QuestBrain and #TreeAI.QuestBrain.Modes() or 0), "Quêtes : les 4 modes en tête (" .. nTiles .. ")")
+  while W.lastLay.rects[first] and W.lastLay.rects[first].kind == "action" do first, nTiles = first + 1, nTiles + 1 end
+  check(nTiles == (TreeAI.QuestBrain and 3 or 0), "Quêtes : 3 tuiles d'action en tête (" .. nTiles .. ")")
+  check(W.lastLay.rects[first] and W.lastLay.rects[first].kind == "toggle" and W.lastLay.rects[first].label == "Guidage des quêtes",
+    "Quêtes : la case « Guidage des quêtes » sous les tuiles (" .. tostring(W.lastLay.rects[first] and W.lastLay.rects[first].label) .. ")")
+  first = first + 1
   check(W.lastLay.rects[first] and W.lastLay.rects[first].label == "Prochaine étape" and tostring(hero1):find("^Trajet"),
-    "Quêtes : « Prochaine étape » sous les modes, puis le trajet (" .. tostring(W.lastLay.rects[first] and W.lastLay.rects[first].label) .. ")")
+    "Quêtes : « Prochaine étape » ensuite, puis le trajet (" .. tostring(W.lastLay.rects[first] and W.lastLay.rects[first].label) .. ")")
+  if TreeAI.QuestBrain and TreeAI.QuestBrain.ZoneNow and TreeAI.QuestBrain.ZoneNow() then
+    local zr
+    for _, r in ipairs(W.lastLay.rects) do if r.kind == "row" and r.label:find("^Zone : ") then zr = r end end
+    check(zr, "Quêtes : la ligne « Zone : … » (section « Ma zone »)")
+  end
   check(win.action:IsShown() and win.action.label:GetText() == "Pause", "Quêtes : bouton « Pause » en bas à droite")
   win.action:GetScript("OnClick")(win.action)
   check(R.char.paused == true and win.action.label:GetText() == "Reprendre", "Pause → Reprendre")

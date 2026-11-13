@@ -396,11 +396,14 @@ return function(M, ctx)
     "stop 1 heads to Les Tarides (or a turn-in on the way) (" .. tostring(st1 and (st1.text or st1.kind)) .. ")")
   S.Refresh(true)
   local dump = S.Dump()
-  check(tostring(dump[4]):find("^Zone") and tostring(dump[4]):find("%*$"), "the strip shows « Zone » as the active mode (" .. tostring(dump[4]) .. ")")
+  check(tostring(dump[5]):find("^Zone") and tostring(dump[5]):find("%*"), "the strip shows « Zone » as the active mode (" .. tostring(dump[5]) .. ")")
   W.Render()
   local L2 = layout("QUÊTES")
-  local zl = L2[1]
-  check(zl and zl.label == "Zone : Les Tarides · choisie par toi", "top of the Quêtes page: « " .. tostring(zl and zl.label) .. " »")
+  -- (5.0 LOOK) the 3 action tiles and the « Guidage des quêtes » switch come first ; the zone line is in « Ma zone »
+  local zl
+  for _, r in ipairs(L2) do if not zl and r.kind == "row" and r.label:find("^Zone : ") then zl = r end end
+  check(zl and zl.label == "Zone : Les Tarides · choisie par toi", "the zone line of the Quêtes page: « " .. tostring(zl and zl.label) .. " »")
+  check(L2[1] and L2[1].kind == "action" and L2[1].label == "Rendre mes quêtes", "top of the Quêtes page: the action tiles (" .. tostring(L2[1] and L2[1].label) .. ")")
   local hero, dupMode, order
   for _, r in ipairs(L2) do
     if r.kind == "hero" and not hero then hero = r.label end
@@ -432,7 +435,9 @@ return function(M, ctx)
   M.Advance(0.3, 0.1)
   check(Z.char.mode == "auto" and not W.zonePick, "« Automatique »: TreeAI picks (zone mode auto)")
   W.Render()
-  check(W.lastLay.rects[1] and W.lastLay.rects[1].label == "Zone : Mille pointes · automatique (ta zone)", "top line « " .. tostring(W.lastLay.rects[1] and W.lastLay.rects[1].label) .. " »")
+  local zl2
+  for _, r in ipairs(W.lastLay.rects) do if not zl2 and r.kind == "row" and r.label:find("^Zone : ") then zl2 = r end end
+  check(zl2 and zl2.label == "Zone : Mille pointes · automatique (ta zone)", "zone line « " .. tostring(zl2 and zl2.label) .. " »")
   -- the top line itself opens the picker (« Changer »)
   local zr = rowButton("zone:pick")
   if zr then zr:Click("LeftButton") end
