@@ -153,17 +153,21 @@ et l'apprentissage — c'est TA réserve, pas un prix lu). Sources : sacs (API),
 
 | travail | avant (4.4) | 5.0 |
 |---|---|---|
-| plan complet | ~490 kinstr, 1,7 Mo de déchets, tranche la plus lourde 95 kinstr ; relancé à chaque changement de sac (5 s) et toutes les 10 min | ~300 kinstr, 65 tranches ≤ 12–20 kinstr ; seulement à la demande (page ouverte, niveau gagné, marchand / HV, quête rendue) |
-| objet équipé | plan complet | son emplacement seul : ~50 kinstr, par tranches |
-| changement de sac | plan complet 5 s plus tard | 1,4 kinstr (le sac touché) ; verdict en cache par lien |
+| plan complet | ~490 kinstr, tranche la plus lourde 95 kinstr ; relancé 5 s après chaque changement de sac et toutes les 10 min | ~350 kinstr en ~66 tranches ≤ 21 kinstr, une par image calme (`T:Spread`) ; seulement quand il sert |
+| objet équipé | plan complet | son emplacement seul (~90 kinstr, par tranches) |
+| changement de sac | plan complet | 1,4 kinstr (le sac touché) ; verdict en cache par lien |
 | `T.Gear.Score(lien)` répété | — | ~30 instructions (cache) |
 | `T.Gear.Spec()` / poids répétés | relus à chaque appel | ~15 instructions (cache, périmé par les événements) |
 | au repos | cycle AutoRefresh du cœur tenu éveillé | rien : pas de méthode AutoRefresh, pas de minuterie |
 
-- Le premier plan n'est jamais calculé « pour rien » : sans plan, les sacs suffisent pour dire « Équipe X ».
+- Le premier plan attend une raison : page Équipement ouverte, niveau gagné, marchand / HV ouvert, quête rendue, ou le
+  joueur qui se déplace (30 s après l'activation). Un joueur absent ne coûte rien. Sans plan, les sacs suffisent
+  pour dire « Équipe X ».
+- Mémoire : pas d'index gardé ; les stats lues pour un plan sont relâchées à sa fin.
 - Spé : lecture légère à la demande après un événement de talents ; lectures longues (nœuds, sorts) différées par
   `T:Spread`, jamais en combat ; la question « Quelle est ta spé ? » n'est posée qu'après une 2e lecture (25 s après
   la connexion, quand le jeu a chargé les talents).
+- Flèches de sac : une minuterie de 0,5 s seulement tant qu'une flèche est affichée.
 
 ## 6. Pas fait / limites connues
 

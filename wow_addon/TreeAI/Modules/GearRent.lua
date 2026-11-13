@@ -107,14 +107,29 @@ function M.BagDirty(bag)
   bag = tonumber(bag)
   if dirtyBags and bag and bag >= 0 and bag <= 12 then dirtyBags[bag] = true else dirtyBags = nil end
 end
+--- n° d'objet et lien d'une case de sac, sans table intermédiaire (le n° d'abord : la plupart des objets ne sont pas
+--- de l'équipement et s'arrêtent là)
+local function slotID(bag, slot)
+  local CC = g("C_Container")
+  local f = (type(CC) == "table" and CC.GetContainerItemID) or g("GetContainerItemID")
+  if type(f) == "function" then return num(try(f, bag, slot)), true end
+  local info = API.BagItem and API.BagItem(bag, slot)
+  return info and info.itemID, false, info and info.link
+end
+local function slotLink(bag, slot)
+  local CC = g("C_Container")
+  local f = (type(CC) == "table" and CC.GetContainerItemLink) or g("GetContainerItemLink")
+  if type(f) == "function" then return str(try(f, bag, slot)) end
+  local info = API.BagItem and API.BagItem(bag, slot)
+  return info and str(info.link)
+end
 local function scanBag(bag, lv)
   local list = {}
   local n = API.BagSlots and tonumber((try(API.BagSlots, bag))) or 0
   for slot = 1, n do
-    local info = API.BagItem and API.BagItem(bag, slot)
-    local id = info and info.itemID
+    local id, direct, l0 = slotID(bag, slot)
     if id and equipKnown[id] ~= false then
-      local link = str(info.link)
+      local link = direct and slotLink(bag, slot) or str(l0)
       if link and isEquip(id, link) then
         local sc = M.Score(link)
         if sc and sc.known and sc.usable and sc.kind == "good" and (sc.delta or 0) > 0 then
