@@ -981,7 +981,8 @@ function W.RowTip(r)
   end
   if r.kind == "questie" then
     try(tt.AddLine, tt, "Suivi de Questie", 1, 0.82, 0.2)
-    try(tt.AddLine, tt, "Coupe le suivi, les icônes et le bouton de minimap de Questie dans SES options ; sa base de quêtes reste lue par TreeAI. L'interface se recharge.", 0.9, 0.9, 0.9, true)
+    -- (5.1 LOOK) TreeAI n'écrit plus dans les options de Questie : la page « Autres addons » dit ce qu'il lit et laisse
+    try(tt.AddLine, tt, "Questie affiche son suivi : TreeAI ne le touche pas. Clic : la page « Autres addons » (ce que TreeAI lit chez lui, ce qu'il lui laisse).", 0.9, 0.9, 0.9, true)
     try(tt.Show, tt)
     return
   end
@@ -1034,7 +1035,8 @@ end
 function W.RowClick(r, btn)
   if r.kind == "questie" then
     local AD = T.Addons
-    if AD and type(AD.SilenceQuestie) == "function" then T:UserAction(AD.SilenceQuestie, true) end
+    if AD and type(AD.SilenceQuestie) == "function" then T:UserAction(AD.SilenceQuestie, true)
+    elseif AD and type(AD.Open) == "function" then T:UserAction(AD.Open) end   -- (5.1 LOOK) lecture seule : la page « Autres addons »
     return
   end
   if r.kind == "route" then                         -- (4.2) l'en-tête du trajet : guider vers l'étape en cours

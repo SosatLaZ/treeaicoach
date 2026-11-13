@@ -47,10 +47,11 @@ def run(flavor: str, geometry: str = "ready=1", savedvars: Path | None = None, *
 def test_look5_full(flavor: str) -> None:
     out = run(flavor)
     # what the player sees: groups of the strip, the pill, the nav, the settings sub-list, the profiles, the setup
-    assert "bande : Quêtes [Guidage quêtes ON] : Rendre (2) · Prendre · Suivant · Zone" in out
+    # (5.1 LOOK) slim strip (« Suivant » / « Vite » off it by default), 9 plain categories, « Maintenant » first
+    assert "bande : Quêtes [Guidage quêtes ON] : Rendre (2) · Prendre · Zone" in out
     assert "|  Perso : Sacs · Équipement" in out and "|  Groupe  |  TreeAI" in out
-    assert "LOOK5 navigation : Quêtes · Trajet · Groupe · Donjons · Équipement" in out
-    assert re.search(r"LOOK5 Réglages, sous-liste : Affichage · Profil : Simple / Complet · Touches", out)
+    assert "LOOK5 navigation : Maintenant · Quêtes · Groupe · Équipement" in out
+    assert re.search(r"LOOK5 Réglages, sous-liste : Affichage · Autres addons · Profil : Simple / Complet · Touches", out)
     assert "LOOK5 PROFIL Simple : " in out and "LOOK5 PROFIL Complet : " in out
     assert "étape 1 — Bienvenue dans TreeAI  1/3 · Ton personnage" in out
     assert "étape 2 — Bienvenue dans TreeAI  2/3 · Ce que TreeAI affiche" in out
@@ -71,8 +72,8 @@ def test_look5_screen(res: tuple[int, int], scale: str, layout: str) -> None:
     out = run("forever", geometry=f"ready=1,w={res[0]},h={res[1]}", LOOK5_MODE="screen", LOOK5_SCALE=scale, LOOK5_LAYOUT=layout)
     m = re.search(r"TreeAIStrip : gauche (-?\d+), haut (-?\d+), (\d+)×(\d+) unités = (\d+)×(\d+) px réels", out)
     assert m, out[-3000:]
-    # the 4.3.6 strip was 521×27 real px at 1080p / 0.64 with 9 px text : never again that small
-    assert int(m.group(6)) >= 30, m.group(0)
+    # (5.1 LOOK) one slim row: 24 to 38 UI units high (26 × the real-pixel floor), never under 22 real px
+    assert 24 <= int(m.group(4)) <= 38 and int(m.group(6)) >= 22, m.group(0)
     assert "fenêtre : " in out and "pages dessinées sans chevauchement" in out
 
 
@@ -94,12 +95,12 @@ def test_look5_existing_player_gets_the_setup_once(tmp_path: Path) -> None:
 
 def test_tokens_one_system() -> None:
     src = (MODS / "Theme.lua").read_text(encoding="utf-8")
-    assert "Th.V = 5" in src and "Th.TOKENS = {" in src and "Th.ICONS = {" in src and "Th.LEGEND = {" in src
+    assert "Th.V = 6" in src and "Th.TOKENS = {" in src and "Th.ICONS = {" in src and "Th.LEGEND = {" in src
     for fn in ("ActionButton", "Pill", "CountBadge", "Card", "Legend", "LegendLines", "PaintAction", "ToastSeconds", "StopAnim"):
         assert re.search(r"function Th:%s\(" % fn, src), fn
-    # menus opaque, small on-screen frames half transparent
+    # (5.1 LOOK) windows translucent but readable, small on-screen frames translucent
     for m in re.finditer(r"\n    bg = \{ [\d.]+, [\d.]+, [\d.]+, ([\d.]+) \}", src):
-        assert float(m.group(1)) >= 0.95, m.group(0)
+        assert float(m.group(1)) >= 0.80, m.group(0)
     smalls = re.findall(r"small = \{ [\d.]+, [\d.]+, [\d.]+, ([\d.]+) \}", src)
     assert len(smalls) == 3 and all(0.35 <= float(a) <= 0.65 for a in smalls), smalls
     # game icons only: no texture shipped with the addon
@@ -148,7 +149,7 @@ def test_window_shell_rules() -> None:
     src = (MODS / "Window.lua").read_text(encoding="utf-8")
     nav = re.search(r"\nW\.NAV = \{(.*?)\}", src).group(1)
     ids = re.findall(r'"(\w+)"', nav)
-    assert len(ids) == 11 and ids[0] == "quests" and ids[-1] == "settings" and "bags" in ids
+    assert len(ids) == 9 and ids[0] == "home" and ids[-1] == "settings" and "bags" in ids
     assert "W.FALLBACK = { bags = \"gear\"" in src and "W.SIDE = { settings = true }" in src
     for fn in ("function Ly.actions(", "function Ly.toggle(", "function Ly.choice(", "function Ly.card(", "function Ly.note(",
                "function Ly.kv(", "function Ly.legend(",
@@ -159,7 +160,7 @@ def test_window_shell_rules() -> None:
         assert fn in src, fn
     assert "function W.SearchHits(cur)" in src and "function W.BuildNav()" in src and "function W.ResetPlace()" in src
     # first opening on the right half, never the centre ; no per-frame script in the shell
-    assert 'anchorTo(f, "RIGHT", -W.FIRST.right, W.FIRST.y)' in src
+    assert 'anchorTo(f, "RIGHT", -(inset or W.FIRST.right), W.FIRST.y)' in src
     assert "OnUpdate" not in code(MODS / "Window.lua")
 
 

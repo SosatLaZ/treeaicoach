@@ -53,7 +53,7 @@ def test_clean_screen_defaults() -> None:
     assert "questAuto = false" in _src("QoL.lua")
     assert "onScreen = false" in _src("Coach.lua")
     # unsolicited notices: their own page only
-    assert 'ownPage = "addons"' in _src("Addons.lua")
+    assert "Suggest(" not in _src("Addons.lua")   # (5.1) « Autres addons » : plus aucun avis non demandé
     assert 'opts.ownPage = "macros"' in _src("Macros.lua")
     assert "e.ownPage" in core and "if not e.ownPage then cand" in core
 
@@ -61,11 +61,11 @@ def test_clean_screen_defaults() -> None:
 def test_window_navigation_declared() -> None:
     src = _src("Window.lua")
     # (5.0 LOOK) 11 categories at most: « Sacs » joins when its module registers the page, Macros & touches → Réglages
-    assert 'W.NAV = { "quests", "route", "group", "dungeon", "gear", "bags", "prof", "hv", "hunter", "coach", "settings" }' in src
-    assert 'W.ALIAS = { now = "quests", perso = "gear", binds = "keys",' in src
+    assert 'W.NAV = { "home", "quests", "group", "gear", "bags", "prof", "hv", "hunter", "settings" }' in src
+    assert 'W.ALIAS = { now = "home", maintenant = "home", accueil = "home", perso = "gear", binds = "keys",' in src
     # first opening: the right half, never the centre
     assert 'anchorTo(win, "CENTER", 0, 40)' not in src
-    assert 'anchorTo(f, "RIGHT", -W.FIRST.right, W.FIRST.y)' in src
+    assert 'anchorTo(f, "RIGHT", -(inset or W.FIRST.right), W.FIRST.y)' in src
 
 
 def test_reward_choice_never_picked() -> None:

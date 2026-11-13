@@ -146,7 +146,16 @@ return function(M, ctx)
     end
   end
   check(seenStrip, "la bande d'actions est à l'écran")
-  check(seenCompass or not (C and C._active), "la boussole est à l'écran")
+  -- (5.1 LOOK) Shortest Path Forever already draws the route and its arrow: by default TreeAI shows NO second arrow
+  -- (the link « spf / arrow » of the page « Autres addons ») ; the player who cuts that link gets the compass back —
+  -- checked at the end of this scenario, placed in free space like everything else.
+  local AD = T.Addons
+  local deferArrow = AD and AD.Link and AD.Link("spf", "arrow") and true or false
+  if deferArrow then
+    check(not seenCompass, "Suivi Forever guide déjà : pas de 2e flèche TreeAI à l'écran")
+  else
+    check(seenCompass or not (C and C._active), "la boussole est à l'écran")
+  end
   check(seenAlert, "l'alerte est à l'écran")
   -- the generic scan: on placement only
   out(("  scans génériques : %d (EnumerateFrames) + %d (enfants d'UIParent) en 34 s de jeu, dont %d depuis un OnUpdate"):format(scans, kidsCalls, scanInUpdate))
@@ -154,6 +163,32 @@ return function(M, ctx)
   local s1, k1 = scans, kidsCalls
   M.Advance(30, 0.1)
   check(scans == s1 and kidsCalls == k1, ("au repos, plus aucun scan d'écran (%d + %d en 30 s)"):format(scans - s1, kidsCalls - k1))
+
+  -- ------------------------------------------------------------------ (5.1 LOOK) the link is cut: TreeAI's arrow is back
+  -- … in free space, with the same zero-overlap rule as every other frame ; link restored: no second arrow again
+  if deferArrow then
+    AD.SetLink("spf", "arrow", false)
+    M.Advance(8, 0.1)
+    local cf = rawget(_G, "TreeAICompassFrame")
+    local back = cf and cf:IsShown() and geo.OnScreen(cf, 2)
+    check(back or not (C and C._active), "lien « Suivi Forever » coupé : la boussole TreeAI revient, à l'écran")
+    if back then
+      local r = geo.Rect(cf)
+      out(("  TreeAICompassFrame : %s (%d×%d px) — lien « spf / arrow » coupé"):format(rectPx(r), r0(r.w * PX), r0(r.h * PX)))
+      for _, oc in ipairs(OCC) do
+        check(not overlap(r, oc), ("TreeAICompassFrame (%s) ne touche pas « %s » (%s)"):format(rectPx(r), oc.label, rectPx(oc)))
+      end
+      check(not overlap(r, { l = SW * 0.38, b = SH * 0.34, w = SW * 0.24, h = SH * 0.30 }), "TreeAICompassFrame : jamais au milieu de l'écran")
+      for _, n in ipairs({ "TreeAIStrip", "TreeAINow" }) do
+        local f = rawget(_G, n)
+        local fr = f and f:IsShown() and geo.Rect(f)
+        if fr then check(not overlap(r, fr), "TreeAICompassFrame et " .. n .. " séparés") end
+      end
+    end
+    AD.SetLink("spf", "arrow", true)
+    M.Advance(4, 0.1)
+    check(not (cf and cf:IsShown()), "lien rétabli : de nouveau pas de 2e flèche")
+  end
 
   -- ------------------------------------------------------------------ Shortest Path Forever is there: no duplicate lists
   local txt = {}

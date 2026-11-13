@@ -47,7 +47,10 @@ M.TOUR_V = 1        -- monter ce numéro = la visite est reproposée une fois à
 M.TIP_GAP = 600     -- s (horloge du serveur, survit au /reload) entre deux astuces
 M.TIP_SHOW = 30     -- s : une astuce ou la bulle d'aide s'efface seule
 M.TIP_SEEN = 8      -- s : vue au moins ce temps = vue pour de bon (sinon elle pourra revenir)
-M.LOGIN_QUIET = 8   -- s après la connexion avant de montrer la visite
+M.LOGIN_QUIET = 8   -- s après la connexion avant le premier réveil du module
+-- (5.1 LOOK) « moins agressif » : la visite ne démarre plus JAMAIS toute seule. Elle est proposée (dernière étape du
+-- réglage, menu de la pastille, bouton des options, /tai visite) et c'est le joueur qui clique.
+M.AUTO = false
 M.CALM_FOR = 3      -- s de calme d'affilée avant de la montrer
 M.TIPS_AFTER = 60   -- s après la connexion avant la première astuce
 
@@ -91,6 +94,136 @@ local function store()
 end
 M.Store = store
 function M.Done() return (tonumber(store().done) or 0) >= M.TOUR_V end
+
+-- ===================================================================== (5.1 LOOK) le calme : rien ne s'ouvre tout seul
+-- T.Calm.Ok(kind) : une question / un assistant / une visite peut-il se proposer MAINTENANT ? Jamais pendant la
+-- 1re minute après la connexion, jamais en combat, un seul à la fois (2 min entre deux), et plus jamais tout seul une
+-- fois remis à « plus tard » (T.Calm.Later, gardé dans TreeAIDB.quiet : survit au /reload). Défini au niveau du
+-- fichier : marche même si le module « Visite guidée » est coupé.
+local Q = { FIRST = 60, GAP = 120 }
+T.Calm = Q
+local function quietStore()
+  local db = T.db
+  if type(db) ~= "table" then Q._tmp = Q._tmp or { later = {} } return Q._tmp end
+  if type(db.quiet) ~= "table" then db.quiet = {} end
+  if type(db.quiet.later) ~= "table" then db.quiet.later = {} end
+  return db.quiet
+end
+function Q.IsLater(kind) return quietStore().later[tostring(kind)] and true or false end
+function Q.Later(kind, on)
+  quietStore().later[tostring(kind)] = (on ~= false) and (wall() > 0 and wall() or 1) or nil
+  if Q.cur and Q.cur.kind == kind then Q.cur = nil end
+  if T.Fire then pcall(T.Fire, T, "QUIET_LATER", kind) end
+end
+--- peut-on PROPOSER maintenant (sans rien réserver) ? faux + "later" | "login" | "combat"
+function Q.Can(kind)
+  if Q.IsLater(tostring(kind)) then return false, "later" end
+  local at = tonumber(T._loginAt)
+  if not at or now() - at < Q.FIRST then return false, "login" end
+  if inCombat() then return false, "combat" end
+  return true
+end
+--- → vrai (et la place est prise pour 2 min), ou faux + "login" | "combat" | "busy" | "later"
+function Q.Ok(kind)
+  kind = tostring(kind)
+  if Q.IsLater(kind) then return false, "later" end
+  local t = now()
+  local at = tonumber(T._loginAt)
+  if not at or t - at < Q.FIRST then return false, "login" end
+  if inCombat() then return false, "combat" end
+  local cur = Q.cur
+  if cur and cur.kind ~= kind and t - cur.at < Q.GAP then return false, "busy" end
+  Q.cur = { kind = kind, at = t }
+  return true
+end
+
+-- ===================================================================== (5.1 LOOK) la petite ligne du 1er lancement
+-- À la place de l'assistant qui s'ouvrait au milieu de l'écran : UNE ligne fine, en haut au centre —
+-- « TreeAI est prêt · Régler (1 min) · Plus tard ». Elle s'efface seule (20 s), ne revient pas en combat ; au 3e
+-- lancement sans réponse elle vaut « plus tard ». Le réglage reste dans « Maintenant », la pastille, /tai bienvenue.
+local hello
+Q.HELLO_SHOW, Q.HELLO_TRIES = 20, 3
+local function helloHide() if hello then meth(hello, "Hide") end end
+local function buildHello()
+  if hello or type(G.CreateFrame) ~= "function" then return hello end
+  local ok, f = pcall(G.CreateFrame, "Frame", "TreeAIHello", G.UIParent, G.BackdropTemplateMixin and "BackdropTemplate" or nil)
+  if not ok or not f then return nil end
+  hello = f
+  meth(f, "SetSize", 300, 22)
+  meth(f, "SetFrameStrata", "MEDIUM")
+  meth(f, "SetClampedToScreen", true)
+  meth(f, "EnableMouse", true)
+  local th = Th()
+  if not (th and th:Skin(f, "small")) then
+    f.bgt = meth(f, "CreateTexture", nil, "BACKGROUND")
+    if f.bgt then meth(f.bgt, "SetAllPoints", f) meth(f.bgt, "SetColorTexture", 0, 0, 0, 0.45) end
+  end
+  local function fs(tokenName, r, g, b)
+    local t = th and th:Text(f, "S", tokenName) or meth(f, "CreateFontString", nil, "OVERLAY", "GameFontHighlightSmall")
+    if t and not th then meth(t, "SetTextColor", r, g, b) end
+    if t then meth(t, "SetWordWrap", false) end
+    return t
+  end
+  f.text = fs("text", 0.9, 0.9, 0.9)
+  if f.text then meth(f.text, "SetPoint", "LEFT", f, "LEFT", 8, 0) meth(f.text, "SetText", "TreeAI est prêt.") end
+  local function link(name, label, tokenName, fn, tip)
+    local okB, b = pcall(G.CreateFrame, "Button", name, f)
+    if not okB or not b then return nil end
+    b.t = fs(tokenName, 0.45, 0.74, 1)
+    if b.t then meth(b.t, "SetPoint", "CENTER", b, "CENTER", 0, 0) meth(b.t, "SetText", label) end
+    local w = (b.t and tonumber(meth(b.t, "GetStringWidth"))) or 0
+    if not w or w <= 0 then w = #label * 5.4 end
+    meth(b, "SetSize", floor(w + 12), 18)
+    local hl = meth(b, "CreateTexture", nil, "HIGHLIGHT")
+    if hl then meth(hl, "SetAllPoints", b) meth(hl, "SetColorTexture", 1, 1, 1, 0.08) end
+    meth(b, "SetScript", "OnClick", function() helloHide() if T.UserAction then T:UserAction(fn) else pcall(fn) end end)
+    meth(b, "SetScript", "OnEnter", function(self)
+      local tt = G.GameTooltip
+      if not tt then return end
+      meth(tt, "SetOwner", self, "ANCHOR_BOTTOM")
+      meth(tt, "AddLine", tip, 0.9, 0.9, 0.9, true)
+      meth(tt, "Show")
+    end)
+    meth(b, "SetScript", "OnLeave", function() local tt = G.GameTooltip if tt then meth(tt, "Hide") end end)
+    b.entry = { id = "mod:hello:" .. name }
+    return b
+  end
+  f.later = link("TreeAIHelloLater", "Plus tard", "muted", function() Q.Later("setup", true) end,
+    "Plus tard : cette ligne ne reviendra pas toute seule. Le réglage reste dans la fenêtre TreeAI (« Maintenant ») et /tai bienvenue.")
+  f.go = link("TreeAIHelloGo", "Régler (1 min)", "accent", function() if T.ShowWizard then T:ShowWizard(1) end end,
+    "Trois étapes : ton personnage, ce que TreeAI affiche, tes touches. « Passer » à tout moment.")
+  if f.later then meth(f.later, "SetPoint", "RIGHT", f, "RIGHT", -4, 0) end
+  if f.go then meth(f.go, "SetPoint", "RIGHT", f.later or f, f.later and "LEFT" or "RIGHT", -2, 0) end
+  local tw = (f.text and tonumber(meth(f.text, "GetStringWidth"))) or 90
+  meth(f, "SetWidth", floor(8 + tw + 14 + (tonumber(meth(f.go, "GetWidth")) or 80) + 2 + (tonumber(meth(f.later, "GetWidth")) or 56) + 4))
+  meth(f, "Hide")
+  return hello
+end
+function Q.HelloFrame() return hello end
+--- montre la petite ligne (1er lancement). Renvoie vrai si elle est à l'écran.
+function T:Hello()
+  local db = T.db
+  if type(db) ~= "table" or db.onboarded or Q.IsLater("setup") then return false end
+  if inCombat() then return false end
+  local st = quietStore()
+  st.helloN = (tonumber(st.helloN) or 0) + 1
+  if st.helloN > Q.HELLO_TRIES then Q.Later("setup", true) return false end   -- vue 3 fois sans réponse = plus tard
+  if not buildHello() then return false end
+  local th = Th()
+  local placed = false
+  if th and th.ToastSpot then
+    local l, b = th:ToastSpot(tonumber(meth(hello, "GetWidth")) or 300, 22)
+    if l then
+      meth(hello, "ClearAllPoints")
+      meth(hello, "SetPoint", "BOTTOMLEFT", G.UIParent, "BOTTOMLEFT", l, b)
+      placed = true
+    end
+  end
+  if not placed then meth(hello, "ClearAllPoints") meth(hello, "SetPoint", "TOP", G.UIParent, "TOP", 0, -150) end
+  meth(hello, "Show")
+  T:After(Q.HELLO_SHOW, helloHide)
+  return true
+end
 
 -- ===================================================================== cibles (contrats, jamais de position devinée)
 M.targets = {}
@@ -698,7 +831,8 @@ function M.Next()
     local f, kind = pass(pcall(st.find))
     if visible(f) then
       a.step, a.kind, a.target = st, kind, f
-      if a.from == "auto" then store().step = idx end   -- première visite coupée par un /reload : on reprendra là
+      -- première visite (lancée par le joueur depuis la 5.1) coupée par un /reload : on reprendra là
+      if a.from == "auto" or not M.Done() then store().step = idx end
       showStep()
       return true
     end
@@ -979,7 +1113,10 @@ function M.Tick()
     return
   end
   if M.active then return end   -- la visite avance au clic du joueur
-  if not M.Done() then
+  -- (5.1) jamais de 1er démarrage tout seul ; seule une visite EN COURS (lancée par le joueur, coupée par un /reload)
+  -- reprend — et pas pendant la 1re minute
+  local resume = (tonumber(store().step) or 0) >= 1
+  if not M.Done() and (M.AUTO or resume) then
     -- première fois : après la connexion et l'assistant de démarrage, au premier moment calme qui dure
     local wiz = T.GetWizard and T:GetWizard()
     if wiz and meth(wiz, "IsShown") then
@@ -998,7 +1135,7 @@ function M.Tick()
       if M._waitN <= 90 then M.Kick(10) end
       return
     end
-    local wait = M.LOGIN_QUIET - (t - (M._loginAt or t))
+    local wait = ((resume and not M.AUTO) and max(M.LOGIN_QUIET, Q.FIRST) or M.LOGIN_QUIET) - (t - (M._loginAt or t))
     if wait > 0 then M.Kick(wait) return end
     if M.mode ~= "pointer" and M.Calm(false, true) then
       if M._calmSince and t - M._calmSince >= M.CALM_FOR - 0.05 then
@@ -1067,20 +1204,10 @@ function M:OnEnable()
     st.calmV = 1
     if M.db then M.db.tips = false end
   end
-  -- (5.0 LOOK) le réglage en 3 étapes (personnage · affichage · touches) est proposé UNE fois à ceux qui avaient déjà
-  -- fini l'ancien assistant : au premier moment calme (même garde que le 1er lancement), « Passer » = plus jamais
+  -- (5.1 LOOK) plus rien n'est reproposé tout seul : le réglage en 3 étapes de la 5.0 n'est plus rouvert à ceux qui
+  -- avaient fini l'ancien assistant (il reste dans « Maintenant », la pastille et /tai bienvenue)
   local db = T.db
-  if type(db) == "table" and (tonumber(db.setupV) or 0) < 5 then
-    local had = db.onboarded
-    db.setupV = 5
-    if had and type(T._MaybeWizard) == "function" and type(T.ShowWizard) == "function" then
-      db.onboarded = nil
-      T:After(6, function()
-        local wz = T.GetWizard and T:GetWizard()
-        if T.db and not T.db.onboarded and not (wz and meth(wz, "IsShown")) then T:_MaybeWizard(0) end   -- (déjà ouvert par le cœur : rien)
-      end)
-    end
-  end
+  if type(db) == "table" and (tonumber(db.setupV) or 0) < 6 then db.setupV = 6 end
   M._loginAt = now()
   M._calmSince, M._waitN, kickAt = nil, nil, nil
   self:On("COMBAT_START", function() M.Pause("combat") end)

@@ -42,7 +42,14 @@ return function(M, ctx)
   M.Advance(2, 0.25)
   local wiz = T.GetWizard and T:GetWizard()
   p("== wizard shown:", tostring(wiz and wiz:IsShown()))
-  check(wiz and wiz:IsShown(), "start-up wizard shown")
+  -- (5.1 LOOK) nothing opens by itself any more: one small line « TreeAI est prêt · Régler (1 min) · Plus tard »
+  check(not (wiz and wiz:IsShown()), "start-up wizard NOT shown by itself")
+  local hello = rawget(_G, "TreeAIHello")
+  check(hello and hello:IsShown(), "first login: the small « TreeAI est prêt » line")
+  if hello and hello:IsShown() then M.Hw(function() TreeAIHelloGo:Click("LeftButton") end) end
+  wiz = T.GetWizard and T:GetWizard()
+  p("== wizard shown after « Régler » :", tostring(wiz and wiz:IsShown()))
+  check(wiz and wiz:IsShown(), "start-up wizard shown on the player's click")
   if wiz and wiz:IsShown() then
     for step = 1, 3 do
       local body = Lb.strip(wiz.body:GetText())
@@ -81,6 +88,10 @@ return function(M, ctx)
     M.Advance(1, 0.25)
     if Tr.active and Tr.mode == "tour" then break end
   end
+  -- (5.1 LOOK) the tour never starts by itself: the player launches it (menu, /tai visite)
+  check(not Tr.active, "the guided tour does NOT start by itself")
+  M.Hw(function() Tr.Start("hub") end)
+  M.Advance(1, 0.25)
   p("== tour active:", tostring(Tr.active ~= nil), "mode", tostring(Tr.mode))
   check(Tr.active and Tr.mode == "tour", "the guided tour starts")
   local guard = 0

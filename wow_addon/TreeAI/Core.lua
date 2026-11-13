@@ -2803,7 +2803,7 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Region = { lite = true, desc = "Quêtes rangées par région (ici, à côté, loin)" },
   Hub = { lite = true, desc = "Pastille de la minimap : tout TreeAI en un clic" },
   Window = { lite = true, desc = "Fenêtre TreeAI (pages, recherche) + carte « Prochaine étape »" },
-  Shortcuts = { lite = true, desc = "Bande d'actions rapides : guidage des quêtes ON / OFF, Rendre, Prendre, Suivant, Zone, Vite, Sacs, Équipement, Métiers, Groupe" },
+  Shortcuts = { lite = true, desc = "Bande d'actions rapides (une rangée fine) : guidage des quêtes ON / OFF, Rendre, Prendre, Zone, Sacs, Équipement, Métiers, Groupe" },
   Quick = { lite = true, desc = "Raccourcis : barre d'actions rapides, quêtes acceptées et rendues" },
   Edge2 = { lite = false, desc = "Avantages : camp disputé, objet qui ne tombe pas, corps à fouiller…" },
   Coach = { lite = true, desc = "Conseils pro : le bon geste au bon moment (repos, familier, munitions, XP…), un à la fois" },   -- (ADVICE) sûr : Coach.lua s'y inscrit
@@ -2812,7 +2812,8 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   -- (REPLACE 4.0.1) sans autres addons
   QuestPins = { lite = true, desc = "Icônes de quêtes : « ! » à prendre, « ? » à rendre, zones d'objectifs (carte + minimap)" },
   Watch = { lite = false, desc = "Suivi TreeAI : quêtes du trajet, distance, direction et durée en direct, à côté du suivi du jeu" },
-  Addons = { lite = true, desc = "Mes addons : ce que TreeAI remplace, Questie et Suivi Forever en silence en un clic" },
+  Addons = { lite = true, desc = "Autres addons : ce que TreeAI prend à Suivi Forever, Questie, Auctionator, Leatrix Plus… et ce qu'il leur laisse" },
+  Now = { lite = true, desc = "« Maintenant » : quoi faire tout de suite, 5 lignes au plus, un clic chacune (fenêtre et petit bloc)" },   -- (5.1 LOOK) sûr : Now.lua s'y inscrit
   QoL = { lite = true, desc = "Confort : vendre les gris et réparer, butin instantané, butin automatique, recul de caméra" },
   Meter = { lite = true, desc = "Dégâts : la fenêtre des dégâts du groupe (compteur du jeu, après chaque combat)" },
   Brain = { lite = true, desc = "Pilote auto : quêtes inutiles en pause, zone et mode du trajet, courses, pourquoi" },   -- (BRAIN) sûr : Brain.lua s'y inscrit
@@ -4973,7 +4974,10 @@ function TreeAI:_MaybeWizard(tries)
     return
   end
   self:RunOutOfCombat("wizard", function()
-    if self.db and not self.db.onboarded then self:ShowWizard(1) end
+    -- (5.1 LOOK) plus de fenêtre qui s'ouvre seule : une petite ligne « Régler · Plus tard » (Tour.lua, T:Hello)
+    if self.db and not self.db.onboarded then
+      if type(self.Hello) == "function" then self:Hello() else self:ShowWizard(1) end
+    end
   end)
 end
 

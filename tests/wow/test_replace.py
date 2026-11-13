@@ -65,10 +65,11 @@ def test_no_questie_data_copied():
 
 
 def test_other_addons_only_their_option_keys():
+    # (5.1 LOOK) read-only: NOTHING is written in another addon's options any more (Questie's profile, SPF's saved table)
     a = code("Addons")
-    writes = set(re.findall(r"\bp\.([A-Za-z_.]+)\s*=(?!=)", a))
-    assert writes <= {"enabled", "trackerEnabled", "minimap.hide"}, writes
-    assert set(re.findall(r"\bd\.([A-Za-z_]+)\s*,?\s*(?:d\.[A-Za-z_]+\s*)?=(?!=)", a)) <= {"tracker", "journeyTracker"}
+    assert not re.findall(r"\bp\.([A-Za-z_.]+)\s*=(?!=)", a)
+    assert not re.findall(r"\bd\.([A-Za-z_]+)\s*,?\s*(?:d\.[A-Za-z_]+\s*)?=(?!=)", a)
+    assert "ReloadUI" not in a
     for m in ("QuestPins", "Watch", "QoL", "Meter"):
         assert not re.search(r"Questie[^\n]*\.\w+\s*=(?!=)", code(m)), m      # read only everywhere else
 
@@ -78,7 +79,7 @@ def test_labels_and_safe_set():
     for label in ("« ! » quêtes à prendre", "« ? » quêtes à rendre", "Zones d'objectifs", "quêtes grises"):
         assert label in qp, label
     assert "Cacher le suivi du jeu" in w and "Par distance" in w and "Ordre du trajet" in w
-    assert "Rendre Questie silencieux" in a and "Réafficher Questie" in a and "Activer les icônes" in a
+    assert "Autres addons" in a and "Base de quêtes" in a and "Icônes et suivi de quêtes" in a and "Rendre Questie silencieux" not in a
     assert "Vendre les objets gris et réparer" in q and "Butin instantané" in q
     assert "C_DamageMeter" in d and "En combat" in d
     core = (ADDON / "Core.lua").read_text(encoding="utf-8")

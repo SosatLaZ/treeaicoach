@@ -323,6 +323,10 @@ function W.QuestTop()
   for _, m in ipairs(list) do if type(m) == "table" and m.id then by[m.id] = m end end
   local Sc = T.Shortcuts
   local off = type(Sc) == "table" and type(Sc.GuideOn) == "function" and not Sc.GuideOn()
+  -- (5.1) UNE action principale : celle que TreeAI conseille maintenant (lue dans le jeu), sinon aucune n'est mise en avant
+  local MODE_OF = { rendre = "turnin", prendre = "pickup", zone = "zone" }
+  local nx = type(Sc) == "table" and type(Sc.NextAction) == "function" and select(2, pcall(Sc.NextAction)) or nil
+  local want = type(nx) == "table" and MODE_OF[nx.id or ""] or nil
   local out = {}
   for _, id in ipairs(W.TOP_MODES) do
     local m = by[id]
@@ -335,7 +339,8 @@ function W.QuestTop()
       out[#out + 1] = { m.label or m.short or id, function() pcall(B.SetMode, id) end,
         off and "Guidage des quêtes coupé : rallume-le d'abord (la case juste dessous)"
           or (m.active and "Mode en cours" or "Clic : passer à ce mode (le trajet suit tout de suite)"),
-        icon = TOP_ICON[id], sub = sub, count = (id ~= "zone") and n or nil, active = m.active and not off, disabled = off }
+        icon = TOP_ICON[id], sub = sub, count = (id ~= "zone") and n or nil, active = m.active and not off, disabled = off,
+        primary = (want == id and not off) or false }
     end
   end
   return out
@@ -365,6 +370,20 @@ function W.ModeTiles(Ly, skip)
   Ly.tiles(tiles, 2)
   return true
 end
+--- (5.1 LOOK) pas d'impasse : une étape sans clic reçoit « y aller » (la cible en cours de la boussole, confiée à
+--- Suivi Forever / au repère du jeu quand ils tiennent la flèche)
+function W.StepGo(st)
+  if type(st) ~= "table" or st.onClick then return st end
+  local C, A = T.Compass, T.Addons
+  if not (type(C) == "table" and type(C.Current) == "function" and type(A) == "table" and type(A.GoTo) == "function") then return st end
+  st.onClick = function()
+    local cur = select(2, pcall(C.Current))
+    if type(cur) == "table" and cur.mapID and cur.x and cur.y then A.GoTo(cur)
+    elseif type(C.FollowRoute) == "function" then pcall(C.FollowRoute) end
+  end
+  st.actionText = "y aller (" .. tostring(A.GoHow and A.GoHow() or "la boussole t'y mène") .. ")"
+  return st
+end
 --- « Prochaine étape » : la même chose que la boussole (T.Next si présent, sinon le texte de la boussole, sinon le
 --- 1er arrêt du trajet)
 function W.NextItem()
@@ -388,11 +407,11 @@ function W.NextItem()
     local full = type(cur) == "table" and (cur.label or cur.title) or nil
     local lbl = strip(type(full) == "string" and full or meth(wd.label, "GetText") or "")
     local dst = strip(meth(wd.dist, "GetText") or ""):gsub("%s+", " ")
-    if lbl ~= "" then return { n = 1, title = lbl, sub = dst } end
+    if lbl ~= "" then return W.StepGo({ n = 1, title = lbl, sub = dst }) end
   end
   local g = W.Guide(1)
   local st = g and g.steps and g.steps[1]
-  if st and not st.entry then return st end
+  if st and not st.entry then return W.StepGo(st) end
 end
 --- « À prendre près de toi » : les 5 meilleures quêtes à prendre (cerveau des quêtes), avec la raison ; élite / groupe :
 --- un badge « Élite · à 2+ »
@@ -594,16 +613,7 @@ W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = 
   end,
   render = function(Ly)
     local ps = T.PlayerState and T:PlayerState() or {}
-    -- (4.1) Suivi Forever montre SON trajet (différent du tien) : UNE ligne, deux choix, jamais redemandé une fois choisi
     local Ad = T.Addons
-    if type(Ad) == "table" and type(Ad.SPFConflict) == "function" and Ad.SPFConflict() and W.Query() == "" then
-      Ly.text("Suivi Forever affiche son propre trajet (différent du tien).", "S", "prio2")
-      Ly.buttons({ { "Lui donner l'ordre de TreeAI", function() Ad.SPFChoose("order") end,
-          "Clic : Suivi Forever suit l'ordre de TreeAI (renvoyé à chaque trajet refait) — un seul trajet à l'écran" },
-        { "Le rendre silencieux", function() Ad.SPFChoose("silent") end,
-          "Clic : son suivi se cache (dans SES options), TreeAI guide seul" } }, 2)
-      Ly.gap(4)
-    end
     -- (ZONEPICK) le choix de zone ouvert : lui seul (filtres, « Automatique », les zones classées)
     if W.zonePick and W.Query() == "" and W.RenderZonePicker(Ly) then return end
     -- (5.0 LOOK) en tête : les 3 tuiles d'action (Rendre · Prendre · Tout faire ici : W.QuestTop), puis UNE case
@@ -639,8 +649,12 @@ W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = 
       if topN > 0 then for _, id in ipairs(W.TOP_MODES) do skip[id] = true end end
       local n = 0
       for _, m in ipairs(select(2, pcall(QB().Modes)) or {}) do if type(m) == "table" and m.id and not skip[m.id] then n = n + 1 end end
-      if n > 0 and Ly.header(topN > 0 and "Autres façons de jouer" or "Façons de jouer", "quests:modes", n, ICON .. "Spell_Holy_PrayerOfHealing") then
-        W.ModeTilesShown = W.ModeTiles(Ly, skip)
+      -- (5.1) les autres modes sont repliés d'office (un clic les déplie) ; la ligne « Que faire » du trajet ne
+      -- revient pas pour autant (les modes sont sur la page, tuiles d'action comprises)
+      if n > 0 then
+        if Ly.header(topN > 0 and "Autres façons de jouer" or "Façons de jouer", "quests:modes", n, ICON .. "Spell_Holy_PrayerOfHealing", topN > 0) then
+          W.ModeTilesShown = W.ModeTiles(Ly, skip)
+        else W.ModeTilesShown = topN > 0 end
       end
     end
     -- 3. au plus 3 actions utiles (danger, mort, courses) ; jamais d'avis non demandé
@@ -660,7 +674,18 @@ W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = 
     end
     -- 4. « Rendre mes quêtes » (mode actif) puis le trajet
     W.TurnInRows(Ly)
-    W.RenderRoute(Ly, true)
+    -- (5.1) Suivi Forever / Adventure Guide tiennent déjà la liste des étapes et la flèche : pas de 2e liste ici
+    -- (l'onglet « Trajet » garde l'ordre des arrêts de TreeAI pour qui le veut ; « Autres addons » rebranche tout)
+    local defer = type(Ad) == "table" and type(Ad.Link) == "function" and (Ad.Link("spf", "arrow") or Ad.Link("agf", "guide"))
+    W.RouteDeferred = defer and true or false
+    if defer and W.Query() == "" then
+      Ly.row({ id = "quests:defer", text = "Le trajet pas à pas et la flèche : dans Suivi Forever (TreeAI ne les répète pas).",
+        right = "Trajet ›", kind = "travel", tooltip = { "TreeAI dit quelle quête faire et pourquoi ; Suivi Forever t'y mène.",
+          "L'ordre des arrêts de TreeAI reste dans l'onglet « Trajet ». Tout se rebranche dans Réglages → Autres addons." },
+        clickHint = "Clic : l'onglet « Trajet » (les arrêts de TreeAI)", onClick = function() W.Select("route") end })
+    else
+      W.RenderRoute(Ly, true)
+    end
     -- 5. à prendre près de toi
     W.PickupRows(Ly, 5)
     -- 6. ménage + journal

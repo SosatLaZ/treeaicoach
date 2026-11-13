@@ -1678,6 +1678,11 @@ end
 function M.CardModel()
   local sl = M.SellList()
   local rep = opt("repair") and M.RepairCost() or 0
+  do   -- (5.1 LOOK) Leatrix Plus répare déjà tout seul : pas de « + réparer » en double
+    local Ad = T.Addons
+    local auto = type(Ad) == "table" and type(Ad.MerchantAuto) == "function" and select(2, pcall(Ad.MerchantAuto)) or nil
+    if type(auto) == "table" and auto.repair then rep = 0 end
+  end
   local n = #sl.list
   local m = { n = n, value = sl.value, rows = M.Grouped(sl.list), rest = sl.rest, greys = sl.greys, repair = rep, enabled = true }
   local ls = M.lastSale
@@ -1701,6 +1706,10 @@ function M.CardModel()
   end
   local miss = merchantStock()
   if miss then m.info = (m.info and (m.info .. "\n") or "") .. miss m.label = m.label or "Rien à vendre" m.enabled = m.enabled and n + rep > 0 end
+  -- (5.1 LOOK) Leatrix Plus vend déjà les gris / répare tout seul : la carte le dit (une ligne), sans rien proposer en double
+  local Ad = T.Addons
+  local auto = type(Ad) == "table" and type(Ad.MerchantAuto) == "function" and select(2, pcall(Ad.MerchantAuto)) or nil
+  if type(auto) == "table" and auto.note and m.label then m.info = (m.info and (m.info .. "\n") or "") .. auto.note m.auto = auto end
   return m
 end
 local function merchantTip()

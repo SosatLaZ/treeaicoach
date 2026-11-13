@@ -58,8 +58,8 @@ def test_hv_tiles_never_mixed():
 
 def test_theme_small_tokens():
     src = code(MODS / "Theme.lua")
-    # (5.0 LOOK) one design system: small on-screen frames half transparent (alpha 0.50), their buttons solid
-    assert 'small = { bg = "small", border = "smallBorder" }' in src and "Th.SMALL = { alpha = 0.50" in src
+    # (5.1 LOOK) one design system: small on-screen frames translucent (alpha 0.45), flat, thin neutral border
+    assert 'small = { bg = "small", border = "smallBorder" }' in src and "Th.SMALL = { alpha = 0.45" in src
     for m in re.finditer(r"small = \{ ([\d.]+), ([\d.]+), ([\d.]+), ([\d.]+) \}", src):
         assert 0.35 <= float(m.group(4)) <= 0.5, m.group(0)
     assert 'th:Skin(f, "small")' in code(MODS / "Shortcuts.lua")

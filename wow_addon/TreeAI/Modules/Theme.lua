@@ -17,32 +17,38 @@ local WHITE = "Interface\\Buttons\\WHITE8X8"
 local BAR_BLIZ = "Interface\\TargetingFrame\\UI-StatusBar"
 
 -- colour tokens ------------------------------------------------------------------------------------
+-- (5.1 LOOK) langage visuel V6 : plat, fin, sombre et translucide, petit texte net — comme les panneaux du joueur
+-- (compteurs, colonne « Suivi Forever », suivi du jeu). UNE couleur d'accent (bleu clair) pour ce qui est choisi /
+-- allumé / compté ; l'or ne sert qu'aux titres de section ; le rouge seulement à l'urgent. Liserés : 1 px, blancs à
+-- 6-10 %, jamais dorés ; aucun dégradé, aucune tuile colorée, rien qui pulse.
+local ACCENT = { 0.45, 0.74, 1, 1 }
 local COMMON = {
-  gold = { 1, 0.82, 0.2, 1 }, prio1 = { 0.6, 0.8, 1, 1 }, prio2 = { 1, 0.82, 0.2, 1 }, prio3 = { 1, 0.3, 0.25, 1 },
-  good = { 0.3, 0.9, 0.4, 1 }, bad = { 1, 0.3, 0.25, 1 }, warn = { 1, 0.6, 0.15, 1 },
-  -- (5.0 LOOK) états et rôles communs à tous les thèmes : allumé / coupé, touche, pastille de nombre, bouton d'action
-  on = { 0.30, 0.85, 0.40, 1 }, off = { 0.58, 0.58, 0.60, 1 }, key = { 0.55, 0.80, 1, 1 },
-  count = { 0.78, 0.13, 0.10, 1 }, disabled = { 0.50, 0.50, 0.52, 1 }, pressed = { 0, 0, 0, 0.28 },
-  tile = { 0.09, 0.10, 0.13, 0.88 }, tileOn = { 0.36, 0.27, 0.06, 0.94 }, tileOff = { 0.09, 0.10, 0.13, 0.55 },
-  pillOn = { 0.10, 0.30, 0.14, 0.92 }, pillOff = { 0.16, 0.16, 0.18, 0.92 }, caption = { 0.85, 0.72, 0.38, 1 },
+  gold = { 1, 0.82, 0.2, 1 }, accent = ACCENT,
+  prio1 = { 0.70, 0.72, 0.76, 1 }, prio2 = { 0.95, 0.95, 0.95, 1 }, prio3 = { 1, 0.42, 0.36, 1 },
+  good = { 0.45, 0.82, 0.52, 1 }, bad = { 1, 0.42, 0.36, 1 }, warn = { 1, 0.66, 0.28, 1 },
+  -- états et rôles communs à tous les thèmes : allumé / coupé, touche, nombre, bouton d'action
+  on = ACCENT, off = { 0.55, 0.55, 0.58, 1 }, key = { 0.62, 0.66, 0.72, 1 },
+  count = ACCENT, disabled = { 0.45, 0.45, 0.48, 1 }, pressed = { 0, 0, 0, 0.25 },
+  tile = { 1, 1, 1, 0.045 }, tileOn = { 0.45, 0.74, 1, 0.16 }, tileOff = { 1, 1, 1, 0.02 },
+  pillOn = { 0.45, 0.74, 1, 0.14 }, pillOff = { 1, 1, 1, 0.04 }, caption = { 0.62, 0.62, 0.64, 1 },
   -- sacs (légende des surbrillances) : mêmes couleurs dans les sacs, les cartes et la page Sacs
   keep = { 0.30, 0.85, 0.40, 1 }, sell = { 1, 0.82, 0.2, 1 }, ah = { 0.35, 0.65, 1, 1 }, bank = { 0.70, 0.55, 1, 1 },
   use = { 1, 1, 1, 1 }, destroy = { 1, 0.3, 0.25, 1 },
 }
 local PALETTES = {
-  { -- Sombre
-    bg = { 0.05, 0.06, 0.08, 0.97 }, panel = { 0.09, 0.10, 0.13, 0.97 }, hud = { 0, 0, 0, 0.45 },
-    barBg = { 0, 0, 0, 0.55 }, border = { 0.78, 0.62, 0.28, 0.9 }, borderSoft = { 0.78, 0.62, 0.28, 0.35 },
-    text = { 0.92, 0.92, 0.92, 1 }, muted = { 0.6, 0.6, 0.62, 1 }, hover = { 1, 1, 1, 0.08 },
-    button = { 0.14, 0.15, 0.19, 0.95 }, selected = { 0.78, 0.62, 0.28, 0.30 }, flat = true,
-    small = { 0.04, 0.05, 0.07, 0.50 }, smallBorder = { 0.78, 0.62, 0.28, 0.55 },
+  { -- Sombre (V6 : verre noir, liseré blanc discret)
+    bg = { 0.025, 0.025, 0.03, 0.88 }, panel = { 0.05, 0.05, 0.06, 0.90 }, hud = { 0, 0, 0, 0.40 },
+    barBg = { 0, 0, 0, 0.50 }, border = { 1, 1, 1, 0.10 }, borderSoft = { 1, 1, 1, 0.06 },
+    text = { 0.90, 0.90, 0.90, 1 }, muted = { 0.60, 0.60, 0.63, 1 }, hover = { 1, 1, 1, 0.07 },
+    button = { 1, 1, 1, 0.06 }, selected = { 0.45, 0.74, 1, 0.18 }, flat = true,
+    small = { 0, 0, 0, 0.45 }, smallBorder = { 1, 1, 1, 0.05 },
   },
   { -- Clair
-    bg = { 0.20, 0.22, 0.26, 0.97 }, panel = { 0.26, 0.28, 0.32, 0.97 }, hud = { 0.15, 0.16, 0.19, 0.55 },
-    barBg = { 0.1, 0.1, 0.12, 0.6 }, border = { 0.95, 0.85, 0.55, 0.95 }, borderSoft = { 0.95, 0.85, 0.55, 0.4 },
-    text = { 1, 1, 1, 1 }, muted = { 0.78, 0.78, 0.8, 1 }, hover = { 1, 1, 1, 0.12 },
-    button = { 0.32, 0.34, 0.39, 0.95 }, selected = { 0.95, 0.85, 0.55, 0.30 }, flat = true,
-    small = { 0.15, 0.16, 0.19, 0.50 }, smallBorder = { 0.95, 0.85, 0.55, 0.55 },
+    bg = { 0.16, 0.17, 0.20, 0.92 }, panel = { 0.20, 0.21, 0.25, 0.92 }, hud = { 0.15, 0.16, 0.19, 0.50 },
+    barBg = { 0.1, 0.1, 0.12, 0.6 }, border = { 1, 1, 1, 0.16 }, borderSoft = { 1, 1, 1, 0.09 },
+    text = { 1, 1, 1, 1 }, muted = { 0.78, 0.78, 0.8, 1 }, hover = { 1, 1, 1, 0.10 },
+    button = { 1, 1, 1, 0.09 }, selected = { 0.45, 0.74, 1, 0.24 }, flat = true,
+    small = { 0.15, 0.16, 0.19, 0.50 }, smallBorder = { 1, 1, 1, 0.09 },
   },
   { -- Blizzard
     bg = { 0, 0, 0, 0.96 }, panel = { 0.05, 0.05, 0.05, 0.96 }, hud = { 0, 0, 0, 0.4 },
@@ -50,6 +56,7 @@ local PALETTES = {
     text = { 1, 1, 1, 1 }, muted = { 0.65, 0.65, 0.65, 1 }, hover = { 1, 0.82, 0.2, 0.15 },
     button = { 0.12, 0.08, 0.04, 0.9 }, selected = { 1, 0.82, 0.2, 0.25 }, flat = false,
     small = { 0, 0, 0, 0.50 }, smallBorder = { 0.6, 0.6, 0.6, 0.6 },
+    tile = { 0.09, 0.10, 0.13, 0.88 }, tileOn = { 0.36, 0.27, 0.06, 0.94 }, tileOff = { 0.09, 0.10, 0.13, 0.55 },
   },
 }
 for _, p in ipairs(PALETTES) do for k, v in pairs(COMMON) do if p[k] == nil then p[k] = v end end end
@@ -62,29 +69,32 @@ local CLASS = {  -- fallback when RAID_CLASS_COLORS is absent
 
 -- skin kinds: which background token, border or not -------------------------------------------------
 local KINDS = {
-  window = { bg = "bg", border = "border", glass = true },   -- verre sombre arrondi (UI2)
+  window = { bg = "bg", border = "border" },                 -- (5.1) verre noir plat, liseré 1 px (plus de bord arrondi doré)
   panel = { bg = "panel", border = "border" },
   hud = { bg = "hud", border = "borderSoft" },
   bar = { bg = "barBg", border = "borderSoft", bar = true },
   badge = { bg = "bg", border = "border" },
   button = { bg = "button", border = "borderSoft" },
   row = { bg = false, border = false, hover = true },
-  alert = { bg = "small", border = "prio3" },   -- (4.2 FIX42) alerte : fond transparent comme les autres petits cadres
+  alert = { bg = "small", border = "smallBorder" },   -- (5.1) alerte : un petit cadre comme les autres, sans liseré rouge
   tooltip = { bg = "bg", border = "border" },
   card = { bg = "bg", border = "borderSoft" },                -- (UIREDO) fenêtre / carte : fond plat, liseré 1 px
   -- (4.2 FIX42) petits cadres posés sur l'écran (bande, alertes, cartes du marchand / de l'HV / de la banque) : fond
   -- transparent ~0,4, liseré 1 px discret, petite police (Th.SMALL) — jamais la fenêtre ni les menus
   small = { bg = "small", border = "smallBorder" },
+  -- (5.1 LOOK) petite carte accrochée SOUS une fenêtre du jeu (marchand, banque, HV) : elle tombe souvent sur une
+  -- autre colonne (Suivi Forever) — fond presque opaque pour que les deux textes ne se mélangent pas
+  docked = { bg = "bg", border = "smallBorder" },
 }
 --- (4.2 FIX42) jetons des petits cadres : alpha du fond (0,35-0,5), police, hauteur des boutons
-Th.SMALL = { alpha = 0.50, font = "S", fontPx = 10, btnH = 20, pad = 6 }
+Th.SMALL = { alpha = 0.45, font = "S", fontPx = 10, btnH = 20, pad = 6 }
 Th.KINDS = KINDS
 
 local skins = setmetatable({}, { __mode = "k" })   -- frame -> { kind, opts, tex }
 local fonts = setmetatable({}, { __mode = "k" })   -- fontstring -> size letter
 -- (5.0 LOOK) N = 11 px (mots des boutons posés sur l'écran : lisibles à l'échelle d'interface 0,64), H = titre de fenêtre
 local SIZES = { S = { "GameFontHighlightSmall", 10 }, N = { "GameFontHighlightSmall", 11 }, M = { "GameFontHighlight", 12 },
-  L = { "GameFontNormalLarge", 16 }, H = { "GameFontNormalHuge", 20 } }
+  L = { "GameFontNormalLarge", 14 }, H = { "GameFontNormalHuge", 16 } }   -- (5.1) titres plus petits : 14 / 16
 -- (REVIEW) un seul rythme d'espacement et de hauteurs pour tous les cadres TreeAI (menus, fenêtres, lignes)
 Th.SIZES = SIZES
 Th.SPACE = { xs = 2, s = 4, m = 8, l = 12, xl = 16 }
@@ -406,7 +416,7 @@ function Th:_PaintButton(b)
     if s.tex and s.tex.bg then setColorTex(s.tex.bg, self:Color(spec))
     elseif b.SetBackdropColor then meth(b, "SetBackdropColor", self:Color(spec)) end
   end
-  if b.label then meth(b.label, "SetTextColor", self:Color(st.selected and "gold" or "text")) end
+  if b.label then meth(b.label, "SetTextColor", self:Color(st.selected and "accent" or "text")) end
 end
 
 function Th:Button(parent, text, w, h, onClick, tip)
@@ -554,7 +564,7 @@ end
 local BD_GLASS = { bgFile = WHITE, edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", tile = false, edgeSize = 12,
   insets = { left = 3, right = 3, top = 3, bottom = 3 } }
 Th.BACKDROP_GLASS = BD_GLASS
-KINDS.glass = { bg = "bg", border = "borderSoft", glass = true }   -- variante au liseré doux
+KINDS.glass = { bg = "bg", border = "borderSoft" }   -- variante au liseré doux (5.1 : plate elle aussi)
 Th.HEADER_H = 22
 Th._windows = setmetatable({}, { __mode = "k" })   -- frame -> { opts, header, grip, collapsed }
 Th._escNames = {}
@@ -952,21 +962,24 @@ function Th:RefreshHotKeys() for b in pairs(self._hotkeys) do self:HotKey(b) end
 -- les pages des autres modules en héritent par la mise en page de la fenêtre (Ly.actions, Ly.toggle, Ly.card…).
 -- Rien ici ne tourne tout seul : aucun OnUpdate (le survol et l'enfoncé sont des scripts de souris).
 -- =====================================================================================================
-Th.V = 5
+Th.V = 6   -- (5.1 LOOK) V6 : plat, fin, translucide ; un accent ; bande d'une rangée (forme « slim »)
 Th.TOKENS = {
   grid = 4,                                                              -- tout est posé sur une grille de 4 px
   space = Th.SPACE,                                                      -- xs 2 · s 4 · m 8 · l 12 · xl 16
-  font = { S = 10, N = 11, M = 12, L = 16, H = 20 },                     -- px (× l'échelle du thème)
+  font = { S = 10, N = 11, M = 12, L = 14, H = 16 },                     -- px (× l'échelle du thème)
   border = 1,                                                            -- liseré : 1 px, partout
   -- fonds : menus et fenêtres opaques ; petits cadres posés sur l'écran à moitié transparents, leurs boutons pleins
-  alpha = { menu = 0.97, card = 0.97, small = 0.50, tile = 0.88, hover = 0.10, pressed = 0.28, disabled = 0.45 },
+  -- (5.1) tout est translucide ; idle / combat = alpha de la bande au repos / en combat (pleine au survol)
+  alpha = { menu = 0.88, card = 0.88, small = 0.45, tile = 0.045, hover = 0.07, pressed = 0.25, disabled = 0.45,
+    idle = 0.60, combat = 0.30 },
   button = { h = 24, big = 44, pad = 8, icon = 16, iconBig = 24 },
   row = { h = 24, h2 = 36, icon = 16, gap = 2 },
   card = { pad = 8, gap = 8, head = 24 },
   badge = { h = 13, w = 13 },
-  tile = { w = 46, h = 42, icon = 22, gap = 2, compact = 28 },           -- bouton de la bande (icône + mot dessous)
-  strip = { cap = 16, pad = 4, grip = 10, sep = 9 },
-  toast = { min = 8, max = 15, w = 320 },                                -- alertes : une à la fois, 8 à 15 s
+  tile = { w = 46, h = 42, icon = 22, gap = 2, compact = 22 },           -- tuile (fenêtre) ; compact = icône seule de la bande
+  slim = { h = 22, icon = 14, gap = 1, pad = 6 },                        -- bouton de la bande : icône + mot court, une rangée
+  strip = { cap = 16, pad = 2, grip = 8, sep = 7 },
+  toast = { min = 8, max = 15, w = 320, quietMin = 5, quietMax = 8, quietW = 280 },   -- alertes : une à la fois ; « discret » 5 à 8 s
   window = { nav = 176, top = 56, foot = 40, pad = 16 },
 }
 -- un seul jeu d'icônes : celles du jeu (jamais d'image à nous), par rôle
@@ -1025,8 +1038,8 @@ function Th:CountBadge(parent)
   meth(f, "EnableMouse", false)
   f.bg = meth(f, "CreateTexture", nil, "ARTWORK")
   if f.bg then meth(f.bg, "SetAllPoints", f); setColorTex(f.bg, self:Color("count")) end
-  f.text = meth(f, "CreateFontString", nil, "OVERLAY", "NumberFontNormalSmall")
-  if f.text then meth(f.text, "SetPoint", "CENTER", f, "CENTER", 0, 0) end
+  f.text = meth(f, "CreateFontString", nil, "OVERLAY", "GameFontHighlightSmall")
+  if f.text then meth(f.text, "SetPoint", "CENTER", f, "CENTER", 0, 0); meth(f.text, "SetTextColor", 0.03, 0.05, 0.08, 1) end
   function f.Set(self2, n)
     n = tonumber(n)
     self2.value = (n and n > 0) and n or nil
@@ -1045,16 +1058,29 @@ function Th:PaintAction(b)
   local st = b and b.__st
   if not st then return end
   local kind = st.kind
+  local slim = kind == "slim" or kind == "icon"
   if st.disabled then
-    setColorTex(b.bg, self:Color("tileOff"))
+    if slim then setColorTex(b.bg, 0, 0, 0, 0) else setColorTex(b.bg, self:Color("tileOff")) end
     edgeColor(b.edges, 0, 0, 0, 0)
+  elseif st.primary and not slim then
+    -- (5.1) L'action principale d'une page : la seule teinte pleine (accent), une par page
+    local r, g, bl = self:Color("accent")
+    setColorTex(b.bg, r, g, bl, 0.22)
+    edgeColor(b.edges, r, g, bl, 0.55)
   elseif st.active then
     setColorTex(b.bg, self:Color("tileOn"))
-    edgeColor(b.edges, self:Color("gold"))
+    if slim then edgeColor(b.edges, 0, 0, 0, 0)
+    else local r, g, bl = self:Color("accent") edgeColor(b.edges, r, g, bl, 0.45) end
   else
-    setColorTex(b.bg, self:Color("tile"))
-    local r, g, bl = self:Color("smallBorder")
-    edgeColor(b.edges, r, g, bl, kind == "bar" and 0.35 or 0.25)
+    if slim then setColorTex(b.bg, 0, 0, 0, 0) edgeColor(b.edges, 0, 0, 0, 0)
+    else
+      setColorTex(b.bg, self:Color("tile"))
+      edgeColor(b.edges, self:Color("smallBorder"))
+    end
+  end
+  if b.under then
+    if st.active and not st.disabled and kind == "slim" then setColorTex(b.under, self:Color("accent")); meth(b.under, "Show")
+    else meth(b.under, "Hide") end
   end
   if b.icon then
     meth(b.icon, "SetDesaturated", st.disabled and true or false)
@@ -1062,15 +1088,17 @@ function Th:PaintAction(b)
   end
   if b.label then
     if st.disabled then meth(b.label, "SetTextColor", self:Color("disabled"))
-    elseif st.active then meth(b.label, "SetTextColor", self:Color("gold"))
+    elseif st.active then meth(b.label, "SetTextColor", self:Color("accent"))
     else meth(b.label, "SetTextColor", self:Color("text")) end
   end
   if b.keyText then meth(b.keyText, "SetAlpha", st.disabled and 0.5 or 1) end
+  if b.countText then meth(b.countText, "SetAlpha", st.disabled and 0.5 or 1) end
 end
 
 --- LE bouton d'action TreeAI. opts = { name, layout = "tile" (icône + mot dessous) | "bar" (icône + mot à droite) |
---- "icon" (icône seule), w, h, icon, label, onClick(self, bouton de souris), onEnter(self), onLeave(self) }.
---- b:Set{ label, icon, count, key, active, disabled } repeint ; b:Fit() rend la largeur utile ; b.icon, b.label,
+--- "slim" (5.1 : petite icône + mot court + nombre, sans fond — la bande) | "icon" (icône seule), w, h, icon, label,
+--- onClick(self, bouton de souris), onEnter(self), onLeave(self) }.
+--- b:Set{ label, icon, count, key, active, disabled, primary } repeint ; b:Fit() rend la largeur utile ; b.icon, b.label,
 --- b.keyText (touche, coin haut gauche), b.badge (nombre, coin haut droit). Jamais protégé : un clic = une fonction.
 function Th:ActionButton(parent, opts)
   opts = type(opts) == "table" and opts or {}
@@ -1078,10 +1106,10 @@ function Th:ActionButton(parent, opts)
   local ok, b = pcall(G.CreateFrame, "Button", opts.name, parent or G.UIParent)
   if not ok or not b then return nil end
   local K = self.TOKENS
-  local kind = (opts.layout == "bar" or opts.layout == "icon") and opts.layout or "tile"
+  local kind = (opts.layout == "bar" or opts.layout == "icon" or opts.layout == "slim") and opts.layout or "tile"
   b.__st = { kind = kind }
   local w = opts.w or (kind == "tile" and K.tile.w or kind == "icon" and K.tile.compact or 120)
-  local h = opts.h or (kind == "tile" and K.tile.h or kind == "icon" and K.tile.compact or K.button.h)
+  local h = opts.h or (kind == "tile" and K.tile.h or kind == "icon" and K.tile.compact or kind == "slim" and K.slim.h or K.button.h)
   meth(b, "SetSize", w, h)
   meth(b, "RegisterForClicks", "LeftButtonUp", "RightButtonUp")
   b.bg = meth(b, "CreateTexture", nil, "BACKGROUND")
@@ -1092,26 +1120,36 @@ function Th:ActionButton(parent, opts)
   b.push = meth(b, "CreateTexture", nil, "OVERLAY")
   if b.push then meth(b.push, "SetAllPoints", b); setColorTex(b.push, self:Color("pressed")); meth(b.push, "Hide") end
   b.icon = meth(b, "CreateTexture", nil, "ARTWORK")
-  b.label = self:Text(b, opts.font or (kind == "bar" and "M" or "N"), "text")
+  b.label = self:Text(b, opts.font or (kind == "bar" and "M" or kind == "slim" and "S" or "N"), "text")
   if b.label then meth(b.label, "SetWordWrap", false) end
   b.keyText = meth(b, "CreateFontString", nil, "OVERLAY", "NumberFontNormalSmallGray")
   if b.keyText then meth(b.keyText, "SetTextColor", self:Color("key")) end
   b.badge = self:CountBadge(b)
+  -- (5.1) forme « slim » : le nombre est un petit chiffre d'accent après le mot, et le mode choisi un trait dessous
+  b.countText = self:Text(b, "S", "count")
+  if b.countText then meth(b.countText, "SetWordWrap", false); meth(b.countText, "Hide") end
+  b.under = meth(b, "CreateTexture", nil, "ARTWORK")
+  if b.under then
+    meth(b.under, "SetHeight", 1)
+    meth(b.under, "SetPoint", "BOTTOMLEFT", b, "BOTTOMLEFT", 4, 1); meth(b.under, "SetPoint", "BOTTOMRIGHT", b, "BOTTOMRIGHT", -4, 1)
+    meth(b.under, "Hide")
+  end
   --- forme du bouton : "tile" (icône + mot dessous), "icon" (icône seule, compact), "bar" (icône + mot à droite).
   --- Le même bouton change de forme (la bande passe en mode compact sans créer un 2e jeu de boutons).
   function b.SetLayout(self2, k2)
     local st = self2.__st
-    k2 = (k2 == "icon" or k2 == "bar") and k2 or "tile"
+    k2 = (k2 == "icon" or k2 == "bar" or k2 == "slim") and k2 or "tile"
     if st.laid == k2 then return end
     st.kind, st.laid = k2, k2
-    local isz = opts.iconSize or (k2 == "tile" and K.tile.icon or k2 == "icon" and (K.tile.compact - 8) or K.button.icon)
+    local isz = opts.iconSize or (k2 == "tile" and K.tile.icon or k2 == "icon" and (K.tile.compact - 8) or k2 == "slim" and K.slim.icon or K.button.icon)
     st.isz = isz
-    meth(self2, "SetHeight", opts.h or (k2 == "tile" and K.tile.h or k2 == "icon" and K.tile.compact or K.button.h))
+    meth(self2, "SetHeight", opts.h or (k2 == "tile" and K.tile.h or k2 == "icon" and K.tile.compact or k2 == "slim" and K.slim.h or K.button.h))
     if self2.icon then
       meth(self2.icon, "ClearAllPoints")
       meth(self2.icon, "SetSize", isz, isz)
       if k2 == "tile" then meth(self2.icon, "SetPoint", "TOP", self2, "TOP", 0, -4)
       elseif k2 == "icon" then meth(self2.icon, "SetPoint", "CENTER", self2, "CENTER", 0, 0)
+      elseif k2 == "slim" then meth(self2.icon, "SetPoint", "LEFT", self2, "LEFT", K.slim.pad - 1, 0)
       else meth(self2.icon, "SetPoint", "LEFT", self2, "LEFT", K.button.pad - 2, 0) end
     end
     if self2.label then
@@ -1119,6 +1157,8 @@ function Th:ActionButton(parent, opts)
       if k2 == "icon" then meth(self2.label, "Hide")
       elseif k2 == "tile" then
         meth(self2.label, "SetPoint", "BOTTOM", self2, "BOTTOM", 0, 3); meth(self2.label, "SetJustifyH", "CENTER"); meth(self2.label, "Show")
+      elseif k2 == "slim" then
+        meth(self2.label, "SetPoint", "LEFT", self2, "LEFT", K.slim.pad - 1 + isz + 4, 0); meth(self2.label, "SetJustifyH", "LEFT"); meth(self2.label, "Show")
       else
         meth(self2.label, "SetPoint", "LEFT", self2, "LEFT", K.button.pad + isz + 2, 0); meth(self2.label, "SetJustifyH", "LEFT"); meth(self2.label, "Show")
       end
@@ -1127,11 +1167,21 @@ function Th:ActionButton(parent, opts)
       meth(self2.keyText, "ClearAllPoints")
       if k2 == "bar" then meth(self2.keyText, "SetPoint", "RIGHT", self2, "RIGHT", -K.button.pad + 2, 0)
       else meth(self2.keyText, "SetPoint", "TOPLEFT", self2, "TOPLEFT", 2, -2) end
+      if k2 == "slim" or k2 == "icon" then meth(self2.keyText, "Hide") else meth(self2.keyText, "Show") end   -- (bande : la touche est dans l'infobulle)
     end
     if self2.badge then
       meth(self2.badge, "ClearAllPoints")
       if k2 == "bar" then meth(self2.badge, "SetPoint", "TOPLEFT", self2.icon or self2, "TOPRIGHT", -5, 4)
       else meth(self2.badge, "SetPoint", "TOPRIGHT", self2, "TOPRIGHT", -1, -1) end
+      if k2 == "slim" then meth(self2.badge, "Hide") else self2.badge:Set(st.count) end
+    end
+    if self2.countText then
+      meth(self2.countText, "ClearAllPoints")
+      if k2 == "slim" and self2.label then
+        meth(self2.countText, "SetPoint", "LEFT", self2.label, "RIGHT", 3, 0)
+        local n = tonumber(st.count)
+        if n and n > 0 then meth(self2.countText, "Show") else meth(self2.countText, "Hide") end
+      else meth(self2.countText, "Hide") end
     end
     if st.painted then Th:PaintAction(self2) end
   end
@@ -1150,10 +1200,20 @@ function Th:ActionButton(parent, opts)
       st.key = v.key or nil
       if self2.keyText then meth(self2.keyText, "SetText", st.key or "") end
     end
-    if self2.badge and v.count ~= st.count then st.count = v.count self2.badge:Set(v.count) end
-    local a, d = v.active and true or false, v.disabled and true or false
-    if a ~= st.active or d ~= st.disabled or not st.painted then
-      st.active, st.disabled, st.painted = a, d, true
+    if self2.badge and v.count ~= st.count then
+      st.count = v.count
+      local n = tonumber(v.count)
+      if st.kind == "slim" then
+        meth(self2.badge, "Hide")
+        if self2.countText then
+          if n and n > 0 then meth(self2.countText, "SetText", n > 99 and "99+" or tostring(math.floor(n))); meth(self2.countText, "Show")
+          else meth(self2.countText, "SetText", ""); meth(self2.countText, "Hide") end
+        end
+      else self2.badge:Set(v.count) end
+    end
+    local a, d, pr = v.active and true or false, v.disabled and true or false, v.primary and true or false
+    if a ~= st.active or d ~= st.disabled or pr ~= st.primary or not st.painted then
+      st.active, st.disabled, st.primary, st.painted = a, d, pr, true
       Th:PaintAction(self2)
     end
   end
@@ -1177,6 +1237,15 @@ function Th:ActionButton(parent, opts)
     end
     local need
     if k2 == "tile" then need = math.max(minW or K.tile.w, math.floor(st.tw + 8 + 0.5))
+    elseif k2 == "slim" then
+      local n = tonumber(st.count)
+      local cw = 0
+      if n and n > 0 then
+        cw = self2.countText and tonumber(meth(self2.countText, "GetStringWidth")) or 0
+        if not cw or cw <= 0 then cw = #tostring(math.floor(n)) * 6 end
+        cw = cw + 3
+      end
+      need = math.max(minW or 0, math.floor(K.slim.pad - 1 + (st.isz or K.slim.icon) + 4 + st.tw + cw + K.slim.pad + 0.5))
     else need = math.max(minW or 0, math.floor(K.button.pad + (st.isz or K.button.icon) + 2 + st.tw + K.button.pad + 0.5)) end
     meth(self2, "SetWidth", need)
     return need
@@ -1203,9 +1272,9 @@ function Th:Pill(parent, opts)
   p.hl = meth(p, "CreateTexture", nil, "HIGHLIGHT")
   if p.hl then meth(p.hl, "SetAllPoints", p); setColorTex(p.hl, 1, 1, 1, self.TOKENS.alpha.hover) end
   p.dot = meth(p, "CreateTexture", nil, "ARTWORK")
-  if p.dot then meth(p.dot, "SetSize", 8, 8); meth(p.dot, "SetPoint", "LEFT", p, "LEFT", 5, 0) end
+  if p.dot then meth(p.dot, "SetSize", 6, 6); meth(p.dot, "SetPoint", "LEFT", p, "LEFT", 6, 0) end
   p.label = self:Text(p, opts.font or "S", "text")
-  if p.label then meth(p.label, "SetPoint", "LEFT", p, "LEFT", 17, 0); meth(p.label, "SetWordWrap", false) end
+  if p.label then meth(p.label, "SetPoint", "LEFT", p, "LEFT", 16, 0); meth(p.label, "SetWordWrap", false) end
   p.state = self:Text(p, opts.font or "S", "on")
   if p.state then meth(p.state, "SetPoint", "RIGHT", p, "RIGHT", -6, 0); meth(p.state, "SetWordWrap", false) end
   p.text = opts.label or ""
@@ -1215,8 +1284,8 @@ function Th:Pill(parent, opts)
     self2.on = on
     setColorTex(self2.bg, Th:Color(on and "pillOn" or "pillOff"))
     local r, g, bl = Th:Color(on and "on" or "off")
-    edgeColor(self2.edges, r, g, bl, on and 0.9 or 0.5)
-    setColorTex(self2.dot, r, g, bl, 1)
+    edgeColor(self2.edges, 0, 0, 0, 0)                                    -- (5.1) plus de liseré coloré : un point et un mot
+    setColorTex(self2.dot, r, g, bl, on and 1 or 0.6)
     if self2.label then meth(self2.label, "SetText", self2.text); meth(self2.label, "SetTextColor", Th:Color(on and "text" or "muted")) end
     if self2.state then meth(self2.state, "SetText", on and "ON" or "OFF"); meth(self2.state, "SetTextColor", r, g, bl) end
   end
@@ -1226,7 +1295,9 @@ function Th:Pill(parent, opts)
       local _, n = tostring(self2.text):gsub("[^\128-\191]", "")
       tw = n * 5.4
     end
-    local need = math.floor(17 + tw + 8 + 22 + 6 + 0.5)
+    local sw = self2.state and tonumber(meth(self2.state, "GetStringWidth")) or 0
+    if not sw or sw <= 0 then sw = 18 end
+    local need = math.floor(16 + tw + 5 + sw + 6 + 0.5)
     meth(self2, "SetWidth", need)
     return need
   end
@@ -1251,7 +1322,7 @@ function Th:Card(parent, opts)
   if opts.strata then meth(c, "SetFrameStrata", opts.strata) end
   if not self:Skin(c, opts.kind == "small" and "small" or "card") then
     c.bgt = meth(c, "CreateTexture", nil, "BACKGROUND")
-    if c.bgt then meth(c.bgt, "SetAllPoints", c); setColorTex(c.bgt, 0.05, 0.06, 0.08, opts.kind == "small" and 0.5 or 0.97) end
+    if c.bgt then meth(c.bgt, "SetAllPoints", c); setColorTex(c.bgt, 0.025, 0.025, 0.03, opts.kind == "small" and 0.45 or 0.88) end
   end
   local top = K.pad
   if opts.title then
@@ -1313,7 +1384,50 @@ end
 function Th:ToastSeconds(text)
   local K = self.TOKENS.toast
   local _, n = tostring(text or ""):gsub("[^\128-\191]", "")
+  if self:ToastQuiet() then   -- (5.1) « discret » : 5 s, +1 s par 20 lettres au-delà de 30, plafond 8 s
+    return math.max(K.quietMin, math.min(K.quietMax, K.quietMin + math.floor(math.max(0, n - 30) / 20)))
+  end
   return math.max(K.min, math.min(K.max, K.min + math.floor(math.max(0, n - 40) / 12)))
+end
+--- (5.1 LOOK) alertes « discrètes » (d'office) : petites, courtes, sans couleur vive. Réglage : Affichage → Alertes discrètes
+function Th:ToastQuiet()
+  local s = T.settings and T.settings.alert
+  return not (type(s) == "table" and s.quiet == false)
+end
+--- (5.1 LOOK) la place d'un petit cadre d'avis (alerte, ligne du 1er lancement) quand la boussole TreeAI n'est pas à
+--- l'écran : en haut au centre, SOUS ce qui s'y trouve déjà (barre d'XP, flèche du jeu ou d'un autre addon), jamais
+--- au milieu de l'écran (au-dessus de 34 % de la hauteur), jamais sur un cadre du jeu, d'un autre addon ou de TreeAI.
+--- → gauche, bas (unités d'UIParent) ou nil. Lecture seule, au moment de l'afficher seulement.
+function Th:ToastSpot(w, h)
+  local W, H
+  if T._ScreenSize then W, H = T._ScreenSize() end
+  if not (W and H and W > 200 and H > 200) or type(T.SpotIsFree) ~= "function" then return nil end
+  local own = {}
+  local ue = tonumber(meth(G.UIParent, "GetEffectiveScale")) or 1
+  for _, n in ipairs({ "TreeAIStrip", "TreeAINow", "TreeAICompassFrame", "TreeAIAlert", "TreeAIHello", "TreeAICard" }) do
+    local f = rawget(G, n)
+    if type(f) == "table" and meth(f, "IsVisible") then
+      local l, b, fw, fh = meth(f, "GetRect")
+      local k = (tonumber(meth(f, "GetEffectiveScale")) or ue) / ue
+      if tonumber(l) and tonumber(b) and tonumber(fw) and tonumber(fh) then own[#own + 1] = { l * k, b * k, fw * k, fh * k } end
+    end
+  end
+  local l = math.floor((W - w) / 2 + 0.5)
+  local top = math.floor(H * 0.08)
+  local last = math.floor(H * 0.34 - h)
+  while top <= last do
+    local b = H - top - h
+    local okF, free = pcall(T.SpotIsFree, T, l, b, w, h, 4)
+    if okF and free then
+      local hit = false
+      for _, r in ipairs(own) do
+        if l < r[1] + r[3] + 4 and r[1] < l + w + 4 and b < r[2] + r[4] + 4 and r[2] < b + h + 4 then hit = true break end
+      end
+      if not hit then return l, b end
+    end
+    top = top + 10
+  end
+  return nil
 end
 --- l'alerte se pose juste sous la boussole (le seul endroit où le joueur regarde déjà), sauf s'il l'a placée lui-même,
 --- si la boussole n'est pas à l'écran, ou si elle tomberait sur la bande d'actions : alors la place du cœur est gardée.
@@ -1366,6 +1480,29 @@ local function oneToast(e)
   local l2 = a.lines[2]
   if l2 then meth(l2, "SetText", ""); meth(l2, "Hide") end
   meth(a, "SetHeight", 10 + 13)
+  -- (5.1) discret : texte blanc cassé, un trait fin d'accent à gauche (rouge doux si danger) — plus de cadre rouge ;
+  -- largeur ajustée au texte (jamais plus que la largeur d'origine)
+  local quiet = Th:ToastQuiet()
+  local l1 = a.lines[1]
+  if l1 then
+    if quiet then meth(l1, "SetTextColor", Th:Color("text")) else meth(l1, "SetTextColor", 1, 0.45, 0.4) end
+  end
+  if not a._bar then
+    a._bar = meth(a, "CreateTexture", nil, "ARTWORK")
+    if a._bar then
+      meth(a._bar, "SetWidth", 2)
+      meth(a._bar, "SetPoint", "TOPLEFT", a, "TOPLEFT", 1, -3); meth(a._bar, "SetPoint", "BOTTOMLEFT", a, "BOTTOMLEFT", 1, 3)
+    end
+  end
+  if a._bar then
+    local danger = e and T.IsDanger and T:IsDanger(e)
+    setColorTex(a._bar, Th:Color(danger and "prio3" or "accent"))
+    if quiet then meth(a._bar, "Show") else meth(a._bar, "Hide") end
+  end
+  if quiet and l1 then
+    local tw = tonumber(meth(l1, "GetUnboundedStringWidth")) or tonumber(meth(l1, "GetStringWidth")) or 0
+    if tw > 20 then meth(a, "SetWidth", math.max(140, math.min(300, math.floor(tw + 18)))) end
+  elseif not quiet then meth(a, "SetWidth", 300) end
   local s = T.settings and T.settings.alert
   if not (s and tonumber(s.duration) and tonumber(s.duration) > Th.TOKENS.toast.max) then
     a.left = math.max(tonumber(a.left) or 0, Th:ToastSeconds(e and e.text))
@@ -1373,7 +1510,18 @@ local function oneToast(e)
   end
   if meth(a, "IsShown") then
     local okN, placed = pcall(nearCompass, a)
-    -- pas de place libre près de la boussole : la place du cœur (choisie sur tout l'écran), pas celle d'une alerte d'avant
+    -- (5.1) pas de boussole TreeAI à l'écran (Suivi Forever guide) : en haut au centre, sous la flèche du jeu
+    if not (okN and placed) and not (T.IsPlayerPlaced and T:IsPlayerPlaced("alert")) then
+      local as = tonumber(meth(a, "GetScale")) or 1
+      local aw, ah = (tonumber(meth(a, "GetWidth")) or 300) * as, (tonumber(meth(a, "GetHeight")) or 23) * as
+      local okS, sl, sb = pcall(Th.ToastSpot, Th, aw, ah)
+      if okS and sl and as > 0 then
+        meth(a, "ClearAllPoints")
+        meth(a, "SetPoint", "BOTTOMLEFT", G.UIParent, "BOTTOMLEFT", sl / as, sb / as)
+        placed = true
+      end
+    end
+    -- pas de place libre : la place du cœur (choisie sur tout l'écran), pas celle d'une alerte d'avant
     if not (okN and placed) and not (T.IsPlayerPlaced and T:IsPlayerPlaced("alert")) and T.ApplyAlertSettings then pcall(T.ApplyAlertSettings, T) end
   end
 end
@@ -1394,7 +1542,7 @@ function Th:Describe()
   local out = { "thème = " .. tostring(self:Name()) .. " (v" .. self.V .. ")", "grille = " .. K.grid .. " px, liseré = " .. K.border .. " px" }
   out[#out + 1] = ("polices = S %d · N %d · M %d · L %d · H %d px"):format(K.font.S, K.font.N, K.font.M, K.font.L, K.font.H)
   out[#out + 1] = ("espaces = xs %d · s %d · m %d · l %d · xl %d"):format(K.space.xs, K.space.s, K.space.m, K.space.l, K.space.xl)
-  for _, tk in ipairs({ "bg", "panel", "small", "tile", "tileOn", "border", "smallBorder", "gold", "on", "off", "count", "key" }) do
+  for _, tk in ipairs({ "bg", "panel", "small", "tile", "tileOn", "border", "smallBorder", "gold", "accent", "on", "off", "count", "key" }) do
     local r, g, b, a = self:Color(tk)
     out[#out + 1] = ("couleur %s = %.2f %.2f %.2f, alpha %.2f"):format(tk, r, g, b, a)
   end

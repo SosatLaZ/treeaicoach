@@ -1,29 +1,34 @@
--- TreeAI — module Addons « Mes addons » (agent REPLACE, 4.0.1) : jouer avec TreeAI seul, les autres addons en
--- silence ou désinstallés. Une page de la fenêtre TreeAI (« Mes addons ») : pour chaque addon trouvé chez le joueur,
--- ce que TreeAI fait à sa place, ce qui manque encore, et le clic qui règle ça :
---  * Questie : TreeAI garde SA BASE (QuestieDB, lue en jeu, rien de copié) et dessine lui-même les icônes (QuestPins) et
---    le suivi (Watch). « Rendre Questie silencieux » écrit dans SES options (Questie.db.profile : enabled = icônes,
---    trackerEnabled = suivi, minimap.hide = bouton — ce que sa page d'options écrit elle-même), puis recharge
---    l'interface (Questie le demande pour son suivi) ; « Réafficher Questie » remet ce qu'il y avait. Options
---    illisibles : les 3 clics exacts dans ses options, rien d'écrit ;
---  * Shortest Path Forever : TreeAI trace et guide ; son suivi (horaires des bateaux, voyage) se coupe / revient par
---    SES options sauvegardées (ShortestPathForeverDB.tracker / journeyTracker), sans recharge ;
---  * Leatrix Plus → module « Confort » ; Details → module « Dégâts » (compteur intégré du jeu, C_DamageMeter) ;
---    Auctionator, DungeonJournal, Forever Loot Sparkles, Tweaks Forever : ce que TreeAI couvre, honnêtement.
--- Une ligne une seule fois (« Maintenant », info) quand un de ces addons est là. Lecture seule ailleurs, aucun cadre
--- d'un autre addon touché, rien en combat. Lua 5.1, aucune globale.
+-- TreeAI — module Addons « Autres addons » (5.1, agent LOOK) : TreeAI se BRANCHE sur les addons du joueur au lieu de
+-- les doubler. Lecture seule à l'exécution : aucun cadre d'un autre addon n'est déplacé, caché, re-parenté ni ancré ;
+-- aucune de leurs options n'est écrite ; chaque lecture passe par rawget / pcall ; rien de leur code ni de leurs
+-- données n'est repris (idées seulement : research/addons_study.md, research/look6.md).
+--  * Shortest Path Forever (colonne « Suivi Forever », flèche du jeu) : quand il est là, TreeAI ne montre NI boussole
+--    NI 2e liste de trajet ; « Y aller » lui confie la destination (son API publique « Navigate », au clic du joueur),
+--    sinon le repère du jeu (que SPF et la carte suivent). TreeAI n'ajoute que ce que SPF n'a pas : quelle quête faire
+--    ensuite et pourquoi, le groupe, l'équipement, les sacs, les métiers. Le petit bloc « Maintenant » peut se poser
+--    contre sa colonne (même largeur, même style) — posé sur UIParent à la place LUE, jamais ancré à son cadre.
+--  * Questie : sa base est lue ; ses icônes et son suivi ne sont pas touchés.
+--  * Adventure Guide Forever / SkillUp Forever : leurs listes (étapes de montée, composants de métier) ne sont pas
+--    répétées ; TreeAI garde ses avis et ses actions en un clic.
+--  * Auctionator : ses prix sont lus par son API publique (module HV).
+--  * Leatrix Plus : s'il vend déjà les gris / répare tout seul, la carte du marchand le dit et ne le propose pas.
+--  * OpenMap, Tweaks Forever, compteurs, cadres d'unité : seulement évités au placement.
+-- Une page « Autres addons » (Réglages) : chaque addon trouvé, ce que TreeAI lui prend, ce qu'il lui laisse, chaque
+-- ligne se coupe d'un clic. A.Probe() : ce qui a été trouvé sur CE client (noms, versions, points d'entrée) pour le
+-- rapport d'erreurs. Lua 5.1, aucune globale.
 local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 local G = _G
 
 local A = T:RegisterModule("Addons", {
-  title = "Mes addons",
-  description = "Ce que TreeAI remplace (Questie, Suivi Forever, Leatrix Plus, Details…) et le clic qui met les autres en silence.",
-  defaults = { enabled = true, noticeV = 0 },
+  title = "Autres addons",
+  description = "TreeAI se branche sur tes autres addons (Suivi Forever, Questie, Auctionator, Leatrix Plus…) au lieu de les doubler.",
+  defaults = { enabled = true, noticeV = 0, links = {} },
   charDefaults = {},
 })
 T.Addons = A
+A.autoIdleSafe = true
 do
   local fam = type(T.OPTIONS_FAMILY) == "table" and T.OPTIONS_FAMILY[#T.OPTIONS_FAMILY]
   if type(fam) == "table" and type(fam.mods) == "table" then
@@ -36,12 +41,91 @@ end
 local fmt = string.format
 local function pass(ok, ...) if ok then return ... end return nil end
 local function try(fn, ...) if type(fn) ~= "function" then return nil end return pass(pcall(fn, ...)) end
+local function meth(o, m, ...) local f = type(o) == "table" and o[m] if type(f) == "function" then return pass(pcall(f, o, ...)) end end
 local function g(name) return rawget(G, name) end
-local function inCombat() return T.InCombat and T:InCombat() or false end
+local function secret(v) local f = g("issecretvalue") return type(f) == "function" and try(f, v) and true or false end
 local ICON = "Interface\\Icons\\"
-A.NOTICE_V = 1
+A.NOTICE_V = 2
 
--- ===================================================================== addons installés (lecture seule)
+-- ===================================================================== le registre : addons connus, liens, points d'entrée
+-- test = motif sur le nom de dossier (minuscules) ; globals = globales publiques qui prouvent qu'il est chargé ;
+-- entries = points d'entrée sondés (chemins « A.b.c ») ; links = ce que TreeAI lui PREND (take) ou lui LAISSE (leave),
+-- chaque ligne se coupe (A.SetLink) ; layout = seulement évité au placement. fixed = ligne d'information : le lien est
+-- tenu par le module qui lit l'addon (Export / boussole pour Questie, module HV pour Auctionator, Icônes de quêtes),
+-- pas de case qui ne couperait rien.
+A.KNOWN = {
+  { key = "spf", title = "Shortest Path Forever", icon = ICON .. "INV_Misc_Map_01",
+    test = function(l) return l:find("shortestpath", 1, true) ~= nil end, globals = { "ShortestPathForever" },
+    entries = { "ShortestPathForever.API.Navigate", "ShortestPathForever.API.NavigateRoute", "ShortestPathForever.API.Estimate",
+      "ShortestPathForever.API.EstimateDetail", "ShortestPathForever.API.Active", "ShortestPathForever.API.CurrentStop",
+      "ShortestPathForever.API.Subscribe", "ShortestPathForever.API.Ended", "ShortestPathForeverDB", "ForeverMapMarkers" },
+    links = {
+      { id = "arrow", kind = "leave", label = "Flèche et trajet pas à pas",
+        on = "Laissés à Suivi Forever : TreeAI ne montre ni boussole ni 2e liste de trajet ; « Y aller » lui donne la destination.",
+        off = "TreeAI montre sa propre boussole et son trajet (deux flèches possibles)." },
+      { id = "dock", kind = "take", label = "« Maintenant » posé contre sa colonne",
+        on = "Le petit bloc « Maintenant » de TreeAI se pose contre la colonne Suivi Forever (même largeur), sans y toucher.",
+        off = "Pas de bloc « Maintenant » à l'écran : tout reste dans la fenêtre TreeAI." },
+    } },
+  { key = "questie", title = "Questie", icon = ICON .. "INV_Misc_Book_09",
+    test = function(l) return l == "questie" or l == "questiedb" end, globals = { "Questie", "QuestieLoader", "LibQuestieDB" },
+    entries = { "QuestieLoader.ImportModule", "LibQuestieDB.Quest.Get", "LibQuestieDB.Npc.Get", "Questie.db.profile", "Questie_BaseFrame" },
+    links = {
+      { id = "data", kind = "take", label = "Base de quêtes", fixed = true,
+        on = "Lue par TreeAI (donneurs, objectifs, chaînes) pour dire quelle quête faire ensuite. Rien n'y est écrit.",
+        off = "TreeAI n'utilise que les points du jeu (quêtes de ton journal)." },
+      { id = "icons", kind = "leave", label = "Icônes et suivi de quêtes", fixed = true,
+        on = "Laissés à Questie et au jeu : TreeAI ne dessine pas ses icônes par-dessus ni un 2e suivi (pour forcer les siennes : option « Dessiner même quand Questie dessine les siennes »).",
+        off = "TreeAI peut dessiner ses icônes / son suivi si tu les allumes (Réglages → Affichage)." },
+    } },
+  { key = "agf", title = "Adventure Guide Forever", icon = ICON .. "INV_Misc_Book_08",
+    test = function(l) return l:find("adventureguide", 1, true) ~= nil end, globals = { "AdventureGuideForever", "AdventureGuide" },
+    entries = { "AdventureGuideForever.API", "AdventureGuideForeverDB", "AdventureGuide.API" },
+    links = {
+      { id = "guide", kind = "leave", label = "Guide de montée (étapes, chapitres)",
+        on = "Laissé à Adventure Guide : TreeAI ne répète pas sa liste d'étapes ; il garde ses avis (rendre, groupe, équipement).",
+        off = "TreeAI montre aussi sa propre liste d'étapes (page Quêtes)." },
+    } },
+  { key = "skillup", title = "SkillUp Forever", icon = ICON .. "Trade_BlackSmithing",
+    test = function(l) return l:find("skillup", 1, true) ~= nil end, globals = { "SkillUpForever", "SkillUp" },
+    entries = { "SkillUpForever.API", "SkillUpForeverDB", "SkillUp.API" },
+    links = {
+      { id = "prof", kind = "leave", label = "Liste de montée de métier et composants",
+        on = "Laissées à SkillUp : TreeAI ne répète pas la liste ; il garde « où est le maître », « quoi vendre », « quoi garder ».",
+        off = "TreeAI montre aussi sa propre liste de composants (page Métiers, chez le marchand)." },
+    } },
+  { key = "auctionator", title = "Auctionator", icon = ICON .. "INV_Misc_Coin_02",
+    test = function(l) return l:find("auctionator", 1, true) ~= nil end, globals = { "Auctionator" },
+    entries = { "Auctionator.API.v1.GetAuctionPriceByItemID", "Auctionator.API.v1.GetAuctionPriceByItemLink",
+      "Auctionator.API.v1.MultiSearch", "Auctionator.API.v1.MultiSearchExact", "Auctionator.API.v1.CreateShoppingList" },
+    links = {
+      { id = "prices", kind = "take", label = "Prix de l'hôtel des ventes", fixed = true,
+        on = "Lus chez Auctionator (son API publique) pour les avis « vendre / garder / HV ». Rien n'y est écrit.",
+        off = "TreeAI n'utilise que ses propres relevés de prix." },
+    } },
+  { key = "leatrix", title = "Leatrix Plus", icon = ICON .. "INV_Misc_Gear_01",
+    test = function(l) return l:find("leatrix", 1, true) ~= nil and l:find("plus", 1, true) ~= nil end, globals = { "LeaPlusDB" },
+    entries = { "LeaPlusDB.AutoSellJunk", "LeaPlusDB.AutoRepairGear", "LeaPlusDB.FasterLooting" },
+    links = {
+      { id = "merchant", kind = "leave", label = "Vendre les gris et réparer tout seul",
+        on = "Si ces options de Leatrix sont cochées, TreeAI le dit chez le marchand et ne propose pas la même chose.",
+        off = "La carte du marchand de TreeAI propose toujours « vendre + réparer »." },
+    } },
+  { key = "openmap", title = "OpenMap", icon = ICON .. "INV_Misc_Map02", layout = true,
+    test = function(l) return l:find("openmap", 1, true) ~= nil end, globals = { "OpenMap" }, entries = { "OpenMap" } },
+  { key = "tweaks", title = "Tweaks Forever", icon = ICON .. "INV_Misc_Wrench_01", layout = true,
+    test = function(l) return l:find("tweaks", 1, true) ~= nil end, globals = { "TweaksForever" }, entries = { "TweaksForever" } },
+  { key = "details", title = "Compteur de dégâts", icon = ICON .. "Ability_Hunter_SniperShot", layout = true,
+    test = function(l) return l == "details" or l:find("^details_") ~= nil or l == "recount" or l == "skada" end,
+    globals = { "Details", "Recount", "Skada" }, entries = { "Details", "Recount", "Skada", "C_DamageMeter" } },
+  { key = "journal", title = "DungeonJournal", icon = ICON .. "INV_Misc_Key_03", layout = true,
+    test = function(l) return l:find("dungeon", 1, true) ~= nil and l:find("journal", 1, true) ~= nil end, globals = {}, entries = {} },
+  { key = "sparkles", title = "Forever Loot Sparkles", icon = ICON .. "INV_Misc_Gem_Pearl_04", layout = true,
+    test = function(l) return l:find("sparkle", 1, true) ~= nil end, globals = {}, entries = {} },
+}
+local BY = {}
+for _, k in ipairs(A.KNOWN) do BY[k.key] = k end
+
 local function loadedAddon(name)
   local CA = g("C_AddOns")
   if type(CA) == "table" and type(CA.IsAddOnLoaded) == "function" then
@@ -50,54 +134,102 @@ local function loadedAddon(name)
   end
   return try(g("IsAddOnLoaded"), name) and true or false
 end
--- clé → motif sur le nom de dossier (minuscules)
-local KNOWN = {
-  { key = "questie", test = function(l) return l == "questie" end },
-  { key = "questiedb", test = function(l) return l == "questiedb" end },
-  { key = "spf", test = function(l) return l:find("shortestpath", 1, true) ~= nil end },
-  { key = "details", test = function(l) return l == "details" or l:find("^details_") ~= nil end },
-  { key = "leatrix", test = function(l) return l:find("leatrix", 1, true) ~= nil end },
-  { key = "auctionator", test = function(l) return l:find("auctionator", 1, true) ~= nil end },
-  { key = "journal", test = function(l) return l:find("dungeon", 1, true) ~= nil and l:find("journal", 1, true) ~= nil end },
-  { key = "sparkles", test = function(l) return l:find("sparkle", 1, true) ~= nil end },
-  { key = "tweaks", test = function(l) return l:find("tweaks", 1, true) ~= nil end },
-}
---- { [clé] = { name, title, loaded } } des addons connus trouvés dans la liste du jeu (mémo 30 s)
+local function versionOf(name)
+  local CA = g("C_AddOns")
+  local v = (type(CA) == "table" and type(CA.GetAddOnMetadata) == "function" and try(CA.GetAddOnMetadata, name, "Version"))
+    or try(g("GetAddOnMetadata"), name, "Version")
+  if type(v) ~= "string" or secret(v) or v == "" then return nil end
+  return T.Cut and T.Cut(v, 24, "") or v
+end
+--- valeur au bout d'un chemin « A.b.c » (rawget à chaque pas, jamais une métaméthode d'un autre addon)
+local function at(path)
+  local cur = G
+  for part in tostring(path):gmatch("[^%.]+") do
+    if type(cur) ~= "table" then return nil end
+    local ok, v = pcall(rawget, cur, part)
+    if not ok then return nil end
+    cur = v
+  end
+  return cur
+end
+A.At = at
+
+--- { [clé] = { name, title, loaded, version } } des addons connus trouvés dans la liste du jeu (mémo 30 s)
 local seenAt, seen = -100, {}
 function A.Installed(force)
-  local t = try(g("GetTime")) or 0
+  local t = tonumber(try(g("GetTime"))) or 0
   if not force and t - seenAt < 30 then return seen end
   seenAt, seen = t, {}
   local CA = g("C_AddOns")
   local n = (type(CA) == "table" and try(CA.GetNumAddOns)) or try(g("GetNumAddOns")) or 0
   for i = 1, math.min(tonumber(n) or 0, 400) do
-    local name, title = nil, nil
+    local name, title
     if type(CA) == "table" and type(CA.GetAddOnInfo) == "function" then name, title = try(CA.GetAddOnInfo, i)
     else name, title = try(g("GetAddOnInfo"), i) end
-    if type(name) == "string" then
+    if type(name) == "string" and not secret(name) then
       local l = name:lower()
-      for _, k in ipairs(KNOWN) do
+      for _, k in ipairs(A.KNOWN) do
         if not seen[k.key] and k.test(l) then
-          seen[k.key] = { name = name, title = type(title) == "string" and title or name, loaded = loadedAddon(name) }
+          seen[k.key] = { name = name, title = (type(title) == "string" and not secret(title)) and title or name, loaded = loadedAddon(name),
+            version = versionOf(name) }
         end
       end
     end
   end
-  -- chargés sans être listés (tests, noms de dossier différents) : leurs globales publiques
-  if not seen.questie and type(g("Questie")) == "table" then seen.questie = { name = "Questie", title = "Questie", loaded = true } end
-  if not seen.questiedb and type(g("LibQuestieDB")) == "table" then seen.questiedb = { name = "QuestieDB", title = "QuestieDB", loaded = true } end
-  if not seen.spf and type(g("ShortestPathForever")) == "table" then
-    seen.spf = { name = "ShortestPathForever", title = "Shortest Path Forever", loaded = true }
+  -- chargés sans être listés (noms de dossier différents, tests) : leurs globales publiques
+  for _, k in ipairs(A.KNOWN) do
+    if not seen[k.key] then
+      for _, gn in ipairs(k.globals or {}) do
+        if type(g(gn)) == "table" then seen[k.key] = { name = gn, title = k.title, loaded = true } break end
+      end
+    end
   end
+  if seen.questie and not seen.questie.loaded and (type(g("Questie")) == "table" or type(g("LibQuestieDB")) == "table") then seen.questie.loaded = true end
   return seen
 end
+--- l'addon `key` est-il chargé ?
+function A.Has(key)
+  local e = A.Installed()[key]
+  return (e and e.loaded) and true or false
+end
 
--- ===================================================================== Questie : en silence par SES options
+-- ===================================================================== liens : ce que TreeAI prend / laisse, coupable
+local function linkDef(key, id)
+  local k = BY[key]
+  for _, l in ipairs(k and k.links or {}) do if l.id == id then return l end end
+  return nil
+end
+--- le réglage du joueur pour ce lien (vrai = branché ; d'office : branché)
+function A.Wanted(key, id)
+  local def = linkDef(key, id)
+  if def and def.fixed then return true end
+  local s = A.db and type(A.db.links) == "table" and A.db.links[key .. ":" .. id]
+  return s ~= false
+end
+--- le lien est-il ACTIF maintenant : l'addon est chargé, le lien existe, le joueur ne l'a pas coupé
+function A.Link(key, id)
+  if not (A._active and linkDef(key, id)) then return false end
+  return A.Has(key) and A.Wanted(key, id)
+end
+A.Defers = A.Link
+function A.SetLink(key, id, on)
+  local def = linkDef(key, id)
+  if not (A.db and def) or def.fixed then return false end
+  if type(A.db.links) ~= "table" then A.db.links = {} end
+  if on == false then A.db.links[key .. ":" .. id] = false else A.db.links[key .. ":" .. id] = nil end
+  pcall(A.Apply)
+  if T.Fire then pcall(T.Fire, T, "ADDON_LINKS", key, id, on ~= false) end
+  if T.MarkDirty then T:MarkDirty() end
+  if T.RequestRefresh then T:RequestRefresh() end
+  return true
+end
+
+-- ===================================================================== Questie (lecture seule)
 local function questieProfile()
   local Q = g("Questie")
   if type(Q) ~= "table" then return nil end
   local db = rawget(Q, "db")
-  local p = type(db) == "table" and db.profile or nil
+  local p = type(db) == "table" and rawget(db, "profile") or nil
   return type(p) == "table" and p or nil
 end
 --- base de quêtes lue par TreeAI ? (QuestieDB / Questie, via la boussole ou l'export)
@@ -109,245 +241,298 @@ function A.QuestDB()
   local s = X and type(X.Source) == "function" and try(X.Source, X) or nil
   return type(s) == "table" and (s.src == "LibQuestieDB" and "QuestieDB" or "Questie") or nil
 end
---- { loaded, readable, icons, tracker, button, silent, db }
+--- { loaded, readable, icons, tracker, button, db } — ce que Questie dessine, lu dans ses options (jamais écrit)
 function A.QuestieState()
   local p = questieProfile()
   local loaded = type(g("Questie")) == "table" or type(g("QuestieLoader")) == "table" or loadedAddon("Questie")
   local st = { loaded = loaded and true or false, readable = p ~= nil, db = A.QuestDB() }
   if p then
-    st.icons = p.enabled ~= false and (p.enableMapIcons ~= false or p.enableMiniMapIcons ~= false)
-    st.tracker = p.trackerEnabled ~= false
-    st.button = not (type(p.minimap) == "table" and p.minimap.hide == true)
+    st.icons = rawget(p, "enabled") ~= false and (rawget(p, "enableMapIcons") ~= false or rawget(p, "enableMiniMapIcons") ~= false)
+    st.tracker = rawget(p, "trackerEnabled") ~= false
+    local mm = rawget(p, "minimap")
+    st.button = not (type(mm) == "table" and rawget(mm, "hide") == true)
   elseif st.loaded then
     st.icons, st.tracker, st.button = true, true, true    -- illisible : on suppose tout visible (jamais en double)
   end
   st.silent = st.loaded and st.readable and not st.icons and not st.tracker or false
   return st
 end
-A.QUESTIE_CLICKS = "Échap > Options > AddOns > Questie : onglet « Icônes », décoche « Activer les icônes » ; "
-  .. "onglet « Suivi », décoche « Activer le suivi »."
-local function reload()
-  local f = g("ReloadUI")
-  if type(f) == "function" then return pcall(f) end
-  local CU = g("C_UI")
-  if type(CU) == "table" and type(CU.Reload) == "function" then return pcall(CU.Reload) end
-  return false
-end
---- un clic : icônes, suivi et bouton de minimap de Questie coupés dans SES options ; recharge (doReload ~= false)
-function A.SilenceQuestie(doReload)
-  if inCombat() then if T.CombatRefused then T:CombatRefused("Après le combat.") end return false, "combat" end
-  local p = questieProfile()
-  if not p then
-    if T.ClickNote then T:ClickNote("Questie : " .. A.QUESTIE_CLICKS) end
-    return false, "unreadable"
-  end
-  if A.db then
-    A.db.questieWas = { enabled = p.enabled ~= false, tracker = p.trackerEnabled ~= false,
-      button = not (type(p.minimap) == "table" and p.minimap.hide == true) }
-  end
-  p.enabled = false
-  p.trackerEnabled = false
-  if type(p.minimap) == "table" then p.minimap.hide = true end
-  if doReload ~= false then reload() end
-  return true
-end
---- remet Questie comme avant (ou tout visible) ; recharge
-function A.RestoreQuestie(doReload)
-  if inCombat() then if T.CombatRefused then T:CombatRefused("Après le combat.") end return false, "combat" end
-  local p = questieProfile()
-  if not p then return false, "unreadable" end
-  local was = A.db and A.db.questieWas or {}
-  p.enabled = was.enabled ~= false
-  p.trackerEnabled = was.tracker ~= false
-  if type(p.minimap) == "table" then p.minimap.hide = not (was.button ~= false) end
-  if A.db then A.db.questieWas = nil end
-  if doReload ~= false then reload() end
-  return true
-end
 
--- ===================================================================== Shortest Path Forever : son suivi
-local function spfDB() local d = g("ShortestPathForeverDB") return type(d) == "table" and d or nil end
+-- ===================================================================== Shortest Path Forever (lecture seule)
+local SPF_API = { "Navigate", "NavigateRoute", "Estimate", "EstimateDetail", "Active", "CurrentStop", "Subscribe", "Ended" }
+--- { loaded, api = { Navigate = true, … }, canNavigate, tracker } — son API publique telle qu'elle répond ICI
 function A.SPFState()
   local inst = A.Installed()
-  local d = spfDB()
-  local st = { loaded = (inst.spf and inst.spf.loaded) or type(g("ShortestPathForever")) == "table" or false, readable = d ~= nil }
-  if d then st.tracker = d.tracker ~= false or d.journeyTracker ~= false end
+  local S = g("ShortestPathForever")
+  local api = type(S) == "table" and rawget(S, "API") or nil
+  local st = { loaded = (inst.spf and inst.spf.loaded) or type(S) == "table" or false, api = {} }
+  if type(api) == "table" then
+    for _, n in ipairs(SPF_API) do if type(rawget(api, n)) == "function" then st.api[n] = true end end
+  end
+  st.canNavigate = st.api.Navigate == true
+  local d = g("ShortestPathForeverDB")
+  st.readable = type(d) == "table"
+  if st.readable then st.tracker = rawget(d, "tracker") ~= false or rawget(d, "journeyTracker") ~= false else st.tracker = st.loaded end
   return st
 end
-function A.SetSPFTracker(on)
-  local d = spfDB()
-  if not d then return false end
-  if on then
-    local was = A.db and A.db.spfWas or {}
-    d.tracker, d.journeyTracker = was.tracker ~= false, was.journey ~= false
-    if A.db then A.db.spfWas = nil end
+--- (compat 4.1) TreeAI et Suivi Forever n'affichent plus deux trajets : plus de conflit à arbitrer
+function A.SPFConflict() return false end
+--- la colonne « Suivi Forever » (SPF, Adventure Guide, SkillUp la partagent) : cadre nommé connu, sinon nil.
+--- Lecture seule : son rectangle en unités d'UIParent { l, b, w, h, name } — jamais ancré, jamais déplacé.
+A.COLUMN_NAMES = { "ShortestPathForeverTrackerFrame", "ShortestPathForeverTracker", "ShortestPathForever_Tracker",
+  "ShortestPathForeverTrackerBaseFrame", "SPFTrackerFrame", "SPF_TrackerFrame", "SPF_Tracker", "ShortestPathTrackerFrame",
+  "ForeverTrackerHost", "ForeverTrackerHostFrame", "ForeverTrackerFrame", "ForeverTracker", "TrackerHostFrame" }
+local function finite(v) return type(v) == "number" and v == v and v > -1e6 and v < 1e6 end
+function A.Column()
+  if not (A.Has("spf") or A.Has("agf") or A.Has("skillup")) then return nil end
+  local ue = tonumber(meth(G.UIParent, "GetEffectiveScale")) or 1
+  for _, n in ipairs(A.COLUMN_NAMES) do
+    local f = g(n)
+    if type(f) == "table" and not meth(f, "IsForbidden") and meth(f, "IsVisible") then
+      local l, b, w, h = meth(f, "GetRect")
+      if finite(l) and finite(b) and finite(w) and finite(h) and w >= 60 and h >= 20 and not secret(l) then
+        local k = (tonumber(meth(f, "GetEffectiveScale")) or ue) / ue
+        if finite(k) and k > 0 then return { l = l * k, b = b * k, w = w * k, h = h * k, name = n } end
+      end
+    end
+  end
+  return nil
+end
+
+-- ===================================================================== Leatrix Plus (lecture seule de ses réglages)
+--- { loaded, sell = bool, repair = bool } : « vendre les gris » / « réparer » automatiques cochés chez lui ?
+function A.Leatrix()
+  local d = g("LeaPlusDB")
+  local out = { loaded = A.Has("leatrix") or type(d) == "table" }
+  if type(d) == "table" then
+    out.sell = rawget(d, "AutoSellJunk") == "On"
+    out.repair = rawget(d, "AutoRepairGear") == "On"
+  end
+  return out
+end
+--- chez le marchand : ce que Leatrix fait déjà tout seul (le lien « merchant » branché) → { sell, repair, note } ou nil
+function A.MerchantAuto()
+  if not A.Link("leatrix", "merchant") then return nil end
+  local l = A.Leatrix()
+  if not (l.sell or l.repair) then return nil end
+  local what = (l.sell and l.repair and "vend les objets gris et répare") or (l.sell and "vend les objets gris") or "répare"
+  return { sell = l.sell or false, repair = l.repair or false, note = "Leatrix Plus " .. what .. " déjà tout seul : TreeAI ne le propose pas." }
+end
+
+-- ===================================================================== « Y aller » : UN connecteur pour toutes les lignes
+-- Au clic du joueur seulement. Avec Suivi Forever branché : sa navigation (API publique), sinon le repère du jeu — que
+-- SPF et la carte suivent —, sinon la boussole TreeAI. Renvoie "spf" | "tomtom" | "blizzard" | "compass" | nil.
+function A.GoTo(t)
+  local C = T.Compass
+  if type(t) ~= "table" or not (C and t.mapID and t.x and t.y) then return nil end
+  local x, y = tonumber(t.x), tonumber(t.y)
+  if not (x and y) then return nil end
+  if x > 1 or y > 1 then x, y = x / 100, y / 100 end
+  local tg = { mapID = t.mapID, x = x, y = y, label = t.label or t.title, title = t.title or t.label, key = t.key, questID = t.questID,
+    source = t.source or "now" }
+  local how
+  A._handing = true   -- (le relais de la boussole ne repasse pas la même destination une 2e fois)
+  if type(C.GoTo) == "function" then how = try(C.GoTo, tg) end
+  if not how and type(C.SetTarget) == "function" then
+    if try(C.SetTarget, tg) ~= nil then how = "compass" end
+  end
+  A._handing = nil
+  A.lastGo = { how = how, mapID = tg.mapID, x = x, y = y }
+  return how
+end
+--- (connecteur) TOUT « va là » cliqué par le joueur passe par la boussole TreeAI (Compass.SetWaypoint : équipement,
+--- maîtres, marchands, réparateur, quêtes…). Quand Suivi Forever tient la flèche, la boussole TreeAI est cachée : sans
+--- ce relais, ces clics ne montreraient rien. Ici, APRÈS l'appel d'origine et seulement dans un clic du joueur
+--- (T:InUserAction), la même destination est confiée à Suivi Forever / au repère du jeu. Notre fonction à nous est
+--- enveloppée (jamais une fonction d'un autre addon) ; l'enveloppe ne fait rien quand le lien est coupé.
+function A.HookCompass()
+  local C = T.Compass
+  if A._hooked or type(C) ~= "table" or type(C.SetWaypoint) ~= "function" then return false end
+  A._hooked = true
+  local orig = C.SetWaypoint
+  C.SetWaypoint = function(...)
+    local r = orig(...)
+    if type(r) == "table" and A._active and not A._handing and T.InUserAction and T:InUserAction() and A.Link("spf", "arrow") then
+      A._handing = true
+      local ok, how = pcall(function()
+        if type(C.GoTo) ~= "function" then return nil end
+        return C.GoTo({ mapID = r.mapID, x = r.x, y = r.y, label = r.name, title = r.name, key = r.key, source = r.source })
+      end)
+      A._handing = nil
+      A.lastGo = { how = ok and how or nil, mapID = r.mapID, x = r.x, y = r.y, via = "boussole" }
+    end
+    return r
+  end
+  return true
+end
+--- le joueur change de mode de quêtes (Rendre, Prendre, Zone…) avec Suivi Forever branché : la 1re étape du nouveau
+--- trajet lui est confiée, une fois (1,5 s plus tard : le trajet est refait entre-temps). Jamais en boucle.
+function A.HandFirstStop()
+  if not (A._active and A.Link("spf", "arrow")) then return false end
+  local C = T.Compass
+  if type(C) ~= "table" then return false end
+  if type(C.Rebuild) == "function" then pcall(C.Rebuild) end
+  local cur = type(C.Current) == "function" and try(C.Current) or nil
+  if type(cur) ~= "table" or not (cur.mapID and cur.x and cur.y) then return false end
+  return A.GoTo(cur) ~= nil
+end
+
+--- ce que « Y aller » fera (texte de l'infobulle) : « Suivi Forever t'y mène » / « repère sur la carte »
+function A.GoHow()
+  if A.Link("spf", "arrow") then
+    return A.SPFState().canNavigate and "Suivi Forever t'y mène" or "le repère du jeu t'y mène (Suivi Forever et la carte le suivent)"
+  end
+  return "la boussole TreeAI t'y mène"
+end
+
+-- ===================================================================== appliquer les liens (au démarrage, à chaque bascule)
+-- Rien n'est touché chez les autres : seuls NOS réglages changent, et l'état d'avant est gardé pour être rendu quand
+-- le lien est coupé ou l'addon désinstallé.
+function A.Apply()
+  if not (A.db and A._active) then return end
+  local was = type(A.db.was) == "table" and A.db.was or {}
+  A.db.was = was
+  -- Suivi Forever guide : notre guidage passe en « auto » (la boussole s'efface quand il guide, « Y aller » lui parle)
+  -- et notre boussole n'est plus affichée d'office
+  local arrow = A.Link("spf", "arrow")
+  local C = T.modules and T.modules.Compass
+  if arrow then
+    -- une seule fois, au moment où le lien devient actif : ensuite le joueur reste maître de ses réglages (s'il
+    -- rallume la boussole dans Affichage, elle reste allumée)
+    if was.guide == nil and T.GuideMode then
+      was.guide = T:GuideMode()
+      if T.SetGuideMode and was.guide ~= "auto" then T:SetGuideMode("auto") end
+    end
+    if C and C.db and was.compass == nil then
+      was.compass = C.db.shown ~= false
+      if C.db.shown ~= false then
+        C.db.shown = false
+        if C.OnOptionChanged then pcall(C.OnOptionChanged, C, "shown") end
+      end
+    end
   else
-    if A.db then A.db.spfWas = { tracker = d.tracker ~= false, journey = d.journeyTracker ~= false } end
-    d.tracker, d.journeyTracker = false, false
-  end
-  return true
-end
-
---- (4.1 LAYOUT) Suivi Forever affiche SON propre trajet (le guidage « TreeAI » ne lui envoie rien) : deux planificateurs
---- qui ne disent pas la même chose. Vrai tant que le joueur n'a pas choisi (une fois, gardé).
-function A.SPFConflict()
-  if A.db and A.db.spfChoice then return false end
-  local s = A.SPFState()
-  if not s.loaded or (s.readable and not s.tracker) then return false end
-  return not (T.GuideMode and T:GuideMode() == "auto")
-end
---- le choix du joueur : "order" = lui donner l'ordre de TreeAI (guidage « auto » : notre ordre renvoyé à chaque
---- trajet refait) ; "silent" = son suivi coupé (dans SES options)
-function A.SPFChoose(how)
-  if how == "order" then
-    if T.SetGuideMode then T:SetGuideMode("auto") end
-    local R = T.Route
-    if R and R.Follow then pcall(R.Follow, R) end
-  elseif how == "silent" then
-    A.SetSPFTracker(false)
-  else return false end
-  if A.db then A.db.spfChoice = how end
-  return true
-end
-
--- ===================================================================== ce que TreeAI remplace (textes de la page)
-local function modOn(name) local m = T.modules and T.modules[name] return (m and m._active) and true or false end
-local function setMod(name, on) if T.SetModuleEnabled then T:SetModuleEnabled(name, on) end end
-local function openWin(id) local Wn = T.Window if Wn and Wn.Open then Wn.Open(id) end end
-
---- sections de la page : { {title, icon, lines = {textes}, buttons = { {label, fn, tip} }, ok = bool} }
-function A.Sections()
-  local inst = A.Installed()
-  local out = {}
-  local q = A.QuestieState()
-  -- Questie
-  if q.loaded or inst.questiedb then
-    local lines, buttons = {}, {}
-    lines[#lines + 1] = q.db and ("Base de quêtes lue par TreeAI : " .. q.db .. " (à garder installée).")
-      or "Base de quêtes illisible : TreeAI n'a que les points du jeu (quêtes du journal)."
-    if q.loaded then
-      if q.silent then
-        lines[#lines + 1] = "Questie est silencieux : icônes et suivi dessinés par TreeAI (« Icônes de quêtes », « Suivi TreeAI »)."
-        buttons[#buttons + 1] = { "Réafficher Questie", function() A.RestoreQuestie(true) end, "Rend ses icônes, son suivi et son bouton (recharge l'interface)" }
-      elseif q.readable then
-        lines[#lines + 1] = "Questie dessine encore " .. ((q.icons and q.tracker) and "ses icônes et son suivi"
-          or (q.icons and "ses icônes") or "son suivi") .. " : TreeAI se tait pour ne rien montrer en double."
-        buttons[#buttons + 1] = { "Rendre Questie silencieux", function() A.SilenceQuestie(true) end,
-          "Coupe ses icônes, son suivi et son bouton de minimap dans SES options ; sa base reste lue par TreeAI. Recharge l'interface." }
-      else
-        lines[#lines + 1] = "Options de Questie illisibles ici. À la main : " .. A.QUESTIE_CLICKS
-      end
+    if was.guide ~= nil then
+      if T.SetGuideMode and T.GuideMode and T:GuideMode() ~= was.guide then T:SetGuideMode(was.guide) end
+      was.guide = nil
     end
-    out[#out + 1] = { title = "Questie", icon = ICON .. "INV_Misc_Book_09", lines = lines, buttons = buttons, ok = q.silent or not q.loaded }
-  end
-  -- Shortest Path Forever
-  local s = A.SPFState()
-  if s.loaded then
-    local lines, buttons = {}, {}
-    lines[#lines + 1] = "TreeAI calcule et guide le trajet (vols, bateaux, foyer), le dessine sur la carte et la minimap ; "
-      .. "Suivi Forever reste utile pour contourner les falaises (son navmesh) : Options > Trajet > Guidage."
-    if s.readable then
-      if s.tracker then
-        lines[#lines + 1] = "Son suivi est affiché (horaires des bateaux, voyage en cours)."
-        buttons[#buttons + 1] = { "Couper son suivi", function() A.SetSPFTracker(false) end, "Dans SES options : son suivi se cache, rien d'autre ne change" }
-      else
-        lines[#lines + 1] = "Son suivi est coupé."
-        buttons[#buttons + 1] = { "Remettre son suivi", function() A.SetSPFTracker(true) end, "Remet son suivi comme avant" }
+    if was.compass ~= nil then
+      if C and C.db and (C.db.shown ~= false) ~= was.compass then
+        C.db.shown = was.compass
+        if C.OnOptionChanged then pcall(C.OnOptionChanged, C, "shown") end
       end
+      was.compass = nil
     end
-    out[#out + 1] = { title = "Shortest Path Forever (Suivi Forever)", icon = ICON .. "INV_Misc_Map_01", lines = lines, buttons = buttons, ok = not s.tracker }
   end
-  -- Leatrix Plus → Confort
-  if inst.leatrix then
-    local on = modOn("QoL")
-    out[#out + 1] = { title = "Leatrix Plus : le « Confort » de TreeAI", icon = ICON .. "INV_Misc_Gear_01", ok = on,
-      lines = { "Vendre les gris + réparer, butin instantané, butin automatique, recul de caméra : module « Confort »"
-        .. (on and " (allumé)." or " (coupé)."),
-        "Pas repris : ce qui modifie les cadres de Blizzard (masquer des messages, déplacer des cadres) — risque de blocages." },
-      buttons = { on and { "Réglages du confort", function() openWin("options") end, "La page « Confort » des options" }
-        or { "Allumer le confort", function() setMod("QoL", true) end, "Un clic : vendre les gris, réparer, butin instantané" } } }
+end
+
+-- ===================================================================== sonde : ce qui est VRAIMENT là sur ce client
+--- lignes pour le rapport d'erreurs (TreeAI-erreurs.txt) : chaque addon connu, sa version, ses points d'entrée
+function A.Probe()
+  local out = { "-- Autres addons (détection TreeAI)" }
+  local inst = A.Installed(true)
+  for _, k in ipairs(A.KNOWN) do
+    local e = inst[k.key]
+    if e then
+      local ent = {}
+      for _, p in ipairs(k.entries or {}) do
+        local v = at(p)
+        ent[#ent + 1] = p .. "=" .. ((v == nil and "absent") or type(v))
+      end
+      local links = {}
+      for _, l in ipairs(k.links or {}) do links[#links + 1] = l.id .. "=" .. (A.Link(k.key, l.id) and "branché" or (A.Wanted(k.key, l.id) and "inactif" or "coupé")) end
+      out[#out + 1] = fmt("%s : dossier « %s »%s, %s%s%s", k.title, tostring(e.name), e.version and (" v" .. e.version) or "",
+        e.loaded and "chargé" or "installé, pas chargé", #links > 0 and (" ; liens " .. table.concat(links, ", ")) or "",
+        #ent > 0 and (" ; " .. table.concat(ent, ", ")) or "")
+    else
+      out[#out + 1] = k.title .. " : absent"
+    end
   end
-  -- Details → Dégâts
-  if inst.details then
-    local M = T.Meter
-    local avail, why = true, nil
-    if M and type(M.Available) == "function" then avail, why = M.Available() end
-    local on = modOn("Meter")
-    out[#out + 1] = { title = "Details : la fenêtre « Dégâts » de TreeAI", icon = ICON .. "Ability_Hunter_SniperShot", ok = on and avail,
-      lines = { avail and "Le jeu a son propre compteur (C_DamageMeter) : la fenêtre « Dégâts » de TreeAI le lit après chaque combat."
-        or ("Compteur du jeu indisponible : " .. tostring(why or "?") .. ". Details reste utile ici."),
-        "Pendant le combat les chiffres sont secrets pour les addons (règle de Forever) : mis à jour à la fin du combat." },
-      buttons = { on and { "Montrer / cacher Dégâts", function() if M and M.Toggle then M.Toggle() end end, "La petite fenêtre des dégâts" }
-        or { "Allumer Dégâts", function()
-          setMod("Meter", true)
-          local Mt = T.Meter
-          if Mt and Mt.db then Mt.db.shown = true if Mt.Apply then Mt.Apply() end end
-        end, "Un clic : la fenêtre des dégâts du groupe" } } }
-  end
-  if inst.auctionator then
-    out[#out + 1] = { title = "Auctionator", icon = ICON .. "INV_Misc_Coin_02", ok = false,
-      lines = { "TreeAI : page « HV » (achats-reventes sûrs, ventes, bilan) et il relit les scans d'Auctionator.",
-        "Garde Auctionator pour mettre en vente en masse et chercher vite : TreeAI ne le remplace pas encore." },
-      buttons = { { "Page HV", function() openWin("hv") end, "Hôtel des ventes de TreeAI" } } }
-  end
-  if inst.tweaks then
-    out[#out + 1] = { title = inst.tweaks.title or "Tweaks Forever", icon = ICON .. "INV_Misc_Wrench_01", ok = false,
-      lines = { "Compatibilité HV pour les addons d'HV sur Forever : à garder tant qu'Auctionator est installé (TreeAI n'en a pas besoin)." } }
-  end
-  if inst.journal then
-    out[#out + 1] = { title = "DungeonJournal", icon = ICON .. "INV_Misc_Key_03", ok = false,
-      lines = { "TreeAI : page « Donjons » (quêtes du donjon, qui n'a pas quoi, prêts, donjons déjà faits).",
-        "Garde-le pour les fiches de boss et leur butin complet : TreeAI ne les a pas." },
-      buttons = { { "Page Donjons", function() openWin("dungeon") end, "Donjons de TreeAI" } } }
-  end
-  if inst.sparkles then
-    out[#out + 1] = { title = "Forever Loot Sparkles", icon = ICON .. "INV_Misc_Gem_Pearl_04", ok = false,
-      lines = { "Effet visuel dans le monde : TreeAI ne dessine rien dans le monde 3D (il surligne seulement tes sacs et le butin). À garder si tu l'aimes." } }
+  local col = A.Column()
+  out[#out + 1] = col and fmt("Colonne Suivi Forever : cadre « %s » %d×%d en %d,%d", col.name, col.w, col.h, col.l, col.b)
+    or "Colonne Suivi Forever : aucun cadre nommé connu trouvé (le bloc « Maintenant » ne s'y pose pas)"
+  local lea = A.Leatrix()
+  if lea.loaded then out[#out + 1] = fmt("Leatrix Plus : vendre les gris = %s, réparer = %s", tostring(lea.sell), tostring(lea.repair)) end
+  local go = A.lastGo
+  if go then out[#out + 1] = fmt("Dernier « Y aller » : %s (carte %s)", tostring(go.how), tostring(go.mapID)) end
+  for _, n in ipairs({ "C_Map.SetUserWaypoint", "C_Map.ClearUserWaypoint", "C_Map.CanSetUserWaypointOnMap", "UiMapPoint.CreateFromCoordinates",
+      "TomTom.AddWaypoint" }) do
+    out[#out + 1] = n .. " : " .. (type(at(n)) == "function" and "présente" or "absente")
   end
   return out
 end
 
--- ===================================================================== page « Mes addons »
+-- ===================================================================== page « Autres addons »
+--- sections de la page : { { key, title, icon, version, lines = { { text, label, kind, on, key, id } }, layout } }
+function A.Sections()
+  local inst = A.Installed()
+  local out = {}
+  for _, k in ipairs(A.KNOWN) do
+    local e = inst[k.key]
+    if e and e.loaded then
+      local s = { key = k.key, title = k.title, icon = k.icon, version = e.version, layout = k.layout, lines = {} }
+      if k.layout then
+        s.lines[1] = { text = "Rien n'est lu ni pris : TreeAI évite seulement ses cadres quand il place les siens." }
+      end
+      for _, l in ipairs(k.links or {}) do
+        local on = A.Wanted(k.key, l.id)
+        s.lines[#s.lines + 1] = { label = l.label, kind = l.kind, text = on and l.on or l.off, on = on, key = k.key, id = l.id, fixed = l.fixed }
+      end
+      if k.key == "spf" then
+        local st = A.SPFState()
+        local col = A.Column()
+        s.lines[#s.lines + 1] = { text = (st.canNavigate and "Son API publique répond : « Y aller » lui confie la destination."
+          or "Son API de navigation ne répond pas ici : « Y aller » pose le repère du jeu (il le suit).")
+          .. (col and "" or " Sa colonne n'a pas de cadre nommé connu : le bloc « Maintenant » reste dans la fenêtre.") }
+      elseif k.key == "questie" then
+        local q = A.QuestieState()
+        s.lines[#s.lines + 1] = { text = q.db and ("Base lue : " .. q.db .. ".") or "Base illisible ici : TreeAI n'a que les points du jeu." }
+      elseif k.key == "leatrix" then
+        local l = A.Leatrix()
+        s.lines[#s.lines + 1] = { text = fmt("Chez lui : vendre les gris %s, réparer %s.", l.sell and "coché" or "pas coché", l.repair and "coché" or "pas coché") }
+      end
+      out[#out + 1] = s
+    end
+  end
+  return out
+end
 local function render(Ly)
   local W = T.Window
   local secs = A.Sections()
-  Ly.text("TreeAI fait le travail de tes autres addons quand il le peut ; ce qui manque est dit ici, sans détour.", "S", "muted")
+  Ly.text("TreeAI se branche sur tes addons au lieu de les doubler. Il ne touche à rien chez eux : il lit, et il se tait là où ils font déjà le travail.",
+    "S", "muted")
   if #secs == 0 then
-    Ly.empty("Aucun des addons qu'il remplace n'est installé : rien à régler.")
+    Ly.empty("Aucun addon connu n'est chargé : TreeAI fait tout lui-même.")
     return
   end
-  for i, s in ipairs(secs) do
-    if Ly.header(s.title, "addons:" .. i, s.ok and "réglé" or nil, s.icon) then
-      for _, l in ipairs(s.lines or {}) do Ly.text(l, "S", "text", 6) end
-      local b = {}
-      for _, x in ipairs(s.buttons or {}) do
-        if type(x) == "table" and x[1] and x[2] then b[#b + 1] = { x[1], function() x[2]() if W and W.Dirty then W.Dirty() end end, x[3] } end
+  for _, s in ipairs(secs) do
+    if Ly.header(s.title .. (s.version and ("  v" .. s.version) or ""), "addons:" .. s.key, nil, s.icon) then
+      for _, l in ipairs(s.lines) do
+        if l.id and Ly.toggle and not l.fixed then
+          Ly.toggle({ label = (l.kind == "take" and "TreeAI prend : " or "TreeAI laisse : ") .. l.label, desc = l.text, on = l.on,
+            set = function(v) A.SetLink(l.key, l.id, v) if W and W.Dirty then W.Dirty() end end })
+        elseif l.label then Ly.text((l.kind == "take" and "TreeAI prend : " or "TreeAI laisse : ") .. l.label .. " — " .. l.text, "S", "muted", 6)
+        else Ly.text(l.text, "S", "muted", 6) end
       end
-      if #b > 0 then Ly.buttons(b, math.min(2, #b)) end
     end
   end
 end
 A.Render = render
-
--- page de la fenêtre, hors navigation (la pastille garde sa hauteur) : ouverte par « Outils » / la pastille
--- (entrée « Mes addons »), la ligne d'avis et /tai addons
 do
   local W = T.Window
   if W and W.AddPage then
-    W.AddPage({ id = "addons", hidden = true, label = "Mes addons", icon = ICON .. "INV_Misc_EngGizmos_27", title = "Mes addons",
-      desc = "Ce que TreeAI remplace, et le clic qui met les autres en silence",
+    W.AddPage({ id = "addons", hidden = true, label = "Autres addons", icon = ICON .. "INV_Misc_EngGizmos_27", title = "Autres addons",
+      desc = "Ce que TreeAI prend à chaque addon, ce qu'il lui laisse — chaque ligne se coupe d'un clic",
       sub = function()
-        local q = A.QuestieState()
-        if q.loaded and not q.silent then return "Questie dessine encore : un clic pour qu'il se taise" end
-        return "Questie, Suivi Forever, Leatrix Plus, Details : ce que TreeAI fait à leur place"
+        local n = #A.Sections()
+        return n == 0 and "Aucun addon connu chargé" or fmt("%d addon%s branché%s : ce que TreeAI prend, ce qu'il laisse", n, n > 1 and "s" or "", n > 1 and "s" or "")
       end,
       render = render })
     -- rangée avec l'autre page cachée (« Onglet »), avant « Fonctions » / « Options » qui restent en dernier
-    local pages, at, from = W.PAGES, nil, nil
+    local pages, atI, from = W.PAGES, nil, nil
     for i, pg in ipairs(pages) do
-      if pg.id == "addons" then from = i elseif not at and (pg.id == "modules" or pg.id == "options") then at = i end
+      if pg.id == "addons" then from = i elseif not atI and (pg.id == "modules" or pg.id == "options") then atI = i end
     end
-    if from and at and from > at then table.insert(pages, at, table.remove(pages, from)) end
+    if from and atI and from > atI then table.insert(pages, atI, table.remove(pages, from)) end
   end
 end
 function A.Open()
@@ -356,35 +541,38 @@ function A.Open()
   return false
 end
 T.HUB_EXTRA = T.HUB_EXTRA or {}
-table.insert(T.HUB_EXTRA, { group = "reglages", id = "addons", title = "Mes addons", icon = ICON .. "INV_Misc_EngGizmos_27",
-  tip = "Clic : ce que TreeAI remplace (Questie, Suivi Forever, Leatrix Plus, Details) et le clic qui les met en silence",
+table.insert(T.HUB_EXTRA, { group = "reglages", id = "addons", title = "Autres addons", icon = ICON .. "INV_Misc_EngGizmos_27",
+  tip = "Clic : ce que TreeAI prend à tes autres addons et ce qu'il leur laisse (Suivi Forever, Questie, Auctionator, Leatrix Plus…)",
   fn = function() A.Open() end })
 if T.RegisterSlash then
   T:RegisterSlash("addons", function() if not A.Open() then A:Print("La fenêtre TreeAI est coupée.") end end,
-    "addons : ce que TreeAI remplace (Questie silencieux, confort, dégâts)")
-end
-
--- ===================================================================== une ligne, une fois
-function A.Notice()
-  if not (A.db and A._active) or (tonumber(A.db.noticeV) or 0) >= A.NOTICE_V then return false end
-  local inst = A.Installed(true)
-  local q = A.QuestieState()
-  local names = {}
-  if q.loaded and not q.silent then names[#names + 1] = "Questie" end
-  if inst.leatrix then names[#names + 1] = "Leatrix Plus" end
-  if inst.details then names[#names + 1] = "Details" end
-  if inst.spf and A.SPFState().tracker then names[#names + 1] = "Suivi Forever" end
-  if #names == 0 then return false end
-  A.db.noticeV = A.NOTICE_V
-  local list = (#names == 1) and names[1] or (table.concat(names, ", ", 1, #names - 1) .. " et " .. names[#names])
-  A:Suggest("notice", fmt("TreeAI peut faire le travail de %s : page « Mes addons »", list), 2, {
-    ttl = 900, tab = "now", sound = false, kind = "always", icon = ICON .. "INV_Misc_EngGizmos_27",
-    ownPage = "addons",   -- (4.1 LAYOUT) pas de pub : seulement en tête de la page « Mes addons »
-    tooltip = "Questie en silence (TreeAI dessine les icônes et le suivi), confort à la Leatrix, fenêtre de dégâts.",
-    onClick = function() A.Open() A:Clear("notice") end })
-  return true
+    "addons : ce que TreeAI prend à tes autres addons, ce qu'il leur laisse")
 end
 
 function A:OnEnable()
-  if T.After then T:After(8, function() pcall(A.Notice) end) end
+  -- les autres addons finissent de se charger pendant les secondes qui suivent : un regard à 2 s, un autre à 12 s
+  A.Installed(true)
+  pcall(A.Apply)
+  pcall(A.HookCompass)
+  self:On("QUEST_MODE_CHANGED", function()
+    if not (T.InUserAction and T:InUserAction() and A.Link("spf", "arrow")) or A._firstStop then return end
+    A._firstStop = true
+    T:After(1.5, function() A._firstStop = nil pcall(A.HandFirstStop) end)
+  end)
+  if T.After then
+    T:After(2, function() if A._active then A.Installed(true) pcall(A.Apply) end end)
+    T:After(12, function() if A._active then A.Installed(true) pcall(A.Apply) if T.Fire then pcall(T.Fire, T, "ADDON_LINKS") end end end)
+  end
+end
+function A:OnDisable()
+  -- module coupé : nos réglages d'avant sont rendus (boussole, guidage)
+  local was = A.db and A.db.was
+  if type(was) ~= "table" then return end
+  local C = T.modules and T.modules.Compass
+  if was.guide ~= nil and T.SetGuideMode then T:SetGuideMode(was.guide) was.guide = nil end
+  if was.compass ~= nil and C and C.db then
+    C.db.shown = was.compass
+    was.compass = nil
+    if C.OnOptionChanged then pcall(C.OnOptionChanged, C, "shown") end
+  end
 end
