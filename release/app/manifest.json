@@ -1,25 +1,25 @@
 {
- "version": "5.0.0",
+ "version": "5.0.1",
  "exe": "TreeAICoach-app.exe",
- "sha256": "010c196f735f87ba54dc0bdb18994ea5dbb0d7988e6e9e2a0025f3b059b47cf2",
+ "sha256": "fb35c9fe54452c8cb1b29a235e63451fab2eb6002bd78b736a6badbcea9df803",
  "chunks": [
   {
-   "name": "5.0.0/part-01.zip",
-   "size": 88066194,
-   "sha256": "fbd0e67edf54ce42733692113041aaac1289590b39e1fc2496e0b03e24c17311",
+   "name": "5.0.1/part-01.zip",
+   "size": 88066192,
+   "sha256": "b03b27d1682d426359c9fcdf308723137760a4845683e44e3dde93c40cf8e9a5",
    "files": 127
   },
   {
-   "name": "5.0.0/part-02.zip",
-   "size": 14374502,
-   "sha256": "82cb6711c5aa94c2a33c73447c2d7fc3394262a552baa96ee4b580e8011e298e",
-   "files": 694
+   "name": "5.0.1/part-02.zip",
+   "size": 14399166,
+   "sha256": "7cad3b132bc7a958c722abdd17ff4613ef21bd88389671e2110aaa5a0f90f29f",
+   "files": 696
   }
  ],
- "total_size": 102440696,
+ "total_size": 102465358,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "5.0.0 : stabilit\u00e9 (foules, butin, qu\u00eates), \u00e9quipement selon ta sp\u00e9, sacs, m\u00e9tiers, interface refaite"
+ "notes": "5.0.1 : achat-revente \u00e0 l'HV (panneau, files Acheter / Poster, gains nets exacts, livre de comptes)"
 }

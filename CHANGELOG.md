@@ -3,6 +3,21 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 5.0.1 · 13 novembre 2026
+
+- **Achat-revente à l'hôtel des ventes** (première partie) : panneau « Achat-revente » collé à la fenêtre de l'HV
+  avec trois boutons (Acheter · Poster · Action suivante) ; un clic ou une touche = une action, jamais rien
+  d'automatique. Chaque affaire affiche le prix, la revente prévue, tous les frais (commission 5 %, dépôts perdus
+  prévus), le gain net, l'or immobilisé et le délai de vente estimé.
+- Deux niveaux seulement : « sûr » (revente au marchand plus chère que l'achat) et « probable » (au moins 3 jours de
+  ventes constatées, plusieurs vendeurs, prix stables, données de moins de 12 h). Le reste n'est pas proposé.
+- L'annonce est relue juste avant chaque achat : si elle a changé, l'affaire est retirée. Prix de mise en vente
+  jamais sous ton coût + frais + marge. Réserve d'or gardée, 20 % au plus de ton or sur un même objet ; rien de ce
+  que l'assistant d'inventaire dit de garder n'est proposé à la vente.
+- Livre de comptes : gain réel du jour et sur 7 jours, or par heure passée à l'HV, objectif du jour (50 po,
+  modifiable). Si le marché ne permet pas l'objectif, il le dit.
+- Fin du gel de ~20 ms à la fin de chaque recherche à l'HV.
+
 ## 5.0.0 · 13 novembre 2026
 
 Grosse reprise : stabilité d'abord, puis équipement, sacs, métiers et interface. Mesures faites en simulation.

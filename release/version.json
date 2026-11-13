@@ -1,6 +1,6 @@
 {
-  "version": "5.0.0",
+  "version": "5.0.1",
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334,
-  "notes": "5.0.0 : stabilité (foules, butin, quêtes), équipement selon ta spé, sacs, métiers, interface refaite"
+  "notes": "5.0.1 : achat-revente à l'HV (panneau, files Acheter / Poster, gains nets exacts, livre de comptes)"
 }
