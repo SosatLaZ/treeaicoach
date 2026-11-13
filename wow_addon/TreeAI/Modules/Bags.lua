@@ -232,19 +232,36 @@ function M.Rescan() S.seen = -1 M._lists, M._shop = nil, nil end
 --- combien tu en as dans tes sacs
 function M.Count(id) return snapshot().count[id] or 0 end
 
---- contexte : niveau, journal de quêtes, dernier scan de l'HV ; un changement refait tous les avis (au plus 1 test / image)
+--- contexte : niveau et dernier scan de l'HV (un changement refait tous les avis) ; journal de quêtes (chaque monstre
+--- tué le fait bouger) : seuls les avis dont la réponse « quête » a changé sont refaits. Au plus 1 test par image.
+local questSig
 local function context()
   local t = now()
   if C.at == t then return C end
   C.at = t
-  local qg = (T.QuestGen and T:QuestGen()) or 0
   local A = mod("Auction")
   local ag = A and ((A.lastScan and A.lastScan.t) or (A.db and A.db.lastScanT)) or 0
   local lv = level()
-  if qg ~= C.qg or ag ~= C.ag or lv ~= C.level then
+  if ag ~= C.ag or lv ~= C.level then
     local first = C.level == nil
-    C.qg, C.ag, C.level = qg, ag, lv
+    C.ag, C.level = ag, lv
     if not first then M.Invalidate() end
+  end
+  local H = mod("Highlight")
+  local D = H and type(H.Data) == "function" and H.Data() or nil
+  local qg = (type(D) == "table" and D.ver) or (T.QuestGen and T:QuestGen()) or 0
+  if qg ~= C.qg then
+    local first = C.qg == nil
+    C.qg = qg
+    if not first and questSig then
+      for id, v in pairs(V) do
+        if questSig(id) ~= v.qsig then
+          V[id] = nil
+          for key, sid in pairs(S.id) do if sid == id then S.dirty[key] = true end end
+          M._lists = nil
+        end
+      end
+    end
   end
   return C
 end
@@ -302,13 +319,14 @@ M.Targets = targets
 
 --- métiers connus : { [ligne] = rang } ou nil (inconnu : jamais lu)
 local function profRanks()
-  if C.profs ~= nil then return C.profs or nil end
+  if C.profs ~= nil and now() - (C.profsAt or 0) < 60 and now() >= (C.profsAt or 0) then return C.profs or nil end
+  C.profsAt = now()
   local P = T.modules and T.modules.Prof
   local list = type(P) == "table" and P.profs or nil
   if (type(list) ~= "table" or #list == 0) and type(P) == "table" and type(P.ScanProfessions) == "function" then
-    list = try(P.ScanProfessions)                           -- module Métiers coupé : la lecture du jeu, une fois par contexte
+    list = try(P.ScanProfessions)                           -- module Métiers coupé : la lecture du jeu (au plus 1 / min)
   end
-  if type(list) ~= "table" or #list == 0 then C.profs = false return nil end
+  if type(list) ~= "table" then C.profs = false return nil end   -- pas lu : on ne sait pas (une liste vide = aucun métier)
   local map = {}
   for _, p in ipairs(list) do if type(p) == "table" and p.line then map[p.line] = tonumber(p.rank) or 0 end end
   C.profs = map
@@ -566,6 +584,16 @@ builtin("quête", function(id, it, _, bag, slot)
   if it.cls == 12 or it.bind == 4 or questSlot(bag, slot) then return huge, "objet de quête" end
 end)
 
+--- la réponse « quête » d'un objet, en une chaîne : sert à savoir si un changement du journal touche cet objet
+questSig = function(id)
+  local it = itemInfo(id)
+  if not it then return "?" end
+  local key = S.first[id]
+  local ok, n, why = pcall(BUILTIN["quête"], id, it, S.count[id] or 0, key and floor(key / 1000) or nil, key and key % 1000 or nil)
+  if not ok then return "!" end
+  return tostring(n) .. "|" .. tostring(why)
+end
+
 -- consommables pour toi / munitions / familier
 builtin("consommable", function(id)
   buildTables()
@@ -680,12 +708,12 @@ builtin("équipement", function(id, it, _, bag, slot)
   if ok == false then
     if why == "non équipable" then return nil end
     local at = type(why) == "string" and tonumber(why:match("niveau (%d+)")) or nil
-    if at and at <= lv + 10 then return huge, why, "bank" end
+    if at and at <= lv + 10 then return huge, why, (at > lv + 3) and "bank" or nil end
     if friends then return nil end
     return 0, at and fmt("pas portable avant le niveau %d", at) or (why or "tu ne peux pas le porter")
   end
   if it.req > lv then
-    if it.req <= lv + 10 then return huge, fmt("équipable au niveau %d", it.req), "bank" end
+    if it.req <= lv + 10 then return huge, fmt("équipable au niveau %d", it.req), (it.req > lv + 3) and "bank" or nil end
     if friends then return nil end
     return 0, fmt("pas équipable avant le niveau %d", it.req)
   end
@@ -736,7 +764,8 @@ builtin("recette", function(id, it, _, bag, slot)
     if type(known) == "table" and known[e.spell] then return 0, "recette que tu connais déjà" end
     if knownByTooltip(id, bag, slot) then return 0, "recette que tu connais déjà" end
     if rank >= e.learn then return huge, fmt("à apprendre maintenant (%s %d)", ln, e.learn), "use" end
-    return huge, fmt("à apprendre à %d en %s (tu es à %d)", e.learn, ln, rank), "bank"
+    -- bientôt (≤ 25 points) : reste dans les sacs ; plus loin : à la banque en attendant
+    return huge, fmt("à apprendre à %d en %s (tu es à %d)", e.learn, ln, rank), (e.learn - rank > 25) and "bank" or nil
   end
   if knownByTooltip(id, bag, slot) then return 0, "recette que tu connais déjà" end
 end)
@@ -744,7 +773,7 @@ end)
 -- pont Métiers (tant que PROF n'a pas inscrit son gardien) : une marchandise qui sert à une recette d'UN DE TES
 -- métiers est gardée (« sert à ton Travail du cuir ») ; le « en trop » précis (plan, quantités) viendra du gardien
 -- de PROF. Index des compos de TES métiers seulement, construit un métier par appel (jamais un gros calcul d'un coup).
-local MAT = { lines = {}, by = {}, todo = nil, gen = -1 }
+local MAT = { lines = {}, by = {}, todo = nil, gen = -1, wait = {} }
 local function matIndex()
   if MAT.gen ~= C.gen then
     MAT.gen, MAT.todo = C.gen, nil
@@ -771,12 +800,22 @@ local function matIndex()
     end
   end
   if MAT.todo and #MAT.todo > 0 then return nil end           -- pas encore fini : pas d'avis (donc gardé)
+  if next(MAT.wait) then
+    -- les avis rendus pendant la construction (« je ne sais pas ») sont refaits à la prochaine demande
+    for wid in pairs(MAT.wait) do V[wid] = nil S.touch[wid] = true end
+    MAT.wait = {}
+    M._lists = nil
+  end
   return MAT.by
 end
 builtin("métiers", function(id)
   if EXT.prof then return nil end
   local by = matIndex()
-  if not by then EXT.profSilent = true return nil end
+  if not by then
+    EXT.profSilent = true
+    if MAT.known then MAT.wait[id] = true end
+    return nil
+  end
   local ranks, lines = profRanks(), by[id]
   if not (lines and ranks) then return nil end
   local names = {}
@@ -902,10 +941,10 @@ local function compute(id, bag, slot)
   local it = itemInfo(id)
   local v = { id = id, have = have, t = now(), gen = C.gen, keep = have, surplus = 0, value = 0 }
   if not it then
-    v.action, v.why, v.unknown = "keep", "objet inconnu (pas encore chargé par le jeu) : je garde", true
+    v.action, v.why, v.unknown, v.qsig = "keep", "objet inconnu (pas encore chargé par le jeu) : je garde", true, "?"
     return v
   end
-  v.name, v.vendor = it.name, it.sell
+  v.name, v.vendor, v.qsig = it.name, it.sell, questSig(id)
   local Q = M._ask
   Q.keep, Q.all, Q.opinion, Q.where, Q.why, Q.keeper, Q.reasons = 0, false, nil, nil, nil, nil, {}
   EXT.profSilent = nil
@@ -930,7 +969,7 @@ local function compute(id, bag, slot)
     -- gardé : réclamé par un gardien, ou personne ne dit qu'il est en trop
     v.keep, v.surplus = have, 0
     v.action = (where == "use" and "use") or (where == "bank" and "bank") or "keep"
-    v.why = why or ((it.cls == 2 or it.cls == 4) and it.loc and "équipement : je ne sais pas s'il est mieux que le tien, je garde")
+    v.why = why or ((it.cls == 2 or it.cls == 4) and it.loc and "équipement : personne ne dit qu'il est en trop (toi, un ami ?), je garde")
       or "je ne sais pas s'il te sert : je garde"
     v.claimed = why ~= nil
     return v
@@ -1002,6 +1041,14 @@ function M.Verdict(itemID, bag, slot)
   return v
 end
 M.stats = { computed = 0, overlays = 0, sold = 0 }
+--- l'avis déjà prêt (ou nil) : pour les rappels appelés en rafale par un addon de sacs — jamais de calcul dans leur image
+function M.Peek(id, bag, slot)
+  if not M._active or S.seen ~= bagGen() then return nil end
+  local v = V[id]
+  if not v or v.gen ~= C.gen or now() - v.t > TTL then return nil end
+  if bag and slot and v.sel and not v.sel[bag * 1000 + slot] then return v.rest or v end
+  return v
+end
 --- ligne courte d'un avis : « Garde : 5 potions de soins pour toi (tu en as 3) »
 function M.Text(v)
   if type(v) ~= "table" or not v.action then return nil end
@@ -1080,7 +1127,7 @@ function M.GreyItems()
 end
 
 --- prépare les avis de tous les objets des sacs par petits paquets (une image chacun), puis appelle cb
-local WARM_CHUNK = 8
+local WARM_CHUNK = 6
 local function stale()
   local s = snapshot()
   context()
@@ -1107,7 +1154,10 @@ function M.Warm(cb)
     end
     if i < #todo then
       if T.Spread then T:Spread(M, step, nil, nil, nil, nil, "Bags:avis") else step() end
-    elseif cb then cb() end
+    elseif cb then
+      -- la suite (pastilles, carte, liste) dans sa propre image : jamais avec le dernier paquet d'avis
+      if T.Spread then T:Spread(M, function() if M._active then cb() end end, nil, nil, nil, nil, "Bags:suite") else cb() end
+    end
   end
   if T.Spread then T:Spread(M, step, nil, nil, nil, nil, "Bags:avis") else step() end
   return #todo
@@ -1195,8 +1245,8 @@ function M.MissingText()
   local list = M.Shopping()
   if #list == 0 then return nil end
   local parts = {}
-  for i, e in ipairs(list) do if i <= 4 then parts[#parts + 1] = e.text end end
-  return "Il te manque : " .. tconcat(parts, ", ")
+  for i, e in ipairs(list) do if i <= 3 then parts[#parts + 1] = e.text end end
+  return "Il te manque : " .. tconcat(parts, ", ") .. (#list > 3 and fmt(" (+%d)", #list - 3) or "")
 end
 local function resting() return pub(try(g("IsResting"))) and true or false end
 function M.UpdateStock()
@@ -1562,6 +1612,11 @@ function M.ReadMerchant()
   M.merchantSells, M.merchantCats = sells, cats
   M._shop = nil
 end
+--- le nom de l'onglet de rachat du marchand, dans la langue du jeu
+local function buyback()
+  local w = g("MERCHANT_BUYBACK")
+  return (type(w) == "string" and w ~= "") and w or "Rachat"
+end
 function M.CardModel()
   local sl = M.SellList()
   local rep = opt("repair") and M.RepairCost() or 0
@@ -1576,14 +1631,15 @@ function M.CardModel()
     m.info = "Mode sûr allumé : vends à la main (clic droit sur les objets marqués d'une pièce). /tai bloque achats l'explique."
   elseif n > 0 then
     m.label = fmt("Vendre %s · %s", plural(n, "objet", "objets"), money(sl.value)) .. (rep > 0 and (" + réparer " .. money(rep)) or "")
-    m.info = (sl.rest > 0 and fmt("Puis %d autres au clic suivant. ", sl.rest) or "") .. "Survole : la liste (clic droit = garder). Rachat possible."
+    m.info = (sl.rest > 0 and fmt("Puis %d autres au clic suivant. ", sl.rest) or "")
+      .. fmt("Survole : la liste (clic droit = garder). Annulable : onglet « %s ».", buyback())
   elseif rep > 0 then
     m.label = "Réparer · " .. money(rep)
   elseif ls and now() - ls.at < 90 then
     m.label, m.enabled = fmt("Vendu : %s · +%s", plural(ls.n, "objet", "objets"), money(ls.money)), false
   end
   if ls and now() - ls.at < 90 and not M.sale and n == 0 then
-    m.info = fmt("Vendu : %s (+%s). Une erreur ? Onglet « Rachat » du marchand.", plural(ls.n, "objet", "objets"), money(ls.money))
+    m.info = fmt("Vendu : %s (+%s). Une erreur ? Onglet « %s » du marchand.", plural(ls.n, "objet", "objets"), money(ls.money), buyback())
   end
   local miss = merchantStock()
   if miss then m.info = (m.info and (m.info .. "\n") or "") .. miss m.label = m.label or "Rien à vendre" m.enabled = m.enabled and n + rep > 0 end
@@ -1977,6 +2033,24 @@ function M.Sort()
   return ok
 end
 
+--- un addon de sacs demande des avis pas encore prêts : préparés par petits paquets, puis son affichage est relancé
+function M.ThirdWarm()
+  if OV.thirdWarm or not M._active then return end
+  OV.thirdWarm = true
+  after(0.1, function()
+    M.Warm(function()
+      OV.thirdWarm = nil
+      if inCombat() then return end
+      local BG = g("Baganator")
+      local refresh = type(BG) == "table" and type(BG.API) == "table" and BG.API.RequestItemButtonsRefresh
+      if type(refresh) == "function" then pcall(refresh) end
+      for btn, key in pairs(OV.ext or {}) do
+        if meth(btn, "IsVisible") then apply(btn, kindOf(floor(key / 1000), key % 1000)) end
+      end
+      OV.ext = nil
+    end)
+  end)
+end
 -- addons de sacs : Baganator (API publique : camelote + widget de coin), Bagnon (hooksecurefunc) — lecture seule
 local function hookThird()
   local hsf = g("hooksecurefunc")
@@ -1986,7 +2060,9 @@ local function hookThird()
     if type(BG.API.RegisterJunkPlugin) == "function" then
       pcall(BG.API.RegisterJunkPlugin, "TreeAI", "treeai", function(bagID, slotID, itemID)
         if not (M._active and opt("overlays")) or inCombat() then return false end
-        return M.Verdict(itemID, bagID, slotID).action == "sell"
+        local v = M.Peek(itemID, bagID, slotID)
+        if not v then M.ThirdWarm() return false end
+        return v.action == "sell"
       end)
     end
     if type(BG.API.RegisterCornerWidget) == "function" then
@@ -1994,7 +2070,9 @@ local function hookThird()
         function(widget, details)
           if not (M._active and opt("overlays")) or type(details) ~= "table" or inCombat() then return false end
           local id = num(details.itemID)
-          local a = id and M.Verdict(id).action
+          local v = id and M.Peek(id)
+          if id and not v then M.ThirdWarm() end
+          local a = v and v.action
           if a ~= "ah" and a ~= "bank" then return false end
           if widget.tex then widget.tex:SetTexture(TEX[a]) end
           return true
@@ -2018,8 +2096,9 @@ local function hookThird()
         local bag = num(meth(btn, "GetBag")) or num(type(btn) == "table" and btn.bag)
         local slot = num(meth(btn, "GetID"))
         if bag and slot and bag >= 0 and bag <= 5 then
-          snapshot()
-          apply(btn, kindOf(bag, slot))
+          local id = S.id[bag * 1000 + slot]
+          if id and not M.Peek(id, bag, slot) then OV.ext = OV.ext or setmetatable({}, { __mode = "k" }) OV.ext[btn] = bag * 1000 + slot M.ThirdWarm() return end
+          apply(btn, id and kindOf(bag, slot) or nil)
         end
       end)
     end
@@ -2107,6 +2186,18 @@ local function itemIcon(id)
   return pub(try((type(CI) == "table" and CI.GetItemIconByID) or g("GetItemIcon"), id))
 end
 local grouped = M.Grouped
+--- résumé bon marché pour un bouton / une barre (LOOK) : ne calcule RIEN si les avis ne sont pas prêts (ready = false)
+--- → { ready, sellN, sellValue, missing, free, total, merchant, bank, canSort }
+function M.Summary()
+  local out = { ready = false, sellN = 0, sellValue = 0, missing = 0, merchant = M.merchantOpen and true or false,
+    bank = M.bankOpen and true or false, canSort = M.CanSort() }
+  if not M._active then return out end
+  if API.FreeSlots then out.free, out.total = API.FreeSlots() end
+  if not M.Ready() then return out end
+  local sl = M.SellList()
+  out.ready, out.sellN, out.sellValue, out.missing = true, #sl.list + sl.rest, sl.value, #M.Shopping()
+  return out
+end
 --- ce que la page montre (aussi pour les tests et le résumé) : tuiles + sections
 function M.PageModel()
   local L = M.Lists()
@@ -2282,6 +2373,8 @@ function M:OnEnable()
     if M.merchantOpen then return end
     M.merchantOpen, M.lastSale = true, nil
     M.Rescan()
+    -- les avis se préparent dès l'image suivante (par paquets) : la vente auto des gris (0,15 s) et la carte les trouvent prêts
+    after(0, function() if M.merchantOpen then M.Warm() end end)
     after(0.3, function()
       if not M.merchantOpen then return end
       M.ReadMerchant()

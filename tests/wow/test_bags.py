@@ -60,7 +60,9 @@ def test_best_consumable_is_never_surplus():
     assert "elseif i == 1 then" in src and "p.best, p.keep[id] = id, huge" in src
     assert "elseif better >= tg.hold then" in src
     # a keeper in error claims everything; without an explicit « en trop » the item is kept
-    assert "all, why, keeper = true" in src and "if surplus <= 0 or not opinion then" in src
+    assert "Q.all, Q.why, Q.keeper = true" in src and "if surplus <= 0 or not opinion then" in src
+    # an unclaimed trade good is never vendored: AH only, and only with a known, clearly better price
+    assert 'if market and (action ~= "ah" or d.unknown) then' in src
 
 
 def test_other_modules_use_the_brain():
@@ -69,7 +71,10 @@ def test_other_modules_use_the_brain():
     qol = code(MODS / "QoL.lua")
     assert "B.SellGreys()" in qol and "B.Warm(function()" in qol
     ah = code(MODS / "Auction.lua")
-    assert "T.Bags" in ah and "Verdict" in ah
+    assert "T.Bags" in ah and "B.Verdict" in ah and "function M.RenderNeed(Ly, W, m)" in ah
+    # the profession quick sale (the incident path) never lists a stack a keeper claims; the tooltip says it once
+    assert "BG.Verdict, id, bag, slot" in code(MODS / "CityRun.lua")
+    assert "BG.HasTip" in code(MODS / "ItemInfo.lua")
 
 
 def _run(flavor, cls="HUNTER"):
@@ -90,7 +95,9 @@ def test_bags_scenario(flavor):
     assert re.search(r"BAGS incident : Potion de soins inférieure ×4 → Vends au marchand : moins bien que Potion de soins", out)
     assert "BAGS incident : Potion de soins inférieure ×4 → Garde : 5 potions de soins pour toi (tu n'en as que 3 de mieux)" in out
     assert "BAGS sacs pleins : 2 places : vends / jette Plume sans valeur ×2 (0 pc)" in out
-    assert re.search(r"BAGS carte marchand : Vendre 9 objets · .* \+ réparer", out)
+    assert re.search(r"BAGS carte marchand : Vendre 9 objets · .* \+ réparer .*Annulable : onglet « Rachat »", out)
+    assert "(groupe de 4) Plastron en plaques de test ×1 → Garde" in out
+    assert "→ À utiliser : à apprendre maintenant (Travail du cuir" in out
     assert "BAGS butin sacs fermés : 0 avis calculés pour 4 objets ramassés" in out
     assert "BAGS stock : Il te manque : 2 potions de soins" in out
     assert "chat:" not in out and "violation:" not in out

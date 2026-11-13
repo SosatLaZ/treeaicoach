@@ -737,6 +737,15 @@ function CR.SellStacks()
   for bag, slot, it in iter() do
     local id = num(it.itemID)
     local locked = pub(it.locked)
+    -- (5.0 BAGS) jamais une pile qu'un gardien de l'assistant d'inventaire réclame (quête, potions, munitions,
+    -- nourriture du familier, marque « garder », équipement) ; l'avis « métiers » reste celui d'ici
+    local BG = T.Bags
+    if id and type(BG) == "table" and BG._active and type(BG.Verdict) == "function" then
+      local okV, bv = pcall(BG.Verdict, id, bag, slot)
+      if not okV or (type(bv) == "table" and bv.claimed and bv.keeper ~= "métiers" and (bv.action == "keep" or bv.action == "bank" or bv.action == "use")) then
+        locked = true
+      end
+    end
     if id and not locked then
       local q = num(it.quality)
       local sell = num(select(11, try(API.ItemInfo, id))) or 0

@@ -37,12 +37,35 @@ T.Bags.RegisterKeeper(nom, fn)    -- fn(itemID, infos, combien_en_sac, sac, case
    erreur                             → réclame tout (dans le doute, on ne vend pas)
 T.Bags.Invalidate([itemID])       -- ton avis a changé (plan de métier, équipement) : avis refaits à la demande
 T.Bags.Shopping()                 -- ce qu'il manque : { {cat, id, n, have, want, label, name, ah, npc, src, text} }
-T.Bags.Lists() / SellList() / GreyItems() / Cheapest() / MissingText() / Sort() / Mark(id, "keep"|"sell"|"bank"|nil)
+T.Bags.Lists() / SellList() / GreyItems() / Cheapest() / MissingText() / Mark(id, "keep"|"sell"|"bank"|nil)
+T.Bags.Summary()                  -- pour un bouton / une barre : { ready, sellN, sellValue, missing, free, total, merchant, bank }
+T.Bags.SellClick() / BankClick() / Sort() / RepairNow(true)   -- à appeler DANS un clic (T:UserAction) ; rien hors clic
 ```
-Un gardien dont le nom contient « gear » / « quip » remplace le pont Équipement (Gear.CanUse / UpgradePct) ; « prof » /
-« métier » / « cityrun » remplace le pont Métiers (CityRun.Verdict, consulté seulement chez un PNJ / en ville / en
-courses : là où PROF calcule déjà ses plans). **Un gardien doit être rapide** (appelé pour chaque objet des sacs, 8 par
-image) : pas de plan recalculé dedans.
+(le bloc ci-dessus : API publique complète ; `Peek(id, bag, slot)` = l'avis déjà prêt, sans calcul, pour un rappel
+appelé en rafale.)
+
+Un gardien dont le nom contient « gear » / « quip » remplace le pont Équipement (Gear.CanUse / UpgradePct ; en groupe,
+ce pont ne dit jamais « en trop » d'une pièce échangeable : seul GEAR sait si un ami en a besoin). Un nom contenant
+« prof » / « métier » / « cityrun » remplace le pont Métiers (une marchandise qui sert à une recette d'un de TES métiers
+est gardée ; le « en trop » précis — plan, quantités — est l'affaire du gardien de PROF). **Un gardien doit être
+rapide** (appelé pour chaque objet des sacs, 6 par image) : pas de plan recalculé dedans, répondre depuis un cache et
+appeler `T.Bags.Invalidate()` quand le plan change.
+
+Sans avis de personne : gardé, pas de pastille, pas de ligne d'infobulle (« inconnu → rien »). Exception : une
+marchandise (classe 7) que personne ne réclame et dont le prix d'HV est CONNU et nettement meilleur que le marchand est
+proposée « HV » (jamais « marchand » : la vente d'un clic exige un avis « en trop » explicite).
+
+À faire côté autres agents (hors de mes fichiers) :
+- PROF : la carte « PNJ » de ProfLevel (`C.SellStacks` / « Vendre (n) » / « Réparer ») double la carte du marchand de
+  Sacs ; elle devrait disparaître au profit de `T.Bags` (ou appeler `T.Bags.SellClick`). `CR.SellStacks` / `ExtraList`
+  doivent passer par `T.Bags.Verdict` (c'est le chemin de l'incident). Inscrire un gardien « prof ».
+- GEAR : inscrire un gardien « gear » (améliorations pour moi / le groupe ; `0, "moins bien que …"` pour le reste).
+  ItemInfo : le mot de la fin de la ligne « Valeur » se tait déjà quand Sacs a une ligne (petit ajout gardé, voir rapport).
+- LOOK : la page « Sacs » est rangée sous « HV » (onglets « Sacs | Hôtel des ventes » en tête des deux pages, la
+  navigation garde ses 11 catégories). Un bouton « Sacs » / « Vendre » / « Ranger » de la barre peut lire
+  `T.Bags.Summary()` et appeler `T.Bags.OpenPage()`, `SellClick()`, `Sort()`.
+- STABLE : `T:OnBags(owner, fn)` est utilisé s'il existe (sinon notre propre regroupement de BAG_UPDATE_DELAYED).
+  Le mock ne sait pas déposer à la banque (UseContainerItem sac → banque) : simulé dans le scénario.
 
 ## Perf (mesurable)
 - Aucun travail sur BAG_UPDATE : le relevé (`Snapshot`) et les avis sont refaits à la demande, clé `API.BagGen()`.
@@ -50,7 +73,11 @@ image) : pas de plan recalculé dedans.
   45 s (les gardiens externes changent d'avis sans prévenir).
 - Butin sacs fermés, de la place : 0 avis calculé (scénario §8). En combat : rien (chaque tir = un BAG_UPDATE).
 - Pastilles : seules les cases changées sont retouchées (1 bouton pour 1 objet ramassé, scénario §7).
-- Gros recalcul (ouverture des sacs, marchand) : 8 objets par image (`T:Spread`).
+- Gros recalcul (ouverture des sacs, marchand) : 6 objets par image (`T:Spread`), la suite dans sa propre image.
+- Journal de quêtes (chaque monstre tué) : seuls les avis dont la réponse « quête » change sont refaits.
+- Mesuré (mock, 57 objets, coût de Bags.lua seul) : relevé des sacs ≈ 16 kinstr (0,3 ms), un avis à froid ≈ 1,6 kinstr,
+  pire image à l'ouverture des sacs ≈ 25 kinstr (0,5 ms), butin sacs fermés ≈ 0,5 kinstr, au repos 0.
+- Simulation 60 min « sûr » (chasseur, Forever) : Bags < 1 kinstr/min ; pire image 147 kinstr (base : 149).
 
 ## Pas fait / limites connues
 - Taille des sacs en inventaire (un sac plus petit que les tiens n'est pas « en trop » : gardé).

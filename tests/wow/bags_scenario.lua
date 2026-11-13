@@ -85,6 +85,9 @@ return function(M, ctx)
     local listed = false
     for _, e in ipairs(CR.ExtraList and CR.ExtraList() or {}) do if e.id == 929 and (e.bags or 0) >= 5 then listed = true end end
     check(listed, "evidence: 4.3.4 listed the 5 healing potions « à vendre » (ExtraList)")
+    local stillSold = false
+    for _, e in ipairs(CR.SellStacks and CR.SellStacks() or {}) do if e.id == 929 then stillSold = true end end
+    check(not stillSold, "the profession quick sale no longer lists them (a keeper claims them)")
   else
     check(T.modules.CityRun == nil or not (T.modules.CityRun._active), "CityRun inactive in this profile: bridge silent")
   end
@@ -185,6 +188,70 @@ return function(M, ctx)
   out("gardiens : " .. show(9008))
   check(afterWorn.action == "keep" and tostring(afterWorn.why):find("alternance", 1, true),
     "gear he wore is kept (before: " .. tostring(beforeWorn.action) .. ", after: " .. tostring(afterWorn.why) .. ")")
+  -- quest log: an ordinary item a quest asks for (by name) is claimed for the count asked; when the quest is gone the
+  -- claim goes too — and only the verdicts touched by the quest change are redone (a kill must not redo the whole bag)
+  item(9015, "Laine de quête de test", { stack = 20, sellPrice = 33, classID = 7 })
+  M.SetBagItem(2, 8, 9015, 10)
+  local quests0 = M.quests
+  M.quests = { { title = "Des laines pour l'hiver", level = 28, objectives = { { text = "Laine de quête de test : 10/6", done = true, have = 10, need = 6, type = "item" } } } }
+  bagsChanged()
+  M.FireEvent("QUEST_LOG_UPDATE")
+  M.Advance(4, 0.2)
+  out("gardiens : " .. show(9015))
+  local vq = B.Verdict(9015)
+  check(vq.action == "keep" and vq.claimed and tostring(vq.why):find("Des laines pour l'hiver", 1, true), "item asked by a quest of the log: kept (" .. tostring(vq.why) .. ")")
+  B.Invalidate()
+  for _, id in ipairs({ 9015, 9003, 6948, 4540, 2515 }) do B.Verdict(id) end
+  local cq = B.stats.computed
+  M.quests = {}
+  M.FireEvent("QUEST_LOG_UPDATE")
+  M.Advance(4, 0.2)
+  local vq2 = B.Verdict(9015)
+  B.Verdict(9003) B.Verdict(6948) B.Verdict(4540) B.Verdict(2515)
+  out("gardiens : (quête rendue) " .. show(9015))
+  check(not vq2.claimed, "quest gone: the claim goes away (" .. tostring(vq2.why) .. ")")
+  check(B.stats.computed - cq <= 2, "…and only the verdicts the quest touched were redone (" .. (B.stats.computed - cq) .. ")")
+  M.quests = quests0
+  M.SetBagItem(2, 8, nil)
+  M.FireEvent("QUEST_LOG_UPDATE")
+  bagsChanged()
+  -- recipes (client data): learnable now → « à utiliser », later → kept for later, a profession he does not have → surplus
+  local R = T.Data and T.Data.Recipes and T.Data.Recipes.r
+  local function recipeOf(line, pick)
+    for _, r in ipairs(R and R[line] or {}) do if (tonumber(r[8]) or 0) > 0 and pick(tonumber(r[4]) or 1) then return r[8], r[4] end end
+  end
+  local rNow = recipeOf(165, function(at) return at <= 143 end)
+  local rLater, laterAt = recipeOf(165, function(at) return at > 175 end)
+  local rOther = recipeOf(197, function() return true end)
+  if check(rNow and rLater and rOther, "recipe items found in the client data") then
+    item(rNow, "Patron de test (maintenant)", { stack = 1, sellPrice = 100, classID = 9 })
+    item(rLater, "Patron de test (plus tard)", { stack = 1, sellPrice = 100, classID = 9 })
+    item(rOther, "Patron de couture de test", { stack = 1, sellPrice = 100, classID = 9 })
+    M.SetBagItem(2, 8, rNow, 1) M.SetBagItem(2, 9, rLater, 1) M.SetBagItem(2, 10, rOther, 1)
+    bagsChanged()
+    for _, id in ipairs({ rNow, rLater, rOther }) do out("gardiens : " .. show(id)) end
+    check(B.Verdict(rNow).action == "use" and tostring(B.Verdict(rNow).why):find("apprendre maintenant", 1, true), "recipe learnable now: « à utiliser »")
+    check(B.Verdict(rLater).action == "bank" and tostring(B.Verdict(rLater).why):find(tostring(laterAt), 1, true), "recipe for later: kept (bank)")
+    check(B.Verdict(rOther).action == "ah" and tostring(B.Verdict(rOther).why):find("tu n'as pas ce métier", 1, true),
+      "recipe of a profession he does not have: surplus, AH first (" .. tostring(B.Verdict(rOther).why) .. ")")
+    M.SetBagItem(2, 8, nil) M.SetBagItem(2, 9, nil) M.SetBagItem(2, 10, nil)
+    bagsChanged()
+  end
+  -- in a group of 4, a tradable piece he cannot wear may serve a friend: the bridge keeps quiet (GEAR's keeper knows)
+  B.Mark(9007, nil)
+  local soloV = B.Verdict(9007)
+  M.group = { { name = "Ami-Un", class = "WARRIOR", level = 30, online = true }, { name = "Ami-Deux", class = "MAGE", level = 30, online = true },
+    { name = "Ami-Trois", class = "PRIEST", level = 29, online = true } }
+  M.FireEvent("GROUP_ROSTER_UPDATE")
+  B.Invalidate()
+  local groupV = B.Verdict(9007)
+  out("gardiens : (groupe de 4) " .. show(9007))
+  check(soloV.action == "sell" and groupV.action == "keep" and not groupV.claimed,
+    "plate chest: surplus alone, kept in a group (solo " .. tostring(soloV.action) .. " / group " .. tostring(groupV.action) .. ")")
+  check(B.TipLine(9007) == nil, "…and no tooltip line when we do not know")
+  M.group = {}
+  M.FireEvent("GROUP_ROSTER_UPDATE")
+  B.Invalidate()
   -- registered keepers: claim, explicit surplus, partial claim, error
   M.SetBagItem(2, 1, 9009, 20) M.SetBagItem(2, 2, 9009, 10) M.SetBagItem(2, 3, 9010, 20) M.SetBagItem(2, 4, 9011, 8)
   bagsChanged()
@@ -269,7 +336,7 @@ return function(M, ctx)
   local m = B.cardModel
   out("carte marchand : " .. tostring(m and m.label) .. " | " .. tostring(m and m.info))
   check(m and m.label:find("^Vendre %d+ objets · ") and m.label:find("réparer", 1, true), "label « Vendre N objets · X + réparer »: " .. tostring(m and m.label))
-  check(tostring(m.info):find("Rachat", 1, true), "undo hint (buyback) shown")
+  check(tostring(m.info):find("Annulable : onglet « Rachat »", 1, true), "undo hint (buyback tab) shown")
   local names = {}
   for _, e in ipairs(m.rows) do names[#names + 1] = e.name .. " ×" .. e.n end
   out("carte marchand : liste = " .. table.concat(names, ", "))
@@ -283,7 +350,7 @@ return function(M, ctx)
   check(row and row:IsShown() and row.e, "hover: rows shown")
   local excluded = row.e.id
   M.Hw(function() row:GetScript("OnClick")(row, "RightButton") end)
-  M.Advance(1, 0.1)
+  M.Advance(3, 0.05)
   check(B.MarkOf(excluded) == "keep" and B.Verdict(excluded).action == "keep", "right-click on a row: kept from now on")
   local n1 = #B.cardModel.rows
   check(n1 == #m.rows - 1, "the list shrinks by that item (" .. #m.rows .. " → " .. n1 .. ")")
