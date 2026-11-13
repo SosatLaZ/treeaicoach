@@ -31,7 +31,7 @@ local Z = T:RegisterModule("ZonePlan", {
   title = "Trajet",
   description = "Tu choisis la zone, TreeAI prépare le meilleur ordre des arrêts. Clic droit sur un arrêt : l'ignorer.",
   defaults = { enabled = true, elites = false, groupQ = true, dungeons = false, gap = 3, maxMin = 0, prio = 1,
-    detour = true, compass = true, autoWatch = true, watchMax = 6 },
+    detour = true, compass = true, autoWatch = false, watchMax = 6 },   -- (5.1, audit B11) suivi du jeu : jamais d'office
   -- style = mode du trajet (par personnage, 0 = pas encore choisi : repris de l'ancien réglage « Priorité ») ;
   -- watchManual[q] = true / false : suivi posé / retiré À LA MAIN par le joueur (jamais repris par le suivi auto) ;
   -- watchOurs[q] = quête mise dans le suivi du jeu par TreeAI (la seule qu'il retire)
@@ -45,7 +45,7 @@ local Z = T:RegisterModule("ZonePlan", {
     { key = "detour", type = "toggle", label = "Proposer un détour hors zone quand il rapporte gros" },
     { key = "compass", type = "toggle", label = "La boussole vise l'arrêt en cours" },
     { section = "Suivi du jeu", key = "autoWatch", type = "toggle",
-      label = "Suivi auto par zone : le suivi du jeu montre les quêtes de ta zone, dans l'ordre du trajet" },
+      label = "Suivi auto par zone : TreeAI range le suivi du jeu (quêtes de ta zone, ordre du trajet) — coupé : il n'y touche pas" },
     { key = "watchMax", type = "range", label = "Quêtes suivies au plus", min = 3, max = 8, step = 1 },
   },
 })
@@ -441,6 +441,69 @@ function N.NearFirst(nodes, ord, start, dist, yd, cap, logCount, only)
   for _, i in ipairs(ord) do if not moved[i] then out[#out + 1] = i end end
   return out
 end
+-- (5.1 ROUTE6) objectif « sur place » : le joueur est dans le coin de l'objectif (yards)
+N.HERE = 80
+local function npcNode(nd)
+  local k = nd.steps[1] and nd.steps[1].k
+  if not nd.x then return false end
+  if k == "pick" then return true end
+  if k ~= "turn" then return false end
+  for _, s in ipairs(nd.steps) do if s.k == "turn" and not s.ready then return false end end
+  return true
+end
+--- (5.1 ROUTE6) un PNJ = un arrêt : chaque prise / remise prête placée plus loin dans l'ordre qu'un arrêt au même PNJ
+--- (≤ N.NPC_YD) est ramenée juste après lui ; refusé si les précédences ou le journal ne suivent pas. Pur.
+function N.SameNpc(nodes, ord, dist, cap, logCount)
+  if not dist then return ord end
+  local out = {}
+  for i, v in ipairs(ord) do out[i] = v end
+  local i = 1
+  while i <= #out do
+    local a = nodes[out[i]]
+    if npcNode(a) then
+      local at = i
+      local j = at + 1
+      while j <= #out do
+        local b = nodes[out[j]]
+        if j > at + 1 and npcNode(b) and b.map == a.map then
+          local d = dist(a, b)
+          if d and d <= N.NPC_YD then
+            local trial = {}
+            for k, v in ipairs(out) do if k ~= j then trial[#trial + 1] = v end end
+            tinsert(trial, at + 1, out[j])
+            if N.Valid(nodes, trial) and N.CapOK(nodes, trial, cap, logCount) then out = trial; at = at + 1 end
+          end
+        elseif j == at + 1 and npcNode(b) and b.map == a.map and (dist(a, b) or huge) <= N.NPC_YD then
+          at = j                                        -- déjà voisins
+        end
+        j = j + 1
+      end
+    end
+    i = i + 1
+  end
+  return out
+end
+--- (5.1 ROUTE6) pourquoi l'arrêt 1 n'est pas ce qui est à portée de main (≤ N.NEAR yd) → phrase courte, ou nil. Pur.
+function N.FirstWhy(nodes, ord, start, dist, timers, cap, logCount)
+  if not (start and start.x and dist and ord[1]) then return nil end
+  local f = nodes[ord[1]]
+  local d1 = f.x and dist(start, f)
+  if d1 and d1 <= N.NEAR then return nil end
+  for k = 2, #ord do
+    local nd = nodes[ord[k]]
+    local kk = nd.steps[1].k
+    local d = nd.x and dist(start, nd)
+    if d and ((npcNode(nd) and d <= N.NEAR) or (kk == "obj" and d <= N.HERE)) then
+      local trial = { ord[k] }
+      for j, v in ipairs(ord) do if j ~= k then trial[#trial + 1] = v end end
+      if not N.Valid(nodes, trial) then return nil end           -- pas encore faisable (sa quête n'est pas prise)
+      for q in pairs(f.qs) do if type(timers) == "table" and timers[q] then return "d'abord la quête chronométrée" end end
+      if not N.CapOK(nodes, trial, cap, logCount) then return "journal plein : rends d'abord une quête" end
+      return "d'abord l'arrêt en cours"
+    end
+  end
+  return nil
+end
 -- (QA-QUEST F2) quêtes chronométrées en cours (timers = { [q] = secondes }) : tous leurs arrêts (remise comprise)
 -- passent en tête, avec ce qui doit les précéder (un objectif groupé avec celui d'une autre quête tire le « prendre »
 -- de cette quête) ; ordre relatif inchangé ; refusé si les précédences ou le journal ne suivent pas
@@ -710,7 +773,9 @@ end
 function Z:Sig()
   if not self:IsEnabled() then return "" end
   local ch = self.char or {}
-  local here = (ch.mode or "auto") == "auto" and Geo.Player and Geo.Player() or nil
+  -- (5.1 ROUTE6, audit B1) la zone du joueur compte dans TOUS les modes : avec une zone choisie, arriver dans une autre
+  -- zone (vol, foyer, à pied) refait le trajet depuis là où il est — avant, seulement en mode auto
+  local here = Geo.Player and Geo.Player() or nil
   return fmt("%s:%s:%d:%s", tostring(ch.mode), tostring(here and Z.ZoneOf(here) or ""), self.rev or 0, Z.BrainMode())
 end
 function Z:Bump(why)
@@ -1542,8 +1607,48 @@ function Z:BuildRoute(P, yieldFn, depth)
     local th = themes[r.q]
     for _, s in ipairs(r.steps) do s.theme = th and th.key or nil end
   end
-  -- nodes → greedy → 2-opt / Or-opt → hysteresis
-  local nodes = N.Nodes(requests, worldDist)
+  -- (5.1 ROUTE6) l'ordre est calculé à part (Z:Order) : le même code refait l'ORDRE seul quand le joueur a bougé
+  -- (Z:Reorder, petit travail : n trajets depuis sa position + le solveur) — le tri des quêtes ci-dessus n'est refait
+  -- que quand les quêtes, le groupe, la zone ou les données changent
+  local S = { P = P, E = E, ctx = ctx, A = A, exp = exp, requests = requests, recs = recs, log = log, far = far, masked = masked,
+    qzone = qzone, skipped = skipped, info = info, level = level, group = group, bmode = bmode, style = style, equal = equal,
+    timers = timers, fillNames = fillNames, leg = leg, start = start }
+  S.nodes = N.Nodes(requests, worldDist)
+  S.n0 = #S.nodes
+  if masked.zone then S.maskedZone0 = {} for i, q in ipairs(masked.zone) do S.maskedZone0[i] = q end end
+  self._S = S
+  return self:Order(S, yieldFn, false)
+end
+
+-- (5.1 ROUTE6, audit B1) « j'ai la quête à côté, ça me dit de partir » : l'ordre des arrêts, depuis la position du joueur.
+-- re = false : premier ordre d'un trajet tout juste trié (BuildRoute). re = true : MÊMES arrêts, nouvel ordre depuis la
+-- position actuelle (matrice des trajets entre arrêts gardée, seuls les trajets depuis le joueur sont recalculés) ; les
+-- arrêts « en chemin » (prises facultatives, remise juste hors zone) sont rejugés à chaque fois ; l'hystérésis décide.
+function Z:Order(S, yieldFn, re)
+  local P, E, ctx, A, exp = S.P, S.E, S.ctx, S.A, S.exp
+  local requests, recs, log, far, masked, qzone, skipped = S.requests, S.recs, S.log, S.far, S.masked, S.qzone, S.skipped
+  local info, level, group, bmode, style, equal = S.info, S.level, S.group, S.bmode, S.style, S.equal
+  local timers, fillNames, leg, start = S.timers, S.fillNames, S.leg, S.start
+  local Rt = T.Route
+  local nodes = S.nodes
+  if re then
+    local m, x, y
+    if Geo.Player then m, x, y = Geo.Player() end
+    start = (m and x) and { map = m, x = x, y = y } or nil
+    if start and self.lastStart then
+      local d = worldDist(start, self.lastStart)
+      if not d or d > 400 then self.lastKeys = nil end   -- téléporté / très loin : l'ordre d'avant ne tient plus
+    end
+    self.lastStart, S.start = start, start
+    -- ce que l'ordre précédent avait ajouté est défait, puis rejugé depuis ici
+    for i = #nodes, S.n0 + 1, -1 do nodes[i] = nil end
+    for _, f in ipairs(far) do
+      local tn = f.steps[#f.steps]
+      if tn then tn.out, tn.onWay = nil, nil end
+    end
+    masked.zone = nil
+    if S.maskedZone0 then masked.zone = {} for i, q in ipairs(S.maskedZone0) do masked.zone[i] = q end end
+  end
   local cap = tonumber(try(C("C_QuestLog", "GetMaxNumQuestsCanAccept"))) or 20
   local logCount = 0
   for _ in pairs(log) do logCount = logCount + 1 end
@@ -1557,19 +1662,52 @@ function Z:BuildRoute(P, yieldFn, depth)
   local first = makeFirst(leg, start)                -- la graine gloutonne (et l'ancien moteur) : foyer au 1er trajet
   local st0 = start or { }
   local bondK = (style == "story") and 4 or 1.3
-  local ord = N.Greedy(nodes, st0, leg, { horizon = (style == "clear") and 60 or 40, cap = cap - 2, logCount = logCount,
-    yield = yieldFn, first = first, bond = function(a, b) return (a.theme and a.theme == b.theme) and bondK or 1 end })
-  local D
+  local ord, D
   local greedy = {}
-  for i, v in ipairs(ord) do greedy[i] = v end
+  if re and S.lastOrd then
+    ord = {}
+    for i, v in ipairs(S.lastOrd) do ord[i], greedy[i] = v, v end
+  else
+    ord = N.Greedy(nodes, st0, leg, { horizon = (style == "clear") and 60 or 40, cap = cap - 2, logCount = logCount,
+      yield = yieldFn, first = first, bond = function(a, b) return (a.theme and a.theme == b.theme) and bondK or 1 end })
+    for i, v in ipairs(ord) do greedy[i] = v end
+  end
   if solver then
-    D = Z.SolverMatrix(nodes, ord, start, leg, yieldFn)
+    if re and S.D and S.solverD then
+      D = S.D                                          -- trajets entre arrêts : gardés ; depuis le joueur : refaits
+      D[0] = {}
+      for _, i in ipairs(ord) do
+        D[0][i] = (start and start.x) and leg(start, nodes[i]) or 45
+        if yieldFn then yieldFn() end
+      end
+      D.hs, D.hsGain = nil, nil
+      local hb, hsS, gain = hearthRow(start)
+      if hb then
+        D.hs, D.hsGain = {}, Z.hsGain or gain
+        for _, i in ipairs(ord) do if nodes[i].x then D.hs[i] = hsS + leg(hb, nodes[i]) end end
+      end
+    else
+      D = Z.SolverMatrix(nodes, ord, start, leg, yieldFn)
+    end
     local out, _, _, how = Rt.Solve(nodes, ord, D, { cap = cap - 2, logCount = logCount, yield = yieldFn })
     if out and #out == #ord then ord = out end
     self.solveHow = how
   else
     D = N.Matrix(nodes, ord, st0, leg, first, yieldFn)
     N.Improve(nodes, ord, D, yieldFn, 3)
+  end
+  S.D, S.solverD = D, solver and true or false
+  -- (5.1 ROUTE6) trajets entre lieux FIXES (arrêts, remises hors zone) : gardés pour ce tri de quêtes — à chaque
+  -- ré-ordonnancement seuls les trajets depuis le joueur sont recalculés
+  local memo = S.legMemo
+  if not memo then memo = setmetatable({}, { __mode = "k" }) S.legMemo = memo end
+  local function mleg(a, b)
+    if a == start or b == start or not (a and b) then return leg(a, b) end
+    local row = memo[a]
+    if not row then row = setmetatable({}, { __mode = "k" }) memo[a] = row end
+    local v = row[b]
+    if v == nil then v = leg(a, b) row[b] = v end
+    return v
   end
   local costOf = solver and function(o2) return (Rt.OrderCost(D, o2)) end or function(o2) return N.Cost(D, o2) end
   local choose = solver and Rt.Choose or N.Choose
@@ -1593,14 +1731,27 @@ function Z:BuildRoute(P, yieldFn, depth)
   -- un aller-retour plus tard ; journal jamais plein ; seulement les prises (ses objectifs viendront avec le trajet suivant)
   self.onWayPicks = nil
   if solver and Rt.InsertOptional and start and #ord > 0 and bmode ~= "pickup" and opt("pickOnWay") ~= false then
-    local cands = self:OptionalPicks(nodes, ord, recs, log, requests, level, group, ctx, P, A)
+    -- (5.1 ROUTE6) les candidats et leurs trajets sont gardés d'un ré-ordonnancement à l'autre (mêmes arrêts, mêmes
+    -- fiches) : seuls leurs trajets depuis le joueur sont refaits
+    local kept = re and S.cands and S.candD == D
+    local cands = kept and S.cands or self:OptionalPicks(nodes, ord, recs, log, requests, level, group, ctx, P, A)
+    S.cands, S.candD = cands, D
     if #cands > 0 then
       local base = {}
       for _, c in ipairs(cands) do
+        for _, s2 in ipairs(c.steps) do s2.onWay, s2.opt = nil, nil end
         nodes[#nodes + 1] = c
         base[#base + 1] = #nodes
       end
-      Z.ExtendMatrix(D, nodes, ord, base, start, leg, yieldFn)
+      if kept then
+        local hb, hsS = hearthRow(start)
+        for _, xi in ipairs(base) do
+          D[0][xi] = (start and start.x) and leg(start, nodes[xi]) or 45
+          if hb and D.hs and nodes[xi].x then D.hs[xi] = hsS + leg(hb, nodes[xi]) end
+        end
+      else
+        Z.ExtendMatrix(D, nodes, ord, base, start, leg, yieldFn)
+      end
       local xpSum = 0
       for _, i in ipairs(ord) do for _, s in ipairs(nodes[i].steps) do xpSum = xpSum + (s.xp or 0) end end
       local tt = costOf(ord)
@@ -1627,6 +1778,9 @@ function Z:BuildRoute(P, yieldFn, depth)
     for _, r in ipairs(requests) do if r.inLog and partyOn(r.q) > 0 then shared[r.q] = true end end
     ord = N.TimersFirst(nodes, ord, shared, cap - 2, logCount)
   end
+  -- (5.1 ROUTE6, audit B1) l'objectif SUR LEQUEL il se tient (≤ N.HERE yd, sa quête dans le journal) passe devant ce qui
+  -- est plus loin ; puis les prises / remises à portée de main (elles restent devant lui)
+  ord = N.NearFirst(nodes, ord, start, worldDist, N.HERE, cap - 2, logCount, "obj")
   ord = N.NearFirst(nodes, ord, start, worldDist, N.NEAR, cap - 2, logCount)
   -- (4.2 ROUTE42) « pas être à un endroit sans avoir pris une quête » : dans un camp / une ville (≥ 2 PNJ « ! » à moins de
   -- N.HUB_PICK yd), les bonnes quêtes à prendre ici passent devant — on ne repart pas pour revenir les chercher
@@ -1664,7 +1818,7 @@ function Z:BuildRoute(P, yieldFn, depth)
         for k = 0, #ord do
           local b = nodes[ord[k + 1]]
           if k > 0 and nodes[ord[k]].x then a = nodes[ord[k]] end
-          local c = leg(a, turn) + ((b and b.x) and (leg(turn, b) - leg(a, b)) or 0)
+          local c = mleg(a, turn) + ((b and b.x) and (mleg(turn, b) - mleg(a, b)) or 0)
           if c < bestC then bestAt, bestC = k, c end
           if yieldFn then yieldFn() end
         end
@@ -1678,6 +1832,12 @@ function Z:BuildRoute(P, yieldFn, depth)
       end
     end
   end
+  -- (5.1 ROUTE6, audit B1) UN PNJ = UN arrêt : une prise / remise prête au même PNJ (≤ N.NPC_YD) qu'un arrêt plus tôt dans
+  -- l'ordre le rejoint (prise en chemin, remise « sur le chemin », arrêt remonté) — plus jamais « Rendre A chez Mangeclous,
+  -- vol aller-retour, Rendre B chez Mangeclous »
+  ord = N.SameNpc(nodes, ord, worldDist, cap - 2, logCount)
+  -- (5.1 ROUTE6) la raison DITE quand une prise / remise à portée de main n'est pas l'arrêt 1 (journal plein, chrono)
+  self.firstWhy = N.FirstWhy(nodes, ord, start, worldDist, timers, cap - 2, logCount)
   -- (QUESTQA) journal plein : les quêtes à prendre attendent (dit une fois, en clair, dans la vue du trajet)
   local picks = 0
   for _, r in ipairs(requests) do if r.steps[1] and r.steps[1].k == "pick" then picks = picks + 1 end end
@@ -1705,6 +1865,8 @@ function Z:BuildRoute(P, yieldFn, depth)
     if nd.x then prevNd = nd end
   end
   self.lastKeys, self.kept = keys, kept
+  S.lastOrd = {}
+  for _, i in ipairs(ord) do if i <= S.n0 then S.lastOrd[#S.lastOrd + 1] = i end end
   -- « Autres zones : 10 quêtes (Les Tarides, Mille pointes…) » : quêtes du journal laissées hors du trajet par la
   -- zone (une remise prise en chemin n'en fait plus partie)
   if masked.zone and next(onWay) then
@@ -1739,7 +1901,7 @@ function Z:BuildRoute(P, yieldFn, depth)
       local bestC = huge
       for k = 1, #pts do
         local a, b = pts[k], pts[k + 1]
-        local c = leg(a, turn) + (b and (leg(turn, b) - leg(a, b)) or 0)
+        local c = mleg(a, turn) + (b and (mleg(turn, b) - mleg(a, b)) or 0)
         if c < bestC then bestC = c end
         if yieldFn then yieldFn() end
       end
@@ -1778,6 +1940,59 @@ function Z:BuildRoute(P, yieldFn, depth)
   end
   route.verdict, route.reasons = v, why and { why } or {}
   if Rt and Rt.selection then Rt.selection.zone = (A.mode ~= "continent") and zoneLabel or nil end
+  return route, exp
+end
+
+-- (5.1 ROUTE6, audit B1) le MÊME trajet, ré-ordonné depuis la position du joueur. Appelé par le Planner (tâche découpée,
+-- hors combat) quand il a bougé d'environ 150 m par rapport au point du dernier calcul, quand il se tient sur un arrêt qui
+-- n'est pas l'arrêt 1, après une mort / un atterrissage. → trajet (mêmes arrêts, nouvel ordre) ou nil (rien à refaire).
+-- Peu coûteux : n trajets depuis le joueur + le solveur ; sauté quand l'arrêt 1 est déjà le plus proche des arrêts
+-- faisables (il y va) et que le dernier calcul a moins de Z.REORDER_KEEP_S secondes.
+Z.REORDER_KEEP_S = 60
+function Z:CanReorder()
+  local S = self._S
+  return (S and S.nodes and S.lastOrd and #S.lastOrd > 0 and self:IsEnabled()) and true or false
+end
+function Z:Reorder(P, yieldFn, force)
+  local S = self._S
+  if not (S and S.P == P and S.lastOrd and #S.lastOrd > 0) then return nil end
+  local clock = G("debugprofilestop")
+  local t0 = clock and tonumber(try(clock)) or 0
+  local tnow = tonumber(try(G("GetTime"))) or 0
+  if not force and tnow - (self.reorderAt or -1e9) < Z.REORDER_KEEP_S then
+    local m, x, y
+    if Geo.Player then m, x, y = Geo.Player() end
+    local start = (m and x) and { map = m, x = x, y = y } or nil
+    local f = S.nodes[S.lastOrd[1]]
+    local d1 = start and f and f.x and worldDist(start, f)
+    if d1 then
+      local nearer = false
+      local head = { 0 }
+      for k = 2, #S.lastOrd do
+        local nd = S.nodes[S.lastOrd[k]]
+        local d = nd.x and worldDist(start, nd)
+        if d and d < d1 - 30 then
+          head[1] = S.lastOrd[k]
+          if N.Valid(S.nodes, head) then                -- faisable tout de suite (rien ne doit le précéder… dans ce test simple)
+            local ok = true
+            for q, r in pairs(nd.qs) do
+              for _, j in ipairs(S.lastOrd) do
+                local r2 = j ~= S.lastOrd[k] and S.nodes[j].qs[q]
+                if r2 and r2 < r then ok = false break end
+              end
+              if not ok then break end
+            end
+            if ok then nearer = true break end
+          end
+        end
+      end
+      if not nearer then self.lastStart = start return nil end
+    end
+  end
+  self.reorderAt = tnow
+  local route, exp = self:Order(S, yieldFn, true)
+  self.reorders = (self.reorders or 0) + 1
+  self.reorderMs = (clock and tonumber(try(clock)) or 0) - t0   -- durée murale du travail (tranches comprises)
   return route, exp
 end
 
@@ -1918,7 +2133,7 @@ function Z:SetMode(mode, map)
     if not next(ch.zones) then ch.mode = "auto" end
   elseif mode == "continent" then ch.mode = "continent"
   else ch.mode, ch.zones = "auto", {} end
-  if T.Export and T.Export.Dirty then pcall(T.Export.Dirty, T.Export) end   -- quêtes à prendre dans la nouvelle zone
+  if T.Export and T.Export.Dirty then pcall(T.Export.Dirty, T.Export, true) end   -- quêtes à prendre dans la nouvelle zone
   self:Bump()
 end
 -- (ZONEFIX) choisir UNE zone d'un clic (liste « Zones à faire ») : elle seule, tout de suite (le menu, lui, coche
@@ -1936,7 +2151,7 @@ function Z:PickZone(map, by)
   ch.choice = (tonumber(ch.choice) or 0) + 1               -- (4.3.5 PICKFIX) un numéro par choix (retour auto : une fois)
   ch.mode, ch.zones = "zones", { [map] = true }
   self.lastKeys, self._lastAllowed = nil, nil
-  if T.Export and T.Export.Dirty then pcall(T.Export.Dirty, T.Export) end
+  if T.Export and T.Export.Dirty then pcall(T.Export.Dirty, T.Export, true) end
   self:Bump()
   return true
 end
@@ -2353,6 +2568,11 @@ function Z:StopEntries(s)
   end
   if s and s.map and s.x and P and P.Navigate then out[#out + 1] = { text = "Guider vers cet arrêt", fn = function() P:Navigate(s) end } end
   out[#out + 1] = { text = "Recalculer le trajet", fn = function() Z:Recalc() end }
+  -- (5.1 ROUTE6, audit D5) « des fois tu conseilles mal » : un clic note l'arrêt, ta position et les raisons du calcul
+  local NTr = T.NavTrace
+  if NTr and NTr.BadAdvice then
+    out[#out + 1] = { text = "Mauvais conseil (noter pour le rapport)", fn = function() NTr.BadAdvice(s) end }
+  end
   return out
 end
 function Z:StopMenu(s) return self:ShowMenu(self:StopEntries(s), "stop") end
@@ -2429,6 +2649,41 @@ function Z:HeadLines()
   if not file then
     local ol = self:OthersLine()
     if ol then out[#out + 1] = ol end
+  end
+  -- (5.1 ROUTE6, audit B4) ce qui est tenu hors du trajet se LIT et se remet d'un clic
+  local dl = QBm and QBm.DismissedLine and QBm.IsEnabled and QBm:IsEnabled() and select(2, pcall(QBm.DismissedLine)) or nil
+  if type(dl) == "table" then out[#out + 1] = dl end
+  -- (5.1 ROUTE6, audit D4) un point de vol que le JEU a montré « à découvrir » (carte des vols ouverte un jour), tout près
+  -- de toi ou d'un arrêt du trajet : dit, avec son clic — jamais un point supposé inconnu
+  local Rf = T.Route
+  local fp = Rf and Rf.UnknownTaxiNear and Rf.IsEnabled and Rf:IsEnabled() and select(2, pcall(Rf.UnknownTaxiNear)) or nil
+  if type(fp) == "table" and fp.name then
+    out[#out + 1] = { text = fmt("Point de vol à découvrir : %s — à %s %s", cut(fp.name, 26), fp.distText, fp.ofText), prio = 1,
+      id = "zone:taxi", onClick = function() Rf.GoTaxi(fp) end,
+      tooltip = "Le jeu le montre « non découvert » sur la carte des vols. Le prendre en passant ouvre les vols depuis ici.\nClic : la boussole y va" }
+  end
+  -- (5.1 ROUTE6, audit B3) là où tu es mort deux fois : dit, et l'arrêt est repoussé dans l'ordre (coût en plus)
+  local NTd = T.NavTime
+  if NTd and NTd.DangerAtMap and P and P.steps and NTd.char and type(NTd.char.deaths) == "table" and next(NTd.char.deaths) then
+    local seen = 0
+    for i = P.cursor or 1, #P.steps do
+      local s2 = P.steps[i]
+      if not s2._done and not s2._other and s2.x then
+        seen = seen + 1
+        local nd = NTd.DangerAtMap(s2)
+        if nd then
+          out[#out + 1] = { text = fmt("Zone dangereuse : tu es mort %d fois près de %s", nd, cut(P:StepLabel(s2), 34)), prio = 2,
+            id = "zone:danger", tooltip = "Cet arrêt est repoussé dans l'ordre du trajet (les trajets qui passent là comptent "
+              .. tostring(NTd.DANGER_S) .. " s de plus).\nIl redevient normal quand tu as pris 3 niveaux." }
+          break
+        end
+        if seen >= 8 then break end
+      end
+    end
+  end
+  if self.firstWhy then                                -- (5.1 ROUTE6, audit B1) pourquoi l'arrêt 1 n'est pas ce qui est à côté
+    out[#out + 1] = { text = "Arrêt 1 : " .. self.firstWhy, prio = 1, id = "zone:firstwhy",
+      tooltip = "Une prise / remise est à portée de main mais ne passe pas en tête : " .. self.firstWhy }
   end
   local lf = self.logFull
   if file and P.logFullSkipped then          -- plan de l'appli : « Prendre » masqués faute de place
@@ -2510,6 +2765,16 @@ if T.On then
     if db.enabled == false and not refused and T.ModuleProfile and T:ModuleProfile() == "sur" and T.SetModuleEnabled then
       T:SetModuleEnabled("ZonePlan", true)
     end
+  end)
+end
+-- (5.1 ROUTE6, audit B11) une fois chez tout le monde : le suivi auto par zone (coché d'office jusqu'en 5.0) est décoché ;
+-- qui le veut le recoche (le choix fait ensuite est gardé)
+if T.On then
+  T:On("READY", "ZonePlan:watch51", function()
+    local db = Z.db
+    if type(db) ~= "table" or db.watchV == 1 then return end
+    db.watchV = 1
+    db.autoWatch = false
   end)
 end
 function Z:OnEnable()

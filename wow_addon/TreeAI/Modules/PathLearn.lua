@@ -15,6 +15,10 @@ local tonumber = function(v) return _G.tonumber(v) end
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 
+-- (5.1 ROUTE6, audit B3) dans le profil par défaut : ce module n'a ni cadre ni fonction protégée ; il range une position
+-- par seconde SEULEMENT quand tu bouges (échantillon de NavTime), et ses requêtes sont mémorisées (PL.QUERY_S). Coût
+-- mesuré : voir research/route6.md. Sans lui, « le plus court chemin » n'était qu'une ligne droite × un facteur de zone.
+if type(T.SAFE_MODULES) == "table" then T.SAFE_MODULES.PathLearn = true end
 local PL = T:RegisterModule("PathLearn", {
   title = "Chemins appris",
   description = "Le trajet suit les chemins que tu as vraiment parcourus (rampes, virages, relief).",
@@ -165,10 +169,26 @@ end
 local function walked(m, k) return (m.w[k] or 0) >= MIN_WALKED end
 -- case parcourue la plus proche de (n, w), à moins de NEAR_YD → clé, distance ; mémorisée par case (au centre de la case)
 -- tant que rien de neuf n'est appris (le trajet en demande des centaines par calcul)
+-- (5.1 ROUTE6) les REQUÊTES suivent ce qui est appris au plus une fois toutes les PL.QUERY_S secondes : en terrain neuf une
+-- case s'apprend toutes les ~3 s, et chaque case vidait les mémos (case la plus proche, A*) — le trajet refaisait alors tous
+-- ses chemins à chaque rafraîchissement. Après une pause (≥ QUERY_S sans requête neuve) la première requête est à jour.
+PL.QUERY_S = 30
+local qRev, qAt = -1, -1e9
+local function queryRev()
+  if qRev ~= PL.rev then
+    local t = tonumber(try(G("GetTime"))) or 0
+    if qRev < 0 or t - qAt >= PL.QUERY_S then qRev, qAt = PL.rev, t end
+  end
+  return qRev
+end
+PL.QueryRev = queryRev
+--- (tests, « Réinitialiser ») ce qui vient d'être appris sert tout de suite
+function PL.Sync() qRev, qAt = PL.rev, tonumber(try(G("GetTime"))) or 0 return qRev end
 local nearMemo, nearRev = {}, -1
 local function nearest(m, n, w)
   local cx, cy = cellOf(n, w)
-  if nearRev ~= PL.rev then nearMemo, nearRev = {}, PL.rev end
+  local qr = queryRev()
+  if nearRev ~= qr then nearMemo, nearRev = {}, qr end
   local mk = key(cx, cy)
   local hit = nearMemo[mk]
   if hit ~= nil then return hit or nil end
@@ -275,7 +295,8 @@ local function solve(a, b)
   local ka = nearest(m, a.n, a.w)
   local kb = ka and nearest(m, b.n, b.w)
   if not (ka and kb) then return nil end
-  if memoRev ~= PL.rev then memo, memoRev = {}, PL.rev end
+  local qr = queryRev()
+  if memoRev ~= qr then memo, memoRev = {}, qr end
   local mk = ka .. ">" .. kb
   local r = memo[mk]
   if r == nil then
@@ -347,8 +368,22 @@ function PL.Waypoint(a, b)
   return pick, diff
 end
 function PL.Count(c) local m = store(c) return m and m.n or 0 end
-function PL.Reset() local db = store() if db then db.maps = {} end last = {} PL.rev = PL.rev + 1 end
+function PL.Reset() local db = store() if db then db.maps = {} end last = {} PL.rev = PL.rev + 1 PL.Sync() end
 
+-- une fois : qui est resté en mode sûr (où ce module était coupé d'office) le reçoit allumé ; un « coupé » choisi par le
+-- joueur (db.modChoice du cœur) n'est jamais défait
+if T.On then
+  T:On("READY", "PathLearn:safe51", function()
+    local db = PL.db
+    if type(db) ~= "table" or db.safeV then return end
+    db.safeV = 1
+    local mc = type(T.db) == "table" and T.db.modChoice
+    local refused = type(mc) == "table" and mc.PathLearn == false
+    if db.enabled == false and not refused and T.ModuleProfile and T:ModuleProfile() == "sur" and T.SetModuleEnabled then
+      T:SetModuleEnabled("PathLearn", true)
+    end
+  end)
+end
 function PL:OnEnable()
   store()
   self:RegisterEvent("PLAYER_ENTERING_WORLD", function() last = {} end)

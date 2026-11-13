@@ -381,6 +381,60 @@ end
 
 -- ------------------------------------------------------------------ source de données Questie (lecture seule)
 -- Adapter: Q(id, key), N(id, key), O(id, key), I(id, key), ids() -> list, map(areaId) -> uiMapID, src
+-- (5.1 ROUTE6, audit B8) UN SEUL traducteur « zone de Questie (AreaTable) → carte du jeu (uiMapID) », pour l'export, la
+-- boussole, le marchand d'un objet de quête, les services, les métiers. Avant : l'export lisait la table privée de la
+-- bibliothèque QuestieDB, la boussole la méthode de l'addon Questie — avec une seule des deux, « Achète X » perdait son
+-- marchand (« Ramasse » sans lieu). Ordre : méthode de Questie (ZoneDB:GetUiMapIdByAreaId), table de la bibliothèque
+-- (Support.Get("ZoneDB").private.areaIdToUiMapId : table, ou chaîne Lua chargée une fois), table privée de l'addon.
+-- Une zone inconnue est redemandée après 60 s (Questie finit de charger après la connexion).
+local area = { memo = {}, miss = {} }
+local function areaTable(zdb)
+  local s = type(zdb) == "table" and type(rawget(zdb, "private")) == "table" and zdb.private.areaIdToUiMapId or nil
+  if type(s) == "string" then
+    local ls = G("loadstring")
+    local f = ls and ls(s)
+    s = f and try(f) or nil
+  end
+  return type(s) == "table" and s or nil
+end
+function X.AreaToMap(areaId)
+  areaId = tonumber(areaId)
+  if not areaId then return nil end
+  local lib, QL = G("LibQuestieDB"), G("QuestieLoader")
+  if area.lib ~= lib or area.ql ~= QL then area = { memo = {}, miss = {}, lib = lib, ql = QL } end
+  local v = area.memo[areaId]
+  if v then return v end
+  local t = now()
+  if area.miss[areaId] and t - area.miss[areaId] < 60 then return nil end
+  local mods = type(QL) == "table" and rawget(QL, "_modules") or nil
+  local zdb = type(mods) == "table" and rawget(mods, "ZoneDB") or nil
+  local id
+  if type(zdb) == "table" and type(zdb.GetUiMapIdByAreaId) == "function" then
+    id = tonumber((try(zdb.GetUiMapIdByAreaId, zdb, areaId)))
+    if id and id <= 0 then id = nil end
+  end
+  if not id and type(lib) == "table" and type(lib.Support) == "table" then
+    if area.libT == nil then area.libT = areaTable(try(lib.Support.Get, "ZoneDB")) or false end
+    id = area.libT and tonumber(area.libT[areaId]) or nil
+  end
+  if not id and zdb then
+    if area.qlT == nil then area.qlT = areaTable(zdb) or false end
+    id = area.qlT and tonumber(area.qlT[areaId]) or nil
+  end
+  if id then area.memo[areaId] = id else area.miss[areaId] = t end
+  return id
+end
+--- (sonde du rapport d'erreurs) quelles tables de Questie répondent sur ce client → texte court
+function X.AreaSources()
+  local lib, QL = G("LibQuestieDB"), G("QuestieLoader")
+  local mods = type(QL) == "table" and rawget(QL, "_modules") or nil
+  local zdb = type(mods) == "table" and rawget(mods, "ZoneDB") or nil
+  local libZ = type(lib) == "table" and type(lib.Support) == "table" and try(lib.Support.Get, "ZoneDB") or nil
+  return ("Questie : méthode ZoneDB %s · table de la bibliothèque %s · table de l'addon %s"):format(
+    (type(zdb) == "table" and type(zdb.GetUiMapIdByAreaId) == "function") and "oui" or "non",
+    areaTable(libZ) and "oui" or "non", areaTable(zdb) and "oui" or "non")
+end
+
 local function libDB()
   local lib = G("LibQuestieDB")
   if type(lib) ~= "table" or type(lib.RequireContract) ~= "function" then return nil end
@@ -393,21 +447,7 @@ local function libDB()
     if memo then return memo end   -- (5.0 STABLE) une lecture par (id, champ), partagée avec la boussole
     return function(id, key) if type(E) == "table" then return try(E.Get, id, key) end end
   end
-  local area2map
-  local function map(areaId)
-    if area2map == nil then
-      area2map = false
-      local zdb = lib.Support and try(lib.Support.Get, "ZoneDB")
-      local s = type(zdb) == "table" and type(zdb.private) == "table" and zdb.private.areaIdToUiMapId
-      if type(s) == "string" then
-        local ls = G("loadstring")
-        local f = ls and ls(s)
-        local t = f and try(f)
-        if type(t) == "table" then area2map = t end
-      elseif type(s) == "table" then area2map = s end
-    end
-    return area2map and tonumber(area2map[areaId]) or nil
-  end
+  local map = X.AreaToMap                            -- (5.1 ROUTE6) le traducteur commun
   local xpdb
   local function qxp(id)
     if xpdb == nil then
@@ -457,9 +497,7 @@ local function legacyDB()
       tsort(out)
       return out
     end,
-    map = function(areaId)
-      if type(zdb) == "table" and type(zdb.GetUiMapIdByAreaId) == "function" then return tonumber((try(zdb.GetUiMapIdByAreaId, zdb, areaId))) end
-    end,
+    map = X.AreaToMap,                               -- (5.1 ROUTE6) le traducteur commun
     dungeon = function(areaId)
       return type(zdb) == "table" and type(zdb.IsDungeonZone) == "function" and try(zdb.IsDungeonZone, areaId) and true or false
     end,
@@ -845,6 +883,14 @@ local function questRecord(db, id, lq, st, maps, budget)
           if db.drop then local p = tonumber(db.drop(o.id, drops[1])) if p and p > 0 then o.p = r1(p) / 100 end end
         elseif type(odrops) == "table" and #odrops > 0 then
           for i = 1, min(#odrops, 4) do spawnsOf[#spawnsOf + 1] = { "obj", odrops[i] } end
+        else
+          -- (5.1 ROUTE6, audit B8) ni monstre ni objet du monde ne le donne, des marchands le vendent (base d'objets de
+          -- Questie) : c'est un objet À ACHETER — dit tel quel même quand aucun marchand n'a de lieu connu
+          local vend = db.I(o.id, "vendors")
+          if type(vend) == "table" and #vend > 0 then
+            o.vend = {}
+            for i = 1, min(#vend, 4) do o.vend[i] = tonumber(vend[i]) end
+          end
         end
         local fl = tonumber(db.I(o.id, "flags")) or 0
         if floor(fl / 2048) % 2 == 1 then o.plf = 1 end
@@ -1093,6 +1139,28 @@ function X:Build(yieldFn)
   return exp, track, ok
 end
 
+-- (5.1 ROUTE6) empreinte du contenu utile au trajet : id, état, niveau, donneur / receveur (lieu), objectifs (lieu, nombre),
+-- amis qui l'ont — jamais les compteurs 3/8 (ils ne changent pas l'ordre). Un nombre, sans chaîne construite par quête.
+X.rev = 0
+local ST = { avail = 1, log = 2, done = 3 }
+function X.ContentHash(exp)
+  local h, n = 5381, 0
+  local function mix(v) h = (h * 33 + (tonumber(v) or 0)) % 2147483647 end
+  local function pos(p)
+    if type(p) == "table" and p.x then mix(p.map) mix(floor((tonumber(p.x) or 0) * 10)) mix(floor((tonumber(p.y) or 0) * 10)) else mix(7) end
+  end
+  for _, q in ipairs(type(exp) == "table" and exp.quests or {}) do
+    n = n + 1
+    mix(q.id) mix(ST[q.st or ""] or 9) mix(q.lv) mix(q.done) mix(q.zone)
+    pos(q.s) pos(q.f)
+    for _, o in ipairs(q.o or {}) do pos(o) mix(o.n) mix(o.id) end
+    mix(type(q.who) == "table" and #q.who or 0)
+    mix((q.pre and 3 or 0) + (q.preAny and 5 or 0))
+  end
+  mix(n)
+  return h
+end
+
 -- store: TreeAIDB.export (the in-memory copy keeps a non-saved index for drop learning)
 function X:Store(exp, track)
   local db = G("TreeAIDB")
@@ -1100,6 +1168,11 @@ function X:Store(exp, track)
   db.export = exp
   self.data = { export = exp, _itemNpcs = track or {} }
   self.builtAt = now()
+  -- (5.1 ROUTE6, audit B2) révision : avance quand les fiches de quêtes ont VRAIMENT changé (quêtes, état, PNJ, lieux,
+  -- groupe) — le Planner la met dans sa signature, le trajet suit les nouvelles données sans « Recalculer » ; un export
+  -- identique (changement de zone sans rien de neuf) ne refait rien
+  local h = X.ContentHash(exp)
+  if h ~= self._hash then self._hash, self.rev = h, (self.rev or 0) + 1 end
   T:Fire("EXPORT_UPDATED", exp)
 end
 function X:Data() return self.data and self.data.export or (type(G("TreeAIDB")) == "table" and G("TreeAIDB").export) or nil end
@@ -1136,10 +1209,20 @@ function X:Rebuild()
   if driver then driver:Show() else while co do resume() end end
   return true
 end
-function X:Dirty()
+--- soon = true (5.1 ROUTE6, audit B2) : un choix du joueur (zone, mode) — les données suivent en moins d'une seconde,
+--- sans attendre les 5 s qui regroupent les évènements du jeu
+function X:Dirty(soon)
   self.dirty = true
   if not (T.RunOutOfCombat and T.After) then return end
-  if self._pending then return end
+  if soon == true and not self._soon then
+    self._soon = true
+    T:After(0.3, function()
+      self._soon = false
+      T:RunOutOfCombat("Export:rebuild", function() X:Rebuild() end)
+    end)
+    return
+  end
+  if self._pending or self._soon then return end
   self._pending = true
   T:After(5, function()
     self._pending = false

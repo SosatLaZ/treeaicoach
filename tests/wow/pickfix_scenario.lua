@@ -92,18 +92,18 @@ return function(M, ctx)
   M.player.level = 25
   check(not QB.Phantom(9102), "B: next level → tried again")
   M.player.level = 24
-  -- reached twice (≤ 10 m, NPC targeted) and left without it → phantom
+  -- (5.1 ROUTE6, audit B4) reached (NPC targeted) and left without it, as often as he likes: NEVER a phantom from a
+  -- walk-past (5.0.0 removed the quest at the 2nd one) ; the absent-giver question is tests/wow/route6_phantom_scenario.lua
   QB.char.phantom, QB.char.visits, QB._visit = {}, {}, {}
   route({ { k = "pick", q = 9201, map = 1440, x = 40, y = 40 }, { k = "obj", q = 9201, o = 1, map = 1440, x = 60, y = 60 } })
-  for visit = 1, 2 do
+  for _ = 1, 3 do
     goTo(40, 40) QB.VisitTick()
     goTo(46, 46) QB.VisitTick()
-    if visit == 1 then
-      P:Evaluate()
-      check(not QB.Phantom(9201) and not find("pick", 9201)._done and not find("pick", 9201)._other, "B: left once without it → the stop stays")
-    end
+    P:Evaluate()
+    check(not QB.Phantom(9201) and not find("pick", 9201)._done and not find("pick", 9201)._other, "B: left without it → the stop stays")
   end
-  check(QB.Phantom(9201) and QB.Phantom(9201).why:find("2 fois", 1, true), "B: giver reached twice without offering → « pas proposée »")
+  check(not QB.Phantom(9201), "B: giver reached three times and left → nothing is removed by a walk-past")
+  check(QB.MarkPhantom(9201, "PNJ absent : test", "t", "player") and QB.Phantom(9201), "B: dismissed by the player (« Pas là »)")
   M.FireEvent("QUEST_ACCEPTED", 1, 9201)
   check(not QB.Phantom(9201), "B: QUEST_ACCEPTED clears it")
   M.units.npc = nil

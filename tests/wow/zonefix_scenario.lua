@@ -507,8 +507,13 @@ return function(M, ctx)
   replan()
 
   -- ================================================================== H. the game's tracker = the route's quests, in order
-  local AW = Z.AutoWatchOn and Z:AutoWatchOn()
-  check(AW, "H: « Suivi auto par zone » on by default (mode sûr)")
+  -- (5.1 ROUTE6, audit B11) off by default: TreeAI leaves the game's watch list alone until the player ticks the option
+  check(Z.AutoWatchOn and not Z:AutoWatchOn(), "H: « Suivi auto par zone » is OFF by default")
+  M.Advance(6, 0.5)
+  check(#M.watchLog == 0, "H: by default TreeAI adds / removes nothing in the game's watch list (" .. #M.watchLog .. " changes)")
+  M.Hw(function() T:UserAction(function() Z:SetAutoWatch(true) end) end)   -- the player's explicit opt-in
+  local AW = Z:AutoWatchOn()
+  check(AW, "H: option ticked by the player → on")
   M.Advance(4, 0.5)
   local ws = watchedSet()
   local want = Z:WatchWanted(X.LogSnapshot()) or {}

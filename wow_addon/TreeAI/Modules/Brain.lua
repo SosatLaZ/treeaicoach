@@ -1310,11 +1310,20 @@ function B.UpdateNotice()
     local nx = nextStepLabel()
     if nx then cand = { "En vol : à l'arrivée, " .. cut(nx, 40), "le trajet reprend à l'atterrissage", 1, "always" } end
   elseif c.main == "city" and S.errandText and S.errandText ~= "" and opt("errands") then
-    cand = { "Courses ici : " .. cut(S.errandText, 40), "clic : la boussole vise le PNJ le plus proche", 1, nil, cityClick }
+    -- (5.1 ROUTE6, audit B12) l'aide en ville ARRIVE À L'ÉCRAN : en entrant dans une ville avec des courses à faire, la
+    -- ligne passe une fois par visite par l'encadré (priorité 3, sans son, 40 s) avec son clic « le PNJ le plus proche » ;
+    -- ensuite elle reste dans « Maintenant » (priorité 1). Avant : priorité 1 seulement, jamais vue fenêtre fermée.
+    local first = S.cityShown ~= c.map
+    if first then S.cityShown, S.cityUntil = c.map, now() + 40 due("notice", 41) end
+    local loud = S.cityUntil and now() < S.cityUntil
+    cand = { "Ici : " .. cut(S.errandText, 40) .. " — clic : le PNJ le plus proche", "clic : la boussole vise le PNJ le plus proche",
+      loud and 3 or 1, nil, cityClick }
   elseif S.hearth and not noGuide then
     cand = { fmt("Pierre de foyer : %s à rendre à %s", plural(S.hearth.turns, "quête", "quêtes"), S.hearth.name),
       fmt("≈ %d min gagnées · plus rien d'autre ici", floor((S.hearth.gain or 0) / 60 + 0.5)), 1 }
   end
+  -- sorti de la ville : la prochaine entrée redira la ligne
+  if S.cityShown and not (c.map and (B.CITY[c.map] or B.CITY[zoneOf(c.map)])) then S.cityShown, S.cityUntil = nil, nil end
   if not (cand and B._active) then
     if S.notice then S.notice = nil B:Clear(NOTICE) end
     if Wn and type(Wn.CARD_NOTICE) == "table" then Wn.CARD_NOTICE["Brain:" .. NOTICE] = nil end
@@ -1324,7 +1333,7 @@ function B.UpdateNotice()
   if S.notice == key then return end
   S.notice = key
   if Wn and type(Wn.CARD_NOTICE) == "table" then Wn.CARD_NOTICE["Brain:" .. NOTICE] = { cand[1], cand[2] } end
-  B:Suggest(NOTICE, cand[1], cand[3], { ttl = 0, sound = false, cooldown = 0, kind = cand[4], tab = "now",
+  B:Suggest(NOTICE, cand[1], cand[3], { ttl = 0, sound = false, cooldown = 0, kind = cand[4], tab = "now", topic = cand[3] == 3 and "city" or nil,
     onClick = cand[5] or openPage, tooltip = { "Pilote auto : " .. tostring(cand[2]),
       cand[5] and "Pourquoi, annuler : la page « Pilote auto » (pastille de la minimap)" or "Clic : la page « Pilote auto » (pourquoi, annuler)" } })
   -- la carte se redessine à l'image suivante (clé remise à zéro : le texte de l'avis a changé)

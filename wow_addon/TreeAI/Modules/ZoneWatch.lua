@@ -24,7 +24,10 @@ local function C(ns, fn) local t = G(ns) return type(t) == "table" and t[fn] or 
 local function ns(v) local f = G("issecretvalue") if f and f(v) then return nil end return v end
 local function now() return tonumber(try(G("GetTime"))) or 0 end
 local function inCombat() return T.InCombat and T:InCombat() or false end
-local function on() return Z:IsEnabled() and Z.db and Z.db.autoWatch ~= false end
+-- (5.1 ROUTE6, audit B11) le suivi du jeu appartient au joueur : TreeAI n'y ajoute ni n'y retire RIEN par défaut. Le suivi
+-- auto par zone est une option à cocher soi-même (Trajet → « Suivi du jeu », ou la pastille) — coupée d'office, et
+-- remise à « non » une fois chez tout le monde (elle était cochée sans avoir été demandée).
+local function on() return Z:IsEnabled() and Z.db and Z.db.autoWatch == true end
 
 Z.WATCH_GAP = 2                 -- s entre deux passages
 Z.AUTO_WINDOW = 1.5             -- s : un changement du suivi aussi près d'une prise / d'un objectif = le jeu lui-même
@@ -178,7 +181,7 @@ local hubEntry = { group = "reglages", id = "suiviauto", icon = "Interface\\Icon
   tip = "Clic : le suivi du jeu montre (ou non) les quêtes de ta zone, dans l'ordre du trajet ; tes choix à la main restent",
   fn = function() Z:SetAutoWatch(not Z:AutoWatchOn()) end }
 function Z:WatchHub()
-  hubEntry.title = fmt("Suivi auto par zone : %s", (self.db and self.db.autoWatch ~= false) and "oui" or "non")
+  hubEntry.title = fmt("Suivi auto par zone : %s", (self.db and self.db.autoWatch == true) and "oui" or "non")
   T.HUB_EXTRA = type(T.HUB_EXTRA) == "table" and T.HUB_EXTRA or {}
   for _, e in ipairs(T.HUB_EXTRA) do if e == hubEntry then return end end
   T.HUB_EXTRA[#T.HUB_EXTRA + 1] = hubEntry

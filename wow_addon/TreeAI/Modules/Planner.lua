@@ -705,6 +705,7 @@ end
 -- boussole, page Trajet et suivi le disent ensemble. Une remise seulement d'une quête finie ; une prise seulement s'il
 -- reste de la place dans le journal. Hors combat, jamais pendant un calcul.
 P.QUICK_YD = 110
+P.HERE_YD = 80
 local function timed(q)                              -- chrono en cours sur cette quête ? (elle seule est lue)
   q = tonumber(q)
   local Qm = T.modules and T.modules.Quests
@@ -718,7 +719,8 @@ local function timed(q)                              -- chrono en cours sur cett
   return false
 end
 function P:QuickWin()
-  if inCombat() or co or not (self.steps and self.cursor) then return false end
+  -- (5.1 ROUTE6) « co » était lu ici avant sa déclaration (une globale, toujours nil) : la tâche en cours est demandée
+  if inCombat() or self:Busy() or not (self.steps and self.cursor) then return false end
   local steps, cur, log = self.steps, self.cursor, self.log or {}
   local first = steps[cur]
   if not first or first._quick then return false end
@@ -731,6 +733,27 @@ function P:QuickWin()
   local nlog = 0
   for _ in pairs(log) do nlog = nlog + 1 end
   local cap = tonumber((try(C("C_QuestLog", "GetMaxNumQuestsCanAccept")))) or 20
+  -- (5.1 ROUTE6) il se tient SUR un objectif faisable (sa quête dans le journal) qui n'est pas l'arrêt 1, et l'arrêt 1 est
+  -- plus loin : l'ordre est refait depuis ici
+  if self:CanReorder() and first.x then
+    local d0 = Geo.Dist(map, x, y, first.map, first.x, first.y)
+    if d0 and d0 > P.HERE_YD then
+      for i = cur + 1, min(#steps, cur + 60) do
+        local s = steps[i]
+        local q = tonumber(s.q)
+        if q and s.k == "obj" and s.x and not s._done and not s._other and log[q] and log[q].done ~= 1 then
+          local d = Geo.Dist(map, x, y, s.map, s.x, s.y)
+          if d and d <= P.HERE_YD then
+            local key = stepKeyOf(s)
+            if self._hereTried == key and now() - (self._hereAt or 0) < 60 then break end
+            if timed(first.q) then break end
+            self._hereTried, self._hereAt = key, now()
+            return self:Reorder("objectif sur place", true)
+          end
+        end
+      end
+    end
+  end
   for i = cur + 1, min(#steps, cur + 60) do
     local s = steps[i]
     local q = tonumber(s.q)
@@ -739,6 +762,14 @@ function P:QuickWin()
       local d = ok and Geo.Dist(map, x, y, s.map, s.x, s.y)
       if d and d <= P.QUICK_YD then
         if timed(first.q) then return false end      -- une quête chronométrée en cours reste devant (QA-QUEST F2)
+        -- (5.1 ROUTE6, audit B1) trajet de zone : l'ordre ENTIER est refait depuis ici (tous les arrêts de ce PNJ ensemble,
+        -- la suite rejugée) — avant, ce seul arrêt passait devant et son PNJ revenait plus loin dans le trajet
+        if self:CanReorder() then
+          local key = stepKeyOf(s)
+          if self._hereTried == key and now() - (self._hereAt or 0) < 60 then return false end
+          self._hereTried, self._hereAt = key, now()
+          return self:Reorder("arrêt à côté", true)
+        end
         tremove(steps, i)
         tinsert(steps, cur, s)
         s._quick = true
@@ -805,6 +836,8 @@ local EXP_VERB = { kill = "Tue", item = "Ramasse", obj = "Utilise", explore = "E
 function P:StepLabel(s)
   local q = s.q
   local buy = s.buy                                  -- (4.2 ROUTE42) objet à acheter chez un marchand : « Achète « X » »
+  local s0 = s
+  local buySuffix = (buy and type(s.vendorName) == "string" and s.vendorName ~= "") and (" chez " .. cut(s.vendorName, 24)) or ""
   -- (QUESTQA) objectif d'une quête du journal : toujours NOTRE libellé (verbe + nom, lu dans le journal), même
   -- quand le plan de l'appli en apporte un (« Fiole d'eau forte remplie » → « Ramasse « Fiole d'eau forte remplie » »)
   if s.k == "obj" and q and self.log and self.log[q] and self.log[q].obj[tonumber(s.o) or 0] then s = { k = "obj", q = q, o = s.o }
@@ -820,6 +853,9 @@ function P:StepLabel(s)
       local verb = buy and "Achète" or OBJ_VERB[o.type or ""] or "Fais"
       if o.type == "monster" then name = name:gsub("%s+tuée?s?$", "") end
       if name == "" then name = questTitle(q) end
+      -- (5.1 ROUTE6, audit B8) où l'acheter : le marchand visé (l'arrêt est chez lui) ; lieu inconnu : dit
+      if buy and s0.vendorUnknown then return "« " .. cut(name, 30) .. " » : à acheter (vendeur inconnu)" end
+      if buy then return verb .. " « " .. cut(name, 30) .. " »" .. buySuffix end
       return verb .. " « " .. cut(name, 34) .. " »"
     end
     -- (QUESTQA) quête pas encore prise : le nom de l'objectif d'après l'export (Questie), avec le bon verbe
@@ -830,7 +866,9 @@ function P:StepLabel(s)
     if type(ro) == "table" and type(ro.t) == "string" and ro.t ~= "" then
       local name = T.ObjectiveName and T.ObjectiveName(ro.t) or ro.t
       if ro.k == "kill" then name = name:gsub("%s+tuée?s?$", "") end
-      return (buy and "Achète" or EXP_VERB[ro.k or ""] or "Fais") .. " « " .. cut(name, 34) .. " »"
+      if buy and s0.vendorUnknown then return "« " .. cut(name, 30) .. " » : à acheter (vendeur inconnu)" end
+      if buy then return "Achète « " .. cut(name, 30) .. " »" .. buySuffix end
+      return (EXP_VERB[ro.k or ""] or "Fais") .. " « " .. cut(name, 34) .. " »"
     end
     return "Objectif de « " .. cut(questTitle(q), 30) .. " »"
   end
@@ -937,7 +975,11 @@ function P:QuestSteps(q, rec, lq, ctx)
         -- (QUESTS 4.1) quête pas encore prise : QuestieDB ne donne pas le nombre demandé (« 1 ») → un ordre de grandeur
         -- (8 monstres, 6 objets) plutôt qu'un temps 6 fois trop court
         local need = (lo and lo.n) or o.n
-        if not lo and (tonumber(need) or 1) <= 1 then need = E.DEFAULT_N[o.k or ""] or need end
+        if not lo and (tonumber(need) or 1) <= 1 then
+          -- (5.1 ROUTE6, audit B7) le nombre réel, vu un jour dans un journal (QuestBrain) ; sinon l'ordre de grandeur
+          local QBc = T.QuestBrain
+          need = (QBc and QBc.LearnedCount and QBc.LearnedCount(q, j)) or E.DEFAULT_N[o.k or ""] or need
+        end
         local oo = { k = o.k, n = need, have = (lo and lo.have) or 0, p = (o.id and T.Stats and T.Stats:Drop(o.id)) or (X() and o.id and X():DropRate(o.id)) or o.p,
           plf = o.plf, ml = o.ml, mx = o.mx, rank = o.rank }
         local med = E.ObjMinutes(oo, ctx)
@@ -953,6 +995,11 @@ function P:QuestSteps(q, rec, lq, ctx)
           if type(v) == "table" and v.map and v.x then
             st.map, st.x, st.y, st.buy, st.vendorName = v.map, v.x, v.y, true, v.name
             st.svc, st._pred, st.alt = 20, 20 / 60, nil
+          elseif type(o.vend) == "table" and #o.vend > 0 then
+            -- (5.1 ROUTE6, audit B8) vendu par un marchand (base d'objets de Questie) dont on ne sait pas le lieu :
+            -- c'est dit — « à acheter (vendeur inconnu) » — jamais « Ramasse »
+            st.buy, st.vendorUnknown = true, true
+            st.svc, st._pred = 20, 20 / 60
           end
         end
         if not st.x then place(st, lq and waypoint(q)) end
@@ -1077,6 +1124,94 @@ function P:StartJob(fn)
   if driver then if driver.Show then driver:Show() end else while co do resume() end end
 end
 function P:Busy() return co ~= nil end
+
+-- (5.1 ROUTE6, audit B1) LE TRAJET PART DE LÀ OÙ TU ES. Le trajet de zone est ré-ordonné (mêmes arrêts, petit travail
+-- découpé comme le calcul complet : ≤ 2 ms par tranche, hors combat) quand :
+--   * tu t'es éloigné d'environ 150 m (P.MOVE_YD) du point d'où il a été calculé — à pied, à cheval, après un vol, une
+--     pierre de foyer, une mort (PLAYER_ALIVE / PLAYER_UNGHOST, PLAYER_CONTROL_GAINED : revu 2 s après) ;
+--   * tu te tiens sur une prise / remise / un objectif faisable qui n'est pas l'arrêt 1 (QuickWin).
+-- Un recalcul COMPLET (tri des quêtes) seulement quand la signature a changé (quêtes, niveau, zone, mode, données).
+-- Jamais en vol, mort ou fantôme ; au plus un toutes les P.MOVE_MIN_S secondes ; rien du tout immobile.
+P.MOVE_YD, P.MOVE_MIN_S = 165, 6
+function P:CanReorder()
+  local Zp = T.ZonePlan
+  return (self.src == "auto" and self.steps and Zp and Zp.CanReorder and Zp:IsEnabled() and Zp:CanReorder()) and true or false
+end
+function P:Reorder(why, force)
+  if inCombat() or co or not self:CanReorder() then return false end
+  local Zp = T.ZonePlan
+  self:StartJob(function()
+    local route = Zp:Reorder(P, budgetYield, force)
+    if not route then return end
+    -- chaque suite dans SA propre image (jamais empilée sur la dernière tranche du calcul) : étapes, puis affichage,
+    -- puis boussole / Suivi Forever, puis ceux qui lisent le trajet
+    coroutine.yield()
+    local before = P.steps and P.cursor and P.steps[P.cursor] and stepKeyOf(P.steps[P.cursor]) or nil
+    local order0 = P.steps and E.Hash(P.steps) or nil
+    P.auto = route
+    P.steps, P.key = nil, nil
+    P:EnsureSteps(); P:Evaluate()
+    if order0 and P.steps and E.Hash(P.steps) == order0 then return end   -- même ordre : rien à redessiner
+    P:StepsChanged()
+    coroutine.yield()
+    P._sig, P._lastRender = nil, nil
+    P:Render()
+    local after = P.steps and P.cursor and P.steps[P.cursor] and stepKeyOf(P.steps[P.cursor]) or nil
+    if after ~= before then                              -- l'arrêt 1 a changé : boussole, Suivi Forever, carte, journal
+      coroutine.yield()
+      local Rt = T.Route
+      if Rt and Rt.OnPlanStep then pcall(Rt.OnPlanStep, Rt) end
+      local Cm = T.Compass
+      if Cm and type(Cm.Rebuild) == "function" then pcall(Cm.Rebuild, "plan") end
+      local NTr = T.NavTrace
+      local s1 = P.steps and P.steps[P.cursor or 0]
+      if NTr and NTr.Log then
+        NTr.Log("trajet", fmt("ré-ordonné (%s) : 1er arrêt %s", tostring(why or "déplacement"), s1 and cut(P:StepLabel(s1), 40) or "aucun"))
+      end
+      coroutine.yield()
+      if T.FireSpread then T:FireSpread("PLAN_BUILT") elseif T.Fire then pcall(T.Fire, T, "PLAN_BUILT") end
+    end
+  end)
+  return true
+end
+local function away()                                 -- en vol, mort ou fantôme : la position ne vaut rien pour le trajet
+  if try(G("UnitOnTaxi"), "player") then return true end
+  local ps = T.PlayerState and T:PlayerState()
+  if type(ps) == "table" then return (ps.dead or ps.ghost) and true or false end
+  return try(G("UnitIsDeadOrGhost"), "player") and true or false
+end
+function P:MoveCheck(why, force)
+  if inCombat() or co or self._pending or not self:CanReorder() or away() then return false end
+  local map, x, y = playerPos()
+  if not (map and x) then return false end
+  local Zp = T.ZonePlan
+  local from = Zp.lastStart
+  if from and from.x and not force then
+    local d = Geo.Dist and Geo.Dist(from.map, from.x, from.y, map, x, y)
+    if d and d < P.MOVE_YD then return false end
+  end
+  local t = now()
+  if not force and t - (self._moveAt or -1e9) < P.MOVE_MIN_S then return false end
+  self._moveAt = t
+  -- la signature a changé entre-temps (zone traversée sans évènement, données) : recalcul complet
+  if self._autoSig and P.AutoSig() ~= self._autoSig then
+    self._autoStale = true
+    self:NoteWhy(why or "déplacement")
+    self:Refresh(false)
+    return true
+  end
+  return self:Reorder(why or "déplacement", force)
+end
+function P:MoveSoon(why)
+  if self._moveSoon then return end
+  self._moveSoon = true
+  T:After(2, function()
+    P._moveSoon = false
+    if inCombat() then P._moveLater = why or true return end
+    P:MoveCheck(why, false)
+  end)
+end
+
 
 -- repair: add steps of newly accepted quests, drop abandoned ones, Or-opt the next 20 steps
 function P:Repair(force)
@@ -1584,8 +1719,12 @@ local function logSig(log)
   end
   tsort(ids)
   local Zp = T.ZonePlan                              -- (ZONEPLAN) zone de travail / réglages changés → nouveau plan
-  return tconcat(ids, ",") .. "|" .. myLevel() .. "|" .. (Zp and Zp.Sig and Zp:Sig() or "")
+  -- (5.1 ROUTE6, audit B2) la révision de l'export compte : des données de quêtes nouvelles (Questie prêt après la connexion,
+  -- zone tout juste choisie, groupe) refont le trajet sans « Recalculer »
+  local Xm = X()
+  return tconcat(ids, ",") .. "|" .. myLevel() .. "|" .. (Zp and Zp.Sig and Zp:Sig() or "") .. "|x" .. tostring(Xm and Xm.rev or 0)
 end
+P.AutoSig = function() return logSig(logSnap()) end
 function P:Refresh(force)
   if inCombat() then self._dirty = true return end
   if co then self:Dirty(force and true or nil) return end   -- a job runs: try again shortly
@@ -1596,6 +1735,7 @@ function P:Refresh(force)
     if force or not self.auto or (self._autoStale and sig ~= self._autoSig) then
       self._autoStale, self._autoSig = false, sig
       if force then self:NoteWhy("recalcul demandé") end
+      self.buildCount = (self.buildCount or 0) + 1      -- (5.1 ROUTE6) recalculs complets (tests, sonde)
       self:StartJob(function()
         P:BuildAuto(budgetYield)   -- no pcall here: Lua 5.1 cannot yield across pcall (resume catches errors)
         P:EnsureSteps(); P:Evaluate(); P:Render()
@@ -1729,7 +1869,12 @@ function P:OnEnable()
   end)
   self:On("COMBAT_END", function()
     if P._dirty or P._renderDirty then P._dirty = false; P:Dirty(false, "COMBAT_END") end
+    if P._moveLater then local w = P._moveLater P._moveLater = nil P:MoveSoon(type(w) == "string" and w or nil) end
   end)
+  -- (5.1 ROUTE6, audit B1) relevé après une mort, atterri, arrivé par la pierre de foyer : le trajet est revu depuis là
+  self:RegisterEvent("PLAYER_ALIVE", function() P:MoveSoon("relevé") end)
+  self:RegisterEvent("PLAYER_UNGHOST", function() P:MoveSoon("relevé") end)
+  self:RegisterEvent("PLAYER_CONTROL_GAINED", function() P:MoveSoon("atterrissage") end)
   self:On("EXPORT_UPDATED", function() P:Dirty(true, "EXPORT_UPDATED") end)
   self:On("SUMMARY", function() pcall(P.WriteSummary, P) end)
   self:On("SQUAD_UPDATE", function() P:Render() end)
@@ -1745,7 +1890,7 @@ function P:OnEnable()
       end
       local QBm = T.QuestBrain                       -- (4.3.5 PICKFIX) donneur atteint puis quitté sans la quête
       if QBm and QBm.VisitTick then pcall(QBm.VisitTick) end
-      P:QuickWin()
+      if not P:QuickWin() then P:MoveCheck() end     -- (5.1 ROUTE6) le trajet part de là où tu es
       P:Render()
     end
     if P._syncDirty or (P._lastSync and now() - P._lastSync > 60) then P:SendSync(false) end

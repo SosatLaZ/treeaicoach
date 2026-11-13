@@ -349,17 +349,10 @@ return function(M, ctx)
   child:SetScale(1)
   wm:Hide()
 
-  -- ------------------------------------------------------------ Route.VendorFor wired : « Achète X » → vendor stop
-  local oldVF = R.VendorFor
-  R.VendorFor = function(id) if id == 777 then return { map = 1424, x = 33, y = 44, name = "Marchande", src = "vu" } end end
-  local ctxc = P.CostCtx and P.CostCtx() or { level = 30, group = 1 }
-  local qs = P:QuestSteps(950, { lv = 30, o = { { k = "item", id = 777, n = 3 } } }, { obj = { { n = 3, have = 0, type = "item", text = "Épices : 0/3" } } }, ctxc)
-  local buy = qs[1]
-  check(buy and buy.buy and buy.map == 1424 and buy.x == 33 and buy.svc == 20, "item sold by a vendor: the stop is the vendor (20 s on site)")
-  P.log = { [950] = { t = "Épices", obj = { { n = 3, have = 0, type = "item", text = "Épices : 0/3" } } } }
-  check(P:StepLabel(buy):find("^Achète « Épices »"), "label « Achète « Épices » »: " .. tostring(P:StepLabel(buy)))
-  R.VendorFor = oldVF
-  P.log = {}
+  -- ------------------------------------------------------------ « Achète X » → vendor stop
+  -- (5.1 ROUTE6, audit C1) the check that stood here replaced Route.VendorFor by a function returning the vendor: it tested
+  -- nothing. The real one — a quest item sold by a vendor, in each Questie flavour (library alone, old addon, both), read
+  -- from the route the player sees — is tests/wow/route6_buy_scenario.lua (tests/wow/test_route6.py).
 
   -- ------------------------------------------------------------ InsertOptional wired + no hearth bridge
   check(not R.InstallEngine and not Zp.Engine._routefix and Zp.noHearth == nil, "bridge removed: ZonePlan calls the Route solver directly")
