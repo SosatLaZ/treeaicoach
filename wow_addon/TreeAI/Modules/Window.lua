@@ -1231,6 +1231,11 @@ local function newLay(width, x0)
       return f
     end))
     b.entry = e
+    -- (5.1) pas d'impasse : une ligne de conseil sans clic reçoit le clic évident (W.DefaultAction), s'il y en a un
+    if not e.onClick and W.DefaultAction then
+      local okD, fn, hint = pcall(W.DefaultAction, e)
+      if okD and type(fn) == "function" then e.onClick, e.clickHint, e.autoAction = fn, e.clickHint or hint, true end
+    end
     local th = Th()
     local icon, r, g, bl = e.icon, 0.85, 0.85, 0.85
     if th then
@@ -1866,21 +1871,9 @@ W._newLay = newLay
 function W.SubBar(Ly, id)
   local p = W.pageIndex[id]
   local par = p and p.parent
-  -- (5.1) page de la navigation avec des pages sœurs (Quêtes | Trajet, Groupe | Donjons) : des onglets, sur chacune
-  local fam = W.TABS[id] or (par and W.TABS[par])
-  if fam then
-    local inFam = false
-    for _, c in ipairs(fam) do if c == id then inFam = true end end
-    if inFam then
-      local list = {}
-      for _, c in ipairs(fam) do
-        local cp = W.pageIndex[c]
-        if cp and (c == id or not cp.guard or W.PageOn({ guard = cp.guard })) then list[#list + 1] = { c, cp.short or cp.label, W.Badge(c), cp.desc } end
-      end
-      if #list > 1 and W.Query() == "" then Ly.tabs(list, id) end
-      return
-    end
-  end
+  -- (5.1) page de la navigation avec des pages sœurs (Quêtes | Trajet, Groupe | Donjons) : leurs onglets sont dans
+  -- l'en-tête de la fenêtre (W.HeadTabs), à droite du titre — rien de plus dans la page
+  if W.TabFamily(id) then return end
   if not par then return end
   local subs = W.SUBS[par]
   if W.SIDE[par] then
@@ -1905,6 +1898,67 @@ function W.SubBar(Ly, id)
     Ly.buttons({ { "← " .. tostring(pp and pp.label or par), function() W.Select(par) end, "Clic : revenir à la page « " ..
       tostring(pp and pp.label or par) .. " »" } }, 3)
   end
+end
+--- (5.1) la famille d'onglets de `id` (W.TABS) : { {id, libellé, pastille, description} } s'il y a au moins 2 pages
+function W.TabFamily(id)
+  local p = W.pageIndex[id]
+  local par = p and p.parent
+  local fam = W.TABS[id] or (par and W.TABS[par])
+  if not fam then return nil end
+  local inFam, list = false, {}
+  for _, c in ipairs(fam) do
+    if c == id then inFam = true end
+    local cp = W.pageIndex[c]
+    if cp and (c == id or not cp.guard or W.PageOn({ guard = cp.guard })) then list[#list + 1] = { c, cp.short or cp.label, W.Badge(c), cp.desc } end
+  end
+  if not inFam or #list < 2 then return nil end
+  return list
+end
+--- (5.1) les onglets d'en-tête (à droite du titre de la page) : des mots, celui qui est choisi en accent, un trait dessous
+local headTabs = {}
+W.headTabList = {}
+function W.HeadTabs(id)
+  local list = (win and W.TabFamily(id)) or {}
+  W.headTabList = {}
+  if not win then return 0 end
+  local tw = tonumber(meth(win.pageTitle, "GetStringWidth")) or 0
+  if tw <= 0 then tw = ulen(meth(win.pageTitle, "GetText") or "") * AVG.L end
+  local x = floor(tw + 20)
+  for i, it in ipairs(list) do
+    local b = headTabs[i]
+    if not b then
+      b = newButton(win.top)
+      meth(b, "SetHeight", 20)
+      b.t = text(b, "M", "muted")
+      meth(b.t, "SetPoint", "CENTER", b, "CENTER", 0, 0)
+      meth(b.t, "SetJustifyH", "CENTER") meth(b.t, "SetJustifyV", "MIDDLE") meth(b.t, "SetWordWrap", false)
+      b.line = meth(b, "CreateTexture", nil, "ARTWORK")
+      meth(b.line, "SetHeight", 1)
+      meth(b.line, "SetPoint", "BOTTOMLEFT", b, "BOTTOMLEFT", 2, 0)
+      meth(b.line, "SetPoint", "BOTTOMRIGHT", b, "BOTTOMRIGHT", -2, 0)
+      color(b.line, tok("accent", 0.45, 0.74, 1, 1))
+      meth(b, "SetScript", "OnClick", function(self) if self.page and meth(self, "IsShown") then W.Select(self.page) end end)
+      meth(b, "SetScript", "OnEnter", function(self) W.Tooltip(self, self.labelText, self.desc and { self.desc } or nil, "Clic : ouvrir") end)
+      meth(b, "SetScript", "OnLeave", hideTip)
+      headTabs[i] = b
+    end
+    local on = it[1] == id
+    local label = it[2] .. (it[3] and (" (" .. tostring(it[3]) .. ")") or "")
+    local bw = floor(ulen(label) * AVG.M + 16)
+    meth(b, "SetWidth", bw)
+    meth(b.t, "SetText", safe(label))
+    meth(b.t, "SetTextColor", tok(on and "accent" or "muted", 0.6, 0.6, 0.63))
+    color(b.bg, 0, 0, 0, 0)
+    if on then meth(b.line, "Show") else meth(b.line, "Hide") end
+    b.page, b.labelText, b.desc = it[1], it[2], it[4]
+    meth(b, "ClearAllPoints")
+    meth(b, "SetPoint", "TOPLEFT", win.pageTitle, "TOPLEFT", x, 2)
+    meth(b, "Show")
+    x = x + bw + 4
+    W.headTabList[i] = { id = it[1], label = label, on = on }
+  end
+  for i = #list + 1, #headTabs do meth(headTabs[i], "Hide") headTabs[i].page = nil end
+  return #list
 end
 --- (4.1 LAYOUT) en tête de page : ses 1 à 3 actions les plus utiles, en gros boutons (p.top() → { {label, fn, tip} })
 function W.TopActions(Ly, p)
@@ -2256,8 +2310,9 @@ function W.FirstRect()
   return w, h, sw, sh
 end
 --- (5.1) le suivi de quêtes du jeu (ou de Questie) à droite de l'écran : la fenêtre s'ouvre à SA gauche, jamais dessus
---- (« garde le suivi de quêtes normal du jeu »). → décalage depuis le bord droit, ou nil (rien à éviter / pas la place)
-function W.TrackerInset(w, sw)
+--- (« garde le suivi de quêtes normal du jeu »), en restant dans la moitié droite (jamais sur le personnage) : elle
+--- rétrécit s'il le faut. → décalage depuis le bord droit + largeur, ou nil (rien à éviter / pas la place)
+function W.TrackerInset(sw)
   local Sc = T.Shortcuts
   if not (type(Sc) == "table" and type(Sc.RectOf) == "function" and sw and sw > 200) then return nil end
   local left
@@ -2267,13 +2322,15 @@ function W.TrackerInset(w, sw)
   end
   if not left then return nil end
   local inset = floor(sw - left + 8)
-  if sw - inset - w < sw * 0.30 then return nil end     -- elle irait sur le personnage : la place d'origine
-  return inset
+  local room = floor(sw / 2 - inset)
+  if room < W.FIRST.minW then return nil end            -- pas la place entre le personnage et le suivi : la place d'origine
+  return inset, min(W.FIRST.maxW, room)
 end
 function W.PlaceFirstTime(f)
   local w, h, sw = W.FirstRect()
-  meth(f, "SetSize", w, h)
-  anchorTo(f, "RIGHT", -(W.TrackerInset(w, sw) or W.FIRST.right), W.FIRST.y)
+  local inset, w2 = W.TrackerInset(sw)
+  meth(f, "SetSize", w2 or w, h)
+  anchorTo(f, "RIGHT", -(inset or W.FIRST.right), W.FIRST.y)
 end
 --- (5.0) « /tai interface reset » : la fenêtre oublie sa place et sa taille (elle rouvrira à droite, taille d'origine)
 function W.ResetPlace()
@@ -2502,6 +2559,7 @@ function W.Render()
   meth(win.pageIcon, "SetTexture", p.icon or (navPage and navPage.icon) or (ICON .. "INV_Misc_Book_09"))
   W.BuildNav()
   paintNav(id)
+  W.HeadTabs(id)
   -- (5.0) Réglages : sous-liste à gauche (façon Leatrix Plus), la page à droite ; ailleurs : onglets / lien de retour
   local side = W.SideOf(id)
   local Ly = newLay(contentWidth(), side and (SIDE_W + 8) or 0)
@@ -2914,12 +2972,57 @@ function W.GearTop()
   return out
 end
 --- (4.3 V43) boussole vers le réparateur le plus proche (vu ou connu) ; faux si aucun
-function W.GoRepair()
+function W.GoRepair() return W.GoService("repair") end
+--- (5.1 LOOK) « y aller » vers le service le plus proche connu (repair, vendor, trainer, auction, bank, innkeeper…) —
+--- la destination part chez Suivi Forever / le repère du jeu quand ils tiennent la flèche (Addons.HookCompass)
+W.SERVICE_NONE = { repair = "Aucun réparateur connu ici : parle à un forgeron / armurier, TreeAI le retiendra.",
+  vendor = "Aucun marchand connu ici : parle à un marchand, TreeAI le retiendra.",
+  auction = "Aucun hôtel des ventes connu ici : il y en a un dans chaque capitale.",
+  trainer = "Aucun maître connu ici : parle-lui une fois, TreeAI le retiendra." }
+function W.GoService(kind)
   local Q = T.QuickTravel
-  local svc = type(Q) == "table" and Q.FindService and select(2, pcall(Q.FindService, "repair"))
-  if type(svc) == "table" and Q.GoTo then pcall(Q.GoTo, svc) return true end
-  if W.Flash then W.Flash("Aucun réparateur connu ici : parle à un forgeron / armurier, TreeAI le retiendra.", 6) end
+  local svc = type(Q) == "table" and Q.FindService and select(2, pcall(Q.FindService, kind))
+  if type(svc) == "table" and Q.GoTo then
+    pcall(Q.GoTo, svc)
+    if W.Flash and svc.name then W.Flash(fmt("%s : c'est parti.", strip(svc.name)), 5) end
+    return true
+  end
+  if W.Flash then W.Flash(W.SERVICE_NONE[kind] or "Rien de connu ici pour l'instant.", 6) end
   return false
+end
+--- (5.1 LOOK) un objet qui manque (composant, potion, munition) : HV ouvert = le chercher ; sinon y aller
+function W.FindItem(itemID)
+  local Am = T.modules and T.modules.Auction
+  local f = rawget(G, "AuctionHouseFrame") or rawget(G, "AuctionFrame")
+  local open = type(f) == "table" and meth(f, "IsShown")
+  if open and Am and Am._active and type(Am.SearchItem) == "function" and itemID and try(Am.SearchItem, itemID) then return "ah" end
+  return W.GoService("auction") and "go" or false
+end
+--- (5.1 LOOK) CONNECTEURS : une ligne de conseil sans clic reçoit le clic évident — celui qui fait la chose ou qui y
+--- mène. Lu sur ce que la ligne déclare (service = "repair" | "vendor" | "trainer" | "auction", itemID, page), sinon
+--- sur son sujet (topic) ou ses mots (réparer → réparateur ; refaire le plein / munitions → marchand ; talents → la
+--- fenêtre de talents du jeu). Rien d'évident = rien (jamais un clic qui ne fait rien). → fn, phrase du clic
+W.TOPIC_SERVICE = { repair = "repair", ammo = "vendor", food = "vendor", petfood = "vendor", drink = "vendor", water = "vendor" }
+function W.DefaultAction(e)
+  if type(e) ~= "table" or e.onClick or e.header or e.control then return nil end
+  local svc = e.service or W.TOPIC_SERVICE[e.topic or ""]
+  local txt = low(e.text or "")
+  if not svc and not e.itemID and not e.page then
+    if e.id == "inv_repair" or txt:find("répare", 1, true) or txt:find("réparation", 1, true) then svc = "repair"
+    elseif txt:find("refais le plein", 1, true) or txt:find("chez un marchand", 1, true) or txt:find("flèche", 1, true) or txt:find("munition", 1, true) then svc = "vendor"
+    elseif txt:find("vérifie tes talents", 1, true) then
+      return function()
+        if inCombat() then W.Flash("Tes talents : après le combat.") return end
+        local f = rawget(G, "ToggleTalentFrame")
+        if type(f) == "function" then pcall(f) else W.Open("talents") end
+      end, "Clic : la fenêtre de talents du jeu"
+    end
+  end
+  if svc == "repair" then return function() W.GoRepair() end, "Clic : le réparateur le plus proche (connu)" end
+  if svc then return function() W.GoService(svc) end, "Clic : y aller (le plus proche connu)" end
+  if e.itemID then return function() W.FindItem(e.itemID) end, "Clic : le chercher à l'HV (ouvert), sinon y aller" end
+  if e.page and W.pageIndex[W.Resolve(e.page)] then return function() W.Select(e.page) end, "Clic : ouvrir la page" end
+  return nil
 end
 W.AddPage({ id = "gear", label = "Équipement", short = "Équipement", icon = ICON .. "INV_Chest_Chain", title = "Équipement",
   desc = "Le meilleur objet par emplacement, où l'obtenir, réparations",
@@ -3059,7 +3162,7 @@ W.DISPLAY = {
   { id = "guide", sec = "main", label = "Guidage des quêtes", preview = "Trajet, boussole et repères de quêtes : tout allumer ou tout couper d'un clic",
     on = function() local Sc = T.Shortcuts return not (Sc and Sc.GuideOn) or Sc.GuideOn() end,
     set = function(v) local Sc = T.Shortcuts if Sc and Sc.SetGuide then Sc.SetGuide(v) end end, combatOK = true },
-  { id = "strip", sec = "main", label = "Bande d'actions rapides", preview = "Une rangée fine : Guide ON · Rendre · Prendre · Zone | Sacs · Équip. · Métiers | Groupe | TreeAI",
+  { id = "strip", sec = "main", label = "Bande d'actions rapides", preview = "Une rangée fine : Guide ON · Rendre · Prendre · Zone | Sacs · Équip. · Métiers | Groupe",
     on = function() local d = dbOf("Shortcuts") return modOn("Shortcuts") and not (d and d.strip == false) end,
     set = function(v) local d = dbOf("Shortcuts") if v and not modOn("Shortcuts") then setMod("Shortcuts", true) end
       if d then d.strip = v and true or false end
@@ -3087,7 +3190,7 @@ W.DISPLAY = {
   { id = "alertQuiet", sec = "main", label = "Alertes discrètes", preview = "Petites, 5 à 8 s, sans couleur vive (décoché : 8 à 15 s, texte rouge)",
     on = function() local a = T.settings and T.settings.alert return not (a and a.quiet == false) end,
     set = function(v) local a = T.settings and T.settings.alert if a then a.quiet = v and true or false end end, combatOK = true },
-  { id = "compass", sec = "main", label = "Boussole TreeAI (en haut, au centre)", preview = "flèche + « 708 m · 2 min » + une ligne — coupée d'office quand Suivi Forever guide",
+  { id = "compass", sec = "main", label = "Boussole TreeAI (en haut, au centre)", preview = "flèche + « 708 m · 2 min » + une ligne — coupée quand Suivi Forever guide",
     on = function() local d = dbOf("Compass") return modOn("Compass") and not (d and d.shown == false) end,
     set = function(v) local d = dbOf("Compass") if v and not modOn("Compass") then setMod("Compass", true) end
       if d then d.shown = v and true or false end

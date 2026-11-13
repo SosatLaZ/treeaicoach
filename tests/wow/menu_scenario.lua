@@ -314,7 +314,8 @@ return function(M, ctx)
       check(table.concat(heads, ",") == "rapide,jeu,outils,reglages", "menu : Actions rapides / Pages / Outils / Réglages (" .. table.concat(heads, ",") .. ")")
       check(items["guide"] and items["strip:rendre"] and items["strip:sacs"], "menu : guidage des quêtes, Rendre, Sacs en actions rapides")
       -- (4.1 LAYOUT) « Maintenant » est fondu dans « Quêtes » ; les 7 pages de la navigation (Personnage, Réglages…)
-      for _, id in ipairs({ "tab:quests", "tab:route", "tab:group", "tab:gear", "tab:hunter", "tab:settings", "options", "erreurs", "bloque", "profil", "macros" }) do
+      -- (5.1 LOOK) « Maintenant » est la page d'accueil ; « Trajet » est un onglet de Quêtes (plus une entrée du menu)
+      for _, id in ipairs({ "tab:home", "tab:quests", "tab:group", "tab:gear", "tab:hunter", "tab:settings", "options", "erreurs", "bloque", "profil", "macros" }) do
         check(items[id], "menu : entrée « " .. id .. " »")
       end
       local okW = true

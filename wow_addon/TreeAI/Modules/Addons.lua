@@ -137,7 +137,7 @@ local function versionOf(name)
   local v = (type(CA) == "table" and type(CA.GetAddOnMetadata) == "function" and try(CA.GetAddOnMetadata, name, "Version"))
     or try(g("GetAddOnMetadata"), name, "Version")
   if type(v) ~= "string" or secret(v) or v == "" then return nil end
-  return v:sub(1, 24)
+  return T.Cut and T.Cut(v, 24, "") or v
 end
 --- valeur au bout d'un chemin « A.b.c » (rawget à chaque pas, jamais une métaméthode d'un autre addon)
 local function at(path)
@@ -211,7 +211,7 @@ A.Defers = A.Link
 function A.SetLink(key, id, on)
   if not (A.db and linkDef(key, id)) then return false end
   if type(A.db.links) ~= "table" then A.db.links = {} end
-  A.db.links[key .. ":" .. id] = (on == false) and false or nil
+  if on == false then A.db.links[key .. ":" .. id] = false else A.db.links[key .. ":" .. id] = nil end
   pcall(A.Apply)
   if T.Fire then pcall(T.Fire, T, "ADDON_LINKS", key, id, on ~= false) end
   if T.MarkDirty then T:MarkDirty() end
@@ -326,13 +326,52 @@ function A.GoTo(t)
   local tg = { mapID = t.mapID, x = x, y = y, label = t.label or t.title, title = t.title or t.label, key = t.key, questID = t.questID,
     source = t.source or "now" }
   local how
+  A._handing = true   -- (le relais de la boussole ne repasse pas la même destination une 2e fois)
   if type(C.GoTo) == "function" then how = try(C.GoTo, tg) end
   if not how and type(C.SetTarget) == "function" then
     if try(C.SetTarget, tg) ~= nil then how = "compass" end
   end
+  A._handing = nil
   A.lastGo = { how = how, mapID = tg.mapID, x = x, y = y }
   return how
 end
+--- (connecteur) TOUT « va là » cliqué par le joueur passe par la boussole TreeAI (Compass.SetWaypoint : équipement,
+--- maîtres, marchands, réparateur, quêtes…). Quand Suivi Forever tient la flèche, la boussole TreeAI est cachée : sans
+--- ce relais, ces clics ne montreraient rien. Ici, APRÈS l'appel d'origine et seulement dans un clic du joueur
+--- (T:InUserAction), la même destination est confiée à Suivi Forever / au repère du jeu. Notre fonction à nous est
+--- enveloppée (jamais une fonction d'un autre addon) ; l'enveloppe ne fait rien quand le lien est coupé.
+function A.HookCompass()
+  local C = T.Compass
+  if A._hooked or type(C) ~= "table" or type(C.SetWaypoint) ~= "function" then return false end
+  A._hooked = true
+  local orig = C.SetWaypoint
+  C.SetWaypoint = function(...)
+    local r = orig(...)
+    if type(r) == "table" and A._active and not A._handing and T.InUserAction and T:InUserAction() and A.Link("spf", "arrow") then
+      A._handing = true
+      local ok, how = pcall(function()
+        if type(C.GoTo) ~= "function" then return nil end
+        return C.GoTo({ mapID = r.mapID, x = r.x, y = r.y, label = r.name, title = r.name, key = r.key, source = r.source })
+      end)
+      A._handing = nil
+      A.lastGo = { how = ok and how or nil, mapID = r.mapID, x = r.x, y = r.y, via = "boussole" }
+    end
+    return r
+  end
+  return true
+end
+--- le joueur change de mode de quêtes (Rendre, Prendre, Zone…) avec Suivi Forever branché : la 1re étape du nouveau
+--- trajet lui est confiée, une fois (1,5 s plus tard : le trajet est refait entre-temps). Jamais en boucle.
+function A.HandFirstStop()
+  if not (A._active and A.Link("spf", "arrow")) then return false end
+  local C = T.Compass
+  if type(C) ~= "table" then return false end
+  if type(C.Rebuild) == "function" then pcall(C.Rebuild) end
+  local cur = type(C.Current) == "function" and try(C.Current) or nil
+  if type(cur) ~= "table" or not (cur.mapID and cur.x and cur.y) then return false end
+  return A.GoTo(cur) ~= nil
+end
+
 --- ce que « Y aller » fera (texte de l'infobulle) : « Suivi Forever t'y mène » / « repère sur la carte »
 function A.GoHow()
   if A.Link("spf", "arrow") then
@@ -410,7 +449,7 @@ function A.Probe()
   if lea.loaded then out[#out + 1] = fmt("Leatrix Plus : vendre les gris = %s, réparer = %s", tostring(lea.sell), tostring(lea.repair)) end
   local go = A.lastGo
   if go then out[#out + 1] = fmt("Dernier « Y aller » : %s (carte %s)", tostring(go.how), tostring(go.mapID)) end
-  for _, n in ipairs({ "C_Map.SetUserWaypoint", "C_Map.ClearUserWaypoint", "C_SuperTrack.SetSuperTrackedUserWaypoint", "UiMapPoint.CreateFromCoordinates",
+  for _, n in ipairs({ "C_Map.SetUserWaypoint", "C_Map.ClearUserWaypoint", "C_Map.CanSetUserWaypointOnMap", "UiMapPoint.CreateFromCoordinates",
       "TomTom.AddWaypoint" }) do
     out[#out + 1] = n .. " : " .. (type(at(n)) == "function" and "présente" or "absente")
   end
@@ -508,6 +547,12 @@ function A:OnEnable()
   -- les autres addons finissent de se charger pendant les secondes qui suivent : un regard à 2 s, un autre à 12 s
   A.Installed(true)
   pcall(A.Apply)
+  pcall(A.HookCompass)
+  self:On("QUEST_MODE_CHANGED", function()
+    if not (T.InUserAction and T:InUserAction() and A.Link("spf", "arrow")) or A._firstStop then return end
+    A._firstStop = true
+    T:After(1.5, function() A._firstStop = nil pcall(A.HandFirstStop) end)
+  end)
   if T.After then
     T:After(2, function() if A._active then A.Installed(true) pcall(A.Apply) end end)
     T:After(12, function() if A._active then A.Installed(true) pcall(A.Apply) if T.Fire then pcall(T.Fire, T, "ADDON_LINKS") end end end)

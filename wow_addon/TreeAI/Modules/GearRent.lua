@@ -77,7 +77,6 @@ function M.AskMountOnce()
   local c = type(M.char) == "table" and M.char or nil
   local lv = level()
   if not c or c.mountAsked or lv < 30 or lv >= M.MOUNT_LEVEL then return false end
-  if type(T.Quiet) == "table" and type(T.Quiet.Ok) == "function" and not T.Quiet.Ok("mount") then return false end   -- (5.1 LOOK) calme
   c.mountAsked = true
   M:Suggest("mount", "Garder de l'or pour la monture du niveau 40 ? (clic : 0, 50 ou 100 po)", 1,
     { ttl = 900, cooldown = 0, sound = false,

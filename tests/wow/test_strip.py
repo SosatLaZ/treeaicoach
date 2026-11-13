@@ -83,10 +83,12 @@ def test_strip_scenario(flavor):
                        capture_output=True, text=True, timeout=300, cwd=ROOT)
     assert r.returncode == 0 and "RESULT ok" in r.stdout, r.stdout[-6000:] + r.stderr[-2000:]
     out = r.stdout
-    assert "STRIP avec QuestBrain : Guidage quêtes : ON · Rendre (4) < · Prendre (3) · Suivant · Zone (9) * · Vite" in out
-    assert ("STRIP sans QuestBrain : Guidage quêtes : ON · Rendre (2) · Prendre · Suivant · Zone · Vite · Sacs · Équipement"
-            " · Groupe · TreeAI") in out
-    assert ("STRIP bande : Quêtes [Guidage quêtes ON] : Rendre (2) · Prendre · Suivant · Zone · Vite  |  Perso : Sacs · "
+    # (5.1 LOOK) « Suivant » and « Vite » keep their action and key but are off the strip by default
+    assert ("STRIP avec QuestBrain : Guidage quêtes : ON · Rendre (4) < · Prendre (3) · Suivant (hors bande) · Zone (9) * · "
+            "Vite (hors bande)") in out
+    assert ("STRIP sans QuestBrain : Guidage quêtes : ON · Rendre (2) · Prendre · Suivant (hors bande) · Zone · Vite (hors bande)"
+            " · Sacs · Équipement · Groupe · TreeAI") in out
+    assert ("STRIP bande : Quêtes [Guidage quêtes ON] : Rendre (2) · Prendre · Zone  |  Perso : Sacs · "
             "Équipement  |  Groupe  |  TreeAI") in out
     assert "STRIP guidage coupé : Guidage quêtes : OFF · Rendre (2) (coupé)" in out
     assert "[Alt-1]" in out and "chat:" not in out and "violation:" not in out

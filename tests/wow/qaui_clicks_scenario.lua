@@ -137,6 +137,9 @@ return function(M, ctx)
       end
     end
   end
+  -- (5.1 LOOK) les clics ci-dessus ont pu couper le guidage des quêtes (entrée du menu, case de la page) : rallumé,
+  -- la carte a ses étapes (avant, un nombre pair de bascules le rallumait par hasard)
+  if T.SetQuestGuide then T:SetQuestGuide(true) M.Advance(3, 0.25) end
   W.db.card = true
   W:OnOptionChanged("card")
   -- 4. card: hero click, Ouvrir, step 1 click

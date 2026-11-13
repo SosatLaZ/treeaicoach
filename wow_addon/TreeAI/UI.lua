@@ -3294,6 +3294,14 @@ do
     local Q = self.modules and self.modules.Quests
     local o = Q and type(Q.others) == "function" and Q.others() or nil
     if type(spf) ~= "table" and not (type(o) == "table" and o.route) then return nil end
+    -- (5.1 LOOK) chaque lien se coupe dans « Autres addons » : coupé = TreeAI remontre sa propre liste
+    local A = self.Addons
+    if type(A) == "table" and A._active and type(A.Wanted) == "function" then
+      local route = A.Wanted("spf", "arrow")
+      local reagents = not (type(A.Has) == "function" and A.Has("skillup")) or A.Wanted("skillup", "prof")
+      if not (route or reagents) then return nil end
+      return { name = "Suivi Forever", route = route, reagents = reagents }
+    end
     return { name = "Suivi Forever", route = true, reagents = true }
   end
 

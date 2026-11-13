@@ -129,11 +129,12 @@ return function(M, ctx)
   if r then
     local SW, SH = geo.Screen()
     check(r.l < SW * 0.45 and r.b + r.h > SH * 0.55, "en haut à gauche de l'écran")
-    check(r.h >= 60 and r.w >= 380, ("bande impossible à rater : %dx%d unités (≥ 380×60)"):format(r0(r.w), r0(r.h)))
+    -- (5.1 LOOK) une rangée fine (≈ 26 unités à l'échelle 1), toujours trouvable : large d'au moins 300
+    check(r.h >= 22 and r.h <= 30 and r.w >= 300, ("bande fine, une rangée : %dx%d unités (22 à 30 de haut, ≥ 300 de large)"):format(r0(r.w), r0(r.h)))
   end
-  check(inside("groupe de 4") >= 9, "au moins 9 boutons + la pastille")
+  check(inside("groupe de 4") >= 7, "au moins 7 boutons + la pastille")
   local bad, seen = S.Audit()
-  check(#bad == 0 and seen >= 9, "chaque bouton a une action et une infobulle (" .. table.concat(bad, " ; ") .. ")")
+  check(#bad == 0 and seen >= 7, "chaque bouton a une action et une infobulle (" .. table.concat(bad, " ; ") .. ")")
   -- stable: a member leaves (nothing comes under the strip) → it does not move
   local p1 = { strip:GetPoint(1) }
   M.group[3] = nil
@@ -159,14 +160,17 @@ return function(M, ctx)
   check(dump[2]:find("(2)", 1, true), "Rendre : les 2 quêtes finies du journal (" .. dump[2] .. ")")
   local B = S.Buttons()
   check(B.rendre and B.rendre.icon and B.rendre.label and B.rendre.label:GetText() == "Rendre", "icône + mot court")
-  check(B.rendre.badge and B.rendre.badge.value == 2 and B.rendre.badge:IsShown(), "pastille de nombre")
+  -- (5.1 LOOK) le nombre est un petit chiffre d'accent après le mot (plus de pastille rouge)
+  check(B.rendre.countText and B.rendre.countText:GetText() == "2" and B.rendre.countText:IsShown()
+    and not (B.rendre.badge and B.rendre.badge:IsShown()), "nombre après le mot (« Rendre 2 »)")
+  check(not B.suivant and not B.vite, "« Suivant » et « Vite » : plus sur la bande d'office (touches et /tai boutons marchent)")
   check(B.guide and B.guide.on == true, "pastille « Guidage quêtes » : ON")
   -- fallback: the window page that does the same
   local pages = { rendre = "quests", prendre = "quests", vite = "quests", groupe = "group", equip = "gear", sacs = "bags" }
   for id, page in pairs(pages) do
     W.Close()
     M.Advance(0.3, 0.1)
-    B[id]:Click("LeftButton")
+    if B[id] then B[id]:Click("LeftButton") else M.Hw(function() T:UserAction(function() S.Do(id) end) end) end   -- (hors bande : sa touche)
     M.Advance(0.3, 0.1)
     check(W.IsOpen() and W.CurrentPage() == (W.Resolve and W.Resolve(page) or page), ("sans QuestBrain : « %s » ouvre la page %s (%s)"):format(id, page,
       tostring(W.CurrentPage())))
@@ -310,8 +314,8 @@ return function(M, ctx)
   check(calls[#calls] == "turnin", "clic « Rendre » = SetMode(turnin)")
   B.groupe:Click("LeftButton")
   check(calls[#calls] == "group", "clic « Groupe » = SetMode(group)")
-  B.vite:Click("LeftButton")
-  check(calls[#calls] == "fastlvl", "clic « Vite » = SetMode(fastlvl)")
+  T.StripAction("vite")   -- (5.1 LOOK) « Vite » n'est plus sur la bande d'office : sa touche fait la même chose
+  check(calls[#calls] == "fastlvl", "touche « Vite » = SetMode(fastlvl)")
   W.Close()
   M.Advance(0.3, 0.1)
   B.rendre:Click("RightButton")
@@ -375,15 +379,16 @@ return function(M, ctx)
   M.bindings["MULTIACTIONBAR1BUTTON3"] = "ALT-3"          -- the player's own key: never replaced
   M.bindings["BONUSACTIONBUTTON1"] = "CTRL-1"             -- the game's pet bar
   S.Refresh(true)
-  local kb = rawget(_G, "TreeAIStripKeys")
-  check(kb and kb:IsShown(), "bouton « Touches… » tant qu'une touche manque")
+  -- (5.1 LOOK) plus de bouton « Touches… » sur la bande : « Touches conseillées » est dans les réglages (page Touches),
+  -- le réglage en 3 étapes et /tai boutons touches — la même fonction (S.SuggestKeys)
+  check(rawget(_G, "TreeAIStripKeys") == nil, "plus de bouton « Touches… » sur la bande")
   M.EnterCombat()
   S.SuggestKeys()
   check(M.bindings.TREEAI_QB_TURNIN == nil, "en combat : aucune touche posée")
   M.LeaveCombat()
   ctx.fire("PLAYER_REGEN_ENABLED")
   M.Advance(0.3, 0.1)
-  kb:Click("LeftButton")
+  M.Hw(function() T:UserAction(function() SlashCmdList["TREEAI"]("boutons touches") end) end)
   M.Advance(0.5, 0.1)
   local got = {}
   for _, cmd in ipairs(S.KEY_ORDER) do got[#got + 1] = cmd:gsub("TREEAI_", "") .. "=" .. tostring(M.bindings[cmd]) end
@@ -402,10 +407,13 @@ return function(M, ctx)
   check(M.savedBindings ~= nil, "touches enregistrées (SaveBindings)")
   dump = S.Dump()
   out("avec touches : " .. table.concat(dump, " · "))
-  check(dump[2]:find("[Alt-1]", 1, true) and dump[4]:find("[Ctrl-Maj-3]", 1, true), "touche affichée sur chaque bouton")
-  check(B.rendre.keyText:GetText() == "Alt-1", "petite touche sur le bouton")
-  check(B.suivant.keyText:GetText() == "C-M-3" and S.KeyShort("Ctrl-Maj-3") == "C-M-3", "touche longue abrégée dans le coin (« C-M-3 »), entière dans l'infobulle")
-  check(tipOf(B.suivant):find("Ctrl-Maj-3", 1, true), "infobulle : la touche entière")
+  check(dump[2]:find("[Alt-1]", 1, true) and dump[4]:find("[Ctrl-Maj-3]", 1, true), "chaque action connaît sa touche")
+  -- (5.1 LOOK) bande fine : la touche n'est plus écrite sur le bouton, elle est dans son infobulle (entière)
+  check(not (B.rendre.keyText and B.rendre.keyText:IsShown()), "pas de touche écrite sur le bouton fin")
+  check(tipOf(B.rendre):find("Touche : Alt-1", 1, true), "infobulle : la touche")
+  local tl = {}
+  for _, l in ipairs(S.TipLines("suivant")) do tl[#tl + 1] = l[1] end
+  check(table.concat(tl, " | "):find("Ctrl-Maj-3", 1, true) and S.KeyShort("Ctrl-Maj-3") == "C-M-3", "infobulle de « Suivant » : la touche entière")
   -- a 2nd click changes nothing (already bound)
   local before = M.bindings.TREEAI_QB_TURNIN
   S.SuggestKeys()
@@ -474,11 +482,21 @@ return function(M, ctx)
     local oldF, oldFS, moves = T.focus, T.FocusStep, {}
     T.focus = { kind = "city", owner = "test", label = "Courses en ville" }
     T.FocusStep = function(d) moves[#moves + 1] = d return true end
+    -- (5.1 LOOK) hors session « Suivant » n'est pas sur la bande ; pendant une session il y revient (c'est son bouton)
+    check(not B.suivant or not B.suivant:IsShown(), "hors session : pas de « Suivant » sur la bande")
+    T:Fire("FOCUS_CHANGED")
+    M.Advance(1.5, 0.1)
+    B = S.Buttons()
+    check(B.suivant and B.suivant:IsShown(), "session en cours : « Suivant » est sur la bande")
     B.suivant:Click("LeftButton")
     B.suivant:Click("RightButton")
     check(moves[1] == 1 and moves[2] == -1, "session : « Suivant » = étape suivante, clic droit = précédente ("
       .. tostring(moves[1]) .. ", " .. tostring(moves[2]) .. ")")
     T.focus, T.FocusStep = oldF, oldFS
+    T:Fire("FOCUS_CHANGED")
+    M.Advance(1.5, 0.1)
+    B = S.Buttons()
+    check(not (B.suivant and B.suivant:IsShown()), "session finie : « Suivant » quitte la bande")
   end
 
   -- ------------------------------------------------------------------ hygiene

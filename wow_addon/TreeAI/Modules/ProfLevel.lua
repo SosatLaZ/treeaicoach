@@ -2508,18 +2508,21 @@ local function renderPage(Ly)
   if nBuy > 0 and Ly.header(fmt("À acheter (%d)", nBuy), "prof:buy") then
     for _, v in ipairs(sp.vendor) do
       Ly.row({ text = fmt("%d %s — %s%s", v.buy, matName(v.id), money(v.cost), v.margin > 0 and fmt(" (dont %d de marge)", v.margin) or ""),
-        right = "marchand", kind = "info", tooltip = { fmt("%s/u au marchand (prix exact du jeu).", money(v.unit)),
+        right = "marchand", kind = "info", service = "vendor", itemID = v.id,   -- (5.1 LOOK) clic = le marchand le plus proche
+        tooltip = { fmt("%s/u au marchand (prix exact du jeu).", money(v.unit)),
           v.margin > 0 and "Marge : les fabrications jaunes / vertes ne montent pas à chaque fois." or nil } })
     end
     for _, a in ipairs(sp.ah) do
       local liq = PL.LiqText(a.id)
       Ly.row({ text = fmt("%d %s ≈ %s (≤ %s/u)", a.n, matName(a.id), money(a.cost), money(PL.MaxUnit(a.unit))), right = "HV", kind = "info",
+        itemID = a.id,   -- (5.1 LOOK) clic = le chercher à l'HV (ouvert), sinon y aller
         tooltip = { fmt("Prix moyen %s/u (%s).", money(a.unit), (plan.unit[a.id] and plan.unit[a.id][2]) or "HV"), liq and ("Liquidité : " .. liq) or nil,
           "Au-delà du plafond, la session n'achète pas." } })
     end
     for _, f in ipairs(sp.farm) do
       local txt = PL.FarmText(f.id)
-      Ly.row({ text = fmt("%d %s — %s", f.n, matName(f.id), txt or "à farmer ou à demander à tes amis"), right = "à farmer", kind = "info" })
+      Ly.row({ text = fmt("%d %s — %s", f.n, matName(f.id), txt or "à farmer ou à demander à tes amis"), right = "à farmer", kind = "info",
+        itemID = f.id })   -- (5.1 LOOK) clic = le chercher à l'HV (ouvert), sinon y aller
     end
     if plan.cost > 0 then
       Ly.text(fmt("Total : %s (marchand %s · HV %s)", money(plan.cost), money(sp.vendorCost), money(floor(sp.ahCost))), "S", "gold")

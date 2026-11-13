@@ -109,8 +109,9 @@ return function(M, ctx)
   -- (PROFLEVEL 4.0.2) « Métiers » juste après « HV »
   -- (4.1 LAYOUT) 7 pages : Quêtes, Groupe, Donjons, Personnage, HV, Conseils pro, Réglages ; les anciennes rangées dedans
   -- (5.0 LOOK) 11 catégories au plus ; « Sacs » entre quand son module inscrit sa page ; Macros & touches → Réglages
-  check(table.concat(ids, ","):gsub(",bags", ""):find("^quests,route,group,dungeon,gear,prof,hv,hunter,coach,settings,"),
-    "navigation : Quêtes / Trajet / Groupe / Donjons / Équipement / Métiers / HV / Chasseur / Conseils / Réglages (" .. table.concat(ids, ",") .. ")")
+  -- (5.1 LOOK) 9 catégories au plus : Maintenant en tête ; Trajet / Donjons = onglets, Conseils → Réglages
+  check(table.concat(ids, ","):gsub(",bags", ""):find("^home,quests,group,gear,prof,hv,hunter,settings,"),
+    "navigation : Maintenant / Quêtes / Groupe / Équipement / Métiers / HV / Chasseur / Réglages (" .. table.concat(ids, ",") .. ")")
   for _, pg in ipairs(W.PAGES) do
     W.Select(pg.id)
     check(W.CurrentPage() == W.Resolve(pg.id), "page " .. pg.id)

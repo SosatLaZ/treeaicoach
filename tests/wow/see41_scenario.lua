@@ -331,8 +331,18 @@ return function(M, ctx)
     if r.kind == "row" and r.label:find("^Zone : ") then zoneRow = r end
   end
   local r1 = W.lastLay.rects[1]
-  check(nAct == 3 and nTiles == 2 and r1 and r1.kind == "action" and r1.label == "Rendre mes quêtes" and zoneRow,
-    "Quêtes : 3 tuiles d'action en tête, 2 autres modes, la ligne de zone (" .. tostring(r1 and r1.label) .. ", " .. nAct .. " + " .. nTiles .. ")")
+  -- (5.1 LOOK) les 2 autres modes sont repliés d'office dans « Autres façons de jouer » (dépliés : 2 tuiles)
+  local folded = false
+  for _, r in ipairs(W.lastLay.rects) do if r.kind == "header" and r.label == "Autres façons de jouer" then folded = true end end
+  check(nAct == 3 and nTiles == 0 and folded and r1 and r1.kind == "action" and r1.label == "Rendre mes quêtes" and zoneRow,
+    "Quêtes : 3 tuiles d'action en tête, les autres modes repliés, la ligne de zone (" .. tostring(r1 and r1.label) .. ", " .. nAct .. " + " .. nTiles .. ")")
+  W.char.collapsed["quests:modes"] = false
+  W.Render()
+  nTiles = 0
+  for _, r in ipairs(W.lastLay.rects) do if r.kind == "tile" then nTiles = nTiles + 1 end end
+  check(nTiles == 2, "« Autres façons de jouer » dépliée : 2 autres modes (" .. nTiles .. ")")
+  W.char.collapsed["quests:modes"] = nil
+  W.Render()
 
   -- ------------------------------------------------------------------ 5. the Groupe page
   W.Select("group")

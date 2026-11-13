@@ -370,6 +370,20 @@ function W.ModeTiles(Ly, skip)
   Ly.tiles(tiles, 2)
   return true
 end
+--- (5.1 LOOK) pas d'impasse : une étape sans clic reçoit « y aller » (la cible en cours de la boussole, confiée à
+--- Suivi Forever / au repère du jeu quand ils tiennent la flèche)
+function W.StepGo(st)
+  if type(st) ~= "table" or st.onClick then return st end
+  local C, A = T.Compass, T.Addons
+  if not (type(C) == "table" and type(C.Current) == "function" and type(A) == "table" and type(A.GoTo) == "function") then return st end
+  st.onClick = function()
+    local cur = select(2, pcall(C.Current))
+    if type(cur) == "table" and cur.mapID and cur.x and cur.y then A.GoTo(cur)
+    elseif type(C.FollowRoute) == "function" then pcall(C.FollowRoute) end
+  end
+  st.actionText = "y aller (" .. tostring(A.GoHow and A.GoHow() or "la boussole t'y mène") .. ")"
+  return st
+end
 --- « Prochaine étape » : la même chose que la boussole (T.Next si présent, sinon le texte de la boussole, sinon le
 --- 1er arrêt du trajet)
 function W.NextItem()
@@ -393,11 +407,11 @@ function W.NextItem()
     local full = type(cur) == "table" and (cur.label or cur.title) or nil
     local lbl = strip(type(full) == "string" and full or meth(wd.label, "GetText") or "")
     local dst = strip(meth(wd.dist, "GetText") or ""):gsub("%s+", " ")
-    if lbl ~= "" then return { n = 1, title = lbl, sub = dst } end
+    if lbl ~= "" then return W.StepGo({ n = 1, title = lbl, sub = dst }) end
   end
   local g = W.Guide(1)
   local st = g and g.steps and g.steps[1]
-  if st and not st.entry then return st end
+  if st and not st.entry then return W.StepGo(st) end
 end
 --- « À prendre près de toi » : les 5 meilleures quêtes à prendre (cerveau des quêtes), avec la raison ; élite / groupe :
 --- un badge « Élite · à 2+ »
@@ -624,8 +638,7 @@ W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = 
     end
     -- 2. la zone de travail (« Changer ») + « Conseille-moi », repliable
     W.ZoneBarShown = false
-    -- (5.1) les détails sont repliés d'office : la page s'ouvre sur les 3 actions, la case du guidage, l'étape
-    if W.Query() == "" and zpBrain() and Ly.header("Ma zone", "quests:zone", nil, ICON .. "INV_Misc_Map_01", true) then
+    if W.Query() == "" and zpBrain() and Ly.header("Ma zone", "quests:zone", nil, ICON .. "INV_Misc_Map_01") then
       W.ZoneBarShown = W.ZoneBar(Ly) or false
     end
     -- 3. les autres façons de jouer (Avec le groupe, Monter vite…), repliable ; sans les tuiles d'action : tous les modes
@@ -636,8 +649,12 @@ W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = 
       if topN > 0 then for _, id in ipairs(W.TOP_MODES) do skip[id] = true end end
       local n = 0
       for _, m in ipairs(select(2, pcall(QB().Modes)) or {}) do if type(m) == "table" and m.id and not skip[m.id] then n = n + 1 end end
-      if n > 0 and Ly.header(topN > 0 and "Autres façons de jouer" or "Façons de jouer", "quests:modes", n, ICON .. "Spell_Holy_PrayerOfHealing", topN > 0) then
-        W.ModeTilesShown = W.ModeTiles(Ly, skip)
+      -- (5.1) les autres modes sont repliés d'office (un clic les déplie) ; la ligne « Que faire » du trajet ne
+      -- revient pas pour autant (les modes sont sur la page, tuiles d'action comprises)
+      if n > 0 then
+        if Ly.header(topN > 0 and "Autres façons de jouer" or "Façons de jouer", "quests:modes", n, ICON .. "Spell_Holy_PrayerOfHealing", topN > 0) then
+          W.ModeTilesShown = W.ModeTiles(Ly, skip)
+        else W.ModeTilesShown = topN > 0 end
       end
     end
     -- 3. au plus 3 actions utiles (danger, mort, courses) ; jamais d'avis non demandé

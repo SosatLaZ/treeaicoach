@@ -38,7 +38,11 @@ return function(M, ctx)
   M.player.dead = false
   fire("PLAYER_ALIVE")
   M.Advance(35, 0.5)
-  check(wiz(), "assistant : ouvert au premier moment calme")
+  -- (5.1 LOOK) l'assistant ne s'ouvre plus tout seul : au premier moment calme, une petite ligne « Régler · Plus tard »
+  check(not wiz(), "assistant : jamais ouvert tout seul, même au calme")
+  local hello = rawget(_G, "TreeAIHello")
+  check(hello and hello:IsShown(), "1er lancement : la petite ligne au premier moment calme (pas pendant la mort)")
+  if hello then hello:Hide() end
   if T.GetWizard and T:GetWizard() then T:GetWizard():Hide() end
   T.db.onboarded = T.version or true
   T:_MaybeWizard(0)

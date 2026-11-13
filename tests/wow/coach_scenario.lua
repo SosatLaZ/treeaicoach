@@ -35,8 +35,9 @@ return function(M, ctx)
     local ids = {}
     for _, pg in ipairs(W.PAGES) do ids[#ids + 1] = pg.id end
     local nav = table.concat(ids, ",")
-    -- (4.1 LAYOUT) « Conseils pro » : 6e page de la navigation, avant « Réglages »
-    check((nav:gsub(",bags", "")):find("^quests,route,group,dungeon,gear,prof,hv,hunter,coach,settings"), "page « Conseils pro » avant Réglages (" .. nav .. ")")
+    -- (5.1 LOOK) 9 catégories au plus : « Conseils pro » est rangé dans Réglages (toujours joignable : W.Open("coach"))
+    check((nav:gsub(",bags", "")):find("^home,quests,group,gear,prof,hv,hunter,settings"), "navigation 5.1 (" .. nav .. ")")
+    check(W.pageIndex.coach and W.NavOf("coach") == "settings" and W.Resolve("coach") == "coach", "page « Conseils pro » rangée dans Réglages, toujours joignable")
   end
 
   -- ------------------------------------------------------------------ moteur pur

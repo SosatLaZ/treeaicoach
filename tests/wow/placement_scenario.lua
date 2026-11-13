@@ -37,8 +37,9 @@ return function(M, ctx)
     if not p then return nil end
     return ("%s %s %s %d %d"):format(p, name(rel), tostring(rp), r0(x), r0(y))
   end
+  -- (5.1 LOOK) TreeAIHello = la petite ligne du 1er lancement (elle remplace l'assistant qui s'ouvrait seul : même cas)
   local SKIP = { TreeAICoreFrame = true, TreeAIWizard = true, TreeAITourCallout = true, TreeAITourGlow = true,
-    TreeAITourArrow = true, TreeAIEditBar = true }
+    TreeAITourArrow = true, TreeAIEditBar = true, TreeAIHello = true }
   local function visible()
     local out = {}
     for _, f in ipairs(geo.Ours()) do

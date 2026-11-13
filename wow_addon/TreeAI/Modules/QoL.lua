@@ -171,6 +171,9 @@ local function onMerchant()
   if merchantOpen then return end                  -- MERCHANT_SHOW et l'événement d'interaction : un seul passage
   merchantOpen = true
   if not opt("sellRepair") or shift() or Q.QuickDoesIt() then return end
+  -- (5.1 LOOK) Leatrix Plus vend déjà les gris / répare tout seul (ses options cochées, lien branché) : jamais deux fois
+  local Ad = T.Addons
+  if type(Ad) == "table" and type(Ad.MerchantAuto) == "function" and try(Ad.MerchantAuto) then return end
   -- un instant plus tard : la fenêtre du marchand est vraiment ouverte (et ses données arrivées)
   after(0.15, function() if merchantShown() then Q.SellAndRepair() end end)
 end

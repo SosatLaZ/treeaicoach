@@ -203,6 +203,12 @@ function M.ProbeAPI()
       end
     end
   end
+  -- (5.1 LOOK) ce qui a été détecté des autres addons sur CE client : noms, versions, points d'entrée présents
+  local Ad = T.Addons
+  if type(Ad) == "table" and type(Ad.Probe) == "function" then
+    local okP, lines = pcall(Ad.Probe)
+    for _, l in ipairs(okP and type(lines) == "table" and lines or {}) do out[#out + 1] = tostring(l) end
+  end
   return out
 end
 --- garde la sonde dans TreeAIDB.diag.api (une fois par version et par client ; /tai erreurs la refait)

@@ -32,10 +32,17 @@ return function(M, ctx)
   -- while he reads it, « Passer » = never again ; the strip is there
   if MODE == "upgrade" then
     local function wz() local w = T:GetWizard() return w and w:IsShown() and w or nil end
-    check(T.db.setupV == 5, "5.0 : réglage en 3 étapes proposé une fois (setupV posé)")
+    -- (5.1 LOOK) plus rien n'est reproposé tout seul : ni réglage en 3 étapes, ni petite ligne (il avait déjà fini
+    -- l'ancien assistant) ; le réglage reste à un clic (/tai bienvenue) et n'est jamais remis à l'étape 1 en le lisant
+    check(T.db.setupV == 6, "5.1 : plus de réglage reproposé (setupV posé)")
     M.Advance(12, 0.2)
+    check(not wz() and T.db.onboarded, "joueur de la 4.x : aucun réglage ne s'ouvre tout seul, il reste « fini »")
+    local hello = rawget(_G, "TreeAIHello")
+    check(not (hello and hello:IsShown()), "joueur de la 4.x : pas de ligne de 1er lancement non plus")
+    M.RunSlash("/tai bienvenue")
+    M.Advance(0.5, 0.2)
     local w = wz()
-    if check(w and w.step == 1, "joueur de la 4.x : le réglage en 3 étapes s'ouvre une fois, au calme") then
+    if check(w and w.step == 1, "/tai bienvenue : le réglage en 3 étapes s'ouvre") then
       out("MISE À JOUR étape 1 : " .. plain(w.title:GetText()))
       w.next:Click("LeftButton")
       M.Advance(8, 0.2)
@@ -196,14 +203,15 @@ return function(M, ctx)
     local r = clearOfGame("TreeAIStrip", tag)
     if r then
       out("  " .. describe("TreeAIStrip") .. (S.compact and " (compact)" or ""))
-      -- impossible to miss: a button is at least 26 real px (compact) / 36 (words), and never the size of 4.3.6 (27 px strip)
-      local bh = (S.compact and Th.TOKENS.tile.compact or Th.TOKENS.tile.h) * strip:GetScale() * px()
-      check(bh >= (S.compact and 26 or 36), ("%s : bouton de %d px réels de haut (≥ %d)"):format(tag, r0(bh), S.compact and 26 or 36))
+      -- (5.1 LOOK) a slim row: 22 to 40 real px high whatever the resolution / UI scale (floor in real pixels), never
+      -- the 68–115 px block of 5.0
+      local sh = r.h * px()
+      check(r.h >= 24 and r.h <= 38 and sh >= 22, ("%s : bande de %d unités = %d px réels de haut (24 à 38 unités, ≥ 22 px)"):format(tag, r0(r.h), r0(sh)))
       check(r.l + r.w / 2 < SW * 0.62 and r.b + r.h / 2 > SH * 0.4, tag .. " : à gauche, jamais dans le bas de l'écran")
       -- never in the middle of the screen (the character, the fight)
       check(not overlap(r, { l = SW * 0.38, b = SH * 0.34, w = SW * 0.24, h = SH * 0.30 }), tag .. " : jamais au milieu de l'écran")
     end
-    check(stripInside(tag) >= 9, tag .. " : au moins 9 boutons")
+    check(stripInside(tag) >= 7, tag .. " : au moins 7 boutons")
     local bad = S.Audit()
     check(#bad == 0, tag .. " : chaque bouton a une action et une infobulle (" .. table.concat(bad, " ; ") .. ")")
     out("  bande : " .. S.DumpLine())
@@ -270,8 +278,8 @@ return function(M, ctx)
   for _, v in pairs(K.space) do check(v == 2 or v % 4 == 0, "espace sur la grille (" .. v .. ")") end
   local _, _, _, aBg = Th:Color("bg")
   local _, _, _, aSmall = Th:Color("small")
-  check(aBg >= 0.95, "menus et fenêtres opaques (alpha " .. aBg .. ")")
-  check(aSmall >= 0.35 and aSmall <= 0.65, "petits cadres à moitié transparents (alpha " .. aSmall .. ")")
+  check(aBg >= 0.80 and aBg < 0.95, "fenêtre translucide mais lisible (alpha " .. aBg .. ")")
+  check(aSmall >= 0.35 and aSmall <= 0.55, "petits cadres translucides (alpha " .. aSmall .. ")")
   for _, role in ipairs({ "guide", "turnin", "pickup", "next", "zone", "fast", "bags", "gear", "prof", "group", "window", "settings" }) do
     check(type(Th.ICONS[role]) == "string" and Th.ICONS[role]:find("^Interface\\"), "icône du jeu pour « " .. role .. " »")
   end
@@ -342,7 +350,7 @@ return function(M, ctx)
   if check(al and al:IsShown(), "alerte affichée") then
     check(al.lines[1]:IsShown() and not al.lines[2]:IsShown(), "une alerte à la fois (la plus récente)")
     check(al.lines[1]:GetText():find("Quête finie", 1, true), "… la plus récente : " .. tostring(al.lines[1]:GetText()))
-    check(al.left >= 7.5 and al.left <= 15, "durée de 8 à 15 s (" .. tostring(al.left) .. ")")
+    check(al.left >= 4.5 and al.left <= 8, "alerte discrète : 5 à 8 s (" .. tostring(al.left) .. ")")
     local _, SH = geo.Screen()
     local ar = geo.Rect(al)
     check(ar and ar.b > SH * 0.5, "alerte dans la moitié haute de l'écran (jamais au centre)")
@@ -359,7 +367,10 @@ return function(M, ctx)
     M.Advance(16, 0.5)
     check(not al:IsShown(), "alerte effacée toute seule")
   end
-  check(Th:ToastSeconds("court") == 8 and Th:ToastSeconds(("x"):rep(400)) == 15, "durée bornée 8-15 s")
+  check(Th:ToastSeconds("court") == 5 and Th:ToastSeconds(("x"):rep(400)) == 8, "discret (d'office) : durée bornée 5-8 s")
+  T.settings.alert.quiet = false
+  check(Th:ToastSeconds("court") == 8 and Th:ToastSeconds(("x"):rep(400)) == 15, "« discret » coupé : durée bornée 8-15 s")
+  T.settings.alert.quiet = nil
 
   -- ---------------------------------------------------------------- 4. the window
   out("=== FENÊTRE ===")
@@ -369,7 +380,7 @@ return function(M, ctx)
   local SW, SH = geo.Screen()
   local wr = geo.Rect(win)
   check(win:IsShown() and geo.OnScreen(win, 2) and wr.l + wr.w / 2 > SW / 2, "fenêtre : 1re ouverture à droite, à l'écran")
-  check(W.CurrentPage() == "quests", "elle ouvre sur Quêtes")
+  check(W.CurrentPage() == "home", "elle ouvre sur « Maintenant » (" .. tostring(W.CurrentPage()) .. ")")
   W.Open("settings")
   check(W.CurrentPage() == "display" and W.Resolve("reglages") == "display", "Réglages ouvre « Affichage » (1re fois)")
   W.Open("quests")
@@ -381,8 +392,8 @@ return function(M, ctx)
     check(ulen(p.label) * 6.6 <= W.NAV_W - 16 - 32 - 22 + 1, "catégorie « " .. p.label .. " » : le nom tient dans la colonne")
   end
   out("navigation : " .. table.concat(names, " · "))
-  check(#nav <= 11 and #nav >= 9, "11 catégories au plus (" .. #nav .. ")")
-  check(names[1] == "Quêtes" and names[#names] == "Réglages", "Quêtes d'abord, Réglages à la fin")
+  check(#nav <= 9 and #nav >= 7, "9 catégories au plus (" .. #nav .. ")")
+  check(names[1] == "Maintenant" and names[2] == "Quêtes" and names[#names] == "Réglages", "Maintenant d'abord, Réglages à la fin")
   -- guarded: « Sacs » only once its module registered a page
   local hasBags = W.pageIndex.bags ~= nil
   if not hasBags then
@@ -397,7 +408,7 @@ return function(M, ctx)
     local n2 = W.NavPages()
     local found = false
     for _, p in ipairs(n2) do if p.id == "bags" then found = true end end
-    check(found and W.navCount == #nav + 1 and W.navCount <= 11, "page Sacs inscrite par son module : elle entre dans la navigation (" .. tostring(W.navCount) .. ")")
+    check(found and W.navCount == #nav + 1 and W.navCount <= 9, "page Sacs inscrite par son module : elle entre dans la navigation (" .. tostring(W.navCount) .. ")")
     W.Select("bags")
     local n = 0
     for _, r in ipairs(W.lastLay.rects) do if r.kind == "action" then n = n + 1 end end
@@ -407,7 +418,7 @@ return function(M, ctx)
     check(W.Resolve("sacs") == "bags" and W.Resolve("inventaire") == "bags", "alias français : sacs, inventaire")
   end
   -- redirects for old page ids
-  local RED = { now = "quests", perso = "gear", binds = "keys", journal = "journal", tools = "tools", macros = "macros", keys = "keys",
+  local RED = { now = "home", maintenant = "home", perso = "gear", binds = "keys", journal = "journal", tools = "tools", macros = "macros", keys = "keys",
     options = "options", display = "display", affichage = "display",
     touches = "keys", profil = "profile", metiers = "prof", trajet = "route", groupe = "group" }
   for old, new in pairs(RED) do

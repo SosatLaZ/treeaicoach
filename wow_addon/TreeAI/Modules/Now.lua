@@ -16,8 +16,9 @@ local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 local G = _G
 
+-- mode sûr : ce module ne fait que lire les contrats des autres et poser un petit cadre à nous → allumé d'office
 if type(T.SAFE_MODULES) == "table" then T.SAFE_MODULES.Now = true end
-if type(T.MODULE_INFO) == "table" then
+if type(T.MODULE_INFO) == "table" and not T.MODULE_INFO.Now then
   T.MODULE_INFO.Now = { lite = true, desc = "« Maintenant » : quoi faire tout de suite, 5 lignes au plus, un clic chacune (fenêtre et petit bloc)" }
 end
 
@@ -53,14 +54,14 @@ local function money(c) return (T.Fmt and T.Fmt.Money and T.Fmt.Money(c)) or (to
 local ICON = "Interface\\Icons\\"
 
 -- ===================================================================== « plus tard » (retenu par personnage)
--- (le calme commun : T.Quiet de Tour.lua — « plus tard » vaut pour la ligne de connexion, la question et cette ligne)
+-- (le calme commun : T.Calm de Tour.lua — « plus tard » vaut pour la ligne de connexion, la question et cette ligne)
 function N.Later(id)
-  local Q = T.Quiet
+  local Q = T.Calm
   if type(Q) == "table" and type(Q.IsLater) == "function" then return Q.IsLater(id) end
   return (N.char and type(N.char.later) == "table" and N.char.later[id]) and true or false
 end
 function N.SetLater(id, on)
-  local Q = T.Quiet
+  local Q = T.Calm
   if type(Q) == "table" and type(Q.Later) == "function" then Q.Later(id, on)
   elseif N.char then
     if type(N.char.later) ~= "table" then N.char.later = {} end
@@ -180,9 +181,15 @@ SOURCES[#SOURCES + 1] = function(out)
     icon = ICON .. "Trade_BlackSmithing", btn = "Courses", fn = act(S.Do, "metiers"),
     tip = { "Un clic : la session métier (le bon PNJ, étape par étape)." } }
 end
+-- les questions (spé, réglage) : jamais pendant la 1re minute ni en combat, jamais une fois remises à plus tard
+local function canAsk(kind)
+  local Q = T.Calm
+  if type(Q) == "table" and type(Q.Can) == "function" then return Q.Can(kind) and true or false end
+  return not N.Later(kind)
+end
 -- 8. une question à la fois (jamais une fenêtre) : ta spé si elle n'a pas pu être lue ; clic droit = plus tard
 SOURCES[#SOURCES + 1] = function(out)
-  if N.Later("spec") then return end
+  if not canAsk("spec") then return end
   local Gm = T.Gear
   local s = type(Gm) == "table" and Gm.Spec and try(Gm.Spec) or nil
   if type(s) ~= "table" or not s.ask then return end
@@ -193,7 +200,7 @@ SOURCES[#SOURCES + 1] = function(out)
 end
 -- 9. le réglage en 1 minute, tant qu'il n'a été ni fait ni remis à plus tard
 SOURCES[#SOURCES + 1] = function(out)
-  if N.Later("setup") or not (T.db and not T.db.onboarded and T.ShowWizard) then return end
+  if not canAsk("setup") or not (T.db and not T.db.onboarded and T.ShowWizard) then return end
   out[#out + 1] = { id = "ask:setup", text = "Réglage en 1 minute : profil, affichage, touches", prio = 1, icon = ICON .. "INV_Misc_Gear_01", ask = "setup",
     btn = "Régler", fn = act(function() T:ShowWizard(1) end),
     tip = { "Trois étapes, « Passer » à tout moment.", "Clic droit : plus tard (/tai bienvenue le rouvre)." } }

@@ -299,6 +299,7 @@ return function(M, ctx)
     check(ab.pip and ab.pip:IsShown(), "status pip on the Raccourcis button")
     -- Hawk cast out of combat -> the warning goes away
     M.auras.player = { { name = "Aspect du faucon", spellId = 13165, duration = 0, expirationTime = 0, kind = "buff", source = "player" } }
+    M.FireEvent("UNIT_AURA", "player")   -- (5.1 LOOK) as the real client does: without it the Hunter module's 5 s aura memo decided, by the phase of the refresh cycle, which module sounded first
     Q:Refresh(); M.Advance(1)
     check(not Q._lastPlan.aspectWarn and not (ab._pulse and ab._pulse:IsShown()), "Hawk on: no glow")
     -- combat with SECRET auras: the aspect is followed through our own casts

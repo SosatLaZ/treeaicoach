@@ -607,8 +607,12 @@ local function dims()
   local s = k and k.strip or { cap = 16, pad = 2, grip = 8, sep = 7 }
   return t, s
 end
---- un bouton de la bande est-il montré ? (« Suivant » / « Vite » : seulement avec l'option « Boutons en plus »)
-local function onStrip(st) return not st.extra or (S.db and S.db.more == true) end
+--- un bouton de la bande est-il montré ? (« Suivant » / « Vite » : seulement avec l'option « Boutons en plus » ;
+--- « Suivant » revient tout seul pendant une session — courses en ville, session métier : c'est SON bouton)
+local function onStrip(st)
+  if not st.extra or (S.db and S.db.more == true) then return true end
+  return st.id == "suivant" and type(T.focus) == "table" and type(T.FocusStep) == "function"
+end
 S.OnStrip = onStrip
 -- estompée au repos et en combat, pleine au survol (option « fade ») : aucun OnUpdate, un seul SetAlpha par changement
 local hoverGen = 0
@@ -1350,7 +1354,7 @@ function S.Paint()
   if gb and S.compact then gb:Set({ icon = "Interface\\Icons\\Ability_Tracking", active = guideOn, disabled = not guideOn }) end
 end
 local function sizeSig(states)
-  local t = { S.db and S.db.text ~= false and "T" or "t", S.db and S.db.more and "M" or "m" }
+  local t = { S.db and S.db.text ~= false and "T" or "t", S.db and S.db.more and "M" or "m", type(T.focus) == "table" and "F" or "f" }
   -- (5.1) le nombre est écrit après le mot : son nombre de chiffres change la largeur du bouton
   for _, st in ipairs(states) do
     if onStrip(st) then
@@ -1781,6 +1785,7 @@ function S:OnEnable()
   self:On("QUEST_GUIDE_CHANGED", function() S.Refresh(true) end)
   self:On("QUEST_BRAIN_UPDATED", soon)
   self:On("NEXT_CHANGED", function() if S.lastState then S.Refresh() end end)
+  self:On("FOCUS_CHANGED", soon)   -- (5.1) une session commence / finit : « Suivant » arrive sur la bande / la quitte
   -- (ONBOARD) la visite guidée montre la bande (sinon la barre d'actions si le joueur l'a remise)
   local Tr = T.Tour
   if type(Tr) == "table" and type(Tr.Target) == "function" then

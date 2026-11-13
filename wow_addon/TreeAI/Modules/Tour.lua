@@ -96,12 +96,12 @@ M.Store = store
 function M.Done() return (tonumber(store().done) or 0) >= M.TOUR_V end
 
 -- ===================================================================== (5.1 LOOK) le calme : rien ne s'ouvre tout seul
--- T.Quiet.Ok(kind) : une question / un assistant / une visite peut-il se proposer MAINTENANT ? Jamais pendant la
+-- T.Calm.Ok(kind) : une question / un assistant / une visite peut-il se proposer MAINTENANT ? Jamais pendant la
 -- 1re minute après la connexion, jamais en combat, un seul à la fois (2 min entre deux), et plus jamais tout seul une
--- fois remis à « plus tard » (T.Quiet.Later, gardé dans TreeAIDB.quiet : survit au /reload). Défini au niveau du
+-- fois remis à « plus tard » (T.Calm.Later, gardé dans TreeAIDB.quiet : survit au /reload). Défini au niveau du
 -- fichier : marche même si le module « Visite guidée » est coupé.
 local Q = { FIRST = 60, GAP = 120 }
-T.Quiet = Q
+T.Calm = Q
 local function quietStore()
   local db = T.db
   if type(db) ~= "table" then Q._tmp = Q._tmp or { later = {} } return Q._tmp end
@@ -115,7 +115,15 @@ function Q.Later(kind, on)
   if Q.cur and Q.cur.kind == kind then Q.cur = nil end
   if T.Fire then pcall(T.Fire, T, "QUIET_LATER", kind) end
 end
---- → vrai, ou faux + "login" | "combat" | "busy" | "later"
+--- peut-on PROPOSER maintenant (sans rien réserver) ? faux + "later" | "login" | "combat"
+function Q.Can(kind)
+  if Q.IsLater(tostring(kind)) then return false, "later" end
+  local at = tonumber(T._loginAt)
+  if not at or now() - at < Q.FIRST then return false, "login" end
+  if inCombat() then return false, "combat" end
+  return true
+end
+--- → vrai (et la place est prise pour 2 min), ou faux + "login" | "combat" | "busy" | "later"
 function Q.Ok(kind)
   kind = tostring(kind)
   if Q.IsLater(kind) then return false, "later" end
@@ -818,7 +826,8 @@ function M.Next()
     local f, kind = pass(pcall(st.find))
     if visible(f) then
       a.step, a.kind, a.target = st, kind, f
-      if a.from == "auto" then store().step = idx end   -- première visite coupée par un /reload : on reprendra là
+      -- première visite (lancée par le joueur depuis la 5.1) coupée par un /reload : on reprendra là
+      if a.from == "auto" or not M.Done() then store().step = idx end
       showStep()
       return true
     end
@@ -1099,7 +1108,10 @@ function M.Tick()
     return
   end
   if M.active then return end   -- la visite avance au clic du joueur
-  if not M.Done() and M.AUTO then
+  -- (5.1) jamais de 1er démarrage tout seul ; seule une visite EN COURS (lancée par le joueur, coupée par un /reload)
+  -- reprend — et pas pendant la 1re minute
+  local resume = (tonumber(store().step) or 0) >= 1
+  if not M.Done() and (M.AUTO or resume) then
     -- première fois : après la connexion et l'assistant de démarrage, au premier moment calme qui dure
     local wiz = T.GetWizard and T:GetWizard()
     if wiz and meth(wiz, "IsShown") then
@@ -1118,7 +1130,7 @@ function M.Tick()
       if M._waitN <= 90 then M.Kick(10) end
       return
     end
-    local wait = M.LOGIN_QUIET - (t - (M._loginAt or t))
+    local wait = ((resume and not M.AUTO) and max(M.LOGIN_QUIET, Q.FIRST) or M.LOGIN_QUIET) - (t - (M._loginAt or t))
     if wait > 0 then M.Kick(wait) return end
     if M.mode ~= "pointer" and M.Calm(false, true) then
       if M._calmSince and t - M._calmSince >= M.CALM_FOR - 0.05 then

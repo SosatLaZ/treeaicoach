@@ -400,62 +400,61 @@ return function(M, ctx)
   M.LeaveCombat()
   M.Advance(0.5, 0.1)
   check(wf:IsShown() and wf.__alpha == 1 and blocked() == b0, "after the fight: still shown (the pending hide gave up)")
-  -- Questie tracker still on : (4.2) the column sits under it, no row offers to cut it anymore ; the Addons page can still
-  -- silence it in ITS options (one click, reload)
+  -- Questie tracker still on : (4.2) the column sits under it, no row offers to cut it anymore.
+  -- (5.1 LOOK) READ-ONLY: TreeAI no longer writes in Questie's (or Shortest Path Forever's) options — the « silence »
+  -- writers are gone ; the « Autres addons » page says what TreeAI reads and what it leaves, each line switchable
   _G.Questie.db.profile.enabled, _G.Questie.db.profile.trackerEnabled = true, true
   W.Render()
   local qrow
   for i = 1, W.rowsShown do if W.rows[i].kind == "questie" then qrow = W.rows[i] end end
   check(not qrow, "(4.2) no « cut Questie's tracker » row in the column")
-  M.reloaded = nil
-  T:UserAction(A.SilenceQuestie, true)
+  check(A.SilenceQuestie == nil and A.RestoreQuestie == nil and A.SetSPFTracker == nil and A.SPFChoose == nil,
+    "(5.1) no function writes in another addon's options any more")
   local p = _G.Questie.db.profile
-  check(p.enabled == false and p.trackerEnabled == false and p.minimap.hide == true and M.reloaded, "one click: Questie silenced in ITS options + reload")
-  check(A.QuestieState().silent, "Questie state: silent")
-  M.reloaded = nil
-  A.RestoreQuestie(true)
-  check(p.enabled == true and p.trackerEnabled == true and p.minimap.hide == false and M.reloaded, "« Réafficher Questie » restores what it was")
-  A.SilenceQuestie(false)
+  local qst = A.QuestieState()
+  check(qst.loaded and qst.readable and qst.icons and qst.tracker and not qst.silent, "Questie state read (icons + tracker shown)")
+  check(p.enabled == true and p.trackerEnabled == true and p.minimap.hide ~= true, "Questie's options untouched")
   rawset(_G, "Questie", { loaded = true })
-  local ok, why = A.SilenceQuestie(false)
-  check(ok == false and why == "unreadable", "unreadable Questie options: nothing written, the 3 clicks are shown instead")
+  check(A.QuestieState().loaded and not A.QuestieState().readable, "unreadable Questie options: assumed visible, nothing written")
   rawset(_G, "Questie", nil)
 
-  -- ------------------------------------------------------------------ Addons page + SPF tracker + one-line notice
+  -- ------------------------------------------------------------------ « Autres addons » page + SPF (read-only), no notice
   rawset(_G, "ShortestPathForever", { API = {} })
   rawset(_G, "ShortestPathForeverDB", { tracker = true, journeyTracker = true })
   A.Installed(true)
-  check(A.SPFState().tracker, "SPF tracker detected (its saved options)")
-  A.SetSPFTracker(false)
-  check(_G.ShortestPathForeverDB.tracker == false and _G.ShortestPathForeverDB.journeyTracker == false, "SPF tracker cut through its options")
-  A.SetSPFTracker(true)
-  check(_G.ShortestPathForeverDB.tracker == true and _G.ShortestPathForeverDB.journeyTracker == true, "SPF tracker back")
+  check(A.SPFState().tracker and A.SPFState().loaded, "SPF tracker detected (its saved options, read only)")
+  check(A.SPFConflict() == false, "no more « its route or yours » question")
   rawset(_G, "Questie", { db = { profile = { enabled = true, trackerEnabled = true, minimap = { hide = false } } } })
+  A.Installed(true)
   local secs = A.Sections()
   local titles = {}
   for _, s in ipairs(secs) do titles[#titles + 1] = s.title end
   local ts = table.concat(titles, " / ")
   check(ts:find("Questie", 1, true) and ts:find("Shortest Path", 1, true), "page sections for the installed addons: " .. ts)
-  local qs = secs[1]
-  check(qs and qs.buttons[1] and qs.buttons[1][1] == "Rendre Questie silencieux" and qs.lines[1]:find("QuestieDB", 1, true),
-    "Questie section: base read by TreeAI + one-click silence")
+  local qs
+  for _, s in ipairs(secs) do if s.key == "questie" then qs = s end end
+  check(qs and qs.lines[1].id == "data" and qs.lines[1].kind == "take" and qs.lines[2].id == "icons" and qs.lines[2].kind == "leave",
+    "Questie section: its base is read, its icons and tracker are left to it")
+  A.SetLink("questie", "icons", false)
+  check(not A.Link("questie", "icons") and A.Link("questie", "data"), "each line switches off by itself")
+  A.SetLink("questie", "icons", true)
   local Wn = T.Window
   if Wn and Wn.Open then
     Wn.Open("addons")
     M.Advance(0.3, 0.1)
-    check(Wn.IsOpen(), "window opens on « Mes addons »")
+    check(Wn.IsOpen() and Wn.CurrentPage() == "addons", "window opens on « Autres addons »")
     Wn.Close()
   end
-  A.db.noticeV = 0
-  A._active = true
-  check(A.Notice(), "one-line notice when Questie / SPF draw")
-  local notice
-  for _, e in ipairs(T:GetSuggestions()) do if tostring(e.id):find("Addons:notice", 1, true) then notice = e end end
-  check(notice and notice.text:find("Mes addons", 1, true) and notice.onClick, "notice: « … page « Mes addons » » + click")
-  check(not A.Notice(), "notice only once")
+  check(A.Notice == nil, "no unsolicited notice any more")
+  for _, e in ipairs(T:GetSuggestions()) do check(not tostring(e.id):find("Addons:notice", 1, true), "no « Addons:notice » line") end
+  check(_G.ShortestPathForeverDB.tracker == true and _G.ShortestPathForeverDB.journeyTracker == true
+    and _G.Questie.db.profile.enabled == true and _G.Questie.db.profile.trackerEnabled == true, "nothing written in SPF's / Questie's saved options")
+  A.SetLink("spf", "arrow", false)   -- (the rest of this scenario plays without Shortest Path Forever)
   rawset(_G, "Questie", nil)
   rawset(_G, "ShortestPathForever", nil)
   rawset(_G, "ShortestPathForeverDB", nil)
+  A.Installed(true)
+  A.SetLink("spf", "arrow", true)
 
   -- ------------------------------------------------------------------ QoL: grey selling / repair, never twice
   local K = T.modules.Quick
