@@ -62,6 +62,46 @@ return function(M, ctx)
   item(9012, "Bijou vert de test", { quality = 2, stack = 1, sellPrice = 800, classID = 15 })
   item(9013, "Babiole de test", { stack = 1, sellPrice = 10, classID = 15 })
   M.inventory[18] = { id = 2504, count = 1 }
+  -- (5.1) the player has Questie: a small QuestieDB with the REAL schema (objectives[3] = items, requiredSourceItems,
+  -- Item.relatedQuests / startQuest, requiredLevel / questLevel / requiredClasses / requiredSkill / specialFlags). The
+  -- item → quests link is verified by Bags on real quests before it is trusted (≥ 3 objectives found back).
+  item(9031, "Peau tannée de test", { stack = 20, sellPrice = 40, classID = 7 })
+  item(9032, "Écaille de test", { stack = 20, sellPrice = 40, classID = 7 })
+  item(9033, "Croc de test", { stack = 20, sellPrice = 40, classID = 7 })
+  item(9034, "Herbe de mage de test", { stack = 20, sellPrice = 40, classID = 7 })
+  item(9035, "Lettre trouvée de test", { stack = 1, sellPrice = 15, classID = 15 })
+  item(9036, "Patte de test", { stack = 20, sellPrice = 40, classID = 7 })
+  item(9037, "Fil de tailleur de test", { stack = 20, sellPrice = 40, classID = 7 })
+  item(9038, "Étoffe de don de test", { stack = 20, sellPrice = 40, classID = 7 })
+  item(9039, "Os de test", { stack = 20, sellPrice = 40, classID = 7 })
+  local function quest(name, ql, rl, items, extra)
+    local q = { name = name, questLevel = ql, requiredLevel = rl, objectives = { nil, nil, {} }, requiredRaces = 0, requiredClasses = 0 }
+    for i, id in ipairs(items or {}) do q.objectives[3][i] = { id, nil } end
+    for k, v in pairs(extra or {}) do q[k] = v end
+    return q
+  end
+  local QDB = { quests = {
+      [7001] = quest("Des peaux pour le camp", 34, 32, { 9031 }),
+      [7002] = quest("Les écailles du marais", 31, 28, { 9032 }),
+      [7003] = quest("Des crocs pour plus tard", 47, 44, { 9033 }),
+      [7004] = quest("Secrets de mage", 32, 30, { 9034 }, { requiredClasses = 128 }),
+      [7005] = quest("La lettre trouvée", 32, 30, {}),
+      [7006] = quest("Des pattes de débutant", 9, 6, { 9036 }),
+      [7007] = quest("Commande du tailleur", 32, 30, { 9037 }, { requiredSkill = { 197, 100 } }),
+      [7008] = quest("Don d'étoffes", 30, 12, { 9038 }, { specialFlags = 1 }),
+      [7009] = quest("Les os du passé", 31, 28, { 9039 }),
+    }, items = {
+      [9031] = { name = "Peau tannée de test", relatedQuests = { 7001 } }, [9032] = { name = "Écaille de test", relatedQuests = { 7002 } },
+      [9033] = { name = "Croc de test", relatedQuests = { 7003 } }, [9034] = { name = "Herbe de mage de test", relatedQuests = { 7004 } },
+      [9035] = { name = "Lettre trouvée de test", startQuest = 7005 }, [9036] = { name = "Patte de test", relatedQuests = { 7006 } },
+      [9037] = { name = "Fil de tailleur de test", relatedQuests = { 7007 } }, [9038] = { name = "Étoffe de don de test", relatedQuests = { 7008 } },
+      [9039] = { name = "Os de test", relatedQuests = { 7009 } },
+    } }
+  M.InstallQuestieDB(QDB)
+  M.SetCompleted({ [7002] = true, [7008] = true })
+  local P = B.Predict
+  check(P and P.Veto and P.QuestState, "predictors loaded (Modules/BagsPredict.lua)")
+  P.ResetQuestie()
   local function clearBags() for b = 0, 4 do M.bags[b].slots = {} end end
   local function bagsChanged() M.FireEvent("BAG_UPDATE_DELAYED") M.Advance(1.2, 0.1) end
   local function show(id, bag, slot)
@@ -77,12 +117,15 @@ return function(M, ctx)
   M.SetBagItem(0, 2, 929, 5)      -- his best healing potions
   M.SetBagItem(0, 3, 858, 4)      -- a lower rank
   M.SetBagItem(0, 4, 9001, 3)     -- grey
-  local P = T.modules.Prof
-  if P and P.Update then P.Update(true) end
+  local Pm = T.modules.Prof
+  if Pm and Pm.Update then Pm.Update(true) end
   M.units.npc = { name = "Marchand-Test" }
   M.merchantItems = { { id = 2515, price = 10, stack = 200, maxStack = 200 } }
   M.SetMerchant(true)
-  M.Advance(2, 0.1)
+  M.Advance(4, 0.05)
+  out("quêtes à venir : état = " .. tostring(P.QuestState()) .. " (" .. tostring(P.QF.src) .. ")")
+  check(P.QuestState() == "fast" and (P.QF.calN or 0) >= 3, "Questie's item → quests link verified on real quests before use (" .. tostring(P.QF.calN) .. " objectives)")
+  check(P.RX.ready, "recipe index built in slices (one profession line per image)")
   local CR = T.CityRun
   local cv = CR and CR._active and CR.Verdict and CR.Verdict(929) or nil
   if cv then
@@ -127,7 +170,10 @@ return function(M, ctx)
   bagsChanged()
   local _, vHigh = show(13446)
   local _, vSoon = show(3928)
-  check(vHigh.action ~= "keep" and tostring(vHigh.why):find("niveau 45", 1, true), "level-45 potion at 30: surplus (" .. tostring(vHigh.why) .. ")")
+  -- (5.1) he WILL be 45: never « sell ». Far away → the bank, said so
+  check(vHigh.action == "bank" and tostring(vHigh.why):find("niveau 45", 1, true) and tostring(vHigh.why):find("banque", 1, true),
+    "level-45 potion at 30: kept for later, bank (" .. tostring(vHigh.action) .. " : " .. tostring(vHigh.why) .. ")")
+  out("incident : " .. show(13446))
   check(vSoon.action == "keep" and tostring(vSoon.why):find("niveau 35", 1, true), "level-35 potion at 30: kept (" .. tostring(vSoon.why) .. ")")
   -- the best potion can never be surplus, even 40 of them and whatever a keeper says
   M.SetBagItem(0, 2, 929, 5) M.SetBagItem(0, 7, 929, 5) M.SetBagItem(0, 8, 929, 5)
@@ -298,7 +344,6 @@ return function(M, ctx)
   M.SetBagItem(2, 6, 2319, 6) M.SetBagItem(2, 7, 9014, 10)
   atr[2319], atr[9014] = 400, 300
   bagsChanged()
-  B.Verdict(2319) B.Verdict(2319) B.Verdict(2319) B.Verdict(2319)   -- (the index of his professions is built one line per call)
   B.Invalidate(2319) B.Invalidate(9014) B.Invalidate(9011)
   out("HV ou marchand : " .. show(2319))
   check(B.Verdict(2319).action == "keep" and tostring(B.Verdict(2319).why):find("Travail du cuir", 1, true), "component of his leatherworking: kept")
@@ -552,7 +597,8 @@ return function(M, ctx)
     "hooked through TooltipDataProcessor (item tooltips)")
   GameTooltip.__lines = {}
   cbs[0](GameTooltip, { id = 9001 })
-  check(#GameTooltip.__lines == 1 and tostring(GameTooltip.__lines[1]):find("Vends au marchand", 1, true), "post-call adds the line: " .. tostring(GameTooltip.__lines[1]))
+  check(#GameTooltip.__lines == 1 and GameTooltip.__lines[1] == "TreeAI · Objet gris : ne sert à rien → vends au marchand (48 pc)",
+    "post-call adds the line: " .. tostring(GameTooltip.__lines[1]))
   M.EnterCombat()
   GameTooltip.__lines = {}
   cbs[0](GameTooltip, { id = 9001 })
@@ -629,6 +675,341 @@ return function(M, ctx)
   check(B.stats.computed == c0, "in combat: no verdict computed")
   M.LeaveCombat()
   M.Advance(2, 0.1)
+
+  -- ================================================================== 5.1 — PREDICT, never guess
+  local function settle(sec) M.FireEvent("BAG_UPDATE_DELAYED") M.Advance(sec or 1.5, 0.05) end
+  local function line(id, bag, slot) return tostring(B.Line(B.Verdict(id, bag, slot))) end
+  local function has(list, id) for _, e in ipairs(list) do if e.id == id then return e end end end
+  M.SetMerchant(false)
+  M.Advance(0.5, 0.1)
+  cf:Hide()
+  M.bags[0].size = 16
+  for b = 1, 4 do M.bags[b].size = 16 end
+
+  -- ------------------------------------------------------------------ 10. quests he has NOT taken yet (Questie, read in game)
+  clearBags()
+  M.player.level = 30
+  M.quests = {}
+  M.FireEvent("QUEST_LOG_UPDATE")
+  for i, id in ipairs({ 9031, 9032, 9033, 9034, 9035, 9036, 9037, 9038, 9039 }) do M.SetBagItem(0, i, id, id == 9035 and 1 or 8) end
+  -- somebody (a keeper) calls each of them surplus: without the prediction they would all be sold
+  B.RegisterKeeper("test-surplus", function(id) if id >= 9031 and id <= 9040 then return 0, "test : aucun plan n'en veut" end end)
+  rawset(_G, "Auctionator", { API = { v1 = { GetAuctionPriceByItemID = function() return 10 end } } })   -- AH worth less than the vendor
+  settle(3)
+  local want = {
+    { 9031, "keep", "Garde : pour la quête « Des peaux pour le camp » (dès le niveau 32) — nombre demandé inconnu, je garde tout" },
+    { 9032, "sell", "Test : aucun plan n'en veut → vends au marchand (3 pa 20 pc)", "quête « Les écailles du marais » : déjà faite" },
+    { 9033, "bank", "À la banque : pour la quête « Des crocs pour plus tard » (niveau 44) : à la banque en attendant" },
+    { 9034, "sell", "Test : aucun plan n'en veut → vends au marchand (3 pa 20 pc)", "quête « Secrets de mage » : pas pour ta classe / ta faction" },
+    { 9035, "use", "À utiliser : lance la quête « La lettre trouvée » (clic droit dessus)" },
+    { 9036, "sell", "Test : aucun plan n'en veut → vends au marchand (3 pa 20 pc)", "quête « Des pattes de débutant » : trop basse pour toi" },
+    { 9037, "sell", "Test : aucun plan n'en veut → vends au marchand (3 pa 20 pc)", "quête « Commande du tailleur » : demande un métier que tu n'as pas" },
+    { 9038, "keep", "Garde : pour la quête répétable « Don d'étoffes » (pas encore prise) — nombre demandé inconnu, je garde tout" },
+    { 9039, "keep", "Garde : pour la quête « Les os du passé » (pas encore prise) — nombre demandé inconnu, je garde tout" },
+  }
+  for _, w in ipairs(want) do
+    local v = B.Verdict(w[1])
+    out("quêtes à venir : " .. tostring(v.name) .. " → " .. line(w[1]))
+    check(v.action == w[2] and line(w[1]) == w[3], ("future quest %d: %s / « %s » (got %s / « %s »)"):format(w[1], w[2], w[3], tostring(v.action), line(w[1])))
+    if w[4] then
+      local said = false
+      for _, r in ipairs(v.reasons or {}) do if r == w[4] then said = true end end
+      check(said, "…and the quest that was ruled out is named with the cause: " .. w[4])
+    end
+  end
+  local sl10 = B.SellList()
+  check(not has(sl10.list, 9031) and not has(sl10.list, 9033) and not has(sl10.list, 9035) and not has(sl10.list, 9038) and not has(sl10.list, 9039),
+    "one-click list: never an item a quest to come asks for")
+  check(has(sl10.list, 9032) and has(sl10.list, 9034) and has(sl10.list, 9036) and has(sl10.list, 9037), "…the four ruled out by data are in it")
+  -- he takes the quest (the game now gives the count), then turns it in: only then the item may go
+  local cQ = B.stats.computed
+  M.quests = { { id = 7009, title = "Les os du passé", level = 31, objectives = { { text = "Os de test : 8/6", done = true, have = 8, need = 6, type = "item" } } } }
+  M.FireEvent("QUEST_LOG_UPDATE")
+  M.Advance(3, 0.1)
+  out("quêtes à venir : (prise) " .. line(9039))
+  check(B.Verdict(9039).action == "keep" and tostring(B.Verdict(9039).why):find("Les os du passé", 1, true), "quest taken: claimed by the log (" .. tostring(B.Verdict(9039).why) .. ")")
+  M.quests = {}
+  M.SetCompleted({ [7002] = true, [7008] = true, [7009] = true })
+  M.FireEvent("QUEST_LOG_UPDATE")
+  M.Advance(3, 0.1)
+  out("quêtes à venir : (rendue) " .. line(9039))
+  check(B.Verdict(9039).action == "sell", "quest turned in: ruled out, sellable (" .. line(9039) .. ")")
+  for _, w in ipairs(want) do B.Verdict(w[1]) end
+  check(B.stats.computed - cQ <= 20, "quest-log changes redo only the verdicts that depend on quests (" .. (B.stats.computed - cQ) .. ")")
+  -- he levels: a quest of level 44 comes within 8 levels at 36 → out of the bank, into the bags
+  M.player.level = 36
+  M.Advance(0.2, 0.1)
+  out("quêtes à venir : (niveau 36) " .. line(9033))
+  check(B.Verdict(9033).action == "keep" and line(9033):find("dès le niveau 44", 1, true), "level 36: the level-44 quest is now « soon » (" .. line(9033) .. ")")
+  M.player.level = 30
+  M.Advance(0.2, 0.1)
+
+  -- ------------------------------------------------------------------ 11. no Questie / link not verified → never the one-click
+  M.SetBagItem(1, 1, 17031, 3)     -- mage rune: useless for a hunter (class reagent)
+  M.SetBagItem(1, 2, 9001, 3)      -- a grey
+  local keepLib = { rawget(_G, "LibQuestieDB"), rawget(_G, "QuestDB"), rawget(_G, "NpcDB"), rawget(_G, "ObjectDB"), rawget(_G, "ItemDB") }
+  for _, n in ipairs({ "LibQuestieDB", "QuestDB", "NpcDB", "ObjectDB", "ItemDB" }) do rawset(_G, n, nil) end
+  P.ResetQuestie()
+  settle(2)
+  local vA = B.Verdict(17031)
+  out("sans Questie : " .. line(17031))
+  check(P.QuestState() == "absent" and vA.action == "keep" and vA.confirm and vA.confirm.action == "sell",
+    "no Questie: nothing but « keep » for the rest of the addon, the possible sale is only a « confirm » (" .. tostring(vA.action) .. ")")
+  check(line(17031) == "À confirmer : Composant de mage : inutile pour toi → vends au marchand (7 pa 50 pc) · quêtes à venir inconnues (Questie absent)",
+    "…and the line says what is not known: " .. line(17031))
+  local slA = B.SellList()
+  check(not has(slA.list, 17031) and has(slA.apart, 17031) and has(slA.list, 9001), "one-click = the grey only; the rune is listed apart")
+  -- Questie present but its item → quests link is NOT there: not trusted, the player can have the whole base re-read
+  local QDB2 = { quests = QDB.quests, items = {} }
+  for id, row in pairs(QDB.items) do QDB2.items[id] = { name = row.name, startQuest = row.startQuest } end
+  M.InstallQuestieDB(QDB2)
+  P.ResetQuestie()
+  M.units.npc = { name = "Marchand-Test" }
+  M.merchantItems = {}
+  M.SetMerchant(true)
+  M.Advance(3, 0.05)
+  check(P.QuestState() == "unverified", "link not found on real quests: state « unverified » (" .. tostring(P.QuestState()) .. ")")
+  out("lien non vérifié : " .. line(17031))
+  local mU = B.cardModel
+  out("lien non vérifié : carte = " .. tostring(mU and mU.label) .. " | " .. tostring(mU and mU.info))
+  check(mU and mU.verify and has(mU.apart, 17031), "merchant card: the rune apart + a « Vérifier mes quêtes à venir » line")
+  local cardU = B.GetCard("merchant")
+  B.CardExpand("merchant", true)
+  local vrow
+  for _, r in ipairs(cardU.rows) do if r:IsShown() and r.e and r.e.verify then vrow = r end end
+  local scanned0 = P.stats.scanned
+  if check(vrow, "the « verify » row is shown") then
+    M.Hw(function() vrow:GetScript("OnClick")(vrow, "LeftButton") end)
+    check(P.QuestState() == "scan", "his click starts the full read, sliced")
+    M.Advance(3, 0.05)
+  end
+  check(P.QuestState() == "index" and P.stats.scanned - scanned0 == 9, "whole base read once (" .. (P.stats.scanned - scanned0) .. " quests), state « index »")
+  out("base relue : " .. tostring(P.QF.src) .. " → " .. line(17031) .. " | " .. line(9031))
+  check(B.Verdict(17031).action == "sell" and B.Verdict(9031).action == "keep", "after the read: the rune is a sure sale, the quest hide is kept")
+  check(type(B.db.qidx) == "table" and B.db.qidx.by[9031] == 7001, "the index is saved for the next sessions")
+  P.ResetQuestie()                 -- « next session »
+  P.QuestState()                   -- (asked the first time a sale is considered: here, by hand)
+  M.Advance(2, 0.05)
+  check(P.QuestState() == "index" and P.stats.scanned - scanned0 == 9 and tostring(P.QF.src):find("gardé", 1, true),
+    "next session: the saved index is reused, nothing re-read (" .. tostring(P.QF.src) .. ")")
+  M.SetMerchant(false)
+  M.Advance(0.5, 0.1)
+  B.db.qidx = false
+  for i, n in ipairs({ "LibQuestieDB", "QuestDB", "NpcDB", "ObjectDB", "ItemDB" }) do rawset(_G, n, keepLib[i]) end
+  M.InstallQuestieDB(QDB)
+  P.ResetQuestie()
+  B.UnregisterKeeper("test-surplus")
+  P.QuestState()
+  settle(3)
+  check(P.QuestState() == "fast", "back to the verified link")
+
+  -- ------------------------------------------------------------------ 12. professions: « utile à mon métier » … mais en ai-je besoin ?
+  -- found in the client recipe data (the oracle is the table, not the predictor)
+  local RD = T.Data.Recipes
+  local function usedBy(id)
+    local by = {}
+    for ln, rows in pairs(RD.r) do
+      for _, r in ipairs(rows) do
+        for k = 1, #r[10], 2 do if r[10][k] == id then by[ln] = math.max(by[ln] or 0, r[6]) end end
+      end
+    end
+    return by
+  end
+  local mine = { [165] = 143, [393] = 140 }
+  local pastID, pastAt
+  for _, r in ipairs(RD.r[165]) do
+    for k = 1, #r[10], 2 do
+      local id = r[10][k]
+      local by = usedBy(id)
+      local only = true
+      for ln in pairs(by) do if ln ~= 165 then only = false end end
+      if only and by[165] <= 143 and not pastID and id ~= 2319 then pastID, pastAt = id, by[165] end
+    end
+  end
+  local byDye = usedBy(2604)
+  check(byDye[197] and not byDye[165] and not byDye[393], "client data: red dye serves Tailoring, not his professions")
+  if check(pastID, "client data: a leatherworking component whose recipes are all grey at 143") then
+    item(pastID, "Compo dépassée de test", { stack = 20, sellPrice = 30, classID = 7 })
+  end
+  item(2604, "Teinture rouge", { stack = 20, sellPrice = 50, classID = 7 })
+  item(2319, "Cuir moyen", { stack = 20, sellPrice = 50, classID = 7 })
+  clearBags()
+  M.SetBagItem(0, 1, 2604, 5) M.SetBagItem(0, 2, pastID or 9010, 10) M.SetBagItem(0, 3, 2319, 20) M.SetBagItem(0, 4, 2319, 14)
+  rawset(_G, "Auctionator", { API = { v1 = { GetAuctionPriceByItemID = function(_, id) return id == 2319 and 400 or 10 end } } })
+  settle(2)
+  out("métiers : " .. line(2604))
+  check(line(2604) == "Pas besoin : sert en Couture (pas ton métier) → vends au marchand (2 pa 50 pc)", "not his profession, said exactly: " .. line(2604))
+  check(B.Verdict(2604).action == "sell" and has(B.SellList().list, 2604), "…a sure sale (Questie rules the quests out)")
+  if pastID then
+    out("métiers : " .. line(pastID))
+    check(line(pastID) == ("Pas besoin : sert en Travail du cuir mais tu l'as dépassé (recettes grises depuis %d) → vends au marchand (3 pa)"):format(pastAt),
+      "already past it, said exactly: " .. line(pastID))
+  end
+  out("métiers : " .. line(2319))
+  check(B.Verdict(2319).action == "keep" and line(2319):find("^Garde : sert à ton métier : Travail du cuir %(143→%d+%)$"),
+    "useful and no plan known: everything kept, with the skill range (" .. line(2319) .. ")")
+  -- the plan of PROF gives the count: « garde 20, 14 en trop »
+  local planN = 20
+  B.RegisterKeeper("Prof", function(id) if id == 2319 and planN then return planN, "ton plan de travail du cuir en utilise " .. planN end end)
+  settle(1)
+  local to = line(2319):match("%(143→(%d+)%)")
+  out("métiers : " .. line(2319))
+  check(line(2319) == ("Garde : 20 pour Travail du cuir (143→%s) · 14 en trop → HV ≈ 4 pa l'unité"):format(tostring(to)),
+    "stock covered, the player's sentence: " .. line(2319))
+  check(B.Verdict(2319, 0, 4).action == "ah" and B.Verdict(2319, 0, 3).action == "keep" and B.TipLine(2319, 0, 3) == "TreeAI · " .. line(2319),
+    "…the 14-stack is the surplus lot, the 20-stack is kept, both tooltips say the same sentence")
+  -- what he has at the bank counts (last reading made with the bank open)
+  P.SetOverride({ bank = { [2319] = 20 } })
+  B.Invalidate(nil, "bank")
+  out("métiers : (20 à la banque) " .. line(2319))
+  check(line(2319) == ("Garde : 20 pour Travail du cuir (143→%s), dont 20 à la banque · 34 en trop → HV ≈ 4 pa l'unité"):format(tostring(to)),
+    "bank counted: " .. line(2319))
+  P.SetOverride(nil)
+  B.Invalidate(nil, "bank")
+  -- useful to his profession but NOT on his plan (plan known, silent on it): said, and never in the one-click
+  planN = nil
+  local PLv = T.Prof and T.Prof.Level
+  local gen0 = PLv and PLv.keepGen
+  if PLv then PLv.keepGen = 1 end
+  B.Invalidate(2319)
+  out("métiers : " .. line(2319))
+  local vP = B.Verdict(2319)
+  check(vP.action == "keep" and vP.confirm and line(2319):find("mais pas sur ton chemin", 1, true) and line(2319):find("^À confirmer : Pas besoin : sert en Travail du cuir"),
+    "not on his path: said, to confirm (" .. line(2319) .. ")")
+  check(not has(B.SellList().list, 2319), "…never in the one-click list")
+  if PLv then PLv.keepGen = gen0 end
+  B.UnregisterKeeper("Prof")
+  -- a friend of the group has the profession (shared by TreeAI): « donne »
+  local Grp = T.modules.Group
+  local oList = Grp and Grp.List
+  if Grp then
+    Grp.List = function() return { { name = "Ami-Un", st = { pr = "Couture 120 Enchantement 95" } }, { name = "Moi", me = true, st = { pr = "" } } } end
+    M.group = { { name = "Ami-Un", class = "MAGE", level = 30, online = true } }
+    M.FireEvent("GROUP_ROSTER_UPDATE")
+    M.Advance(1.5, 0.1)
+    B.Invalidate()
+    out("métiers : (ami couturier) " .. line(2604))
+    local vF = B.Verdict(2604)
+    check(vF.action == "keep" and vF.hint == "give" and line(2604):find("^Donne à un ami du groupe : Ami%-Un peut s'en servir %(Couture 120%)"),
+      "a friend's profession uses it: « donne » (" .. line(2604) .. ")")
+    Grp.List = oList
+    M.group = {}
+    M.FireEvent("GROUP_ROSTER_UPDATE")
+    M.Advance(1.5, 0.1)
+  end
+  -- consumables outside our tables (elixir, scroll): kept, saying what is not known; a locked box
+  item(9041, "Élixir de test", { stack = 5, sellPrice = 60, classID = 0, subclassID = 2, minLevel = 20 })
+  item(9042, "Parchemin de test", { stack = 5, sellPrice = 60, classID = 0, subclassID = 4, minLevel = 45 })
+  item(4632, "Coffret orné de test", { stack = 1, sellPrice = 0, classID = 15 })
+  item(9043, "Jeton sans prix de test", { stack = 1, sellPrice = 0, classID = 15 })
+  M.SetBagItem(1, 1, 9041, 2) M.SetBagItem(1, 2, 9042, 2) M.SetBagItem(1, 3, 4632, 1) M.SetBagItem(1, 4, 9043, 1)
+  settle(1)
+  for _, id in ipairs({ 9041, 9042, 4632, 9043 }) do out("jamais vendus : " .. tostring(B.Verdict(id).name) .. " → " .. tostring(B.Text(B.Verdict(id)))) end
+  check(B.Verdict(9041).action == "keep" and tostring(B.Verdict(9041).why):find("élixir utilisable", 1, true), "elixir: kept (" .. tostring(B.Verdict(9041).why) .. ")")
+  check(B.Verdict(9042).action == "bank" and tostring(B.Verdict(9042).why):find("niveau 45", 1, true), "level-45 scroll at 30: bank")
+  check(B.Verdict(4632).action == "keep" and tostring(B.Verdict(4632).why):find("coffre verrouillé", 1, true), "locked box: never sold")
+  check(B.Verdict(9043).action == "keep" and tostring(B.Verdict(9043).why):find("pas de prix de vente", 1, true), "no sell price: kept, reason stated")
+
+  -- ------------------------------------------------------------------ 13. safety nets at the merchant
+  clearBags()
+  item(9040, "Gemme chère de test", { stack = 1, sellPrice = 25000, classID = 15 })
+  item(9044, "Bricole de test", { stack = 5, sellPrice = 30, classID = 15 })
+  B.RegisterKeeper("test-surplus", function(id) if id == 9040 or id == 9044 then return 0, "test : ne sert à rien" end end)
+  M.SetBagItem(0, 1, 9001, 5) M.SetBagItem(0, 2, 9044, 3) M.SetBagItem(0, 3, 9040, 1) M.SetBagItem(0, 4, 929, 5)
+  M.inventory[1] = nil
+  M.sold = 0
+  M.SetMerchant(true)
+  M.Advance(3, 0.05)
+  local m13 = B.cardModel
+  out("filets : carte = " .. tostring(m13 and m13.label) .. " | " .. tostring(m13 and m13.info))
+  check(m13 and m13.n == 2 and m13.apartN == 1 and has(m13.apart, 9040) and tostring(m13.info):find("+ 1 à confirmer un par un", 1, true),
+    "a 2 po 50 item is never in the one-click lot: listed apart")
+  check(B.Verdict(9040).action == "sell", "…its verdict is sure (« sell »), only the click is separate")
+  local card13 = B.GetCard("merchant")
+  M.Hw(function() card13.btn:GetScript("OnClick")(card13.btn, "LeftButton") end)
+  M.Advance(2, 0.05)
+  check(M.sold == 2 and M.bags[0].slots[3] and M.bags[0].slots[3].id == 9040, "ONE click sold the lot (2 stacks), not the gem")
+  settle(1.5)
+  local m13b = B.cardModel
+  out("filets : après = " .. tostring(m13b and m13b.label) .. " | " .. tostring(m13b and m13b.info))
+  check(m13b and tostring(m13b.info):find("Vendu : 2 objets", 1, true) and tostring(m13b.info):find("Annuler (Rachat) : onglet « Rachat » du marchand", 1, true),
+    "reminder while the merchant is open: what was sold, how to undo")
+  check(m13b.sold and #m13b.sold == 2, "…the sold items are listed (" .. tostring(m13b.sold and #m13b.sold) .. ")")
+  -- he buys one back (the stack returns, gold goes down): learned for good
+  M.SetBagItem(0, 2, 9044, 3)
+  M.player.money = M.player.money - 90
+  settle(1.5)
+  out("filets : (racheté) " .. tostring(B.Text(B.Verdict(9044))))
+  check(B.MarkOf(9044) == "keep" and B.char.learned[9044] == "rachat" and tostring(B.Verdict(9044).why):find("racheté", 1, true),
+    "bought back → never proposed again (" .. tostring(B.Verdict(9044).why) .. ")")
+  check(B.MarkOf(9001) == nil, "…the grey he did not buy back is not marked")
+  -- the gem: its own click on its own row
+  B.CardExpand("merchant", true)
+  local grow
+  for _, r in ipairs(card13.rows) do if r:IsShown() and r.e and r.e.apart and r.e.id == 9040 then grow = r end end
+  if check(grow, "the gem has its own row") then
+    M.Hw(function() grow:GetScript("OnClick")(grow, "LeftButton") end)
+    M.Advance(1.5, 0.05)
+    check(M.sold == 3 and not M.bags[0].slots[3], "its own click sells it (and only it)")
+  end
+  -- « toujours vendre » always wins; if a need claims the item, it is said and the click is separate
+  B.Mark(929, "sell")
+  settle(1.5)
+  out("filets : (toujours vendre) " .. line(929))
+  local v929 = B.Verdict(929)
+  check(v929.action == "keep" and v929.confirm and v929.confirm.action == "sell" and line(929):find("attention : ta meilleure potion de soins", 1, true),
+    "« toujours vendre » on his best potions: proposed, with the warning, never in the lot (" .. line(929) .. ")")
+  B.Mark(929, nil)
+  B.Mark(9044, nil)
+  check(B.char.learned[9044] == nil, "/tai oublie: the learned buy-back is forgotten too")
+  B.UnregisterKeeper("test-surplus")
+  M.SetMerchant(false)
+  M.Advance(0.5, 0.1)
+
+  -- ------------------------------------------------------------------ 14. verdicts invalidated BY CAUSE, cost per image
+  clearBags()
+  local fill = { 6948, 929, 858, 4540, 1179, 3530, 2672, 9003, 9004, 2901, 9005, 9006, 17031, 9007, 9001, 9002, 2515, 2519, 9008, 9009, 9010, 9011,
+    9012, 9013, 2319, 2604, 9031, 9032, 9033, 9041, 9042, 4632 }
+  for i, id in ipairs(fill) do M.SetBagItem(math.floor((i - 1) / 16), (i - 1) % 16 + 1, id, 1) end
+  settle(3)
+  B.Invalidate()
+  for _, id in ipairs(fill) do B.Verdict(id) end
+  local function redone(fn)
+    local c0 = B.stats.computed
+    fn()
+    for _, id in ipairs(fill) do B.Verdict(id) end
+    return B.stats.computed - c0
+  end
+  local nLevel = redone(function() M.player.level = 31 M.Advance(0.1, 0.1) end)
+  local nPet = redone(function() B.Invalidate(nil, "pet") end)
+  local nProf = redone(function() B.Invalidate(nil, "prof") end)
+  local nRoster = redone(function() B.Invalidate(nil, "roster") end)
+  local nNone = redone(function() M.Advance(120, 1) end)
+  M.player.level = 30
+  M.Advance(0.2, 0.1)
+  out(("causes : %d objets — niveau %d, familier %d, métiers %d, groupe %d refaits ; 2 min sans rien : %d"):format(#fill, nLevel, nPet, nProf, nRoster, nNone))
+  check(nLevel > 0 and nLevel < #fill and nPet > 0 and nPet <= 3 and nProf > 0 and nProf < #fill and nRoster < #fill,
+    "a cause redoes only the verdicts that depend on it")
+  check(nNone == 0, "no cause, no external keeper: a verdict is kept as long as nothing changes (no 45 s expiry)")
+  -- cost of the worst cold verdict and of one slice of each background job (VM instructions, counted by a hook)
+  local function instr(fn)
+    local n = 0
+    debug.sethook(function() n = n + 100 end, "", 100)
+    fn()
+    debug.sethook()
+    return n
+  end
+  local worst = 0
+  B.Invalidate()
+  for _, id in ipairs(fill) do worst = math.max(worst, instr(function() B.Verdict(id) end)) end
+  local chunk = 0
+  B.Invalidate()
+  for i = 1, #fill, 6 do
+    chunk = math.max(chunk, instr(function() for k = i, math.min(#fill, i + 5) do B.Verdict(fill[k]) end end))
+  end
+  rawset(_G, "Auctionator", nil)
+  out(("coût : pire avis à froid %.1f kinstr ; pire paquet de 6 avis (une image) %.1f kinstr (4 ms = 200 kinstr)"):format(worst / 1000, chunk / 1000))
+  check(chunk < 60000, "one image of verdicts stays far under 4 ms (" .. chunk .. " instructions)")
 
   -- ------------------------------------------------------------------ 9. (5.0 INTEG) with the REAL keepers of GEAR and PROF
   -- the bridges step aside (one opinion per item, from the module that knows): an upgrade is « à utiliser », a piece

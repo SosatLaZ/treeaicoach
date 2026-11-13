@@ -85,3 +85,59 @@ proposée « HV » (jamais « marchand » : la vente d'un clic exige un avis « 
 - Marquer « garder » depuis le sac lui-même (clic modifié sur le bouton du jeu) : non — carte du marchand, page Sacs,
   `/tai garde [objet]`.
 - Retrait de banque : une pile par clic (dépôt : jusqu'à 8 piles par clic).
+
+---
+
+# BAGS 5.1 — « sans te gourer sur ce dont j'ai besoin, faut tout prédire »
+
+Règle : **« vends » n'est dit que si tout besoin futur est écarté par des données**. Dans le doute : gardé, en disant ce
+qui n'est pas su. Un doute n'est jamais dans le clic unique.
+
+## Les prédicteurs (un par façon d'avoir besoin d'un objet) — `Modules/Bags.lua` + `Modules/BagsPredict.lua`
+| Prédicteur | Source (jamais inventée) | Ne peut pas savoir |
+|---|---|---|
+| tes choix | marques « toujours garder / vendre / banque », rachats appris (`char.marks`, `char.learned`) | — : ton choix gagne |
+| quêtes du journal | journal du jeu + Surbrillance : nombre demandé exact, objets fournis, objet qui lance une quête | — |
+| quêtes à venir (veto) | base de Questie **lue en jeu** : objet → quêtes ; prenable par TOI (pas rendue, race / faction, classe, métier, pas exclue), de ton niveau à +8 → garde ; au-delà → banque ; répétables ; objets qui lancent une quête | le **nombre** demandé (absent de la base → tout est gardé) ; rien sans Questie |
+| consommables | Data/Consumables : meilleur palier utilisable, stock cible par classe ; palier supérieur : ≤ +5 niveaux gardé, au-delà banque | élixirs / parchemins : gardés sans stock cible |
+| munitions | arme à distance équipée (jeu) | une arme rangée à la banque |
+| familier | régime / niveau du familier (jeu, sinon dernier régime vu) + Data/PetFood | un familier jamais sorti |
+| composants de classe | liste fixe | — |
+| outils, clés, sacs, monture, mascotte, pierre de foyer, coffres verrouillés | classe d'objet du jeu + listes | — |
+| équipement | gardien Gear (stats lues, spé), sets, « porté récemment », portable d'ici 10 niveaux, ami du groupe (GroupGear → « Donne ») | stats pas encore chargées (alors gardé) |
+| recettes | Data/Recipes (objet-recette → métier, compétence), infobulle « déjà connue » | recette hors des tables |
+| métiers | Data/Recipes (toutes les recettes de tous les métiers) ; le **compte** vient du plan de PROF | ce que tu fabriqueras hors du plan |
+| ami du groupe (veto) | métiers partagés par les amis qui ont TreeAI | un ami sans TreeAI |
+
+Quantités : besoin = somme des prédicteurs (raison du plus grand), comparé à sacs + banque (dernier relevé fait banque
+ouverte, par personnage) quand le besoin est un besoin total (quête, plan de métier). Les autres personnages ne sont
+pas comptés (inconnus).
+
+## Questie : pourquoi pas « relire toute la base au premier marchand »
+Il faut « objet → quêtes qui le demandent ». La base de Questie est rangée par quête : la retourner = lire les
+objectifs de **chaque** quête (2 lectures × ~5 000 quêtes ≈ 0,2 s de travail). Découpé, c'est invisible en jeu, mais
+ça ne tient pas dans le budget de la simulation « foule » (phase butin : 113 kinstr / s, mesuré 101). Donc :
+1. Questie porte déjà ce lien par objet (`relatedQuests`, `startQuest`) : **une lecture par objet dont la vente est
+   envisagée** — mais on ne s'y fie qu'une fois **vérifié sur de vraies quêtes** (celles du journal, puis 16 quêtes
+   prises dans la base : il faut retrouver ≥ 3 objectifs, sans un seul manque) ;
+2. sinon (« non vérifié ») : tout ce qui n'est pas gris est **« à confirmer »** et la carte du marchand offre
+   « Vérifier mes quêtes à venir (une fois) » : TON clic lance la relecture complète (20 quêtes par image, jamais en
+   combat), gardée pour les sessions suivantes (`db.qidx`, tant que la base de Questie est la même) ;
+3. sans Questie : « à confirmer », en le disant (« quêtes à venir inconnues (Questie absent) »).
+
+## Filets
+- `L.sell` = ce qu'UN clic peut vendre ; `L.confirm` = à part (un doute, ou une pile ≥ option « bigValue », 1 po par
+  défaut) : une ligne par objet sur la carte, **son** clic. Un doute = avis « garde » pour le reste de l'addon
+  (`v.confirm` porte la vente possible) → aucun autre module ne peut le vendre par erreur.
+- Rappel tant que le marchand est ouvert : ce qui a été vendu + « Annuler (Rachat) ». Un rachat (l'objet revient,
+  de l'or est dépensé, l'onglet de rachat s'est vidé) → « toujours garder » pour de bon.
+- « toujours vendre » gagne toujours ; si un besoin le réclamait : dit, et clic à part.
+
+## Preuve
+`tests/wow/bags_audit_scenario.lua` (par classe) et `tests/wow/bags_replay_scenario.lua` : voir leurs en-têtes ; les
+deux savent échouer (prédicteurs cassés exprès → violations / regrets).
+
+## Perf
+Avis gardés **par cause** (`v.deps` : level, prof, quest, equip, pet, roster, price, bank) ; durée de vie de 45 s
+seulement pour les avis où un gardien d'un autre module a répondu. Un seul passage `Warm` à la fois (les demandes
+simultanées s'y ajoutent). Index des recettes : 12 morceaux (un par ligne de métier), une fois par session.

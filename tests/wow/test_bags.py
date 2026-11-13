@@ -80,7 +80,9 @@ def test_other_modules_use_the_brain():
 
 def _run(flavor, cls="HUNTER"):
     return subprocess.run([LUA, str(ROOT / "tests/wow/harness.lua"), "-q", "--no-storm", "--flavor", flavor, "--class", cls,
-                           "--level", "30", "--scenario", str(ROOT / "tests/wow/bags_scenario.lua"), str(ADDON)],
+                           "--level", "30", "--allow", "LibQuestieDB", "--allow", "QuestDB", "--allow", "NpcDB", "--allow", "ObjectDB", "--allow", "ItemDB",
+                           "--allow", "IsQuestFlaggedCompleted",
+                           "--scenario", str(ROOT / "tests/wow/bags_scenario.lua"), str(ADDON)],
                           capture_output=True, text=True, timeout=300, cwd=ROOT)
 
 

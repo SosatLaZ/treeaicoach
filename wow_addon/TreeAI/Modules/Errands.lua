@@ -182,10 +182,27 @@ end
 function M.Mats()
   local list, API = {}, T.API or {}
   if not API.IterBags then return list end
+  -- (5.1 BAGS) l'avis des sacs, s'il est déjà prêt (aucun calcul ici) : jamais une pile qu'une quête réclame (journal
+  -- ou quête à venir) ; d'abord ce qu'un ami du groupe peut utiliser, puis ce qui est en trop, puis le reste
+  local B = T.Bags
+  local peek = type(B) == "table" and B._active and type(B.Peek) == "function" and B.Peek or nil
   for bag, slot, it in API.IterBags() do
     local classID = it and select(12, try(API.ItemInfo, it.link or it.itemID))
-    if classID == 7 and not it.locked then list[#list + 1] = { bag = bag, slot = slot } end
+    if classID == 7 and not it.locked then
+      local v = peek and it.itemID and try(peek, it.itemID, bag, slot) or nil
+      local quest = type(v) == "table" and v.claimed and (v.keeper == "quête" or v.keeper == "quêtes à venir")
+      if not quest then
+        local pr = 2
+        if type(v) == "table" then pr = (v.hint == "give" and 0) or ((v.action == "sell" or v.action == "ah" or v.confirm) and 1) or 2 end
+        list[#list + 1] = { bag = bag, slot = slot, pr = pr }
+      end
+    end
   end
+  tsort(list, function(x, y)
+    if x.pr ~= y.pr then return x.pr < y.pr end
+    if x.bag ~= y.bag then return x.bag < y.bag end
+    return x.slot < y.slot
+  end)
   return list
 end
 --- clic du joueur : joint UNE pile (UseContainerItem, onglet « Envoyer » ouvert, hors combat) — jamais autre chose
@@ -217,6 +234,7 @@ function M.ShowMats(show)
       tt:SetOwner(self, "ANCHOR_RIGHT")
       tt:AddLine("Joindre compos", 1, 1, 1)
       tt:AddLine("Onglet « Envoyer » ouvert : chaque clic joint une pile de compos.", 0.85, 0.85, 0.85, true)
+      tt:AddLine("D'abord ce qu'un ami peut utiliser et ce qui est en trop ; jamais ce qu'une quête réclame.", 0.85, 0.85, 0.85, true)
       tt:AddLine("Le destinataire et « Envoyer » restent à toi.", 0.85, 0.85, 0.85, true)
       tt:Show()
     end)

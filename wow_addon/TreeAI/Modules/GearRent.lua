@@ -253,12 +253,12 @@ function M.KeepCount(id, it, have)
   end
   local GG = T.GroupGear   -- utile à un ami du groupe (échanges conseillés) : jamais vendu non plus
   local tr = GG and GG._active and GG.TradeFor and try(GG.TradeFor, id)
-  if type(tr) == "string" then return 1, tr end
+  if type(tr) == "string" then return 1, tr, "give" end   -- (5.1 BAGS) « Donne à un ami du groupe »
   local drop = bagUp.drop and bagUp.drop[id]
   if not drop then return 0 end
   local fw = friendsWant(id, it, bagUp.where[id])
   if fw == false then return 0, drop end
-  if fw == true then return 1, "un ami du groupe peut s'en servir" end
+  if fw == true then return 1, "un ami du groupe peut s'en servir", "give" end
   return 0                                                 -- groupe pas encore lu : pas d'avis (gardé)
 end
 local keeperFor   -- la table T.Bags auprès de laquelle on s'est inscrit (une fois par table)
