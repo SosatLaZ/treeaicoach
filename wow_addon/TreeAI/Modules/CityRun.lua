@@ -723,7 +723,8 @@ function CR.ExtraList()
     local okSell = v and (v.extra or 0) > 0 and not CR.IsConsumable(id)
     if okSell and type(B) == "table" and type(B.Verdict) == "function" then
       local okV, bv = pcall(B.Verdict, id)
-      if okV and type(bv) == "table" and (bv.action == "keep" or bv.action == "use" or bv.action == "bank") then okSell = false end
+      -- (5.1 BAGS) « à confirmer » (bv.confirm : vente possible, listée à part chez le marchand) reste « en trop » ici
+      if okV and type(bv) == "table" and (bv.action == "keep" or bv.action == "use" or bv.action == "bank") and not bv.confirm then okSell = false end
     end
     if okSell then
       local sell = num(select(11, try(API.ItemInfo, id))) or 0

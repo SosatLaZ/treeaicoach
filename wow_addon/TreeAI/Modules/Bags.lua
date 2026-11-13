@@ -31,12 +31,14 @@ local M = T:RegisterModule("Bags", {
   title = "Sacs",
   description = "Assistant d'inventaire : quoi garder, vendre, mettre à l'HV ou à la banque, et ce qu'il te manque.",
   defaults = { enabled = true, card = true, repair = true, overlays = true, keepIcon = false, legend = true, tooltip = true,
-    warn = true, warnFree = 2, stock = true, ahUnknown = false },
-  charDefaults = { marks = {}, worn = {}, vend = {}, diet = false },
+    warn = true, warnFree = 2, stock = true, ahUnknown = false, bigValue = 100, qidx = false, noQuestie = false },
+  charDefaults = { marks = {}, worn = {}, vend = {}, diet = false, bank = false, learned = {} },
   options = {
     { key = "card", type = "toggle", label = "Marchand : carte « Vendre N objets » (un clic, rachat possible)", section = "Marchand" },
     { key = "repair", type = "toggle", label = "Marchand : réparer dans le même clic", section = "Marchand" },
     { key = "ahUnknown", type = "toggle", label = "Sans prix d'HV scanné : vendre quand même au marchand (coupé d'office)", section = "Marchand" },
+    { key = "noQuestie", type = "toggle", label = "Sans Questie (quêtes à venir inconnues) : vendre quand même d'un clic (coupé d'office)", section = "Marchand" },
+    { key = "bigValue", type = "range", label = "Demander un clic à part au-dessus de (pièces d'argent, par pile)", min = 10, max = 1000, step = 10, section = "Marchand" },
     { key = "overlays", type = "toggle", label = "Pastilles sur les sacs : pièce = vendre, HV, banque", section = "Sacs" },
     { key = "keepIcon", type = "toggle", label = "Pastille cadenas sur ce qu'il faut garder", section = "Sacs" },
     { key = "legend", type = "toggle", label = "Légende des pastilles au-dessus des sacs", section = "Sacs" },
@@ -76,8 +78,10 @@ local function epoch() return num(try(g("time"))) or 0 end
 local function opt(k) return not (M.db and M.db[k] == false) end          -- options allumées d'office
 local function optOn(k) return M.db ~= nil and M.db[k] == true end        -- options coupées d'office
 local function inCombat() return (T.InCombat and T:InCombat()) and true or false end
-local function level() return num(try(g("UnitLevel"), "player")) or 1 end
+local OVR                                                    -- (5.1) personnage imposé par un audit : M.Predict.override
+local function level() if OVR and OVR.level then return OVR.level end return num(try(g("UnitLevel"), "player")) or 1 end
 local function class()
+  if OVR and OVR.class then return OVR.class end
   local c = T.PlayerClass and T:PlayerClass()
   if type(c) == "string" then return c end
   local _, f = try(g("UnitClass"), "player")
@@ -158,6 +162,7 @@ local function slotFast(bag, slot)
 end
 
 local S = { seen = -1, id = {}, n = {}, bound = {}, count = {}, list = {}, first = {}, dirty = {}, touch = {}, free = 0, total = 0, all = true }
+M.stats = { computed = 0, overlays = 0, sold = 0, causes = {} }
 local V = {}          -- itemID → avis
 local PLAN = {}       -- catégorie → plan des consommables
 local C = { at = -1, gen = 0 }   -- contexte (niveau, journal, HV, gardiens, marques) : change → tous les avis sont refaits
@@ -179,17 +184,42 @@ local function dropItem(id)
   if c and c.cat == "ammo" then PLAN.ammo = nil end
   M._shop = nil
 end
---- change de contexte : tous les avis (ou celui d'un objet) sont à refaire ; les pastilles suivront
-function M.Invalidate(id)
+--- change de contexte : les avis sont à refaire ; les pastilles suivront. (5.1) PAR CAUSE :
+---   M.Invalidate()            tout (un gardien inscrit / retiré, une option)
+---   M.Invalidate(itemID)      cet objet (ton plan de métier a changé d'avis sur lui)
+---   M.Invalidate(nil, cause)  seulement les avis qui dépendent de cette cause : "level" (niveau), "prof" (métiers),
+---                             "quest" (journal, quêtes rendues), "equip" (équipement porté), "pet" (familier),
+---                             "roster" (groupe), "price" (prix d'HV), "bank" (banque)
+local CAUSE_PLAN = { level = true, prof = true, equip = true, pet = true }   -- ces causes changent aussi les stocks cibles
+function M.Invalidate(id, cause)
+  if type(id) == "string" and cause == nil then id, cause = nil, id end
   id = tonumber(id)
   if id then
     dropItem(id)
     for key, sid in pairs(S.id) do if S.touch[sid] then S.dirty[key] = true end end
     S.touch = {}
+  elseif cause then
+    M.stats.causes[cause] = (M.stats.causes[cause] or 0) + 1
+    if CAUSE_PLAN[cause] then PLAN, C.targets, M._shop = {}, nil, nil end
+    if cause == "prof" then C.profs = nil end
+    if cause == "equip" then C.sets = nil end
+    local n = 0
+    for vid, v in pairs(V) do
+      local d = v.deps
+      if not d or d[cause] or d.all then
+        V[vid] = nil
+        S.touch[vid] = true
+        n = n + 1
+      end
+    end
+    if n > 0 then
+      for key, sid in pairs(S.id) do if S.touch[sid] then S.dirty[key] = true end end
+    end
+    S.touch = {}
   else
     V, PLAN = {}, {}
     C.gen = C.gen + 1
-    C.targets, C.profs, C.usable, M._shop = nil, nil, nil, nil
+    C.targets, C.profs, C.usable, C.sets, M._shop = nil, nil, nil, nil, nil
     S.all = true
   end
   M._lists = nil
@@ -232,9 +262,19 @@ function M.Rescan() S.seen = -1 M._lists, M._shop = nil, nil end
 --- combien tu en as dans tes sacs
 function M.Count(id) return snapshot().count[id] or 0 end
 
---- contexte : niveau et dernier scan de l'HV (un changement refait tous les avis) ; journal de quêtes (chaque monstre
---- tué le fait bouger) : seuls les avis dont la réponse « quête » a changé sont refaits. Au plus 1 test par image.
+--- contexte, relu au plus une fois par image et seulement quand un avis est demandé (jamais sur un événement) :
+--- niveau, métiers (rangs), groupe, dernier scan de l'HV → seuls les avis qui en DÉPENDENT sont refaits (v.deps) ;
+--- journal de quêtes (chaque monstre tué le fait bouger) : seuls les avis dont la réponse « quête » a changé.
 local questSig
+local function profSig()
+  if OVR and OVR.profs ~= nil then return OVR.sig or "audit" end
+  local P = T.modules and T.modules.Prof
+  local list = type(P) == "table" and P.profs or nil
+  if type(list) ~= "table" then return "?" end
+  local sig = ""
+  for _, p in ipairs(list) do if type(p) == "table" then sig = sig .. tostring(p.line) .. "=" .. tostring(p.rank) .. ";" end end
+  return sig
+end
 local function context()
   local t = now()
   if C.at == t then return C end
@@ -242,10 +282,26 @@ local function context()
   local A = mod("Auction")
   local ag = A and ((A.lastScan and A.lastScan.t) or (A.db and A.db.lastScanT)) or 0
   local lv = level()
-  if ag ~= C.ag or lv ~= C.level then
-    local first = C.level == nil
-    C.ag, C.level = ag, lv
-    if not first then M.Invalidate() end
+  local first = C.level == nil
+  if lv ~= C.level then
+    C.level = lv
+    if not first then M.Invalidate(nil, "level") end
+  end
+  if ag ~= C.ag then
+    C.ag = ag
+    if not first then M.Invalidate(nil, "price") end
+  end
+  local ps = profSig()
+  if ps ~= C.ps then
+    local had = C.ps ~= nil
+    C.ps = ps
+    if had then M.Invalidate(nil, "prof") end
+  end
+  local gn = num(try(g("GetNumGroupMembers"))) or num(try(g("GetNumPartyMembers"))) or 0
+  if gn ~= C.gn then
+    local had = C.gn ~= nil
+    C.gn = gn
+    if had then M.Invalidate(nil, "roster") end
   end
   local H = mod("Highlight")
   local D = H and type(H.Data) == "function" and H.Data() or nil
@@ -253,9 +309,18 @@ local function context()
   if qg ~= C.qg then
     local first = C.qg == nil
     C.qg = qg
+    -- (5.1) quêtes à venir : elles ne dépendent que de la LISTE des quêtes du journal (prise, rendue, abandonnée), pas
+    -- des compteurs — un monstre tué ne refait donc pas les avis qui ont consulté Questie
+    local Pd = M.Predict
+    local ls = Pd and Pd.LogSig and Pd.LogSig() or nil
+    local logChanged = ls ~= C.ls
+    if logChanged then
+      C.ls = ls
+      if Pd and Pd.QuestsChanged then Pd.QuestsChanged() end
+    end
     if not first and questSig then
       for id, v in pairs(V) do
-        if questSig(id) ~= v.qsig then
+        if questSig(id) ~= v.qsig or (logChanged and v.qf) then
           V[id] = nil
           for key, sid in pairs(S.id) do if sid == id then S.dirty[key] = true end end
           M._lists = nil
@@ -319,6 +384,7 @@ M.Targets = targets
 
 --- métiers connus : { [ligne] = rang } ou nil (inconnu : jamais lu)
 local function profRanks()
+  if OVR and OVR.profs ~= nil then return OVR.profs or nil end
   if C.profs ~= nil and now() - (C.profsAt or 0) < 60 and now() >= (C.profsAt or 0) then return C.profs or nil end
   C.profsAt = now()
   local P = T.modules and T.modules.Prof
@@ -327,10 +393,18 @@ local function profRanks()
     list = try(P.ScanProfessions)                           -- module Métiers coupé : la lecture du jeu (au plus 1 / min)
   end
   if type(list) ~= "table" then C.profs = false return nil end   -- pas lu : on ne sait pas (une liste vide = aucun métier)
-  local map = {}
-  for _, p in ipairs(list) do if type(p) == "table" and p.line then map[p.line] = tonumber(p.rank) or 0 end end
-  C.profs = map
+  local map, caps = {}, {}
+  for _, p in ipairs(list) do
+    if type(p) == "table" and p.line then map[p.line], caps[p.line] = tonumber(p.rank) or 0, tonumber(p.max) end
+  end
+  C.profs, C.caps = map, caps
   return map
+end
+--- (5.1) rang maximal actuel de chaque métier (le plan de PROF s'arrête là) : { [ligne] = max } ; inconnu → absent
+local function profCaps()
+  if OVR and OVR.profs ~= nil then return OVR.caps or {} end
+  if not profRanks() then return {} end
+  return C.caps or {}
 end
 local function lineName(line)
   local D = T.Data and T.Data.Recipes
@@ -344,7 +418,7 @@ local function planCat(cat)
   if p then return p end
   buildTables()
   local s, tg, lvl = snapshot(), targets()[cat], level()
-  p = { ids = {}, keep = {}, why = {}, opin = {}, have = 0, want = tg.want, hold = tg.hold }
+  p = { ids = {}, keep = {}, why = {}, opin = {}, where = {}, have = 0, want = tg.want, hold = tg.hold }
   PLAN[cat] = p
   local usable = {}
   local fa
@@ -363,8 +437,10 @@ local function planCat(cat)
       elseif cat == "bandage" and fa and c.req > fa then
         p.keep[id], p.why[id] = huge, fmt("utilisable à %d en Secourisme (tu es à %d)", c.req, fa)
       elseif cat ~= "bandage" and c.req > lvl then
-        if c.req <= lvl + 5 then p.keep[id], p.why[id] = huge, fmt("utilisable au niveau %d", c.req)
-        else p.keep[id], p.opin[id] = 0, fmt("pas utilisable avant le niveau %d", c.req) end
+        -- (5.1) tu atteindras ce niveau : jamais « en trop ». Bientôt (≤ 5 niveaux) : dans les sacs ; plus loin : banque
+        if tg.hold <= 0 then p.keep[id], p.opin[id] = 0, "tu n'as pas de mana : inutile pour toi"
+        elseif c.req <= lvl + 5 then p.keep[id], p.why[id] = huge, fmt("utilisable au niveau %d", c.req)
+        else p.keep[id], p.why[id], p.where[id] = huge, fmt("utilisable au niveau %d : à la banque en attendant", c.req), "bank" end
       else
         usable[#usable + 1] = id
       end
@@ -528,7 +604,14 @@ end
 function M.Keepers() local out = {} for i, n in ipairs(ORDER) do out[i] = n end return out end
 
 local BUILTIN, BORDER, PRE = {}, {}, {}
-local function builtin(name, fn) BUILTIN[name] = fn BORDER[#BORDER + 1] = name end
+-- (5.1) de quoi dépend la réponse d'un prédicteur d'ici : son avis n'est refait que si cette cause change
+local DEPS = { ["quête"] = { "quest" }, consommable = { "level" }, munitions = { "equip", "level" }, familier = { "pet", "level" },
+  ["équipement"] = { "equip", "level", "roster" }, recette = { "prof" } }
+local function builtin(name, fn, deps)
+  if not BUILTIN[name] then BORDER[#BORDER + 1] = name end
+  BUILTIN[name] = fn
+  if deps then DEPS[name] = deps end
+end
 -- un gardien d'ici n'est appelé que s'il peut avoir un avis sur cet objet (test sans appel protégé)
 PRE["marque"] = function(id) return M.char and type(M.char.marks) == "table" and M.char.marks[id] ~= nil end
 PRE["consommable"] = function(id) local c = CAT[id] return c ~= nil and c.cat ~= "ammo" end
@@ -536,7 +619,6 @@ PRE["munitions"] = function(id, it) return it.cls == 6 or (CAT[id] ~= nil and CA
 PRE["familier"] = function(id) return PET[id] ~= nil end
 PRE["équipement"] = function(_, it) return (it.cls == 2 or it.cls == 4) and it.loc ~= nil end
 PRE["recette"] = function(_, it) return it.cls == 9 end
-PRE["métiers"] = function(_, it) return it.cls == 7 or it.cls == 5 or it.cls == 0 end
 
 -- tes marques : « garder », « banque », « vendre »
 function M.MarkOf(id) local m = M.char and type(M.char.marks) == "table" and M.char.marks[id] return m or nil end
@@ -547,15 +629,21 @@ function M.Mark(id, kind)
   M.char.marks = type(M.char.marks) == "table" and M.char.marks or {}
   if kind ~= "keep" and kind ~= "bank" and kind ~= "sell" then kind = nil end
   M.char.marks[id] = kind
+  if kind ~= "keep" and type(M.char.learned) == "table" then M.char.learned[id] = nil end
   M.Invalidate(id)
   M.Refresh()
   return true
 end
 builtin("marque", function(id)
   local m = M.MarkOf(id)
-  if m == "keep" then return huge, "tu l'as marqué « garder »" end
+  if m == "keep" then
+    if M.char and type(M.char.learned) == "table" and M.char.learned[id] == "rachat" then
+      return huge, "tu l'as racheté après une vente : je ne le propose plus (/tai oublie pour revenir en arrière)"
+    end
+    return huge, "tu l'as marqué « toujours garder »"
+  end
   if m == "bank" then return huge, "tu l'as marqué « banque »", "bank" end
-  if m == "sell" then return 0, "tu l'as marqué « vendre »" end
+  if m == "sell" then return 0, "tu l'as marqué « toujours vendre »" end
 end)
 
 -- quêtes : journal (Highlight : besoin, à utiliser, prêt, suite connue), objets de classe « Quête »
@@ -599,10 +687,11 @@ builtin("consommable", function(id)
   buildTables()
   local c = CAT[id]
   if not c or c.cat == "ammo" then return nil end
+  if c.cat == "bandage" and M._ask.deps then M._ask.deps.prof = true end   -- (un bandage dépend de ton Secourisme)
   local p = planCat(c.cat)
   local k = p.keep[id]
   if k == nil then return nil end
-  if k > 0 then return k, p.why[id] end
+  if k > 0 then return k, p.why[id], p.where[id] end
   return 0, p.opin[id]
 end)
 builtin("munitions", function(id, it)
@@ -756,7 +845,7 @@ builtin("recette", function(id, it, _, bag, slot)
   local e = recipeIndex()[id]
   if e then
     local ranks = profRanks()
-    if not ranks then return nil end
+    if not ranks then return huge, "recette de métier (tes métiers ne sont pas encore lus)" end
     local rank, ln = ranks[e.line], lineName(e.line)
     if not rank then return 0, fmt("recette de %s : tu n'as pas ce métier", ln) end
     local PL = T.ProfLevel
@@ -770,60 +859,8 @@ builtin("recette", function(id, it, _, bag, slot)
   if knownByTooltip(id, bag, slot) then return 0, "recette que tu connais déjà" end
 end)
 
--- pont Métiers (tant que PROF n'a pas inscrit son gardien) : une marchandise qui sert à une recette d'UN DE TES
--- métiers est gardée (« sert à ton Travail du cuir ») ; le « en trop » précis (plan, quantités) viendra du gardien
--- de PROF. Index des compos de TES métiers seulement, construit un métier par appel (jamais un gros calcul d'un coup).
-local MAT = { lines = {}, by = {}, todo = nil, gen = -1, wait = {} }
-local function matIndex()
-  if MAT.gen ~= C.gen then
-    MAT.gen, MAT.todo = C.gen, nil
-    local ranks = profRanks()
-    if not ranks then MAT.known = false return nil end
-    MAT.known, MAT.todo = true, {}
-    for line in pairs(ranks) do if not MAT.lines[line] then MAT.todo[#MAT.todo + 1] = line end end
-    table.sort(MAT.todo)
-  end
-  if not MAT.known then return nil end
-  local line = MAT.todo and table.remove(MAT.todo)
-  if line then
-    MAT.lines[line] = true
-    local D = T.Data and T.Data.Recipes
-    for _, r in ipairs(type(D) == "table" and type(D.r) == "table" and D.r[line] or {}) do
-      local mats = r[10]
-      for i = 1, type(mats) == "table" and #mats or 0, 2 do
-        local mid = mats[i]
-        if mid and not (MAT.by[mid] and MAT.by[mid][line]) then
-          MAT.by[mid] = MAT.by[mid] or {}
-          MAT.by[mid][line] = true
-        end
-      end
-    end
-  end
-  if MAT.todo and #MAT.todo > 0 then return nil end           -- pas encore fini : pas d'avis (donc gardé)
-  if next(MAT.wait) then
-    -- les avis rendus pendant la construction (« je ne sais pas ») sont refaits à la prochaine demande
-    for wid in pairs(MAT.wait) do V[wid] = nil S.touch[wid] = true end
-    MAT.wait = {}
-    M._lists = nil
-  end
-  return MAT.by
-end
-builtin("métiers", function(id)
-  if EXT.prof then return nil end
-  local by = matIndex()
-  if not by then
-    EXT.profSilent = true
-    if MAT.known then MAT.wait[id] = true end
-    return nil
-  end
-  local ranks, lines = profRanks(), by[id]
-  if not (lines and ranks) then return nil end
-  local names = {}
-  for line in pairs(lines) do if ranks[line] then names[#names + 1] = lineName(line) end end
-  if #names == 0 then return nil end
-  table.sort(names)
-  return huge, "sert à ton métier : " .. tconcat(names, ", ")
-end)
+-- Métiers (composants, « pas ton métier », « dépassé », « pas sur ton chemin »), quêtes à venir, consommables sans
+-- catégorie, ami du groupe : prédicteurs de Modules/BagsPredict.lua (5.1), inscrits ici par M._int.builtin.
 
 -- ===================================================================== marchand ou HV : l'espérance honnête
 local AH_MIN_GAIN = 100          -- l'HV doit rapporter au moins 1 pa de plus que le marchand (et 20 %) pour valoir le détour
@@ -903,11 +940,22 @@ end
 
 -- ===================================================================== l'avis
 local LABEL = { keep = "Garde", sell = "Vends au marchand", ah = "Vends à l'HV", bank = "À la banque", use = "À utiliser",
-  ["destroy?"] = "À jeter si tu manques de place" }
+  ["destroy?"] = "À jeter si tu manques de place", give = "Donne à un ami du groupe", confirm = "À confirmer" }
 M.LABEL = LABEL
 local function claimText(v) return v.why end
+local TTL = 45        -- un gardien d'un autre module peut changer d'avis sans prévenir : son avis ne vit pas plus longtemps
+-- gardiens dont le compte demandé est un besoin TOTAL (sacs + banque) : ce que tu as à la banque compte pour eux
+local BANK_OK = { ["quête"] = true, Prof = true }
+--- ce que tu as à la banque (dernier relevé fait banque ouverte ; jamais deviné : pas de relevé = 0)
+local function bankCount(id)
+  if OVR and OVR.bank then return tonumber(OVR.bank[id]) or 0 end
+  local b = M.char and M.char.bank
+  return type(b) == "table" and type(b.n) == "table" and tonumber(b.n[id]) or 0
+end
+M.BankCount = bankCount
 
--- un gardien répond : ses réclamations s'additionnent ; un « 0 + raison » est un avis « en trop »
+-- un prédicteur répond : les besoins s'ADDITIONNENT (la raison gardée est celle du plus grand) ; un « 0 + raison » est
+-- un avis « en trop »
 M._ask = {}
 function M._Ask(name, fn, id, it, have, bag, slot)
   local Q = M._ask
@@ -924,15 +972,39 @@ function M._Ask(name, fn, id, it, have, bag, slot)
   w = type(w) == "string" and w ~= "" and w or nil
   if n > 0 then
     Q.keep = Q.keep + n
+    Q.said[name] = "claim"
     if n >= have then Q.all = true
     elseif not sf and not Q.opinion then Q.opinion = fmt("en trop : il t'en faut %d (%s)", n, w or name) end
+    if n < huge and not BANK_OK[name] then Q.noBank = true end
     if w then Q.reasons[#Q.reasons + 1] = w end
-    if not Q.why or (wh == "use" and Q.where ~= "use") then Q.why, Q.keeper = w or name, name end
-    if wh == "use" or (wh == "bank" and Q.where == nil) then Q.where = wh end
+    if not Q.why or (wh == "use" and Q.where ~= "use") or (Q.where ~= "use" and n > Q.top) then Q.why, Q.keeper = w or name, name end
+    if n > Q.top then Q.top = n end
+    if wh == "use" or ((wh == "bank" or wh == "give") and Q.where == nil) then Q.where = wh end
   elseif w then
+    Q.said[name] = "opinion"
     Q.opinion = Q.opinion or w
     Q.reasons[#Q.reasons + 1] = w
   end
+end
+local function cap(s2)
+  s2 = tostring(s2 or "")
+  local a, rest = s2:match("^([a-z])(.*)$")                 -- (les minuscules accentuées restent telles quelles)
+  if a then return a:upper() .. rest end
+  return s2
+end
+--- « vends au marchand (2 pa 50) » · « vends à l'HV ≈ 3 pa l'unité » … (long = phrase entière, sinon la fin courte)
+local function destText(action, it, n, value, d, long)
+  if action == "sell" then
+    return long and fmt("vends au marchand (%s)", money(value)) or ("marchand " .. money(value))
+  elseif action == "ah" then
+    if d.unknown then
+      return long and fmt("HV : prix inconnu, scanne l'HV avant de vendre (marchand %s)", money(it.sell * n))
+        or fmt("HV (prix inconnu, marchand %s)", money(it.sell * n))
+    end
+    local rate = d.sold and fmt(", se vend ~%s/j", (d.sold >= 1) and tostring(floor(d.sold + 0.5)) or "<1") or ""
+    return fmt("%sHV ≈ %s l'unité%s", long and "vends à l'" or "", money(d.ah or 0), rate)
+  end
+  return "à jeter seulement si tu manques de place (0 pc)"
 end
 local function compute(id, bag, slot)
   local s = snapshot()
@@ -941,38 +1013,96 @@ local function compute(id, bag, slot)
   local it = itemInfo(id)
   local v = { id = id, have = have, t = now(), gen = C.gen, keep = have, surplus = 0, value = 0 }
   if not it then
-    v.action, v.why, v.unknown, v.qsig = "keep", "objet inconnu (pas encore chargé par le jeu) : je garde", true, "?"
+    v.action, v.why, v.unknown, v.qsig, v.ttl = "keep", "objet inconnu (pas encore chargé par le jeu) : je garde", true, "?", TTL
     return v
   end
   v.name, v.vendor, v.qsig = it.name, it.sell, questSig(id)
   local Q = M._ask
   Q.keep, Q.all, Q.opinion, Q.where, Q.why, Q.keeper, Q.reasons = 0, false, nil, nil, nil, nil, {}
+  Q.top, Q.noBank, Q.unsure, Q.wait, Q.live, Q.said, Q.phrase = 0, nil, nil, nil, nil, {}, {}
+  local deps = {}
+  v.deps, Q.deps = deps, deps
   EXT.profSilent = nil
   buildTables()
   for _, name in ipairs(BORDER) do
     local pre = PRE[name]
-    if not pre or pre(id, it) then M._Ask(name, BUILTIN[name], id, it, have, bag, slot) end
+    if not pre or pre(id, it) then
+      local d = DEPS[name]
+      if d then for i = 1, #d do deps[d[i]] = true end end
+      M._Ask(name, BUILTIN[name], id, it, have, bag, slot)
+    end
   end
-  for _, name in ipairs(ORDER) do M._Ask(name, KEEPERS[name], id, it, have, bag, slot) end
+  for _, name in ipairs(ORDER) do
+    -- le gardien « Gear » ne connaît que l'équipement ; « Prof » prévient lui-même quand son plan change d'avis
+    if name ~= "Gear" or ((it.cls == 2 or it.cls == 4) and it.loc) then
+      if name == "Gear" then deps.equip, deps.level, deps.roster, v.ttl = true, true, true, TTL
+      elseif name == "Prof" then deps.prof = true
+      else deps.all, v.ttl = true, TTL end
+      M._Ask(name, KEEPERS[name], id, it, have, bag, slot)
+    end
+  end
+  local Pd = M.Predict
+  if Pd and Pd.After then Pd.After(id, it, have, Q, EXT) end
   local keep, all, opinion, where, why, keeper, reasons = Q.keep, Q.all, Q.opinion, Q.where, Q.why, Q.keeper, Q.reasons
   if it.q == 0 and not opinion then opinion = "objet gris : ne sert à rien" end
   -- marchandise que personne ne réclame (et Métiers a pu répondre) : proposée à l'HV SEULEMENT si son prix y est connu
   -- et nettement meilleur qu'au marchand — jamais vendue d'un clic au marchand sans un avis « en trop »
   local market = false
-  if not opinion and keep == 0 and not all and it.cls == 7 and it.q >= 1 and not EXT.profSilent then
+  if not opinion and keep == 0 and not all and it.cls == 7 and it.q >= 1 and not EXT.profSilent and not Q.wait then
     opinion, market = "personne ne le réclame", true
   end
+  -- (5.1) ta marque « toujours vendre » gagne : tout part ; si un prédicteur le réclamait, c'est dit et le clic est à part
+  local forced = M.MarkOf(id) == "sell"
+  local unsure = Q.unsure
+  if forced then
+    if (keep > 0 or all) and why then unsure = "attention : " .. why end
+    opinion, keep, all, where = "tu l'as marqué « toujours vendre »", 0, false, nil
+    v.forced = true
+  end
   v.reasons, v.keeper, v.where = reasons, keeper, where
-  local kept = (all or keep >= have) and have or keep
-  local surplus = have - kept
+  -- quantités : besoin (somme des prédicteurs) comparé à sacs + banque quand le besoin est un besoin total
+  local bankN = 0
+  if not all and keep > 0 and keep < huge and not Q.noBank then
+    bankN = bankCount(id)
+    deps.bank = true
+  end
+  local total = have + bankN
+  local keptT = (all or keep >= total) and total or keep
+  local surplus = min(have, total - keptT)
+  local kept = have - surplus
+  v.bank, v.need = bankN > 0 and bankN or nil, (not all and keep > 0 and keep < huge) and keep or nil
+  local bound = it.bind == 1 or (s.first[id] and s.bound[s.first[id]]) or false
   if surplus <= 0 or not opinion then
-    -- gardé : réclamé par un gardien, ou personne ne dit qu'il est en trop
+    -- gardé : réclamé par un prédicteur, ou personne ne dit qu'il est en trop
     v.keep, v.surplus = have, 0
     v.action = (where == "use" and "use") or (where == "bank" and "bank") or "keep"
-    v.why = why or ((it.cls == 2 or it.cls == 4) and it.loc and "équipement : personne ne dit qu'il est en trop (toi, un ami ?), je garde")
+    if where == "give" then v.hint, v.label = "give", LABEL.give end
+    v.why = why or (Q.wait and (Q.wait .. " : je garde en attendant"))
+      or ((it.cls == 2 or it.cls == 4) and it.loc and "équipement : personne ne dit qu'il est en trop (toi, un ami ?), je garde")
+      or (it.sell <= 0 and "pas de prix de vente (le jeu ne le reprend pas) : je garde")
+      or (bound and "lié à toi, usage inconnu : je garde")
       or "je ne sais pas s'il te sert : je garde"
     v.claimed = why ~= nil
     return v
+  end
+  -- (5.1) une vente est envisagée : les prédicteurs « veto » (quêtes à venir, ami du groupe) passent AVANT qu'on la dise
+  if Pd and Pd.Veto then
+    local okV, c, u = pcall(Pd.Veto, id, it, have, Q, deps, forced)
+    v.qf = true
+    if not okV then
+      if T._errorHook then pcall(T._errorHook, c, "Bags:veto") end
+      c, u = nil, "prédiction en erreur : à toi de voir"
+    end
+    if type(c) == "table" and not forced then
+      v.keep, v.surplus = have, 0
+      v.action = (c.where == "use" and "use") or (c.where == "bank" and "bank") or "keep"
+      if c.where == "give" then v.hint, v.label = "give", LABEL.give end
+      v.why, v.keeper, v.claimed, v.where = c.why, c.keeper or "prédiction", true, c.where
+      reasons[#reasons + 1] = c.why
+      return v
+    end
+    if type(c) == "table" then u = "attention : " .. tostring(c.why) end
+    unsure = unsure or u
   end
   -- en trop (avis explicite) : des piles ENTIÈRES dans le surplus (jamais de découpe), les plus petites d'abord
   local stacks, boundAny = {}, false
@@ -987,20 +1117,25 @@ local function compute(id, bag, slot)
   for _, key in ipairs(stacks) do
     if s.n[key] <= left then sel[key] = true left = left - s.n[key] picked = picked + s.n[key] end
   end
+  local needN = min(keep, total)                              -- ce qu'il t'en faut (affiché : « Garde : 20 pour … »)
+  local phrase = Q.phrase[keeper or ""]
+  phrase = (phrase and fmt("%d %s", needN, phrase) or fmt("%d (%s)", needN, why or "à garder"))
+    .. (bankN > 0 and fmt(", dont %d à la banque", min(bankN, needN)) or "")
   v.keep, v.surplus = kept, surplus
   if picked == 0 then
     v.action = "keep"
     v.why = (why or "à garder") .. fmt(" (%d en trop dans une pile entamée)", surplus)
+    v.line = fmt("Garde : %s · %d en trop, mais dans une pile entamée (sépare-la pour les vendre)", phrase, surplus)
     v.claimed = true
     return v
   end
   local action, value, d = venue(id, it, picked, boundAny)
   if market and (action ~= "ah" or d.unknown) then
-    v.keep, v.surplus, v.action, v.why = have, 0, "keep", "je ne sais pas s'il te sert : je garde"
+    -- (5.1) la raison est dite : rien ne s'en sert dans nos données, mais on ne brade pas une marchandise sans son prix
+    v.keep, v.surplus, v.action = have, 0, "keep"
+    v.why = "aucune recette ni quête connue ne s'en sert ; sans prix d'HV connu je garde (scanne l'HV)"
     return v
   end
-  v.action, v.value, v.sellN, v.sel, v.opinion = action, value, picked, sel, opinion
-  v.ah, v.ahSrc, v.ahSold, v.ahUnknown = d.ah, d.src, d.sold, d.unknown
   local tail
   if action == "sell" then tail = fmt("marchand %s", money(value))
   elseif action == "ah" then
@@ -1009,20 +1144,39 @@ local function compute(id, bag, slot)
         d.sold and fmt(" (se vend ~%s/j)", (d.sold >= 1) and tostring(floor(d.sold + 0.5)) or "<1") or (d.src == "Auctionator" and " (Auctionator)" or ""),
         money(it.sell))
   else tail = "0 pc" end
+  local line = (kept > 0 or bankN > 0) and needN > 0
+    and fmt("Garde : %s · %d en trop → %s", phrase, surplus, destText(action, it, picked, value, d, false))
+    or fmt("%s → %s", cap(opinion), destText(action, it, picked, value, d, true))
+  if unsure then
+    -- (5.1) un doute (quêtes à venir pas vérifiées, plan de métier muet, ta marque contre un besoin) : RIEN n'est
+    -- proposé au clic unique — l'avis reste « garde » pour tout l'addon, et l'objet est listé à part (« à confirmer »)
+    v.keep, v.surplus, v.action, v.claimed = have, 0, "keep", true
+    v.label, v.unsure, v.opinion = LABEL.confirm, unsure, opinion
+    v.why = opinion .. " · " .. unsure
+    v.line = fmt("À confirmer : %s · %s", line, unsure)
+    v.confirm = { action = action, value = value, sellN = picked, sel = sel, kept = kept }
+    v.ah, v.ahSrc, v.ahSold, v.ahUnknown = d.ah, d.src, d.sold, d.unknown
+    return v
+  end
+  v.action, v.value, v.sellN, v.sel, v.opinion = action, value, picked, sel, opinion
+  v.ah, v.ahSrc, v.ahSold, v.ahUnknown = d.ah, d.src, d.sold, d.unknown
   v.why = opinion .. " · " .. tail
+  v.line = line
   if kept > 0 then
     -- le reste est gardé : l'avis d'une case qui n'est pas dans le lot à vendre
     v.rest = { id = id, have = have, t = v.t, gen = v.gen, action = (where == "bank" and "bank") or "keep", keep = kept, surplus = surplus,
       value = 0, name = it.name, vendor = it.sell, why = fmt("%s (garde %d, %d en trop)", why or "à garder", kept, surplus),
-      reasons = reasons, keeper = keeper, claimed = true }
+      reasons = reasons, keeper = keeper, claimed = true, line = line, deps = deps, ttl = v.ttl }
   end
   return v
 end
 
 local OFF = { action = "keep", why = "assistant d'inventaire coupé : je garde", keep = 0, surplus = 0, value = 0, off = true }
-local TTL = 45        -- les gardiens des autres modules changent d'avis sans prévenir : un avis ne vit pas plus longtemps
 --- L'AVIS. itemID seul = l'objet ; avec sac + case = cette pile (une pile hors du lot à vendre répond « garde »).
---- → { action, why, keep, surplus, value, have, name, vendor, ah, reasons, keeper, claimed }. Table partagée : ne pas modifier.
+--- → { action, why, keep, surplus, value, have, name, vendor, ah, reasons, keeper, claimed, line, … }. Table partagée :
+--- ne pas modifier. (5.1) action reste "keep" | "sell" | "ah" | "bank" | "use" | "destroy?" ; en plus : `line` (LA
+--- phrase montrée au joueur), `hint = "give"` (garde → à donner à un ami du groupe), `confirm` (une vente possible mais
+--- pas sûre : jamais au clic unique, { action, value, sellN }), `unsure` (ce qui n'est pas su), `bank`, `need`, `deps`.
 function M.Verdict(itemID, bag, slot)
   local id = tonumber(itemID)
   if not id and type(itemID) == "string" then id = tonumber(itemID:match("item:(%d+)")) end
@@ -1032,7 +1186,7 @@ function M.Verdict(itemID, bag, slot)
   snapshot()
   local v = V[id]
   local t = now()
-  if not v or v.gen ~= C.gen or t - v.t > TTL or t < v.t then
+  if not v or v.gen ~= C.gen or (v.ttl and (t - v.t > v.ttl or t < v.t)) then
     v = compute(id, bag, slot)
     V[id] = v
     M.stats.computed = M.stats.computed + 1
@@ -1040,19 +1194,24 @@ function M.Verdict(itemID, bag, slot)
   if bag and slot and v.sel and not v.sel[bag * 1000 + slot] then return v.rest or v end
   return v
 end
-M.stats = { computed = 0, overlays = 0, sold = 0 }
 --- l'avis déjà prêt (ou nil) : pour les rappels appelés en rafale par un addon de sacs — jamais de calcul dans leur image
 function M.Peek(id, bag, slot)
   if not M._active or S.seen ~= bagGen() then return nil end
   local v = V[id]
-  if not v or v.gen ~= C.gen or now() - v.t > TTL then return nil end
+  if not v or v.gen ~= C.gen or (v.ttl and now() - v.t > v.ttl) then return nil end
   if bag and slot and v.sel and not v.sel[bag * 1000 + slot] then return v.rest or v end
   return v
 end
 --- ligne courte d'un avis : « Garde : 5 potions de soins pour toi (tu en as 3) »
 function M.Text(v)
   if type(v) ~= "table" or not v.action then return nil end
-  return (LABEL[v.action] or v.action) .. " : " .. tostring(claimText(v) or "")
+  return (v.label or LABEL[v.action] or v.action) .. " : " .. tostring(claimText(v) or "")
+end
+--- (5.1) LA phrase du joueur pour cet objet (infobulle, listes) : « Garde : 20 pour Travail du cuir (150→165) · 14 en
+--- trop → HV ≈ 3 pa l'unité » · « Pas besoin : sert en Couture (pas ton métier) → vends au marchand (2 pa 50) »
+function M.Line(v)
+  if type(v) ~= "table" or not v.action then return nil end
+  return v.line or M.Text(v)
 end
 --- vrai quand ce module répond : les autres infobulles ne redisent pas « vends / garde » (un seul avis)
 function M.Owns() return M._active == true and opt("tooltip") end
@@ -1064,26 +1223,44 @@ local function sortValue(a, b)
   if a.bag ~= b.bag then return a.bag < b.bag end
   return a.slot < b.slot
 end
---- toutes les piles classées : { sell = {…}, ah = {…}, bank = {…}, use = {…}, destroy = {…}, keep = {…} } ; une entrée =
---- { bag, slot, id, n, value, grey, why, v }
+--- (5.1) au-dessus de cette valeur (par pile, option « bigValue » en pièces d'argent), une vente au marchand demande
+--- son propre clic — jamais dans le lot d'un clic (les gris et tes marques « toujours vendre » ne sont pas concernés)
+local function bigAt() return max(1, tonumber(M.db and M.db.bigValue) or 100) * 100 end
+function M.IsBig(v, value, grey) return not grey and not (type(v) == "table" and v.forced) and (tonumber(value) or 0) >= bigAt() end
+--- toutes les piles classées : { sell = {…}, confirm = {…}, ah = {…}, bank = {…}, use = {…}, destroy = {…}, keep = {…} } ;
+--- une entrée = { bag, slot, id, n, value, grey, why, v }. (5.1) `sell` = ce qu'UN clic peut vendre, sans doute ni
+--- grosse valeur ; `confirm` = à part, un clic par objet (entrée.kind = "sell" | "ah" | "destroy?", .big, .unsure).
 function M.Lists()
   local s = snapshot()
   context()
   local L = M._lists
   if L and L.gen == C.gen and L.seen == s.seen and now() - L.t < TTL then return L end
-  L = { sell = {}, ah = {}, bank = {}, use = {}, destroy = {}, keep = {}, gen = C.gen, seen = s.seen, t = now() }
+  L = { sell = {}, confirm = {}, ah = {}, bank = {}, use = {}, destroy = {}, keep = {}, gen = C.gen, seen = s.seen, t = now() }
   for _, key in ipairs(s.list) do
     local id = s.id[key]
     local bag, slot = floor(key / 1000), key % 1000
     local v = M.Verdict(id, bag, slot)
     local n = s.n[key]
     local it = INFO[id]
-    local list = (v.action == "destroy?" and L.destroy) or L[v.action] or L.keep
-    local unit = (v.action == "sell" and (it and it.sell or 0)) or (v.action == "ah" and (v.sellN or 0) > 0 and v.value / v.sellN) or 0
-    list[#list + 1] = { bag = bag, slot = slot, id = id, n = n, value = floor(unit * n + 0.5), grey = (it and it.q == 0) or false,
-      why = v.why, v = v, name = (it and it.name) or itemName(id) }
+    local grey = (it and it.q == 0) or false
+    local cf = v.confirm
+    local e = { bag = bag, slot = slot, id = id, n = n, value = 0, grey = grey, why = v.why, v = v, name = (it and it.name) or itemName(id) }
+    if cf and cf.sel[key] then
+      local unit = (cf.action == "sell" and (it and it.sell or 0)) or (cf.action == "ah" and (cf.sellN or 0) > 0 and cf.value / cf.sellN) or 0
+      e.value, e.kind, e.unsure = floor(unit * n + 0.5), cf.action, v.unsure
+      L.confirm[#L.confirm + 1] = e
+    else
+      local list = (v.action == "destroy?" and L.destroy) or L[v.action] or L.keep
+      local unit = (v.action == "sell" and (it and it.sell or 0)) or (v.action == "ah" and (v.sellN or 0) > 0 and v.value / v.sellN) or 0
+      e.value = floor(unit * n + 0.5)
+      if v.action == "sell" and M.IsBig(v, e.value, grey) then
+        e.kind, e.big = "sell", true
+        list = L.confirm
+      end
+      list[#list + 1] = e
+    end
   end
-  for _, k in ipairs({ "sell", "ah", "bank", "use", "destroy", "keep" }) do tsort(L[k], sortValue) end
+  for _, k in ipairs({ "sell", "confirm", "ah", "bank", "use", "destroy", "keep" }) do tsort(L[k], sortValue) end
   M._lists = L
   return L
 end
@@ -1091,7 +1268,16 @@ end
 M.SAFE_SELL = 12
 function M.SellList(greyOnly)
   local L = M.Lists()
-  local out = { list = {}, value = 0, greys = 0, rest = 0 }
+  local out = { list = {}, value = 0, greys = 0, rest = 0, apart = {}, apartValue = 0 }
+  -- (5.1) à part : vendables au marchand mais jamais dans le clic unique (grosse valeur, ou un doute dit dans la ligne)
+  if not greyOnly then
+    for _, e in ipairs(L.confirm) do
+      if e.kind == "sell" then
+        out.apart[#out.apart + 1] = e
+        out.apartValue = out.apartValue + e.value
+      end
+    end
+  end
   local others = 0
   for _, e in ipairs(L.sell) do
     if e.grey or (not greyOnly and others < M.SAFE_SELL) then
@@ -1110,7 +1296,8 @@ function M.Grouped(list)
   for _, e in ipairs(list) do
     local r = by[e.id]
     if not r then
-      r = { id = e.id, name = e.name, n = 0, value = 0, why = e.why, v = e.v, grey = e.grey, stacks = 0 }
+      r = { id = e.id, name = e.name, n = 0, value = 0, why = e.why, v = e.v, grey = e.grey, stacks = 0, kind = e.kind, big = e.big,
+        unsure = e.unsure }
       by[e.id] = r
       out[#out + 1] = r
     end
@@ -1166,7 +1353,7 @@ local function stale()
   local todo, t = {}, now()
   for id in pairs(s.count) do
     local v = V[id]
-    if not v or v.gen ~= C.gen or t - v.t > TTL - 5 then todo[#todo + 1] = id end
+    if not v or v.gen ~= C.gen or (v.ttl and t - v.t > v.ttl - 5) then todo[#todo + 1] = id end
   end
   return todo
 end
@@ -1183,11 +1370,19 @@ local function stripSoon()
 end
 --- vrai quand tous les avis des sacs sont prêts (une page peut se dessiner sans rien calculer)
 function M.Ready() return #stale() == 0 end
+local WARM                                                  -- le passage en cours : { todo, i, cbs }
 function M.Warm(cb)
+  -- (5.1) UN seul passage à la fois : carte, pastilles, alerte « sacs pleins » demandent souvent les mêmes avis dans la
+  -- même image — leurs suites s'ajoutent au passage en cours au lieu de refaire chacune le tour des sacs
+  if WARM and now() - WARM.t < 5 and now() >= WARM.t then
+    if cb then WARM.cbs[#WARM.cbs + 1] = cb end
+    return #WARM.todo - WARM.i
+  end
   local todo = stale()
   if #todo == 0 then if cb then cb() end return 0 end
   tsort(todo)
-  local i = 0
+  local W = { todo = todo, i = 0, cbs = { cb }, t = now() }
+  WARM = W
   -- (5.0 INTEG) le joueur a une fenêtre ouverte devant lui (marchand, banque, sacs) : ces paquets passent en tête de la
   -- file des travaux répartis (T:SpreadFirst) — sa carte n'attend pas derrière un plan d'équipement ou de métier
   local function spread(fn, ctx)
@@ -1196,18 +1391,25 @@ function M.Warm(cb)
     elseif T.Spread then T:Spread(M, fn, nil, nil, nil, nil, ctx)
     else fn() end
   end
+  -- les suites (pastilles, carte, liste) chacune dans sa propre image : jamais avec le dernier paquet d'avis
+  local function drain()
+    local f = table.remove(W.cbs, 1)
+    if not f or not M._active then return end
+    if #W.cbs > 0 then spread(drain, "Bags:suite") end
+    f()
+  end
   local function step()
-    if not M._active then return end
+    if not M._active then if WARM == W then WARM = nil end return end
     local n = 0
-    while i < #todo and n < WARM_CHUNK do
-      i, n = i + 1, n + 1
-      M.Verdict(todo[i])
+    while W.i < #todo and n < WARM_CHUNK do
+      W.i, n = W.i + 1, n + 1
+      M.Verdict(todo[W.i])
     end
-    if i < #todo then
+    if W.i < #todo then
       spread(step, "Bags:avis")
-    elseif cb then
-      -- la suite (pastilles, carte, liste) dans sa propre image : jamais avec le dernier paquet d'avis
-      spread(function() if M._active then cb() end end, "Bags:suite")
+    else
+      if WARM == W then WARM = nil end
+      if #W.cbs > 0 then spread(drain, "Bags:suite") end
     end
   end
   spread(step, "Bags:avis")
@@ -1408,14 +1610,65 @@ function M.RepairNow(click)
   M.lastRepair = { cost = cost, at = now() }
   return cost
 end
+--- (5.1) le nombre d'objets dans l'onglet de rachat du marchand (nil si le jeu ne le dit pas)
+local function buybackCount() return num(try(g("GetNumBuybackItems"))) end
 local function saleDone()
   local sale = M.sale
   M.sale = nil
   if not sale then return end
   M.lastSale = { n = sale.n, money = sale.money, at = now(), skipped = sale.skipped }
   M.stats.sold = M.stats.sold + sale.n
+  -- (5.1) ce qui vient de partir reste listé tant que le marchand est ouvert (« Annuler : onglet Rachat ») et sert à
+  -- reconnaître un rachat : un objet que tu rachètes n'est plus jamais proposé
+  local log = M.soldLog or { list = {}, by = {}, n = 0, money = 0 }
+  M.soldLog = log
+  for id, r in pairs(sale.sold or {}) do
+    local e = log.by[id]
+    if not e then
+      e = { id = id, name = r.name, n = 0, value = 0, sold = true, left = r.left }
+      log.by[id] = e
+      log.list[#log.list + 1] = e
+    end
+    e.n, e.value, e.left = e.n + r.n, e.value + r.value, r.left
+  end
+  log.n, log.money, log.buyback = log.n + sale.n, log.money + sale.money, nil
   M:Clear("full")
-  after(0.4, function() M.Refresh() end)
+  after(0.4, function()
+    if M.soldLog then M.soldLog.buyback, M.soldLog.gold, M.soldLog.armed = buybackCount(), num(try(g("GetMoney"))), true end
+    M.Refresh()
+  end)
+end
+--- (5.1) apprendre de ton geste : un objet vendu ici par TreeAI qui REVIENT dans tes sacs marchand ouvert, alors que
+--- l'onglet de rachat s'est vidé d'autant (ou, si le jeu ne le dit pas, que ce marchand ne le vend pas) → tu l'as
+--- racheté : marqué « toujours garder » pour de bon (M.char.learned), plus jamais proposé
+function M.CheckBuyback()
+  local log = M.soldLog
+  if not (log and log.armed and M.merchantOpen and M.char) or M.sale then return 0 end
+  local nowN = buybackCount()
+  local gold = num(try(g("GetMoney")))
+  local paid = gold ~= nil and log.gold ~= nil and gold < log.gold       -- un rachat se paie : sans or dépensé, ce n'en est pas un
+  local s = snapshot()
+  local learned = 0
+  for _, e in ipairs(log.list) do
+    local cur = s.count[e.id] or 0
+    if not e.back and paid and cur > (e.left or 0) then
+      local viaTab = nowN ~= nil and log.buyback ~= nil and nowN < log.buyback
+      local unknownTab = (nowN == nil or log.buyback == nil) and not (M.merchantSells and M.merchantSells[e.id])
+      if viaTab or unknownTab then
+        e.back = true
+        M.char.learned = type(M.char.learned) == "table" and M.char.learned or {}
+        M.Mark(e.id, "keep")
+        M.char.learned[e.id] = "rachat"
+        M.Invalidate(e.id)
+        learned = learned + 1
+        note(fmt("%s : racheté — je ne te le proposerai plus.", tostring(e.name or itemName(e.id))))
+      end
+    end
+    e.left = min(e.left or cur, cur)
+  end
+  if nowN ~= nil then log.buyback = nowN end
+  log.gold = gold or log.gold
+  return learned
 end
 --- un paquet : chaque pile est RELUE juste avant (même objet, même nombre, pas verrouillée, avis toujours « vendre »)
 function M.SellBatch(click)
@@ -1431,10 +1684,19 @@ function M.SellBatch(click)
     local ok = id == e.id and c == e.n and not locked
     if ok then
       local v = M.Verdict(id, e.bag, e.slot)
-      ok = v.action == "sell" and not (sale.greyOnly and not e.grey)
+      -- le lot d'un clic : avis « vendre » sûr ; une ligne « à confirmer » (son propre clic) : la vente qu'elle annonçait
+      if sale.confirm then
+        local cf = v.confirm
+        ok = (cf ~= nil and cf.action == "sell" and cf.sel[e.bag * 1000 + e.slot] == true) or (v.action == "sell" and e.big == true)
+      else
+        ok = v.action == "sell" and not (sale.greyOnly and not e.grey) and not M.IsBig(v, e.value, e.grey)
+      end
     end
     if ok and useSlot(e.bag, e.slot, click) then
       sale.n, sale.money = sale.n + 1, sale.money + e.value
+      local r = sale.sold[e.id]
+      if not r then r = { n = 0, value = 0, name = e.name, left = (sale.before[e.id] or 0) } sale.sold[e.id] = r end
+      r.n, r.value, r.left = r.n + e.n, r.value + e.value, max(0, r.left - e.n)
     else
       sale.skipped = (sale.skipped or 0) + 1
     end
@@ -1446,9 +1708,11 @@ end
 function M.StartSale(list, o)
   o = o or {}
   if M.sale or inCombat() or not merchantShown() or type(list) ~= "table" or #list == 0 then return 0 end
-  local q = {}
-  for i, e in ipairs(list) do q[i] = e end
-  M.sale = { q = q, i = 0, n = 0, money = 0, greyOnly = o.greyOnly and true or false }
+  local q, before = {}, {}
+  local s = snapshot()
+  for i, e in ipairs(list) do q[i] = e before[e.id] = s.count[e.id] or 0 end
+  M.sale = { q = q, i = 0, n = 0, money = 0, greyOnly = o.greyOnly and true or false, confirm = o.confirm and true or false,
+    sold = {}, before = before }
   M.SellBatch(o.click and true or false)
   return #q
 end
@@ -1467,6 +1731,20 @@ function M.SellClick()
   M.UpdateCard()
   return n
 end
+--- (5.1) LE clic d'UNE ligne « à confirmer » de la carte : vend les piles de cet objet-là, rien d'autre
+function M.ConfirmSell(id)
+  id = tonumber(id)
+  if not id then return 0 end
+  if inCombat() then note("Pas de vente en combat.") return 0 end
+  if not merchantShown() then return 0 end
+  if T.ShopSafe and T:ShopSafe() then note("Mode sûr : vends à la main.") return 0 end
+  M.Rescan()
+  local list = {}
+  for _, e in ipairs(M.SellList().apart) do if e.id == id then list[#list + 1] = e end end
+  local n = M.StartSale(list, { click = true, confirm = true })
+  M.UpdateCard()
+  return n
+end
 --- vente automatique des gris à l'ouverture du marchand (option « Confort ») : mêmes paquets, mêmes relectures
 function M.SellGreys()
   if not M._active then return 0 end
@@ -1476,7 +1754,7 @@ end
 
 -- ===================================================================== cartes sous les fenêtres du jeu (marchand, banque)
 local CARD = {}
-local CARD_W, ROW_H, ROWS = 300, 16, 8
+local CARD_W, ROW_H, ROWS = 300, 16, 12
 local function frameOf(names)
   for _, n in ipairs(names) do
     local f = g(n)
@@ -1506,7 +1784,10 @@ local function newCard(kind, onClick, onTip)
   if inCombat() then return nil end
   local Th, cf, UIP = T.Theme, g("CreateFrame"), g("UIParent")
   if type(cf) ~= "function" then return nil end
-  local f = (Th and Th.Frame and Th:Frame(UIP, (Th.KINDS and Th.KINDS.small) and "small" or "panel", CARD_W, 56)) or try(cf, "Frame", nil, UIP)
+  -- (5.1) fond « docked » (presque opaque, cartes posées sous une fenêtre du jeu) quand le thème l'a, sinon « small »
+  local K = Th and Th.KINDS
+  local bgKind = (K and K.docked and "docked") or (K and K.small and "small") or "panel"
+  local f = (Th and Th.Frame and Th:Frame(UIP, bgKind, CARD_W, 56)) or try(cf, "Frame", nil, UIP)
   if not f then return nil end
   meth(f, "SetSize", CARD_W, 56)
   meth(f, "SetFrameStrata", "DIALOG")
@@ -1554,15 +1835,37 @@ local function cardRow(f, i, kind)
   if r.v then meth(r.v, "SetJustifyH", "RIGHT") meth(r.v, "SetPoint", "RIGHT", r, "RIGHT", 0, 0) meth(r.v, "SetWidth", 80) end
   if r.t then meth(r.t, "SetPoint", "LEFT", r, "LEFT", 0, 0) meth(r.t, "SetWidth", CARD_W - 16 - 84) meth(r.t, "SetWordWrap", false) end
   meth(r, "SetScript", "OnClick", function(self, button)
-    if button == "RightButton" and self.e then T:UserAction(function() M.Mark(self.e.id, "keep") end) end
+    local e = self.e
+    if not e then return end
+    if e.verify then
+      if button ~= "RightButton" then T:UserAction(function() local Pd = M.Predict if Pd and Pd.QuestScan then Pd.QuestScan() end M.UpdateCard() end) end
+    elseif e.sold then return
+    elseif button == "RightButton" then T:UserAction(function() M.Mark(e.id, "keep") end)
+    elseif e.apart then
+      -- (5.1) une ligne « à confirmer » se vend par SON clic (jamais avec le lot)
+      if inCombat() then note("Après le combat.") return end
+      T:UserAction(function() M.ConfirmSell(e.id) end)
+    end
   end)
   meth(r, "SetScript", "OnEnter", function(self)
     M.CardExpand(kind, true)
     local e = self.e
     if not e then return end
-    local lines = { M.Text(e.v) }
+    if e.verify then
+      tipShow(self, "Vérifier mes quêtes à venir", { "TreeAI relit une fois la base de Questie (quelques secondes, par petits morceaux)",
+        "pour savoir si un objet servira à une quête que tu n'as pas encore prise.", "Gardé pour les prochaines sessions." }, "Clic : vérifier")
+      return
+    end
+    if e.sold then
+      tipShow(self, e.name .. (e.n > 1 and (" ×" .. e.n) or ""), { fmt("Vendu ici pour %s.", money(e.value)),
+        fmt("Une erreur ? Onglet « %s » du marchand : rachète-le, je ne te le proposerai plus.", (g("MERCHANT_BUYBACK") or "Rachat")) }, nil)
+      return
+    end
+    local lines = { M.Line(e.v) }
     for _, w in ipairs(e.v.reasons or {}) do if w ~= e.v.why then lines[#lines + 1] = w end end
-    tipShow(self, e.name .. (e.n > 1 and (" ×" .. e.n) or ""), lines, "Clic droit : garder (ne plus le proposer)")
+    if e.big then lines[#lines + 1] = fmt("Valeur élevée (%s) : un clic à part.", money(e.value)) end
+    tipShow(self, e.name .. (e.n > 1 and (" ×" .. e.n) or ""), lines,
+      e.apart and "Clic : vendre celui-ci · clic droit : toujours garder" or "Clic droit : toujours garder (ne plus le proposer)")
   end)
   meth(r, "SetScript", "OnLeave", function() tipHide() M.CardLeave(kind) end)
   f.rows[i] = r
@@ -1577,7 +1880,13 @@ local function drawCard(kind, owner, label, info, rows, enabled)
     if enabled == false then meth(f.btn, "Disable") else meth(f.btn, "Enable") end
   end
   if f.info then meth(f.info, "SetText", info or "") end
-  local infoH = (info and info ~= "") and ((#info > 52) and 26 or 14) or 0
+  local infoH = 0
+  if info and info ~= "" then
+    -- hauteur de l'aide : ~50 caractères par ligne (texte accentué : octets ≠ lettres, d'où la marge), 12 px la ligne
+    local linesN = 0
+    for seg in (info .. "\n"):gmatch("(.-)\n") do linesN = linesN + max(1, math.ceil(#seg / 56)) end
+    infoH = 2 + 12 * linesN
+  end
   local y = 36 + infoH + ((infoH > 0) and 4 or 0)
   local shown = 0
   if f.open and rows then
@@ -1586,8 +1895,9 @@ local function drawCard(kind, owner, label, info, rows, enabled)
       if r then
         local e = rows[i]
         r.e = e
-        meth(r.t, "SetText", e.name .. (e.n > 1 and (" ×" .. e.n) or ""))
-        meth(r.v, "SetText", money(e.value))
+        meth(r.t, "SetText", (e.verify and "→ " or e.sold and "vendu : " or e.apart and "? " or "") .. e.name
+          .. ((e.n or 0) > 1 and (" ×" .. e.n) or ""))
+        meth(r.v, "SetText", e.verify and "" or money(e.value))
         meth(r, "ClearAllPoints")
         meth(r, "SetPoint", "TOPLEFT", f, "TOPLEFT", 8, -y)
         meth(r, "Show")
@@ -1684,8 +1994,23 @@ function M.CardModel()
     if type(auto) == "table" and auto.repair then rep = 0 end
   end
   local n = #sl.list
-  local m = { n = n, value = sl.value, rows = M.Grouped(sl.list), rest = sl.rest, greys = sl.greys, repair = rep, enabled = true }
-  local ls = M.lastSale
+  local rows = {}
+  for _, r in ipairs(M.Grouped(sl.list)) do rows[#rows + 1] = r end
+  local m = { n = n, value = sl.value, rows = rows, rest = sl.rest, greys = sl.greys, repair = rep, enabled = true }
+  -- (5.1) à part : un clic par objet (grosse valeur, doute) ; et, si le doute vient des quêtes à venir, de quoi le lever
+  local apart = M.Grouped(sl.apart)
+  local Pd = M.Predict
+  local qs = Pd and Pd.QuestState and Pd.QuestState() or nil
+  local wantVerify = false
+  for _, r in ipairs(apart) do
+    r.apart = true
+    if r.unsure and qs == "unverified" then wantVerify = true end
+  end
+  if wantVerify then rows[#rows + 1] = { verify = true, name = "Vérifier mes quêtes à venir (une fois)", n = 0, value = 0 } end
+  for _, r in ipairs(apart) do rows[#rows + 1] = r end
+  m.apart, m.apartN, m.apartValue, m.verify = apart, #apart, sl.apartValue, wantVerify
+  local log = M.soldLog
+  local undo = fmt("Annuler (%s) : onglet « %s » du marchand", buyback(), buyback())
   if M.sale then
     m.label, m.enabled = fmt("Vente en cours… %d / %d", M.sale.i, #M.sale.q), false
   elseif n > 0 and T.ShopSafe and T:ShopSafe() then
@@ -1695,14 +2020,27 @@ function M.CardModel()
   elseif n > 0 then
     m.label = fmt("Vendre %s · %s", plural(n, "objet", "objets"), money(sl.value)) .. (rep > 0 and (" + réparer " .. money(rep)) or "")
     m.info = (sl.rest > 0 and fmt("Puis %d autres au clic suivant. ", sl.rest) or "")
+      .. (#apart > 0 and fmt("+ %d à confirmer un par un (survole). ", #apart) or "")
       .. fmt("Survole : la liste (clic droit = garder). Annulable : onglet « %s ».", buyback())
   elseif rep > 0 then
     m.label = "Réparer · " .. money(rep)
-  elseif ls and now() - ls.at < 90 then
-    m.label, m.enabled = fmt("Vendu : %s · +%s", plural(ls.n, "objet", "objets"), money(ls.money)), false
+    if #apart > 0 then m.info = fmt("%s à confirmer un par un (survole) : valeur élevée ou doute.", plural(#apart, "objet", "objets")) end
+  elseif #apart > 0 then
+    m.label, m.enabled = fmt("À confirmer : %s · %s", plural(#apart, "objet", "objets"), money(sl.apartValue)), false
+    m.info = "Survole : un clic par ligne (valeur élevée ou doute, dit dans son infobulle). Clic droit = toujours garder."
+      .. (wantVerify and " Première ligne : lever le doute sur les quêtes à venir." or "")
+  elseif log and log.n > 0 then
+    m.label, m.enabled = fmt("Vendu : %s · +%s", plural(log.n, "objet", "objets"), money(log.money)), false
   end
-  if ls and now() - ls.at < 90 and not M.sale and n == 0 then
-    m.info = fmt("Vendu : %s (+%s). Une erreur ? Onglet « %s » du marchand.", plural(ls.n, "objet", "objets"), money(ls.money), buyback())
+  if log and log.n > 0 then
+    -- (5.1) rappel tant que le marchand est ouvert : ce qui est parti, et comment l'annuler
+    for _, e in ipairs(log.list) do if not e.back then rows[#rows + 1] = e end end
+    local names = {}
+    for i, e in ipairs(log.list) do if i <= 3 then names[#names + 1] = cut(e.name, 18) .. (e.n > 1 and (" ×" .. e.n) or "") end end
+    local soldTxt = fmt("Vendu : %s (+%s) : %s%s. Une erreur ? %s.", plural(log.n, "objet", "objets"), money(log.money),
+      tconcat(names, ", "), #log.list > 3 and "…" or "", undo)
+    m.sold = log.list
+    if not M.sale then m.info = (m.info and (m.info .. "\n") or "") .. soldTxt end
   end
   local miss = merchantStock()
   if miss then m.info = (m.info and (m.info .. "\n") or "") .. miss m.label = m.label or "Rien à vendre" m.enabled = m.enabled and n + rep > 0 end
@@ -1715,14 +2053,21 @@ end
 local function merchantTip()
   local m = M.cardModel or M.CardModel()
   local lines = {}
-  for i, e in ipairs(m.rows) do
-    if i > 14 then lines[#lines + 1] = fmt("… et %d autres", #m.rows - 14) break end
-    lines[#lines + 1] = fmt("%s%s — %s — %s", e.name, e.n > 1 and (" ×" .. e.n) or "", money(e.value), tostring(e.v.opinion or e.why or ""))
+  local shown = 0
+  for _, e in ipairs(m.rows) do
+    if not (e.verify or e.sold or e.apart) then
+      shown = shown + 1
+      if shown > 14 then lines[#lines + 1] = fmt("… et %d autres", m.n - 14) break end
+      lines[#lines + 1] = fmt("%s%s — %s — %s", e.name, e.n > 1 and (" ×" .. e.n) or "", money(e.value), tostring(e.v.opinion or e.why or ""))
+    end
   end
   if m.repair > 0 then lines[#lines + 1] = "Réparation : " .. money(m.repair) .. " (dans le même clic)" end
+  if (m.apartN or 0) > 0 then
+    lines[#lines + 1] = fmt("À part (un clic par ligne) : %s, %s — valeur élevée ou doute.", plural(m.apartN, "objet", "objets"), money(m.apartValue or 0))
+  end
   lines[#lines + 1] = "Les gris d'abord, puis 12 objets au plus : le marchand en garde 12 au rachat."
-  lines[#lines + 1] = "Jamais ce qu'un gardien réclame (quêtes, potions, munitions, métiers, équipement)."
-  return "Vendre au marchand", lines, m.n > 0 and "Clic : vendre · clic droit sur une ligne : garder" or nil
+  lines[#lines + 1] = "Jamais ce qu'un besoin prévu réclame (quêtes, potions, munitions, métiers, équipement)."
+  return "Vendre au marchand", lines, m.n > 0 and "Clic : vendre · clic droit sur une ligne : toujours garder" or nil
 end
 --- (5.0 INTEG) vrai quand la carte « Vendre N objets + réparer » du marchand est la nôtre : les autres modules
 --- (Métiers, Courses en ville) n'affichent alors NI bouton de vente NI bouton de réparation
@@ -1910,6 +2255,8 @@ local TEX = {
   bank = "Interface\\Minimap\\Tracking\\Banker",              -- coffre : à la banque
   keep = "Interface\\Buttons\\LockButton-Locked-Up",          -- cadenas : à garder (option)
   destroy = "Interface\\Buttons\\UI-GroupLoot-Pass-Up",       -- croix : le moins cher, à jeter si tu manques de place
+  ask = "Interface\\Buttons\\UI-GroupLoot-Coin-Up",           -- (5.1) pièce pâle : vente possible, à confirmer (un clic à part)
+  give = "Interface\\Buttons\\UI-GroupLoot-Dice-Up",          -- (5.1) dé : à donner à un ami du groupe
 }
 M.TEX = TEX
 local function bagFrames()
@@ -1959,8 +2306,20 @@ local function kindOf(bag, slot)
   if M.full and M.full.key == key then return "destroy" end
   local v = M.Verdict(id, bag, slot)
   local a = v.action
-  if a == "sell" or a == "ah" or a == "bank" then return a end
+  -- UNE marque par objet : vendre · à confirmer · HV · banque · donner · (option) garder
+  local cf = v.confirm
+  if cf then
+    if cf.action == "sell" and cf.sel[key] then return "ask" end
+    return nil
+  end
+  if a == "sell" then
+    local it = INFO[id]
+    if M.IsBig(v, (it and it.sell or 0) * (S.n[key] or 1), it and it.q == 0) then return "ask" end
+    return a
+  end
+  if a == "ah" or a == "bank" then return a end
   if a == "destroy?" then return nil end
+  if v.hint == "give" then return "give" end
   if v.claimed and optOn("keepIcon") then return "keep" end
   return nil
 end
@@ -1982,6 +2341,8 @@ local function apply(btn, kind)
     OV.tex[btn] = tx
   end
   meth(tx, "SetTexture", TEX[kind])
+  meth(tx, "SetDesaturated", kind == "ask")
+  meth(tx, "SetAlpha", kind == "ask" and 0.7 or 1)
   meth(tx, "Show")
   if OV.kind[btn] == nil then OV.n = OV.n + 1 end
   OV.kind[btn] = kind
@@ -2036,10 +2397,10 @@ function M.UpdateLegend()
   local seen = {}
   for _, k in pairs(OV.kind) do seen[k] = true end
   local parts = {}
-  for _, k in ipairs({ "sell", "ah", "bank", "keep", "destroy" }) do
+  for _, k in ipairs({ "sell", "ask", "ah", "bank", "give", "keep", "destroy" }) do
     if seen[k] then
       parts[#parts + 1] = "|T" .. TEX[k] .. ":12|t " .. ((k == "sell" and "vendre") or (k == "ah" and "HV") or (k == "bank" and "banque")
-        or (k == "keep" and "garder") or "à jeter d'abord")
+        or (k == "keep" and "garder") or (k == "ask" and "à confirmer") or (k == "give" and "à donner") or "à jeter d'abord")
     end
   end
   local text = "TreeAI : " .. tconcat(parts, " · ")
@@ -2145,7 +2506,10 @@ local function hookThird()
         if not (M._active and opt("overlays")) or inCombat() then return false end
         local v = M.Peek(itemID, bagID, slotID)
         if not v then M.ThirdWarm() return false end
-        return v.action == "sell"
+        if v.action ~= "sell" then return false end
+        local it = INFO[itemID]
+        local key = (tonumber(bagID) or 0) * 1000 + (tonumber(slotID) or 0)
+        return not M.IsBig(v, (it and it.sell or 0) * (S.n[key] or 1), it and it.q == 0)
       end)
     end
     if type(BG.API.RegisterCornerWidget) == "function" then
@@ -2206,7 +2570,19 @@ end
 
 -- ===================================================================== infobulle : une ligne, le même avis
 local TIP_COL = { keep = { 0.55, 0.85, 0.55 }, use = { 0.4, 0.8, 1 }, bank = { 0.75, 0.75, 1 }, sell = { 1, 0.82, 0.2 },
-  ah = { 1, 0.82, 0.2 }, ["destroy?"] = { 1, 0.5, 0.4 } }
+  ah = { 1, 0.82, 0.2 }, ["destroy?"] = { 1, 0.5, 0.4 }, confirm = { 1, 0.65, 0.3 }, give = { 0.4, 0.8, 1 } }
+--- couleur d'un avis : les jetons du thème (keep / sell / ah / bank / use / destroy / warn / prio1), sinon nos teintes
+local function tipColor(v)
+  local key = (v.confirm and "confirm") or (v.hint == "give" and "give") or v.action
+  local tok = (key == "confirm" and "warn") or (key == "give" and "prio1") or (key == "destroy?" and "destroy") or key
+  local Th = T.Theme
+  if type(Th) == "table" and type(Th.Color) == "function" then
+    local ok, r, gg, b = pcall(Th.Color, Th, tok)
+    if ok and tonumber(r) and tonumber(gg) and tonumber(b) then return r, gg, b end
+  end
+  local c = TIP_COL[key] or TIP_COL.keep
+  return c[1], c[2], c[3]
+end
 --- la ligne d'infobulle d'un objet de tes sacs : texte, r, g, b (nil si tu ne l'as pas / rien à dire)
 function M.TipLine(id, bag, slot)
   if not (M._active and opt("tooltip")) or inCombat() then return nil end
@@ -2215,8 +2591,8 @@ function M.TipLine(id, bag, slot)
   local v = M.Verdict(id, bag, slot)
   if not v or v.off or v.unknown then return nil end
   if v.action == "keep" and not v.claimed then return nil end   -- « je ne sais pas » : rien à dire, rien d'affiché
-  local c = TIP_COL[v.action] or TIP_COL.keep
-  return "TreeAI · " .. M.Text(v), c[1], c[2], c[3]
+  local r, gg, b = tipColor(v)
+  return "TreeAI · " .. M.Line(v), r, gg, b
 end
 --- vrai quand l'infobulle de cet objet porte notre avis (les autres lignes ne redisent alors pas « vends / garde »)
 function M.HasTip(id) return (M.TipLine(id)) ~= nil end
@@ -2279,6 +2655,7 @@ function M.Summary()
   if not M.Ready() then return out end
   local sl = M.SellList()
   out.ready, out.sellN, out.sellValue, out.missing = true, #sl.list + sl.rest, sl.value, #M.Shopping()
+  out.confirmN, out.confirmValue = #sl.apart, sl.apartValue
   return out
 end
 --- ce que la page montre (aussi pour les tests et le résumé) : tuiles + sections
@@ -2287,7 +2664,13 @@ function M.PageModel()
   local sl = M.SellList()
   local shop = M.Shopping()
   local m = { sell = grouped(L.sell), ah = grouped(L.ah), bank = grouped(L.bank), use = grouped(L.use), destroy = grouped(L.destroy),
-    keep = grouped(L.keep), shop = shop, sellN = #sl.list, sellValue = sl.value, free = snapshot().free, total = snapshot().total }
+    keep = grouped(L.keep), confirm = grouped(L.confirm), shop = shop, sellN = #sl.list, sellValue = sl.value, free = snapshot().free,
+    total = snapshot().total }
+  -- (5.1) « à donner » : ce qu'un ami du groupe peut utiliser (sorti de « Garder » pour être vu)
+  m.give = {}
+  for i = #m.keep, 1, -1 do
+    if m.keep[i].v.hint == "give" then table.insert(m.give, 1, table.remove(m.keep, i)) end
+  end
   local all = 0
   for _, e in ipairs(L.sell) do all = all + e.value end
   m.sellAll, m.sellStacks = all, #L.sell
@@ -2312,14 +2695,20 @@ local function rowOf(r, kind)
   if v.ah then tip[#tip + 1] = fmt("HV ≈ %s l'unité (%s).", money(v.ah), v.ahSrc or "?") end
   if (v.vendor or 0) > 0 then tip[#tip + 1] = fmt("Marchand : %s l'unité.", money(v.vendor)) end
   local mark = M.MarkOf(r.id)
+  if v.bank then tip[#tip + 1] = fmt("À la banque : %d (dernier relevé).", v.bank) end
+  if r.big then tip[#tip + 1] = fmt("Valeur élevée (%s la pile) : un clic à part chez le marchand.", money(r.value)) end
+  if v.unsure then tip[#tip + 1] = "Pas sûr : " .. v.unsure .. "." end
   local e = { text = fmt("%s%s — %s", r.name, r.n > 1 and (" ×" .. r.n) or "", tostring(v.opinion or v.why or "")),
-    right = (kind == "sell" or kind == "ah") and ((v.ahUnknown and kind == "ah") and "prix ?" or money(r.value)) or nil,
-    icon = itemIcon(r.id), prio = (kind == "sell" or kind == "ah") and 2 or 1, tooltip = tip }
-  if kind == "keep" or kind == "bank" or kind == "use" then
+    right = (kind == "sell" or kind == "ah" or kind == "confirm") and ((v.ahUnknown and (kind == "ah" or r.kind == "ah")) and "prix ?" or money(r.value)) or nil,
+    icon = itemIcon(r.id), prio = (kind == "sell" or kind == "ah" or kind == "confirm") and 2 or 1, tooltip = tip }
+  if kind == "keep" or kind == "bank" or kind == "use" or kind == "give" then
     e.text = fmt("%s%s — %s", r.name, r.n > 1 and (" ×" .. r.n) or "", tostring(v.why or ""))
+    -- (« toujours vendre » ne se pose pas d'un clic dans une liste : /tai vends [objet], geste voulu)
     if mark then e.onClick, e.actionText = function() M.Mark(r.id, nil) end, "retirer ta marque" end
+    if not mark and v.claimed then tip[#tip + 1] = "Tu n'en veux pas ? /tai vends [objet] : toujours vendre." end
   else
-    e.onClick, e.actionText = function() M.Mark(r.id, "keep") end, "garder (ne plus le proposer)"
+    if kind == "confirm" then e.text = fmt("%s%s — %s", r.name, r.n > 1 and (" ×" .. r.n) or "", tostring(M.Line(v) or "")) end
+    e.onClick, e.actionText = function() M.Mark(r.id, "keep") end, "toujours garder (ne plus le proposer)"
   end
   return e
 end
@@ -2346,8 +2735,9 @@ function M.RenderPage(Ly, W)
     { "Vendre", m.sellSub, function()
         if M.merchantOpen then M.SellClick()
         elseif W and W.Flash then W.Flash("Va voir un marchand : la carte « Vendre » s'affiche sous sa fenêtre.", 4) end
-      end, { "Vend d'un clic ce que personne ne réclame : les gris, puis le reste (12 au plus par clic).",
-        "Jamais tes potions, munitions, objets de quête, compos de métier, équipement utile." },
+      end, { "Vend d'un clic ce dont tout besoin futur est écarté : les gris, puis le reste (12 au plus par clic).",
+        "Jamais tes potions, munitions, objets de quête (journal et quêtes à venir), compos de métier, équipement utile.",
+        "Valeur élevée ou doute : listé à part, un clic par objet." },
       false, M.merchantOpen and "Clic : vendre" or "Chez un marchand" },
     { "Ranger", m.sortSub, function()
         if M.bankOpen and M.BankClick() > 0 then return end
@@ -2377,7 +2767,9 @@ function M.RenderPage(Ly, W)
     end
   end
   section("Vendre au marchand", "bags:sell", m.sell, "sell", "Rien à vendre : tout ce que tu portes te sert, ou personne ne sait encore.")
+  section("À confirmer (un clic chacun, chez le marchand)", "bags:confirm", m.confirm, "confirm", nil)
   section("Hôtel des ventes", "bags:ah", m.ah, "ah", nil)
+  section("À donner à un ami du groupe", "bags:give", m.give, "give", nil)
   section("À utiliser", "bags:use", m.use, "use", nil)
   section("Banque", "bags:bank", m.bank, "bank", nil)
   section("À jeter si tu manques de place", "bags:destroy", m.destroy, "destroy", nil)
@@ -2390,9 +2782,28 @@ local function pageShown()
   return W and W._active and type(W.IsOpen) == "function" and W.IsOpen() and W.char and W.char.page == "bags"
 end
 --- tout ce qui suit un changement de sacs, une fois les sacs posés (jamais dans l'image de l'événement, jamais en combat)
+--- (5.1) relevé de la banque, fait SEULEMENT banque ouverte (c'est le seul moment où son contenu change) : sert aux
+--- quantités (« il t'en faut 20 : tu en as 20 à la banque ») ; gardé par personnage avec son heure
+function M.SnapBank()
+  if not (M.bankOpen and M.char) then return false end
+  local items = M.ScanBank()
+  local n, sig = {}, 0
+  for id, list in pairs(items) do
+    local c = 0
+    for _, st in ipairs(list) do c = c + (st.n or 0) end
+    n[id] = c
+    sig = sig + id * 7 + c
+  end
+  local old = M.char.bank
+  M.char.bank = { t = epoch(), n = n, sig = sig }
+  if not (type(old) == "table" and old.sig == sig) then M.Invalidate(nil, "bank") return true end
+  return false
+end
 function M.Refresh()
   if not M._active then return end
   if inCombat() then M._afterCombat = true return end
+  if M.bankOpen then M.SnapBank() end
+  if M.merchantOpen and M.soldLog then M.CheckBuyback() end
   M.CheckFull()
   if anyBagShown() then M.QueueOverlays() else OV.stale = true end
   if M.merchantOpen then M.Warm(function() M.UpdateCard() stripSoon() end) end
@@ -2437,9 +2848,16 @@ local function onEquip(slot)
     M.char.worn = type(M.char.worn) == "table" and M.char.worn or {}
     M.char.worn[old] = epoch()                              -- tu viens de l'enlever : équipement « en alternance »
   end
-  M.Invalidate()                                            -- arme à distance, comparaisons d'équipement
+  M.Invalidate(nil, "equip")                                -- arme à distance, comparaisons d'équipement
   onBags()
 end
+
+-- (5.1) ce que Modules/BagsPredict.lua (les prédicteurs) partage avec ce fichier — rien d'autre ne doit s'en servir
+M._int = { g = g, try = try, num = num, pub = pub, now = now, epoch = epoch, level = level, class = class, cut = cut, mod = mod,
+  itemInfo = itemInfo, itemName = itemName, snapshot = snapshot, profRanks = profRanks, profCaps = profCaps, lineName = lineName, builtin = builtin,
+  PRE = PRE, EXT = EXT, S = S, C = C, money = money, after = after, inCombat = inCombat, optOn = optOn,
+  cat = function(id) buildTables() return CAT[id], PET[id] end,
+  setOverride = function(o) OVR = o end }
 
 function M:OnEnable()
   buildTables()
@@ -2447,6 +2865,8 @@ function M:OnEnable()
     self.char.marks = type(self.char.marks) == "table" and self.char.marks or {}
     self.char.worn = type(self.char.worn) == "table" and self.char.worn or {}
     self.char.vend = type(self.char.vend) == "table" and self.char.vend or {}
+    self.char.learned = type(self.char.learned) == "table" and self.char.learned or {}
+    if type(self.char.bank) ~= "table" or type(self.char.bank.n) ~= "table" then self.char.bank = false end
     local t = epoch()
     for id, at in pairs(self.char.worn) do if t - (tonumber(at) or 0) > WORN_DAYS * 86400 then self.char.worn[id] = nil end end
   end
@@ -2461,7 +2881,7 @@ function M:OnEnable()
   end)
   self:RegisterEvent("MERCHANT_SHOW", function()
     if M.merchantOpen then return end
-    M.merchantOpen, M.lastSale = true, nil
+    M.merchantOpen, M.lastSale, M.soldLog = true, nil, nil
     M.Rescan()
     -- les avis se préparent dès l'image suivante (par paquets) : la vente auto des gris (0,15 s) et la carte les trouvent prêts
     after(0, function() if M.merchantOpen then M.Warm() end end)
@@ -2473,7 +2893,7 @@ function M:OnEnable()
     after(1.2, function() if M.merchantOpen and not M.sale then M.UpdateCard() end end)   -- la carte Métiers est arrivée : dessous
   end)
   self:RegisterEvent("MERCHANT_CLOSED", function()
-    M.merchantOpen, M.sale, M.merchantSells, M.merchantCats = false, nil, nil, nil
+    M.merchantOpen, M.sale, M.merchantSells, M.merchantCats, M.soldLog = false, nil, nil, nil, nil
     M.UpdateCard()
     M.UpdateStock()
   end)
@@ -2483,12 +2903,29 @@ function M:OnEnable()
     after(0.3, function() if M.bankOpen then M.Refresh() end end)
   end)
   self:RegisterEvent("BANKFRAME_CLOSED", function() M.bankOpen = false M.UpdateBankCard() end)
+  -- (5.1) le jeu vient de charger des objets : les avis « objet inconnu » de ceux-là sont refaits (flux regroupé du cœur)
+  if type(T.OnItemInfo) == "function" then
+    pcall(T.OnItemInfo, T, self, function(_, info)
+      if not M._active or type(info) ~= "table" then return end
+      local any = false
+      for id in pairs(type(info.items) == "table" and info.items or {}) do
+        local v = V[id]
+        if v and v.unknown then M.Invalidate(id) any = true end
+      end
+      if info.many then for id, v in pairs(V) do if v.unknown then M.Invalidate(id) any = true end end end
+      if any and (anyBagShown() or M.merchantOpen or M.bankOpen) then M.Refresh() end
+    end)
+  end
+  -- (5.1) le groupe change : les avis « un ami peut s'en servir » sont refaits (flux regroupé du cœur, jamais en combat)
+  if type(T.OnRoster) == "function" then
+    pcall(T.OnRoster, T, self, function() if M._active then M.Invalidate(nil, "roster") if anyBagShown() or M.merchantOpen then M.Refresh() end end end)
+  end
   self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", function(_, _, slot) onEquip(slot) end)
   self:RegisterEvent("PLAYER_UPDATE_RESTING", function() after(1, function() M.UpdateStock() end) end)
   self:RegisterEvent("BAG_OPEN", function() M.QueueOverlays(true) end)
   self:RegisterEvent("BAG_CLOSED", function() M.QueueOverlays(true) end)
   if class() == "HUNTER" and self.RegisterUnitEvent then
-    self:RegisterUnitEvent("UNIT_PET", "player", nil, function() PLAN.pet = nil M._shop = nil end)
+    self:RegisterUnitEvent("UNIT_PET", "player", nil, function() M.Invalidate(nil, "pet") end)
   end
   local En = g("Enum")
   M.HookTooltip(g("TooltipDataProcessor"), type(En) == "table" and En.TooltipDataType or nil)
@@ -2566,7 +3003,7 @@ if T.RegisterSlash then
     end
   end
   if not (T.HasSlash and T:HasSlash("sacs")) then T:RegisterSlash("sacs", function() M.OpenPage() end, "sacs : la page Sacs (vendre, ranger, ce qu'il te manque)") end
-  if not (T.HasSlash and T:HasSlash("garde")) then T:RegisterSlash("garde", marker("keep", "marqué « garder » (plus jamais proposé à la vente)"), "garde [objet] : ne plus jamais le proposer à la vente") end
-  if not (T.HasSlash and T:HasSlash("vends")) then T:RegisterSlash("vends", marker("sell", "marqué « vendre »"), "vends [objet] : le proposer à la vente chez le marchand") end
+  if not (T.HasSlash and T:HasSlash("garde")) then T:RegisterSlash("garde", marker("keep", "marqué « toujours garder » (plus jamais proposé à la vente)"), "garde [objet] : ne plus jamais le proposer à la vente") end
+  if not (T.HasSlash and T:HasSlash("vends")) then T:RegisterSlash("vends", marker("sell", "marqué « toujours vendre »"), "vends [objet] : toujours le proposer à la vente chez le marchand") end
   if not (T.HasSlash and T:HasSlash("oublie")) then T:RegisterSlash("oublie", marker(nil, "marque retirée"), "oublie [objet] : retire ta marque garder / vendre") end
 end

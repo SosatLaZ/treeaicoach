@@ -143,6 +143,9 @@ return function(M, ctx)
   -- (no AH price known in this scenario: the option « vendre au marchand quand le prix d'HV est inconnu » is on, so
   -- that a trade good declared surplus by the profession keeper is a vendor sale as in 4.x)
   if BG and BG.db then BG.db.ahUnknown = true end
+  -- (5.1 BAGS) …and no Questie here: « sans Questie : vendre quand même d'un clic » is on too (else the surplus is
+  -- listed « à confirmer », one click each — tests/wow/bags_scenario.lua §11)
+  if BG and BG.db then BG.db.noQuestie = true end
   if BG and BG.Warm then
     for _ = 1, 3 do BG.Warm() M.Advance(2, 0.1) end
     check(BG.Ready(), "inventory verdicts ready (keepers settled)")
