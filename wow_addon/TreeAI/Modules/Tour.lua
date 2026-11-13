@@ -1070,7 +1070,10 @@ function M:OnEnable()
     db.setupV = 5
     if had and type(T._MaybeWizard) == "function" and type(T.ShowWizard) == "function" then
       db.onboarded = nil
-      T:After(6, function() if T.db and not T.db.onboarded then T:_MaybeWizard(0) end end)
+      T:After(6, function()
+        local wz = T.GetWizard and T:GetWizard()
+        if T.db and not T.db.onboarded and not (wz and meth(wz, "IsShown")) then T:_MaybeWizard(0) end   -- (déjà ouvert par le cœur : rien)
+      end)
     end
   end
   M._loginAt = now()

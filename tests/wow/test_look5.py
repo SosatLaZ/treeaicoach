@@ -28,10 +28,12 @@ def code(path: Path) -> str:
     return "\n".join(line.split("--", 1)[0] for line in path.read_text(encoding="utf-8").splitlines())
 
 
-def run(flavor: str, geometry: str = "ready=1", **env: str) -> str:
+def run(flavor: str, geometry: str = "ready=1", savedvars: Path | None = None, **env: str) -> str:
     cmd = [LUA, str(ROOT / "tests/wow/harness.lua"), "-q", "--no-storm", "--geometry", geometry, "--profile", "sur",
-           "--flavor", flavor, "--class", "HUNTER", "--level", "30",
-           "--scenario", str(ROOT / "tests/wow/look5_scenario.lua"), str(ADDON)]
+           "--flavor", flavor, "--class", "HUNTER", "--level", "30"]
+    if savedvars:
+        cmd += ["--savedvars", str(savedvars)]
+    cmd += ["--scenario", str(ROOT / "tests/wow/look5_scenario.lua"), str(ADDON)]
     e = dict(os.environ, **env)
     e.pop("TREEAI_WOW_FORCE_FLAVOR", None)
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=300, cwd=ROOT, env=e)
@@ -79,6 +81,15 @@ def test_look5_login_race() -> None:
     """Real login: UIParent unsized, the UI scale lands late, Edit Mode re-anchors the frames — same guarantees."""
     out = run("forever", geometry="w=1920,h=1080", LOOK5_MODE="screen", LOOK5_LAYOUT="classic")
     assert "TreeAIStrip : gauche" in out
+
+
+@pytest.mark.skipif(not LUA, reason="lua5.1 absent")
+def test_look5_existing_player_gets_the_setup_once(tmp_path: Path) -> None:
+    sv = tmp_path / "sv.lua"
+    sv.write_text('TreeAIDB = { profileV = 2, safeV = 4, moduleProfile = "sur", tour = { done = 1 }, onboarded = "4.3.6", '
+                  'v5hBar = true }\n', encoding="utf-8")
+    out = run("forever", savedvars=sv, LOOK5_MODE="upgrade")
+    assert "LOOK5 MISE À JOUR étape 1 : Bienvenue dans TreeAI  1/3 · Ton personnage" in out
 
 
 def test_tokens_one_system() -> None:

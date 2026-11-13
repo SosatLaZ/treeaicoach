@@ -27,6 +27,29 @@ return function(M, ctx)
   local chat0, b0, v0 = #M.output, #(M.blocked or {}), #M.violations
   rawset(_G, "GetPhysicalScreenSize", function() return geo.opts.w, geo.opts.h end)
 
+  -- ==================================================================== UPGRADE : a player who finished the 4.x wizard
+  -- (SavedVariables with onboarded) logs in on 5.0 : the 3-step setup is offered ONCE, at a calm moment, never reset
+  -- while he reads it, « Passer » = never again ; the strip is there
+  if MODE == "upgrade" then
+    local function wz() local w = T:GetWizard() return w and w:IsShown() and w or nil end
+    check(T.db.setupV == 5, "5.0 : réglage en 3 étapes proposé une fois (setupV posé)")
+    M.Advance(12, 0.2)
+    local w = wz()
+    if check(w and w.step == 1, "joueur de la 4.x : le réglage en 3 étapes s'ouvre une fois, au calme") then
+      out("MISE À JOUR étape 1 : " .. plain(w.title:GetText()))
+      w.next:Click("LeftButton")
+      M.Advance(8, 0.2)
+      check(w.step == 2 and w:IsShown(), "… jamais remis à l'étape 1 pendant qu'il le lit")
+      w.skip:Click("LeftButton")
+    end
+    M.Advance(40, 0.5)
+    check(not wz() and T.db.onboarded, "« Passer » : mémorisé, plus jamais rouvert")
+    check(S.Strip() and S.Strip():IsShown() and geo.OnScreen(S.Strip(), 2), "la bande est à l'écran")
+    for i = chat0 + 1, #M.output do out("chat: " .. M.output[i]) end
+    check(#M.output == chat0 and #(M.blocked or {}) == b0 and #M.violations == v0, "rien dans le chat, rien de bloqué")
+    return
+  end
+
   -- ------------------------------------------------------------------ world: level-30 hunter in a group of 4
   M.LeaveCombat()
   M.player.level = 30
