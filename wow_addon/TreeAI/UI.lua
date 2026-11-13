@@ -3332,19 +3332,21 @@ do
   TreeAI:On("READY", owner, function()
     -- (LITE) 5 s : la place des cadres change rarement ; (UIREDO) écran stable 3 passages de suite → un passage
     -- sur deux (10 s), retour à 5 s dès que quelque chose bouge
-    local quiet, skip = 0, false
+    -- (4.4 SMART) recul progressif : écran stable → 5, 10, 20 puis 40 s entre deux relevés (≈ 150 cadres lus à chaque
+    -- fois) ; le moindre changement ramène à 5 s
+    local quiet, n = 0, 0
     TreeAI:NewTicker(5, function()
       local S = TreeAI.settings
       if not (S and S.reflow ~= false) or TreeAI:InCombat() then return end
       -- (PLACEBUG) jamais pendant la connexion / un écran de chargement : l'écran doit être posé et contrôlé
       if TreeAI.ScreenStable and not TreeAI:ScreenStable() then return end
-      if quiet >= 3 then
-        skip = not skip
-        if skip then return end
-      end
+      local every = quiet >= 9 and 8 or quiet >= 6 and 4 or quiet >= 3 and 2 or 1
+      n = n + 1
+      if n < every then return end
+      n = 0
       local before = lastSig
       TreeAI.safecall(TreeAI.Reflow, TreeAI)
-      if lastSig == before then quiet = quiet + 1 else quiet, skip = 0, false end
+      if lastSig == before then quiet = quiet + 1 else quiet = 0 end
     end)
   end)
 end

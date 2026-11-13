@@ -37,6 +37,7 @@ do
     elseif a == "--profile" then opts.profile = arg[i + 1]; i = i + 1
     elseif a == "--fine" then opts.fine = true
     elseif a == "--sub" then opts.sub = true
+    elseif a == "--sub2" then opts.sub, opts.sub2 = true, true
     elseif a == "--step" then opts.step = tonumber(arg[i + 1]); i = i + 1
     elseif a == "--ms-rate" then opts.msRate = tonumber(arg[i + 1]); i = i + 1
     elseif a == "--idle" then opts.idle = true
@@ -294,19 +295,20 @@ local function hook()
         fine[k] = (fine[k] or 0) + 1
         -- 4.4 SMART: inclusive cost by « what pays »: the dispatch context (module:event, Module:AutoRefresh) or,
         -- for tickers / OnUpdate, the outermost non-Core addon function
-        local l3, job, prev, sub = lvl, nil, nil, nil
+        local l3, job, prev, prev2, sub, sub2 = lvl, nil, nil, nil, nil, nil
         while true do
           local i3 = getinfo(l3, "S")
           if not i3 then break end
           local m3 = modOf(i3.source)
           if m3 then
             local here = m3 .. ":" .. i3.linedefined
-            if m3 ~= "Core" or not job then job, sub = here, prev end
-            prev = here
+            if m3 ~= "Core" or not job then job, sub, sub2 = here, prev, prev2 end
+            prev2, prev = prev, here
           end
           l3 = l3 + 1
         end
-        if sub and opts.sub then job = job .. " > " .. sub end   -- --sub: + the function the job called (4.4 SMART)
+        -- --sub: + the function the job called (and the one below with --sub2) (4.4 SMART)
+        if sub and opts.sub then job = job .. " > " .. sub .. ((opts.sub2 and sub2) and (" > " .. sub2) or "") end
         local E1 = FINE_ENV[CUR]
         local T1 = E1 and rawget(E1, "TreeAI")
         local ctx = T1 and rawget(T1, "_ctx")

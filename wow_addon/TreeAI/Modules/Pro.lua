@@ -830,8 +830,15 @@ function M.Refresh(delay)
   T:After(delay or 0.5, function() pending = false pcall(M.Update, true) end)
 end
 
+-- (4.4 SMART) le cycle (3 s) ne recalcule que si le journal a bougé, sinon toutes les 30 s (temps restants, camps, respawn) ;
+-- les événements (butin, combat fini, quête vue…) gardent leur recalcul immédiat (M.Refresh)
+M.IDLE_EVERY = 30
+local autoAt, autoGen = -1e9, nil
 function M:AutoRefresh()
   if inCombat() then return end
+  local qg = T.QuestGen and T:QuestGen()
+  if qg == autoGen and now() - autoAt < M.IDLE_EVERY then return end
+  autoAt, autoGen = now(), qg
   for i = 1, 20 do local u = "nameplate" .. i if try(g("UnitExists"), u) then observe(u) end end
   M.Update()
 end

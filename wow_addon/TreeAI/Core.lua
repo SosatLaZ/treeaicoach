@@ -2895,7 +2895,9 @@ local contentGen = 0   -- (LITE) tout changement de contenu (même d'un onglet c
 local dataGen = 0      -- (UIREDO) contenu changé (lignes, conseils) — pas les simples redessins : pastilles, carte
 function TreeAI:MarkDirty() panelGen = panelGen + 1; contentGen = contentGen + 1; dataGen = dataGen + 1 end
 function TreeAI:DataGen() return dataGen end
-function TreeAI:_PanelRendered() renderedGen = panelGen; contentGen = contentGen + 1 end   -- nouveau passage : cache neuf
+-- (4.4 SMART) un rendu ne vide plus le cache des onglets : seuls un vrai changement (MarkDirty, conseil expiré) ou
+-- l'échéance du prochain conseil le renouvellent (avant : tous les onglets recalculés à chaque rendu, pastilles comprises)
+function TreeAI:_PanelRendered() renderedGen = panelGen end
 function TreeAI:PanelDirty()
   if panelGen ~= renderedGen then return true end
   local t = now()
@@ -2920,14 +2922,19 @@ function TreeAI:GetSuggestions()
   local list = {}
   local minPrio = (self.settings and self.settings.minPrio) or 1
   local qAdv, qBuf = self:Quiet("advice"), self:Quiet("buff")
+  local nextExp = math.huge
   for id, e in pairs(suggestions) do
     if e.expires and e.expires <= t then
       suggestions[id] = nil
       contentGen = contentGen + 1
-    elseif e.prio >= minPrio and not ((e.kind == nil or e.kind == "advice") and qAdv or (e.kind == "buff" and qBuf)) then
-      list[#list + 1] = e
+    else
+      if e.expires and e.expires < nextExp then nextExp = e.expires end
+      if e.prio >= minPrio and not ((e.kind == nil or e.kind == "advice") and qAdv or (e.kind == "buff" and qBuf)) then
+        list[#list + 1] = e
+      end
     end
   end
+  self._nextExpiry = nextExp
   tsort(list, function(a, b)
     if a.prio ~= b.prio then return a.prio > b.prio end
     local sa, sb = a.since or a.time, b.since or b.time
@@ -3166,9 +3173,10 @@ function TreeAI:GetTabLines(id)
   local t = now()
   -- l'état du joueur (mort, vol…) cache / rend des lignes sans toucher au contenu : il fait partie de la clé
   local q = (self:Quiet("advice") and 1 or 0) + (self:Quiet("buff") and 2 or 0)
-  if c and c.gen == contentGen and c.q == q and t - c.at < 1 and c.n == #c.out then return c.out end
+  if c and c.gen == contentGen and c.q == q and t < c.exp and t >= c.at and c.n == #c.out then return c.out end
   local out = self:_GetTabLines(id)
-  tabCache[id] = { gen = contentGen, at = t, out = out, n = #out, q = q }
+  -- gardé jusqu'au prochain conseil qui expire, 10 s au plus (filet : état d'un guide externe, réglages)
+  tabCache[id] = { gen = contentGen, at = t, out = out, n = #out, q = q, exp = mmin(t + 10, self._nextExpiry or math.huge) }
   return out
 end
 function TreeAI:_GetTabLines(id)

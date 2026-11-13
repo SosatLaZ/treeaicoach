@@ -1216,7 +1216,12 @@ for _, tp in ipairs(TIPS) do ROT[#ROT + 1] = tp.key end
 local rot = 0
 local function mark(...) for i = 1, select("#", ...) do dirty[select(i, ...)] = true end end
 M.Mark = mark
+-- (4.4 SMART) rien de marqué (aucun événement utile) : le conseil de fond tourne au plus toutes les 10 s (avant : 3 s)
+M.IDLE_EVERY = 10
+local idleAt = -1e9
 function M:AutoRefresh()
+  if not next(dirty) and now() - idleAt < M.IDLE_EVERY then return end
+  idleAt = now()
   newPass()
   if fighting then return end
   refreshSecret()

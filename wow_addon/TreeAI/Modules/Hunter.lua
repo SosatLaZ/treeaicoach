@@ -648,12 +648,23 @@ local function hostileTarget()
     and not (UnitIsDead and UnitIsDead("target")) and not (UnitIsPlayer and UnitIsPlayer("target"))
 end
 
+-- (4.4 SMART) auras du joueur relues seulement si elles ont changé (UNIT_AURA « player » → auraGen) ou au plus toutes les
+-- 5 s ; ensembles de noms d'aspects gardés (avant : 2 ensembles refaits + 2 parcours des auras à chaque cible / aura)
+local aspectMemo = { gen = -1, at = -1e9 }
+local auraGen = 0
+function M.AuraChanged() auraGen = auraGen + 1 end
 function M:CheckAspect()
   local anyKnown = false
   for _, id in ipairs(COMBAT_ASPECTS) do if knows(id) then anyKnown = true end end
   if not anyKnown then return end
-  local combatOn = hasAura("player", "HELPFUL", nameSet(COMBAT_ASPECTS))
-  local travelOn, travelName = hasAura("player", "HELPFUL", nameSet(TRAVEL_ASPECTS))
+  local am, t = aspectMemo, now()
+  if am.gen ~= auraGen or t - am.at >= 5 or t < am.at then
+    if not am.cset or t - am.at >= 30 then am.cset, am.tset = nameSet(COMBAT_ASPECTS), nameSet(TRAVEL_ASPECTS) end
+    am.combatOn = hasAura("player", "HELPFUL", am.cset)
+    am.travelOn, am.travelName = hasAura("player", "HELPFUL", am.tset)
+    am.gen, am.at = auraGen, t
+  end
+  local combatOn, travelOn, travelName = am.combatOn, am.travelOn, am.travelName
   local best = knows(S.HAWK) and spellName(S.HAWK) or spellName(S.MONKEY)
   if inCombat() then
     if travelOn then
@@ -1090,6 +1101,7 @@ function M:OnEvent(ev, ...)
     local unit = ...
     if unit ~= nil and unit ~= "player" and unit ~= "pet" then return end
     if ev == "UNIT_AURA" then
+      if unit == "player" then auraGen = auraGen + 1 end
       -- seulement pour effacer la ligne « Active … avant le pull » dès que l'aspect est mis (pas un scan à chaque buff)
       if unit == "player" and lastSaid.aspect and not inCombat() then self:CheckAspect() end
       return
@@ -1175,6 +1187,9 @@ function M:Enable()
   if not self._slowTicker and TreeAI.NewTicker then
     self._slowTicker = TreeAI:NewTicker(5, function()
       if not M.enabled then return end
+      -- (4.4 SMART) hors combat, un passage sur deux (10 s) : le familier ne change guère sans événement
+      M._slowN = (M._slowN or 0) + 1
+      if not inCombat() and M._slowN % 2 == 1 then return end
       pcall(M.CheckPet, M)
       -- (V5H) en combat : le strict nécessaire continue (cible / aspect, vie du familier, munitions toutes les 10 s)
       if inCombat() then
