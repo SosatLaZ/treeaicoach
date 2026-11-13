@@ -65,7 +65,7 @@ return function(M, ctx)
   M.actions, M.bindings = {}, {}
   M.macroFail = nil
   local c = Mc.char
-  c.installed, c.bodies, c.setup, c.opts, c.preset, c.stamps = {}, {}, false, {}, nil, {}
+  c.installed, c.bodies, c.setup, c.opts, c.preset, c.stamps = {}, {}, false, {}, "complet", {}   -- (5.1) the full set ; the new default (5 essentials) is tested in macro51_scenario.lua
   Mc:ClearBlocked(); Mc:ClearSpellCache()
   local function def(name) for _, d in ipairs(Mc:Defs()) do if d.n == name then return d end end end
   local function body(name)
@@ -125,10 +125,11 @@ return function(M, ctx)
   check(found and found:find("active", 1, true), "row of the macro on the bar: " .. tostring(found))
   -- (4.3.1 MACROFIX) « Comment ça marche » : badge Auto / Fixe, à quoi / où, clic = sur le curseur, Lier la touche
   check(found and (found:find("[Auto]", 1, true) or found:find("[Fixe]", 1, true)) and found:find("Sert à : ", 1, true)
-    and found:find(hunter and "Où : barre 1, touche 1" or "Où : ", 1, true), "row: badge + purpose + where: " .. tostring(found))
+    and found:find(hunter and "Où : barre 1, case 1 (touche 1)" or "Où : ", 1, true), "row: badge + purpose + where: " .. tostring(found))
+  -- (5.1 CLEAN) the fold « Comment ça marche » became a one-click tutorial (its content: macro51_scenario.lua)
   local howto
-  for _, r in ipairs(W.lastLay.rects) do if r.kind == "text" and r.label:find("^3%. Glisser sur ta barre") then howto = r end end
-  check(howto, "« Comment ça marche » step 3 shown")
+  for _, r in ipairs(W.lastLay.rects) do if r.label and tostring(r.label):find("^Tutoriel") then howto = r end end
+  check(howto, "« Tutoriel » button on the page")
   check(Mc.PresetOK("essentiel") == hunter, "« Mes 5 macros essentielles » offered to hunters only")
   if hunter then
     local was = c.preset
@@ -205,8 +206,13 @@ return function(M, ctx)
     check(not body("TAI Tir"):find("/petattack", 1, true), "pet commands off")
     local mq = def("TAI Marque")
     local mb = body("TAI Marque")
+    -- (5.1 CLEAN) one GCD action per press: the aspect guard is opt-in (off by default)
+    check(mb:find("^#showtooltip Marque du chasseur\n/cast %[@mouseover,harm,nodead%]%[%] Marque du chasseur"),
+      "TAI Marque: the mark on mouseover, no aspect line by default: " .. mb)
+    click(function() Mc:SetOpt(mq, "guard", true) Mc:ApplyNow(mq) end)
+    mb = body("TAI Marque")
     check(mb:find("^#showtooltip Marque du chasseur\n/cast !Aspect du faucon\n/cast %[@mouseover,harm,nodead%]%[%] Marque du chasseur"),
-      "TAI Marque: Hawk first (guard), then the mark on mouseover: " .. mb)
+      "TAI Marque: Hawk first (guard asked), then the mark on mouseover: " .. mb)
     click(function() Mc:SetOpt(mq, "mo", false) Mc:SetOpt(mq, "guard", false) Mc:ApplyNow(mq) end)
     mb = body("TAI Marque")
     check(not mb:find("@mouseover", 1, true) and not mb:find("Aspect", 1, true), "mouseover + aspect guard off: " .. mb)
@@ -342,6 +348,6 @@ return function(M, ctx)
       if m.body ~= "/say perso" then check(ok and #m.body <= 255, m.name .. " valid ≤ 255 " .. tostring(why)) end
     end
   end
-  c.opts, c.preset = {}, nil
+  c.opts, c.preset = {}, "complet"
   W.Close()
 end

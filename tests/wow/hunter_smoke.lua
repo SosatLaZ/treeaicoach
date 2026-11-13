@@ -105,7 +105,7 @@ login:SetScript("OnEvent", function()
     if not m.classes or m.classes[S.class] then m:OnEnable() end
   end
 end)
-TreeAIDB = {}
+TreeAIDB = { modules = { Hunter = { tab = true, pullTips = true, bar = true, trapBar = true } } }   -- (5.1 CLEAN) options coupées d'office, testées ici
 function TreeAI:Debug(m) print("DEBUG", m) end
 
 local function fire(ev, ...)

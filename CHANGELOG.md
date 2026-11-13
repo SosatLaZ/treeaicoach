@@ -23,7 +23,8 @@ Les versions les plus récentes en premier. Les chiffres de détection viennent 
 Grosse reprise : stabilité d'abord, puis équipement, sacs, métiers et interface. Mesures faites en simulation.
 
 - **Plus de saccades** en capitale (40 joueurs), au butin et quand les quêtes s'actualisent : pire image TreeAI
-  2,8 ms (7,7 ms en 4.3.6), aucune image au-dessus de 4 ms. Les évènements du jeu sont regroupés et le bruit du
+  2,8 ms mesuré en simulation (7,7 ms en 4.3.6, même simulation), aucune image au-dessus de 4 ms en simulation —
+  le temps réel dans ton jeu est dans TreeAI-erreurs.txt (« Temps réel par module »). Les évènements du jeu sont regroupés et le bruit du
   journal de quêtes est ignoré. `/tai pics` liste ce qui a ralenti ; une fonction trop lente se met en pause seule.
 - **Guidage des quêtes coupé d'un clic** : pastille de la bande, `/tai guide` ou `/tai quetes off`. Le suivi du jeu
   n'est jamais touché.
@@ -43,7 +44,7 @@ Grosse reprise : stabilité d'abord, puis équipement, sacs, métiers et interfa
 ## 4.3.6 · 9 novembre 2026
 
 - **Moins de lags** : prendre une quête, la suivre, tuer un monstre de quête, remplir un objectif → un seul calcul
-  regroupé (pire image 2-4 ms mesurée) ; « reste à tuer » sur les monstres mis à jour à chaque kill.
+  regroupé (pire image 2-4 ms, mesuré en simulation) ; « reste à tuer » sur les monstres mis à jour à chaque kill.
 - **Boutons rapides** toujours à l'écran (position hors écran oubliée, `/tai barre` pour les remettre).
 - Macros chasseur renommées et plus claires (TAI Feindre, TAI Pièges, icônes) ; en combat, cible / munitions /
   familier continuent d'être suivis.

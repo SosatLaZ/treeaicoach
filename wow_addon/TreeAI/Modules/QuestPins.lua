@@ -54,7 +54,7 @@ end
 
 local floor, sqrt, max, min, abs = math.floor, math.sqrt, math.max, math.min, math.abs
 local tsort, fmt = table.sort, string.format
-local function pass(ok, ...) if ok then return ... end return nil end
+local function pass(ok, ...) if ok then return ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw((...), "QuestPins") end return nil end
 local function try(fn, ...) if type(fn) ~= "function" then return nil end return pass(pcall(fn, ...)) end
 local function g(name) return rawget(G, name) end
 local function secret(v) local f = g("issecretvalue") return type(f) == "function" and try(f, v) and true or false end

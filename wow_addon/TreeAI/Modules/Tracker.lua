@@ -59,7 +59,7 @@ T.Tracker = M
 local floor, min, max, ceil = math.floor, math.min, math.max, math.ceil
 
 -- (LITE) sans table par appel (pcall direct) ; toujours au moins une valeur
-local function tryPass(ok, a, ...) if ok then return a, ... end return nil end
+local function tryPass(ok, a, ...) if ok then return a, ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw(a, "Tracker") end return nil end
 local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
   return tryPass(pcall(fn, ...))
@@ -1322,8 +1322,9 @@ function M.SendRoute(say)   -- say = commande tapée (/tai itineraire) : la rép
   local stops = M.RouteStops()
   local C = compass()
   if #stops == 0 then
-    if say then M:Print("Itinéraire : aucun point connu (Questie / API de quêtes).")
-    else T:CombatRefused("Itinéraire : aucun point connu (Questie / API de quêtes).") end
+    -- (5.1 CLEAN, audit C4) même réponse que le trajet : pas de « point connu » d'un autre vocabulaire
+    if say then M:Print("Rien à envoyer : aucun arrêt n'a de lieu connu pour l'instant. Le trajet du moment : /tai plan.")
+    else T:CombatRefused("Aucun arrêt n'a de lieu connu pour l'instant.") end
     return nil
   end
   local A = C and C.SPF and C.SPF()
@@ -1337,7 +1338,8 @@ function M.SendRoute(say)   -- say = commande tapée (/tai itineraire) : la rép
     return C.GoTo()
   end
 end
-T:RegisterSlash("itineraire", function() M.SendRoute(true) end, "itinéraire conseillé → Shortest Path (ou boussole)")
+-- (5.1 CLEAN) ancien nom, hors de l'aide (TreeAI.SLASH_HIDDEN) : le trajet se lit avec /tai plan
+T:RegisterSlash("itineraire", function() M.SendRoute(true) end, "envoyer le trajet à Shortest Path (ou à la boussole)")
 T:RegisterSlash("itinéraire", function() M.SendRoute(true) end)
 
 local ALIAS = { ["prêtes"] = "pretes", pret = "pretes", prete = "pretes", ["prête"] = "pretes", tout = "tous",

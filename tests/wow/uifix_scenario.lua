@@ -42,7 +42,7 @@ return function(M, ctx)
   fake("LibDBIcon10_Questie", 1745, 1000, 30, 30)        -- minimap button (child of the minimap)
 
   local placed = T:AutoLayout(true)
-  check(placed and placed.panel and placed.alert and placed.radar, "placement : panneau, encadré, radar placés")
+  check(placed and placed.panel and placed.alert and not placed.radar, "placement : panneau, encadré placés (radar retiré en 5.1)")
   local function overlaps(a, b)
     return a.l < b.l + b.w and b.l < a.l + a.w and a.b < b.b + b.h and b.b < a.b + a.h
   end
@@ -61,8 +61,6 @@ return function(M, ctx)
   for _, o in ipairs(T:ScanScreen().rects) do
     for role, r in pairs(placed) do check(not overlaps(r, o), ("%s libre de %s (scan)"):format(role, tostring(o.name))) end
   end
-  local rd = placed.radar
-  check(rd.l + rd.w <= 1750 and rd.b + rd.h > 863, ("radar à gauche de la minimap (%d,%d)"):format(rd.l, rd.b))
   local p = placed.panel
   local pcx = p.l + p.w / 2
   check(p.width >= 300, "panneau ≥ 300 de large (" .. tostring(p.width) .. ")")
@@ -74,8 +72,6 @@ return function(M, ctx)
   end
   local a = placed.alert
   check(a.b + a.h <= 863 and a.l + a.w > 1300, ("encadré sous la minimap / côté droit (%d,%d)"):format(a.l, a.b))
-  local R = T.modules.Radar
-  check(R and R.char and R.char.point and R.char.point:find("TOP"), "radar : position mémorisée (" .. tostring(R.char.point) .. ")")
 
   -- 2. tabs: 4 visible, never overlapping, text fits its box
   local panel = T:GetPanel() or T:CreatePanel()
@@ -211,16 +207,7 @@ return function(M, ctx)
     M.locale = loc
   end
 
-  -- 8. radar : légende, zoom fluide, compact
-  if R and R.ShowLegend and R.frame then
-    check(type(R.ShowLegend(R.frame)) == "number", "radar : légende au survol")
-    R.zoomGoal = 300
-    for _ = 1, 40 do R.StepZoom() end
-    check(math.abs((R.db.zoom or 0) - 300) < 1, "radar : zoom fluide jusqu'au but")
-    R.db.compact = true
-    check(R.Size() == 120, "radar compact : 120 px")
-    R.db.compact = false
-  end
+  -- 8. (5.1 CLEAN) radar retiré
 
   -- 9. robustesse : 3 résolutions × 4 échelles d'interface, disposition Blizzard par défaut (unités d'UI)
   for _, f in ipairs(fakes) do f:Hide() end
@@ -261,7 +248,7 @@ return function(M, ctx)
       for _, r in ipairs(layout) do current[#current + 1] = fake(r[1], r[2], r[3], r[4], r[5]) end
       local tag = ("%dx%d@%.2f"):format(res[1], res[2], sc)
       local pl = T:AutoLayout(true)
-      check(pl and pl.panel and pl.radar and pl.alert, tag .. " : panneau, radar, encadré placés")
+      check(pl and pl.panel and pl.alert, tag .. " : panneau, encadré placés")
       for role, r in pairs(pl or {}) do
         check(r.l >= 0 and r.b >= 0 and r.l + r.w <= W + 0.5 and r.b + r.h <= H + 0.5,
           ("%s : %s dans l'écran (%d,%d %dx%d)"):format(tag, role, r.l, r.b, r.w, r.h))
@@ -276,7 +263,6 @@ return function(M, ctx)
       if pl and pl.panel then
         check(T:PanelChar().point == pl.panel.point and inDB(T:PanelChar()), tag .. " : place du panneau sauvée (survit à /reload)")
       end
-      if pl and pl.radar then check(inDB(R.char) and R.char.point == pl.radar.point, tag .. " : place du radar sauvée") end
       for _, f in ipairs(current) do f:Hide() end
       combos = combos + 1
     end

@@ -2,6 +2,7 @@
 « content » pet = ready, dungeon loot by armor proficiency AND level (nothing before the item data), no invented talent
 « Ensuite » on Forever, too-strong rares = warn without sound, no invented boss timers, one owner for the quest
 countdown, « Fais N× X » only for learned recipes — on the faithful Forever mock and the modern flavour."""
+# (5.1 CLEAN) harness default = the player's profile (« sur ») ; this file tests modules that are off there: « tout »
 import shutil
 import subprocess
 from pathlib import Path
@@ -15,7 +16,7 @@ ADDON = ROOT / "wow_addon" / "TreeAI"
 @pytest.mark.skipif(not shutil.which("lua5.1"), reason="lua5.1 absent")
 @pytest.mark.parametrize("flavor", ["forever", "modern"])
 def test_qasys_scenario(flavor):
-    r = subprocess.run(["lua5.1", str(ROOT / "tests/wow/harness.lua"), "-q", "--flavor", flavor, "--class", "HUNTER",
+    r = subprocess.run(["lua5.1", str(ROOT / "tests/wow/harness.lua"), "-q", "--profile", "tout", "--flavor", flavor, "--class", "HUNTER",
                         "--level", "28", "--scenario", str(ROOT / "tests/wow/qasys_scenario.lua"), str(ADDON)],
                        capture_output=True, text=True, timeout=180, cwd=ROOT)
     assert r.returncode == 0, r.stdout[-5000:] + r.stderr[-2000:]
@@ -30,8 +31,7 @@ def test_no_invented_boss_timer_or_quest_timer_duplicate_left():
 
 
 def test_pet_content_is_ready_everywhere():
-    qf = (ADDON / "Modules" / "QuickFight.lua").read_text(encoding="utf-8")
-    assert "familier pas content" not in qf and 's.happy == 1 then P.reasons' in qf
+    assert not (ADDON / "Modules" / "QuickFight.lua").exists()   # (5.1 CLEAN) removed
     dungeon = (ADDON / "Modules" / "Dungeon.lua").read_text(encoding="utf-8")
     assert "pas content" not in dungeon
 

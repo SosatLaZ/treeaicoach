@@ -1,4 +1,5 @@
 """Modules/Gear.lua (harness scenario, syntax, TOC) + treeaicoach/wow/gear.py (data, AI context)."""
+# (5.1 CLEAN) harness default = the player's profile (« sur ») ; this file tests modules that are off there: « tout »
 import shutil
 import subprocess
 from pathlib import Path
@@ -30,7 +31,7 @@ def test_syntax_no_globals(path):
 @pytest.mark.skipif(not shutil.which("lua5.1"), reason="lua5.1 absent")
 @pytest.mark.parametrize("flavor", ["modern", "legacy"])
 def test_gear_scenario(flavor):
-    r = subprocess.run(["lua5.1", "tests/wow/harness.lua", "-q", "--flavor", flavor, "--class", "HUNTER", *ALLOW,
+    r = subprocess.run(["lua5.1", "tests/wow/harness.lua", "-q", "--profile", "tout", "--flavor", flavor, "--class", "HUNTER", *ALLOW,
                         "--scenario", "tests/wow/gear_scenario.lua", str(ADDON)],
                        cwd=ROOT, capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stdout + r.stderr

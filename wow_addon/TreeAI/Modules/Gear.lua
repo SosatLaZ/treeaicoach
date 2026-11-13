@@ -45,7 +45,7 @@ local M = T:RegisterModule("Gear", {
 T.Gear = M
 
 local floor, min, max, abs = math.floor, math.min, math.max, math.abs
-local function pass(ok, ...) if ok then return ... end return nil end
+local function pass(ok, ...) if ok then return ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw((...), "Gear") end return nil end
 local function try(fn, ...) if type(fn) ~= "function" then return nil end return pass(pcall(fn, ...)) end
 local function g(name) return rawget(G, name) end
 local function opt(k) return M.db and M.db[k] end

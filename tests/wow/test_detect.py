@@ -1,4 +1,5 @@
 """Modules/Detect.lua (vignettes, quest units, quest diffs, services, group, combat) + adoption: TOC, rules, scenario."""
+# (5.1 CLEAN) harness default = the player's profile (« sur ») ; this file tests modules that are off there: « tout »
 import re
 import shutil
 import subprocess
@@ -15,7 +16,7 @@ def test_toc_lists_detect_after_compass_before_consumers():
     lines = [ln.strip() for ln in (ADDON / "TreeAI.toc").read_text(encoding="utf-8").splitlines()]
     i = lines.index("Modules\\Detect.lua")
     assert i > lines.index("Modules\\Compass.lua")
-    for consumer in ("Boost", "Highlight", "Radar"):   # Predict removed in 4.0 (CLEAN)
+    for consumer in ("Boost", "Highlight"):   # (5.1 CLEAN) Radar removed   # Predict removed in 4.0 (CLEAN)
         assert i < lines.index(f"Modules\\{consumer}.lua")
 
 
@@ -31,7 +32,7 @@ def test_forever_safe_and_read_only():
         assert api in SRC, api
     assert "section =" in SRC
     # every adopter goes through T.Detect guarded
-    for mod in ("Boost", "Highlight", "Compass", "Radar"):
+    for mod in ("Boost", "Highlight", "Compass"):
         src = (ADDON / "Modules" / f"{mod}.lua").read_text(encoding="utf-8")
         assert re.search(r"T\.Detect", src), mod
 
@@ -47,7 +48,7 @@ def test_syntax_no_globals():
 @pytest.mark.skipif(not shutil.which("lua5.1"), reason="lua5.1 absent")
 @pytest.mark.parametrize("flavor", ["modern", "legacy", "forever"])
 def test_detect_scenario(flavor):
-    r = subprocess.run(["lua5.1", str(ROOT / "tests/wow/harness.lua"), "-q", "--flavor", flavor, "--class", "HUNTER",
+    r = subprocess.run(["lua5.1", str(ROOT / "tests/wow/harness.lua"), "-q", "--profile", "tout", "--flavor", flavor, "--class", "HUNTER",
                         "--scenario", str(ROOT / "tests/wow/detect_scenario.lua"), str(ADDON)],
                        capture_output=True, text=True, timeout=60, cwd=ROOT)
     assert r.returncode == 0, r.stdout + r.stderr

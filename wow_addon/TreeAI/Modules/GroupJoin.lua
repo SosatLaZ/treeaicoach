@@ -48,7 +48,7 @@ local SHARE_GAP, VOTE_GAP, PROPOSE_GAP = 30, 60, 15
 local AIM_GAP, AIM_REFRESH = 30, 480                         -- boussole revue ≤ 1 / 30 s ; rafraîchie ≤ 8 min (point « vieux »)
 
 -- ------------------------------------------------------------------ utilitaires
-local function pass(ok, ...) if ok then return ... end return nil end
+local function pass(ok, ...) if ok then return ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw((...), "GroupJoin") end return nil end
 local function call(fn, ...) if type(fn) ~= "function" then return nil end return pass(pcall(fn, ...)) end
 local function pub(v)   -- valeur secrète (Forever, combat / verrou du chat) → nil
   local f = rawget(_G, "issecretvalue")

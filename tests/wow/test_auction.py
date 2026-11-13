@@ -1,4 +1,5 @@
 """Auction house math (treeaicoach/wow/auction.py) — exact numbers — and the Lua module scenario."""
+# (5.1 CLEAN) harness default = the player's profile (« sur ») ; this file tests modules that are off there: « tout »
 import shutil
 import subprocess
 from pathlib import Path
@@ -147,7 +148,7 @@ def test_toc_lists_module():
 @needs_lua
 @pytest.mark.parametrize("flavor", ["modern", "legacy"])
 def test_lua_scenario(flavor):
-    r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--flavor", flavor, "--scenario",
+    r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--profile", "tout", "--flavor", flavor, "--scenario",
                         "tests/wow/auction_scenario.lua", str(ADDON)],
                        cwd=ROOT, capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stdout + r.stderr
@@ -157,7 +158,7 @@ def test_lua_scenario(flavor):
 @needs_lua
 def test_lua_forever_scenario():
     """WoW Forever path: C_AuctionHouse (async/throttled ReplicateItems, search throttle, Auctionator API)."""
-    r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--flavor", "modern", "--scenario",
+    r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--profile", "tout", "--flavor", "modern", "--scenario",
                         "tests/wow/auction_forever_scenario.lua", str(ADDON)],
                        cwd=ROOT, capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stdout + r.stderr
@@ -273,7 +274,7 @@ def test_why_none_and_reader():
 @pytest.mark.parametrize("flavor", ["modern", "legacy"])
 def test_lua_liquidity_scenario(flavor):
     """Same model in Lua: illiquid bargains refused, liquid kept, quick buttons one action per click."""
-    r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--flavor", flavor, "--scenario",
+    r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--profile", "tout", "--flavor", flavor, "--scenario",
                         "tests/wow/auction_liquidity_scenario.lua", str(ADDON)],
                        cwd=ROOT, capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stdout + r.stderr
@@ -319,7 +320,7 @@ def test_cancel_advice():
 @pytest.mark.parametrize("flavor", ["modern", "legacy", "forever"])
 def test_lua_owned_scenario(flavor):
     """The user's « Mes ventes » screen: no advice mid-scan, no price advice on special items, sane cancels."""
-    r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--flavor", flavor, "--scenario",
+    r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--profile", "tout", "--flavor", flavor, "--scenario",
                         "tests/wow/auction_owned_scenario.lua", str(ADDON)],
                        cwd=ROOT, capture_output=True, text=True, timeout=180)
     assert r.returncode == 0, r.stdout + r.stderr
@@ -341,7 +342,7 @@ def test_bindings_xml_rafale_key():
 @pytest.mark.parametrize("flavor", ["modern", "legacy", "forever"])
 def test_lua_rafale_scenario(flavor):
     """Mode rafale: one press = at most one protected call (strict mock), pauses on partial scan / reserve."""
-    r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--flavor", flavor, "--scenario",
+    r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--profile", "tout", "--flavor", flavor, "--scenario",
                         "tests/wow/auction_rafale_scenario.lua", str(ADDON)],
                        cwd=ROOT, capture_output=True, text=True, timeout=180)
     assert r.returncode == 0, r.stdout + r.stderr
@@ -407,7 +408,7 @@ def test_reader_lists_crafts_and_vendor_flips():
 def test_lua_profit_scenario(flavor):
     """4.1 AHPROFIT: py parity, evidence over days, thresholds, re-checked buys, one action per click, no combat,
     nothing in chat, vendor → AH, crafts, bags, the window's HV page (3 numbers + 4 buttons + lists)."""
-    r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--flavor", flavor, "--scenario",
+    r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--profile", "tout", "--flavor", flavor, "--scenario",
                         "tests/wow/auction_profit_scenario.lua", str(ADDON)],
                        cwd=ROOT, capture_output=True, text=True, timeout=180)
     assert r.returncode == 0, r.stdout + r.stderr

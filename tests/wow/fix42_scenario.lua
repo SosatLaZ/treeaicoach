@@ -28,6 +28,9 @@ return function(M, ctx)
   check(H and H.OnSwing and H.ShotState, "Hunter loaded with PLAYER_SWING support")
   if H and H.OnSwing then
     check(H.db.trapBar == false and H.db.fdTimer == false and H.db.fleeAlert == false, "extra hunter helpers off by default")
+    -- (5.1 CLEAN) the shot bar is an option too (off by default) and its events are only listened to when it is on
+    check(H.db.bar == false and not H._evOn.PLAYER_SWING, "shot bar off by default, PLAYER_SWING not listened to")
+    H.db.bar = true H:OnOptionChanged("bar", true)
     M.EnterCombat()
     M.FireEvent("START_AUTOREPEAT_SPELL")
     M.FireEvent("PLAYER_SWING", 2.83, 2)
@@ -52,7 +55,7 @@ return function(M, ctx)
     M.target = { exists = true, name = "Gnoll-test", level = 28, health = 100, healthMax = 900, hostile = true }
     M.FireEvent("CHAT_MSG_MONSTER_EMOTE", "%s tente de fuir, pris de panique !", "Gnoll-test")
     check(not fleeLine(), "flee alert off by default")
-    H.db.fleeAlert = true
+    H.db.fleeAlert = true H:OnOptionChanged("fleeAlert", true)
     M.FireEvent("CHAT_MSG_MONSTER_EMOTE", "%s tente de fuir, pris de panique !", "Gnoll-test")
     local fl = fleeLine()
     check(fl and fl.text:find("Gnoll%-test") and fl.text:find("s'enfuit"), "flee alert when on: " .. tostring(fl and fl.text))

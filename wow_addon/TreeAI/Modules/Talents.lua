@@ -35,6 +35,7 @@ local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
   local ok, a, b, c, d, e, f, g, h = pcall(fn, ...)
   if ok then return a, b, c, d, e, f, g, h end
+  local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw(a, "Talents") end   -- (5.1 CLEAN, B9) compté
 end
 local function g(name) return rawget(_G, name) end
 local function inCombat()
@@ -397,11 +398,10 @@ function M.DualLines(st, lines, add)
   return lines
 end
 
-local pending, lastRun = false, 0
+local pending = false
 function M.Update()
   if inCombat() then M.dirty = true return end
   M.dirty = false
-  lastRun = now()
   local st = M.State()
   M.state = st
   local lines = M.Lines(st)
@@ -439,9 +439,9 @@ function M.Refresh(delay)
   T:After(delay or 0.5, function() pending = false pcall(M.Update) end)
 end
 
-function M:AutoRefresh()
-  if M.dirty or now() - lastRun > 60 then pcall(M.Update) end
-end
+-- (5.1 CLEAN, entrée dans le profil par défaut) plus de passage dans le cycle du cœur (toutes les 3 s) : les points ne
+-- bougent qu'avec un événement (niveau, talent appris, spé, réinitialisation, entrée / sortie d'un groupe) ; ce qui
+-- arrive en combat attend la fin du combat (COMBAT_END ci-dessous).
 
 function M.WriteSummary()
   local s = T:Summary()
@@ -487,14 +487,21 @@ end
 
 function M:OnEnable()
   for _, ev in ipairs({ "PLAYER_TALENT_UPDATE", "CHARACTER_POINTS_CHANGED", "PLAYER_LEVEL_UP", "ACTIVE_TALENT_GROUP_CHANGED",
-    "GROUP_ROSTER_UPDATE", "PLAYER_ENTERING_WORLD" }) do
+    "PLAYER_ENTERING_WORLD" }) do
     M:RegisterEvent(ev, function() M.Refresh(1) end)
   end
+  -- (5.1 CLEAN) le groupe ne change qu'une ligne (« en groupe, le parcours … ») : relu quand on entre / sort d'un
+  -- groupe, pas à chaque mise à jour de la liste (des dizaines par heure dans un groupe de 4)
+  local wasGrouped = try(g("IsInGroup")) and true or false
+  M:RegisterEvent("GROUP_ROSTER_UPDATE", function()
+    local now2 = try(g("IsInGroup")) and true or false
+    if now2 ~= wasGrouped then wasGrouped = now2 M.Refresh(1) end
+  end)
   M:RegisterEvent("CONFIRM_TALENT_WIPE", function(_, _, cost)
     if M.char and tonumber(cost) then M.char.wipeCost, M.char.wipeSeen = tonumber(cost), now() end
     M.Refresh(0.5)
   end)
-  M:On("COMBAT_END", function() M.Refresh(1) end)
+  M:On("COMBAT_END", function() if M.dirty then M.Refresh(1) end end)   -- seulement ce qui a attendu la fin du combat
   M:On("SUMMARY", function() pcall(M.WriteSummary) end)
   if T.RegisterSlash then
     T:RegisterSlash("talents", function(rest) M.Report(rest) end, "talents : prochain point + pourquoi (/tai talents solo|groupe|auto)")

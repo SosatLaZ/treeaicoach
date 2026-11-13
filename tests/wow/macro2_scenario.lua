@@ -30,7 +30,7 @@ return function(M, ctx)
   M.macros = { global = {}, char = {} }
   local c = Mc.char or {}
   c.installed, c.bodies, c.setup = {}, {}, false
-  c.opts, c.preset = {}, nil   -- (MACRO3) default preset (the storm clicked the « Macros » page)
+  c.opts, c.preset = {}, "complet"   -- (MACRO3) the full set (5.1: a new hunter starts with the 5 essentials, see macro51)
   Mc:ClearBlocked(); Mc:ClearSpellCache()
   local out0 = #M.output
 

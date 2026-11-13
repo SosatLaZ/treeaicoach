@@ -78,15 +78,13 @@ def test_static_contracts():
     # UI-01: the dungeon cards use the pool registered (and released) by the window
     assert "W._pool = pool" in win and 'W._pool("dcard"' in pages and "W._newPool(function" not in pages
     # UI-15: quest automations never on by default (nor by « Tout allumer »)
-    quick = _src("Modules/Quick.lua")
-    assert "defaults.autoQuest, defaults.autoReward, defaults.autoGossip = false, false, false" in quick
+    assert "questAuto = false" in _src("Modules/QoL.lua")   # (5.1 CLEAN) Quick.lua (its duplicate) removed
     # UI-25: the release version in the TOC
     assert re.search(r"^## Version: \d+\.\d+\.\d+$", _src("TreeAI.toc"), re.M)
     # UI-20: no glyph the game fonts lack in the strings QA listed
     for name, bad in (("Modules/Theme.lua", "Échap → Options"), ("Modules/Shortcuts.lua", "Options → Barre"),
-                      ("Modules/Region.lua", "Ici → Zones"), ("Modules/Highlight.lua", "à rendre ✓")):
+                      ("Modules/Highlight.lua", "à rendre ✓")):
         assert bad not in _src(name), (name, bad)
     # UI-19: no chat line from plain clicks
     assert 'TreeAI:Print(L["Prêt !' not in _src("Options.lua")
     assert "Interface TreeAI réinitialisée" not in _src("UI.lua")
-    assert 'MP:Print("Boussole' not in _src("Modules/MinimapPins.lua")

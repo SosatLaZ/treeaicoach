@@ -26,7 +26,7 @@ local M = T:RegisterModule("Boost", {
 T.Boost = M
 
 local G = _G
-local function pass(ok, ...) if ok then return ... end return nil end
+local function pass(ok, ...) if ok then return ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw((...), "Boost") end return nil end
 local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
   return pass(pcall(fn, ...))

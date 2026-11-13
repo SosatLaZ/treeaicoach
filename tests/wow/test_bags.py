@@ -5,6 +5,7 @@ better ones cover the stock), every keeper, AH vs vendor, the merchant card (one
 non-grey, never in combat), the bank flow, the full-bag warning, overlays on the game's bag buttons, the tooltip line,
 « Il te manque » / Shopping(), the page « Sacs », nothing computed while looting with the bags closed, nothing in the
 chat, zero blocked action. Static rules + the harness scenario (tests/wow/bags_scenario.lua) on forever, modern, legacy."""
+# (5.1 CLEAN) harness default = the player's profile (« sur ») ; this file tests modules that are off there: « tout »
 import re
 import shutil
 import subprocess
@@ -79,7 +80,7 @@ def test_other_modules_use_the_brain():
 
 
 def _run(flavor, cls="HUNTER"):
-    return subprocess.run([LUA, str(ROOT / "tests/wow/harness.lua"), "-q", "--no-storm", "--flavor", flavor, "--class", cls,
+    return subprocess.run([LUA, str(ROOT / "tests/wow/harness.lua"), "-q", "--profile", "tout", "--no-storm", "--flavor", flavor, "--class", cls,
                            "--level", "30", "--allow", "LibQuestieDB", "--allow", "QuestDB", "--allow", "NpcDB", "--allow", "ObjectDB", "--allow", "ItemDB",
                            "--allow", "IsQuestFlaggedCompleted",
                            "--scenario", str(ROOT / "tests/wow/bags_scenario.lua"), str(ADDON)],

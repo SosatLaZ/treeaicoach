@@ -61,6 +61,76 @@ function TreeAI:Debug(...)
   end
 end
 
+---------------------------------------------------------------------------
+-- (5.1 CLEAN, audit B9) Erreurs AVALÉES : des milliers d'appels protégés (try, pass, meth…) rendent nil en silence
+-- quand ils échouent — une page vide, une ligne absente, et « 0 erreur Lua ». Chaque échec passe ici : UNE entrée par
+-- endroit (fichier:ligne lu dans le message, sinon le nom donné par l'appelant), son nombre, le premier message, le
+-- travail en cours et l'heure. Rien sur le chemin du succès (les enveloppes ne nous appellent qu'en cas d'échec) ;
+-- un message déjà vu = un compteur de plus (une recherche dans une table) ; 60 endroits au plus, le reste compté à part.
+-- Gardé dans TreeAIDB.diag.swallowed, lu par l'appli : section « Erreurs avalées » de TreeAI-erreurs.txt.
+---------------------------------------------------------------------------
+do
+  local MAX_SITES, MAX_MEMO = 60, 400
+  local pend = { sites = {}, total = 0, n = 0, dropped = 0 }   -- avant le chargement de TreeAIDB
+  local memo, memoN, memoOf = {}, 0, nil                       -- message déjà vu -> son entrée (même réserve)
+  local function store()
+    local db = TreeAI.db
+    if type(db) ~= "table" then return pend end
+    if type(db.diag) ~= "table" then db.diag = {} end
+    local d = db.diag
+    local s = d.swallowed
+    if d.swV ~= TreeAI.version or type(s) ~= "table" or type(s.sites) ~= "table" then
+      s = { sites = {}, total = 0, n = 0, dropped = 0, since = wallclock() }
+      d.swallowed, d.swV = s, TreeAI.version
+    end
+    if pend.total > 0 then   -- ce qui a échoué avant le chargement de la base
+      for k, e in pairs(pend.sites) do
+        if not s.sites[k] and (s.n or 0) < MAX_SITES then s.sites[k] = e s.n = (s.n or 0) + 1 end
+      end
+      s.total = (tonumber(s.total) or 0) + pend.total
+      pend.sites, pend.total, pend.n = {}, 0, 0
+    end
+    return s
+  end
+  local function siteOf(err, label)
+    if type(err) == "string" then
+      local f, l = err:match("([%w_]+)%.lua:(%d+):")
+      if f then return f .. ".lua:" .. l end
+      local api = err:match("to '([%w_%.:]+)'") or err:match("^([%w_%.]+%(%)?)")
+      return tostring(label or "?") .. (api and (" · " .. api) or "")
+    end
+    return tostring(label or "?") .. " · " .. type(err)
+  end
+  --- une erreur avalée (err = le message de pcall ; label = le fichier / module qui l'a avalée)
+  function TreeAI.Swallow(err, label)
+    pcall(function()
+      local sec = _G.issecretvalue
+      if err ~= nil and sec and sec(err) then err = "<valeur secrète>" end
+      local s = store()
+      s.total = (tonumber(s.total) or 0) + 1
+      if memoOf ~= s then memo, memoN, memoOf = {}, 0, s end
+      local key = type(err) == "string" and err or nil
+      local e = key and memo[key]
+      if e then e.n = e.n + 1 return end
+      local site = siteOf(err, label)
+      e = s.sites[site]
+      if not e then
+        if (s.n or 0) >= MAX_SITES then s.dropped = (tonumber(s.dropped) or 0) + 1 return end
+        local msg = strgsub(tostring(err), "^Interface[/\\]AddOns[/\\]TreeAI[/\\]", "")
+        e = { n = 0, msg = strsub(msg, 1, 240), t = wallclock(), ctx = TreeAI._ctx and strsub(tostring(TreeAI._ctx), 1, 60),
+              who = label and tostring(label) or nil,
+              combat = (_G.InCombatLockdown and _G.InCombatLockdown()) and true or nil }
+        s.sites[site] = e
+        s.n = (s.n or 0) + 1
+      end
+      e.n = e.n + 1
+      if key and memoN < MAX_MEMO then memo[key] = e memoN = memoN + 1 end
+    end)
+    return nil
+  end
+  function TreeAI:SwallowedReport() return store() end
+end
+
 local function safecall(fn, ...)
   local ok, err = pcall(fn, ...)
   if not ok then
@@ -83,20 +153,24 @@ local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
   local ok, a, b, c, d, e, f, g, h, i, j, k, l, m, n = pcall(fn, ...)
   if ok then return a, b, c, d, e, f, g, h, i, j, k, l, m, n end
-  return nil
+  return TreeAI.Swallow(a, "Core")   -- (5.1 CLEAN, B9) compté, jamais muet
 end
+TreeAI._TryForTests = try
 
 -- Valeurs secrètes (Forever = famille Midnight) : en combat, certaines valeurs (PV d'une autre unité, auras,
 -- GUID / nom d'un monstre…) sont « secrètes » : les comparer, les additionner ou s'en servir de clé lève une
 -- erreur Lua. API.Pub(v) rend nil pour une valeur secrète (et v sinon) : à mettre autour de ces lectures.
+-- (5.1 CLEAN) issecretvalue ne lève jamais d'erreur : lu directement (avant : un pcall par valeur lue, des milliers
+-- par minute à travers tous les modules)
 function API.IsSecret(v)
   local f = _G.issecretvalue
-  if type(f) ~= "function" or v == nil then return false end
-  local ok, r = pcall(f, v)
-  return ok and r and true or false
+  if v == nil or type(f) ~= "function" then return false end
+  return f(v) and true or false
 end
 function API.Pub(v)
-  if v ~= nil and API.IsSecret(v) then return nil end
+  if v == nil then return nil end
+  local f = _G.issecretvalue
+  if f and f(v) then return nil end
   return v
 end
 local pub = API.Pub
@@ -1703,10 +1777,15 @@ function TreeAI:CharDB()
   local db = self.db or initDB()
   local key = self:CharKey()
   local c = db.chars[key]
+  -- (5.1 CLEAN) déjà vérifiée (même base, même perso, mêmes tables) : rendue telle quelle — le panneau la lit à chaque
+  -- rendu (onglet actif, compact) ; avant : 4 contrôles de type à chaque lecture
+  local cm = self._charMemo
+  if cm and cm[1] == c and cm[2] == c.summary and cm[3] == c.suggestions and cm[4] == c.modules and c ~= nil then return c end
   if type(c) ~= "table" then c = {}; db.chars[key] = c end
   c.summary = type(c.summary) == "table" and c.summary or {}
   c.suggestions = type(c.suggestions) == "table" and c.suggestions or {}
   c.modules = type(c.modules) == "table" and c.modules or {}
+  self._charMemo = { c, c.summary, c.suggestions, c.modules }
   return c
 end
 
@@ -2579,8 +2658,7 @@ TreeAI._ModuleEnable, TreeAI._ModuleDisable = moduleEnable, moduleDisable
   -- nul) ; les autres lisent T:QuestGuideOn() (boussole : plus de cible de quête ; pilote : plus de règle de quête…)
   -- et reçoivent le message QUEST_GUIDE_CHANGED(on).
   TreeAI.QUEST_GUIDE = TreeAI.QUEST_GUIDE or { Tracker = true, Todo = true, Planner = true, Route = true, PathDraw = true,
-    ZonePlan = true, ZoneWatch = true, QuestBrain = true, QuestPins = true, Watch = true, Abandon = true, Horizon = true,
-    Region = true }
+    ZonePlan = true, ZoneWatch = true, QuestBrain = true, QuestPins = true, Abandon = true }
   function TreeAI:QuestGuideOn()
     local db = self.db
     return not (type(db) == "table" and db.questGuide == false)
@@ -2734,19 +2812,27 @@ TreeAI.SAFE_MODULES = TreeAI.SAFE_MODULES or {
   Prof = true, CityRun = true,
   -- (4.1) le joueur joue toujours en groupe : la page Groupe (amis, rejoindre, intention) allumée en mode sûr
   Group = true,
+  -- (5.1 CLEAN, audit B5) demandé par le joueur et resté coupé jusqu'en 5.0 : aides du chasseur (familier mort /
+  -- absent / mécontent, munitions, aspect dangereux en combat — rien pour une autre classe), talents (le parcours,
+  -- le point libre), chemins appris (enregistrés au fil de tes déplacements). Coût mesuré (session_sim, chasseur,
+  -- Forever, 60 min, kinstr/min, 3 lancements) : sans eux 855-861 (cœur 362-366) ; avec 872-874 (cœur 367-370),
+  -- plafonds inchangés (890, cœur 370). Stats (XP/h, or/h mesurés) reste en « Complet » : +18 à +25 de plus
+  -- (898-903, cœur 382-385), au-delà des deux plafonds.
+  Hunter = true, Talents = true, PathLearn = true,
 }
 -- (4.0.1) entrés dans le mode sûr après la 4.0 : allumés une fois chez les joueurs en mode sûr (voir _ApplyProfileOnce)
 -- (4.1) Prof + CityRun : allumés une fois (SAFE_V 4) chez les joueurs en mode sûr, sauf s'ils les ont coupés eux-mêmes
-TreeAI.SAFE_ADDED = { ZonePlan = 1, PathDraw = 1, Highlight = 1, Prof = 4, CityRun = 4, Group = 4 }
-TreeAI.SAFE_V = 4
--- (4.0.5) sortis du mode sûr : coupés UNE fois chez tout le monde (le Suivi TreeAI cachait le suivi du jeu)
--- (4.1 LAYOUT) valeur = version qui les coupe : à l'écran il ne reste que les boutons rapides, la boussole et la
--- pastille (+ ses repères) ; bande d'horizon (2e flèche + texte au centre), radar, barres de combat (« c-1… »),
--- barre de quête (remplacée par les boutons rapides), points de minimap en plus (flèche « 76 m ») : coupés UNE fois,
--- chez tout le monde, quel que soit le profil ; un clic les rallume (Réglages → Affichage)
-TreeAI.SAFE_REMOVED = { Watch = 2, Horizon = 3, Radar = 3, QuickFight = 3, Quick = 3, MinimapPins = 3 }
+-- (5.1) Hunter + Talents + PathLearn : allumés une fois (SAFE_V 5), même règle (jamais ce qu'il a coupé lui-même)
+TreeAI.SAFE_ADDED = { ZonePlan = 1, PathDraw = 1, Highlight = 1, Prof = 4, CityRun = 4, Group = 4,
+  Hunter = 5, Talents = 5, PathLearn = 5 }
+TreeAI.SAFE_V = 5
+-- (4.0.5 / 4.1) Suivi TreeAI, bande d'horizon, radar, barres de combat et de quête, points de minimap en plus, quêtes
+-- par région : coupés chez tout le monde depuis la 4.1, RETIRÉS en 5.1 (5 703 lignes). Leurs réglages enregistrés
+-- sont effacés une fois (_ApplyProfileOnce) ; plus rien ne les lit.
+TreeAI.GONE_MODULES = { "Watch", "Horizon", "Radar", "QuickFight", "Quick", "MinimapPins", "Region" }
+TreeAI.SAFE_REMOVED = {}
 -- (4.1 LAYOUT) fenêtres cachées une fois (le module reste allumé) : clé du réglage « afficher » de chaque module
-TreeAI.SAFE_HIDDEN = { Meter = "shown", Abandon = "hint", Watch = "shown" }
+TreeAI.SAFE_HIDDEN = { Meter = "shown", Abandon = "hint" }
 --- module « bêta » (pas dans le mode sûr) ?
 function TreeAI:IsBeta(name) return not self.SAFE_MODULES[name] end
 TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
@@ -2759,7 +2845,6 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Compass = { lite = true, desc = "Boussole : flèche vers le prochain objectif" },
   NavTime = { lite = true, desc = "Temps de trajet justes (vitesse et détours mesurés)" },
   PathLearn = { lite = true, desc = "Chemins appris sur tes déplacements (rampes, virages, relief)" },
-  Horizon = { lite = true, desc = "Bande d'horizon : les prochains arrêts selon ton cap" },
   Planner = { lite = true, desc = "Itinéraire de quêtes optimisé" },
   Export = { lite = true, desc = "Export du perso et du plan vers TreeAI Coach" },
   Group = { lite = true, gate = "group", desc = "Groupe : tes amis (avec ou sans TreeAI), objectif, quêtes à partager, prêts à tirer" },
@@ -2782,11 +2867,8 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   CityRun = { lite = false, desc = "Courses en ville : tout à acheter / faire en ville, trajet le plus court, points métiers sur la carte" },
   PvP = { lite = false, combat = true, desc = "JcJ : aides contre les joueurs" },
   PvPMark = { lite = true, combat = true, desc = "Joueurs ennemis attaquables surlignés (barres de nom)" },
-  Radar = { lite = false, desc = "Radar rond des objectifs" },
   Detect = { lite = true, desc = "Détection : rares, trésors, monstres de quête, services proches" },
-  MinimapPins = { lite = true, desc = "Points sur la minimap (ce que Questie ne montre pas)" },
   Binds = { lite = false, desc = "Touches : sur quoi lier tes sorts et macros, nouveaux sorts à poser" },
-  QuickFight = { lite = true, combat = true, desc = "Barre de combat : manger, familier, aspect, pull, prêt ou pas" },
   Leveling = { lite = false, desc = "Progression : repos, zone dangereuse, talents, compétence d'arme" },
   Inventory = { lite = false, desc = "Inventaire : sacs, réparation, vente des gris, nourriture" },
   Bags = { lite = true, desc = "Sacs : quoi garder, vendre, mettre à l'HV ou à la banque ; ce qu'il te manque" },   -- (5.0 BAGS)
@@ -2800,18 +2882,15 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Speed = { lite = true, desc = "Aller plus vite : mort, monture, foyer" },
   QuickTravel = { lite = true, desc = "Raccourcis : vols, auberge, courses, outils du groupe" },
   Plain = { lite = true, desc = "Conseils de quête en mots simples" },
-  Region = { lite = true, desc = "Quêtes rangées par région (ici, à côté, loin)" },
   Hub = { lite = true, desc = "Pastille de la minimap : tout TreeAI en un clic" },
   Window = { lite = true, desc = "Fenêtre TreeAI (pages, recherche) + carte « Prochaine étape »" },
   Shortcuts = { lite = true, desc = "Bande d'actions rapides (une rangée fine) : guidage des quêtes ON / OFF, Rendre, Prendre, Zone, Sacs, Équipement, Métiers, Groupe" },
-  Quick = { lite = true, desc = "Raccourcis : barre d'actions rapides, quêtes acceptées et rendues" },
   Edge2 = { lite = false, desc = "Avantages : camp disputé, objet qui ne tombe pas, corps à fouiller…" },
   Coach = { lite = true, desc = "Conseils pro : le bon geste au bon moment (repos, familier, munitions, XP…), un à la fois" },   -- (ADVICE) sûr : Coach.lua s'y inscrit
   Tour = { lite = true, desc = "Visite guidée et astuces (une fois chacune)" },   -- (ONBOARD) sûr : Tour.lua s'y inscrit
   GroupGear = { lite = true, gate = "group", desc = "Équipement du groupe : ce que portent tes amis, échanges conseillés, à qui sert un butin" },   -- (4.1 GEARTRADE) sûr : GroupGear.lua s'y inscrit
   -- (REPLACE 4.0.1) sans autres addons
   QuestPins = { lite = true, desc = "Icônes de quêtes : « ! » à prendre, « ? » à rendre, zones d'objectifs (carte + minimap)" },
-  Watch = { lite = false, desc = "Suivi TreeAI : quêtes du trajet, distance, direction et durée en direct, à côté du suivi du jeu" },
   Addons = { lite = true, desc = "Autres addons : ce que TreeAI prend à Suivi Forever, Questie, Auctionator, Leatrix Plus… et ce qu'il leur laisse" },
   Now = { lite = true, desc = "« Maintenant » : quoi faire tout de suite, 5 lignes au plus, un clic chacune (fenêtre et petit bloc)" },   -- (5.1 LOOK) sûr : Now.lua s'y inscrit
   QoL = { lite = true, desc = "Confort : vendre les gris et réparer, butin instantané, butin automatique, recul de caméra" },
@@ -2820,7 +2899,8 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
 }
 
 TreeAI.MODULE_PROFILES = { sur = true, essentiel = true, tout = true }
-TreeAI.MODULE_PROFILE_LABEL = { sur = "Mode sûr", essentiel = "Essentiel (léger)", tout = "Tout (bêta compris)" }
+-- (5.1 CLEAN, audit B13) UN nom : « Simple » / « Complet » (« Mode sûr » ne désigne plus que le mode sûr des achats)
+TreeAI.MODULE_PROFILE_LABEL = { sur = "Simple", essentiel = "Léger", tout = "Complet" }
 function TreeAI:ModuleProfile()
   local db = self.db
   local p = type(db) == "table" and db.moduleProfile
@@ -2917,6 +2997,20 @@ function TreeAI:_ApplyProfileOnce()
     if type(db.modChoice) == "table" then db.modChoice.Shortcuts = nil end
     if sc and sc.db then sc.db.enabled = true sc.db.strip = true end
   end
+  -- (5.1 CLEAN) modules retirés : leurs réglages enregistrés (compte + chaque perso) partent une fois
+  if not db.gone51 then
+    db.gone51 = true
+    for _, n in ipairs(self.GONE_MODULES or {}) do
+      if type(db.modules) == "table" then db.modules[n] = nil end
+      if type(db.modChoice) == "table" then db.modChoice[n] = nil end
+      for _, c in pairs(type(db.chars) == "table" and db.chars or {}) do
+        if type(c) == "table" then
+          if type(c.moduleSettings) == "table" then c.moduleSettings[n] = nil end
+          if type(c.modules) == "table" then c.modules[n] = nil end
+        end
+      end
+    end
+  end
   if (tonumber(db.profileV) or 0) < self.PROFILE_V then
     db.profileV = self.PROFILE_V
     -- (3.9.9, REVIEW) une fois pour tous (nouveaux et anciens) : mode sûr ; les fonctions bêta restent à un clic
@@ -2984,7 +3078,7 @@ end
 function TreeAI:_SafeNotice()
   if not self._safeNotice then return end
   self._safeNotice = nil
-  self:Suggest("core:safe", "Mode sûr : les fonctions bêta sont à activer dans le menu", 2, {
+  self:Suggest("core:safe", "Profil Simple : les autres fonctions (bêta) s'allument dans « Fonctions »", 2, {
     ttl = 900, tab = "now", sound = false, kind = "always", ownPage = "modules",
     tooltip = "Clic : la liste des fonctions (un clic par fonction). Aussi : pastille de la minimap → Fonctions bêta.",
     onClick = function()
@@ -3013,16 +3107,17 @@ function TreeAI:_BuildModulesTab()
   local lite = self:Lite()
   local prof = self:ModuleProfile()
   local head
-  if prof == "sur" then head = "Mode sûr : seules les fonctions vérifiées tournent — clic : tout allumer (bêta compris)"
-  elseif lite then head = "Profil : Essentiel (léger) — clic : tout réactiver"
-  else head = "Tout est allumé (bêta compris) — clic : revenir au mode sûr" end
+  -- (5.1 CLEAN, audit B13) un seul vocabulaire : profil « Simple » / « Complet » (+ « Léger »)
+  if prof == "sur" then head = "Profil Simple : seules les fonctions fiables tournent — clic : passer en Complet (tout, bêta compris)"
+  elseif lite then head = "Profil Léger : le minimum tourne — clic : passer en Complet"
+  else head = "Profil Complet : tout est allumé (bêta compris) — clic : revenir au profil Simple" end
   local lines = {
     { text = head, prio = 2, id = "core:profile",
-      tooltip = "Mode sûr = quêtes, zone de travail, trajet (et son tracé), boussole, carte « Prochaine étape », fenêtre TreeAI, surbrillance des objets de quête, course au corps, erreurs, macros.\n"
+      tooltip = "Profil Simple = quêtes, zone de travail, trajet (et son tracé), boussole, carte « Prochaine étape », fenêtre TreeAI, surbrillance des objets de quête, course au corps, erreurs, macros.\n"
         .. "Les fonctions « bêta » n'ont été testées que hors du jeu : allume-les une par une ci-dessous.",
       onClick = function() TreeAI:SetModuleProfile(prof == "sur" and "tout" or (lite and "tout" or "sur")) end },
     -- (« mod: » : l'orage de clics du harnais laisse les bascules de profil tranquilles)
-    { text = lite and "Revenir au mode sûr — clic" or "Profil léger (essentiel, moins de lag) — clic", prio = 1,
+    { text = lite and "Revenir au profil Simple — clic" or "Profil Léger (le minimum, moins de travail en fond) — clic", prio = 1,
       id = "mod:profile:alt", onClick = function() TreeAI:SetModuleProfile(lite and "sur" or "essentiel") end },
     { text = "Coût des fonctions — clic : afficher", prio = 1, id = "core:perf",
       onClick = function()   -- (4.0 QA) dans la page « Fonctions » de la fenêtre, jamais dans le chat
@@ -3065,7 +3160,7 @@ function TreeAI:PerfLines()
     if self.modules[n]._active then nOn = nOn + 1 end
   end
   out[#out + 1] = strformat("TreeAI : %s Ko de mémoire · %d/%d modules actifs · profil %s",
-    mem and tostring(math.floor(mem + 0.5)) or "?", nOn, nAll, self:ModuleProfile())
+    mem and tostring(math.floor(mem + 0.5)) or "?", nOn, nAll, self.MODULE_PROFILE_LABEL[self:ModuleProfile()] or self:ModuleProfile())
   local list = {}
   for name, st in pairs(self._stats) do if (st.calls or 0) > 0 then list[#list + 1] = { name = name, st = st } end end
   tsort(list, function(a, b) return (a.st.ms or 0) > (b.st.ms or 0) end)
@@ -3079,6 +3174,31 @@ function TreeAI:PerfLines()
 end
 function TreeAI:PrintPerf()
   for _, s in ipairs(self:PerfLines()) do self:Print(s) end
+end
+--- (5.1 CLEAN, audit B14) à la déconnexion / au /reload : le temps RÉEL passé dans chaque module pendant la session,
+--- mesuré en jeu (debugprofilestop autour de chaque appel réparti : événement, minuteur, message, travail étalé) —
+--- pas une estimation de simulation. Gardé dans TreeAIDB.diag.perf ; l'appli l'écrit dans TreeAI-erreurs.txt
+--- (section « Temps réel par module »). Les 25 plus coûteux, une fois par session (rien pendant le jeu).
+function TreeAI:_SavePerf()
+  local db = self.db
+  if type(db) ~= "table" then return end
+  if type(db.diag) ~= "table" then db.diag = {} end
+  local list = {}
+  for name, st in pairs(self._stats or {}) do
+    if type(st) == "table" and (tonumber(st.calls) or 0) > 0 then list[#list + 1] = { name, tonumber(st.ms) or 0, st.calls } end
+  end
+  if #list == 0 then return end
+  tsort(list, function(a, b) return a[2] > b[2] end)
+  local mods = {}
+  for i = 1, mmin(25, #list) do
+    local e = list[i]
+    mods[i] = { m = e[1], ms = math.floor(e[2] * 10 + 0.5) / 10, n = e[3] }
+  end
+  local up = mmax(1, now() - (self._loginAt or 0))
+  local sk = self.Spikes
+  db.diag.perf = { t = wallclock(), ver = self.version, up = math.floor(up + 0.5), mods = mods,
+    profile = self:ModuleProfile(), clock = (_G.debugprofilestop and "debugprofilestop") or "aucune",
+    spikeMS = sk and sk.MS, frameMS = sk and sk.FRAME_MS }
 end
 
 do  -- conditions des modules (groupe / instance / HV) : réévaluées après coup (jamais pendant un parcours)
@@ -3444,7 +3564,7 @@ TreeAI.PRESETS = {
   tout   = { nowMax = 8, nowMinPrio = 1, perModule = 0, alertGap = 20, topicGap = 60 },
 }
 TreeAI.PRESET_ORDER = { "simple", "calme", "normal", "tout" }
-TreeAI.PRESET_LABEL = { simple = "Simple", calme = "Mode calme", normal = "Normal", tout = "Tout", perso = "Perso" }
+TreeAI.PRESET_LABEL = { simple = "Simple", calme = "Calme", normal = "Normal", tout = "Tout", perso = "Perso" }
 TreeAI.PRESET_HELP = {
   simple = "3 lignes, seulement ce que tu peux faire maintenant",
   calme = "3 lignes, seulement l'utile, alerte rare (45 s mini)",
@@ -3876,6 +3996,7 @@ function TreeAI:Suggest(id, text, prio, opts)
   e.ownPage = (not opts.danger) and (opts.ownPage or TreeAI.OWN_PAGE[id]) or nil
   e.kind = kind
   suggestions[id] = e
+  if visible then TreeAI._sugGen = (TreeAI._sugGen or 0) + 1 end   -- (5.1 CLEAN) liste triée à refaire
   if quiet then   -- en attente : ni son, ni encadré, ni journal ; réaffiché quand l'état revient
     if visible then self:RequestRefresh() end
     return e
@@ -3959,11 +4080,33 @@ function TreeAI:ClearSuggestions(prefix)
   if any then self:RequestRefresh() end
 end
 
+do
+-- (5.1 CLEAN) la liste triée des conseils : chaque onglet et chaque pastille d'onglet la redemandait et la RETRIAIT
+-- (le tri = le plus gros coût du cœur que les lignes du chasseur ajoutaient). Gardée tant que rien n'a changé :
+-- génération des conseils (TreeAI._sugGen : ajout, retrait, priorité / genre / texte changés), mêmes filtres
+-- (priorité mini, calme), aucun conseil arrivé à échéance, et les mêmes entrées (un parcours, sans tri).
+local function bySugg(a, b)
+  if a.prio ~= b.prio then return a.prio > b.prio end
+  local sa, sb = a.since or a.time, b.since or b.time
+  if sa ~= sb then return sa > sb end
+  return a.id < b.id
+end
+local memo = { gen = -1 }
 function TreeAI:GetSuggestions()
   local t = now()
-  local list = {}
   local minPrio = (self.settings and self.settings.minPrio) or 1
   local qAdv, qBuf = self:Quiet("advice"), self:Quiet("buff")
+  local gen = self._sugGen or 0
+  if memo.gen == gen and memo.mp == minPrio and memo.qa == qAdv and memo.qb == qBuf and t < memo.exp and t >= memo.at then
+    local all, n, same = memo.all, 0, true
+    for _, e in pairs(suggestions) do
+      n = n + 1
+      if not all[e] then same = false break end
+    end
+    if same and n == memo.n then return memo.list end
+  end
+  local list = {}
+  local all, nAll = {}, 0
   local nextExp = math.huge
   for id, e in pairs(suggestions) do
     if e.expires and e.expires <= t then
@@ -3971,19 +4114,18 @@ function TreeAI:GetSuggestions()
       contentGen = contentGen + 1
     else
       if e.expires and e.expires < nextExp then nextExp = e.expires end
+      all[e], nAll = true, nAll + 1
       if e.prio >= minPrio and not ((e.kind == nil or e.kind == "advice") and qAdv or (e.kind == "buff" and qBuf)) then
         list[#list + 1] = e
       end
     end
   end
   self._nextExpiry = nextExp
-  tsort(list, function(a, b)
-    if a.prio ~= b.prio then return a.prio > b.prio end
-    local sa, sb = a.since or a.time, b.since or b.time
-    if sa ~= sb then return sa > sb end
-    return a.id < b.id
-  end)
+  tsort(list, bySugg)
+  memo.gen, memo.mp, memo.qa, memo.qb, memo.at, memo.exp = self._sugGen or 0, minPrio, qAdv, qBuf, t, nextExp
+  memo.all, memo.n, memo.list = all, nAll, list
   return list
+end
 end
 
 ---------------------------------------------------------------------------
@@ -4129,7 +4271,10 @@ function TreeAI:TabShown(id)
 end
 
 local function plain(text)
-  text = strgsub(tostring(text or ""), "|c%x%x%x%x%x%x%x%x", "")
+  text = tostring(text or "")
+  -- (5.1 CLEAN) sans « | », rien à enlever : appelé pour chaque ligne de chaque onglet à chaque recalcul
+  if not text:find("|", 1, true) then return text end
+  text = strgsub(text, "|c%x%x%x%x%x%x%x%x", "")
   text = strgsub(text, "|r", "")
   return text
 end
@@ -4722,15 +4867,38 @@ function TreeAI:HasSlash(cmd) return type(cmd) == "string" and slash[cmd:lower()
 
 -- Aide groupée : commande -> rubrique (les commandes des modules sans rubrique vont dans « Autres »)
 TreeAI.SLASH_GROUPS = TreeAI.SLASH_GROUPS or {
-  { "Démarrer", { "aide", "bienvenue", "mode", "profil", "options" } },
-  { "Panneau", { "afficher", "cacher", "basculer", "mini", "onglet", "edit", "placer", "verrou", "reset", "alerte" } },
-  { "Quêtes", { "quetes", "suivi", "itineraire", "zone", "pro", "abandon", "surbrillance", "highlight" } },
+  { "Démarrer", { "aide", "bienvenue", "fenetre", "guide", "profil", "conseils", "options" } },
+  { "Panneau", { "afficher", "cacher", "edit", "placer", "interface", "alerte" } },
+  { "Quêtes", { "quetes", "plan", "zone", "vite", "rendre", "prendre", "suivi", "abandon", "surbrillance" } },
   { "Boussole", { "boussole", "aller", "cible", "way" } },
   { "Groupe", { "groupe", "objectif", "partir", "pret", "sync" } },
   { "Combat", { "cherche", "stats", "pvp" } },
   { "Macros et touches", { "macros", "binds", "touches", "raccourcis", "combat" } },
   { "HV et métiers", { "hv", "metiers" } },
-  { "Outils", { "modules", "module", "statut", "perf", "pics", "selftest", "diag", "debug", "test", "bloque" } },
+  { "Outils", { "erreurs", "modules", "module", "statut", "perf", "pics", "selftest", "diag", "debug", "test", "bloque" } },
+}
+-- (5.1 CLEAN, audit B13 / B15) UN nom par interrupteur dans l'aide. Les commandes ci-dessous marchent toujours (anciens
+-- noms, doublons d'une autre commande) mais ne sont plus listées : « mode » = « conseils », « bug » / « export » =
+-- « erreurs », « itineraire » = « plan », « mission » = « groupe », « basculer » = « afficher », « reinit » / « reset »
+-- = « interface reset », « verrou » / « mini » / « onglet » = l'ancien panneau (la fenêtre TreeAI le remplace).
+TreeAI.SLASH_HIDDEN = TreeAI.SLASH_HIDDEN or {
+  mode = true, bug = true, export = true, itineraire = true, mission = true, basculer = true, reinit = true,
+  reset = true, verrou = true, mini = true, onglet = true, demo = true, reglages = false,
+}
+-- (5.1 CLEAN, audit B15) le module qui fait le travail d'une commande. Coupé : la commande ne fait rien et le DIT
+-- (« allume d'abord … »), au lieu d'annoncer « ACTIVÉ » ou d'ouvrir une fenêtre vide. Les commandes absentes de
+-- cette table appartiennent au cœur ou à un module toujours allumé.
+TreeAI.SLASH_OWNER = TreeAI.SLASH_OWNER or {
+  quetesauto = "QoL", recompense = "QoL", kos = "PvP", jcj = "PvP", cherche = "Finder", prets = "QuickTravel",
+  rdv = "QuickTravel", hv = "Auction", ah = "Auction", degats = "Meter", talents = "Talents", bilan = "Session",
+  stats = "Stats", donjon = "Dungeon", touches = "Binds", detect = "Detect", pro = "Pro", metiers = "Prof",
+  courses = "CityRun", groupe = "Group", mission = "Group", objectif = "Group", partir = "Group", pret = "Group",
+  macros = "Macros", sacs = "Bags", garde = "Bags", vends = "Bags", oublie = "Bags", equipement = "Gear",
+  surbrillance = "Highlight", abandon = "Abandon", todo = "Todo", afaire = "Todo", suivi = "Tracker",
+  boussole = "Compass", aller = "Compass", cible = "Compass", target = "Compass", way = "Compass",
+  plan = "Planner", trajet = "Planner", route = "Route", chemin = "PathDraw", icones = "QuestPins",
+  zone = "ZonePlan", pilote = false, addons = "Addons", visite = "Tour", tour = "Tour", menu = "Hub",
+  fenetre = "Window", chasseur = "Hunter", familier = "Hunter",
 }
 
 --- { { title=, items = { {cmd=, help=}, ... } }, ... } : toutes les commandes documentées, groupées.
@@ -4740,14 +4908,14 @@ function TreeAI:GetSlashHelp()
     local items = {}
     for _, c in ipairs(g[2]) do
       local e = slash[c]
-      if e and e.help and not used[c] then used[c] = true; items[#items + 1] = { cmd = c, help = L[e.help] } end
+      if e and e.help and not used[c] and not self.SLASH_HIDDEN[c] then used[c] = true; items[#items + 1] = { cmd = c, help = L[e.help] } end
     end
     if #items > 0 then out[#out + 1] = { title = L[g[1]], items = items } end
   end
   local other = {}
   for _, c in ipairs(slashOrder) do
     local e = slash[c]
-    if e.help and not used[c] then other[#other + 1] = { cmd = c, help = L[e.help] } end
+    if e.help and not used[c] and not self.SLASH_HIDDEN[c] then other[#other + 1] = { cmd = c, help = L[e.help] } end
   end
   if #other > 0 then out[#out + 1] = { title = L["Autres"], items = other } end
   return out
@@ -4761,6 +4929,16 @@ function TreeAI:PrintHelp()
   end
 end
 
+--- (5.1 CLEAN) le module d'une commande est-il coupé ? Renvoie son nom et son titre (pour « allume d'abord … »).
+function TreeAI:SlashOwnerOff(cmd)
+  local own = self.SLASH_OWNER[cmd]
+  if not own then return nil end
+  local mod = self.modules[own]
+  if not mod then return nil end
+  if mod.db and mod.db.enabled == false then return own, tostring(mod.title or own) end
+  return nil
+end
+
 function TreeAI:HandleSlash(input)
   input = tostring(input or "")
   local cmd, rest = input:match("^%s*(%S*)%s*(.-)%s*$")
@@ -4770,6 +4948,12 @@ function TreeAI:HandleSlash(input)
     return
   end
   local entry = slash[cmd]
+  -- (5.1 CLEAN, audit B15) module coupé : on le dit, la commande ne fait rien (ni fenêtre vide, ni « ACTIVÉ » à tort)
+  local own, title = self:SlashOwnerOff(cmd)
+  if own then
+    self:Print(("/tai %s : la fonction « %s » est coupée. Allume-la d'abord : page « Fonctions » de la fenêtre TreeAI, ou /tai module %s on."):format(cmd, title, own))
+    return
+  end
   if entry then
     safecall(entry.fn, rest)
   else
@@ -4785,45 +4969,102 @@ end
 
 local function onoff(v) return v and L["activé"] or L["désactivé"] end
 
+--- (5.1 CLEAN, audit B15) UN contrat pour toutes les commandes « interrupteur » :
+---   /tai x           son état + comment le changer — ne change RIEN (avant : un « /tai quetesauto » nu l'allumait)
+---   /tai x on | off  le change (oui / non, 1 / 0 acceptés)
+--- spec = { cmd, label, get = function() → bool, set = function(on), on = "texte allumé", off = "texte coupé" }
+do   -- (bloc : le fichier principal a déjà près de 200 variables locales)
+local ON_WORDS = { on = true, oui = true, ["1"] = true, allume = true, ["activé"] = true, active = true }
+local OFF_WORDS = { off = true, non = true, ["0"] = true, coupe = true, ["coupé"] = true, desactive = true }
+function TreeAI.ParseOnOff(rest)
+  local w = tostring(rest or ""):lower():match("^%s*(%S*)")
+  if ON_WORDS[w] then return true end
+  if OFF_WORDS[w] then return false end
+  return nil
+end
+--- (5.1 CLEAN) la réponse d'un interrupteur : en haut de l'écran (comme la pastille de la bande), jamais dans le chat
+function TreeAI:SwitchNote(msg)
+  local ef = _G.UIErrorsFrame
+  if ef and ef.AddMessage and pcall(ef.AddMessage, ef, msg, 1, 0.82, 0) then return end
+  self:Print(msg)
+end
+function TreeAI:SlashSwitch(spec)
+  return function(rest)
+    local want = TreeAI.ParseOnOff(rest)
+    if want ~= nil then spec.set(want) end
+    local cur = spec.get() and true or false
+    local state = cur and (spec.on or "allumé") or (spec.off or "coupé")
+    if want == nil then
+      TreeAI:SwitchNote(("%s : %s. Pour changer : /tai %s %s"):format(spec.label, state, spec.cmd, cur and "off" or "on"))
+    else
+      TreeAI:SwitchNote(("%s : %s."):format(spec.label, state))
+    end
+  end
+end
+
 TreeAI:RegisterSlash("aide", function() end, "cette aide (/tai aide chat : dans le chat)")
-TreeAI:RegisterSlash("mode", function(rest)
+-- (5.1 CLEAN, audit B13) « Mode : Simple » (combien de conseils) et « Profil : Simple » (quelles fonctions) portaient
+-- le même mot : le niveau de bruit s'appelle « Conseils » partout (/tai conseils ; /tai mode reste accepté, hors aide)
+local function conseilsSlash(rest)
   rest = tostring(rest or ""):lower()
   if rest == "" then
     local cur = TreeAI.settings.preset or "normal"
-    TreeAI:Print(L["Mode"] .. " : " .. L[TreeAI.PRESET_LABEL[cur] or cur] .. "  (/tai mode simple | calme | normal | tout)")
+    TreeAI:Print(L["Conseils"] .. " : " .. L[TreeAI.PRESET_LABEL[cur] or cur] .. ". Pour changer : /tai conseils simple | calme | normal | tout")
     return
   end
   if rest == "calm" then rest = "calme" elseif rest == "all" then rest = "tout" end
   if TreeAI:ApplyPreset(rest) then
-    TreeAI:Print(L["Mode"] .. " : " .. L[TreeAI.PRESET_LABEL[rest]] .. " — " .. L[TreeAI.PRESET_HELP[rest]])
+    TreeAI:Print(L["Conseils"] .. " : " .. L[TreeAI.PRESET_LABEL[rest]] .. " — " .. L[TreeAI.PRESET_HELP[rest]])
   else
-    TreeAI:Print("/tai mode simple | calme | normal | tout")
+    TreeAI:Print("/tai conseils simple | calme | normal | tout")
   end
-end, "simple | calme | normal | tout : combien de conseils tu veux voir")
-TreeAI:RegisterSlash("profil", function(rest)
+end
+TreeAI:RegisterSlash("conseils", conseilsSlash, "conseils [simple | calme | normal | tout] : combien de conseils tu veux voir")
+TreeAI:RegisterSlash("mode", conseilsSlash, "comme /tai conseils")
+-- réglages propres à ce personnage ou communs au compte (avant : dans « /tai profil », avec le profil des fonctions)
+local function reglagesSlash(rest)
   rest = tostring(rest or ""):lower()
   local want = (rest == "perso" or rest == "char" or rest == "personnage") and "char"
     or ((rest == "compte" or rest == "account") and "account") or nil
   if want then TreeAI:SetProfile(want) end
   TreeAI:Print(L["Réglages"] .. " : " .. (TreeAI:ProfileMode() == "char" and L["propres à ce personnage"]
-    or L["communs au compte"]) .. "  (/tai profil perso | compte)")
-end, "perso | compte : réglages propres à ce perso ou communs")
+    or L["communs au compte"]) .. ". Pour changer : /tai reglages perso | compte")
+end
+TreeAI:RegisterSlash("reglages", reglagesSlash, "reglages [perso | compte] : réglages propres à ce perso ou communs au compte")
 TreeAI:RegisterSlash("bienvenue", function() if TreeAI.ShowWizard then TreeAI:ShowWizard(1) end end,
   "relancer l'assistant de démarrage")
-TreeAI:RegisterSlash("pvp", function()
-  TreeAI.settings.pvp = not TreeAI.settings.pvp
-  TreeAI:Print("Aides PvP : " .. (TreeAI.settings.pvp and "activées" or "désactivées (aide à quêter seulement)"))
-end, "aides PvP oui/non")
-TreeAI:RegisterSlash("afficher", function() TreeAI:ShowPanel() end, L["afficher le panneau"])
-TreeAI:RegisterSlash("show", function() TreeAI:ShowPanel() end)
-TreeAI:RegisterSlash("cacher", function() TreeAI:HidePanel() end, L["cacher le panneau"])
-TreeAI:RegisterSlash("hide", function() TreeAI:HidePanel() end)
-TreeAI:RegisterSlash("basculer", function() TreeAI:TogglePanel() end, L["afficher/cacher"])
-TreeAI:RegisterSlash("verrou", function()
-  local p = TreeAI.settings.panel
-  p.locked = not p.locked
-  TreeAI:Print(L["Panneau verrouillé"] .. ": " .. onoff(p.locked))
-end, L["verrouiller/déverrouiller le panneau"])
+TreeAI:RegisterSlash("pvp", TreeAI:SlashSwitch({ cmd = "pvp", label = "Aides JcJ",
+  get = function() return TreeAI.settings.pvp end, set = function(on) TreeAI.settings.pvp = on end,
+  on = "allumées", off = "coupées (aide à quêter seulement)" }), "pvp [on | off] : aides contre les joueurs")
+-- (5.1 CLEAN, audit B13) une seule fenêtre : « afficher » ouvre la fenêtre TreeAI ; l'ancien panneau ne s'ouvre que
+-- si la fenêtre est coupée (module « Fenêtre TreeAI »)
+local function windowOn()
+  local W = TreeAI.Window
+  return (W and W._active and type(W.Open) == "function") and W or nil
+end
+TreeAI.WindowOn = windowOn
+local function showMain()
+  local W = windowOn()
+  if W then W.Open() return end
+  TreeAI:ShowPanel()
+end
+local function hideMain()
+  local W = windowOn()
+  if W and type(W.Close) == "function" then W.Close() end
+  TreeAI:HidePanel()
+end
+TreeAI:RegisterSlash("afficher", showMain, "afficher la fenêtre TreeAI")
+TreeAI:RegisterSlash("show", showMain)
+TreeAI:RegisterSlash("cacher", hideMain, "cacher la fenêtre TreeAI")
+TreeAI:RegisterSlash("hide", hideMain)
+TreeAI:RegisterSlash("basculer", function()
+  local W = windowOn()
+  if W and type(W.Toggle) == "function" then W.Toggle() return end
+  TreeAI:TogglePanel()
+end, L["afficher/cacher"])
+TreeAI:RegisterSlash("verrou", TreeAI:SlashSwitch({ cmd = "verrou", label = L["Panneau verrouillé"],
+  get = function() return TreeAI.settings.panel.locked end, set = function(on) TreeAI.settings.panel.locked = on end,
+  on = "oui", off = "non" }), L["verrouiller/déverrouiller le panneau"])
 TreeAI:RegisterSlash("reset", function()
   if TreeAI.ResetPanel then TreeAI:ResetPanel() end
   TreeAI:Print(L["Position du panneau réinitialisée."])
@@ -4848,27 +5089,27 @@ TreeAI:RegisterSlash("alerte", function()
   end
 end, L["tester l'encadré d'alerte"])
 TreeAI:RegisterSlash("options", function() if TreeAI.OpenOptions then TreeAI:OpenOptions() end end, L["ouvrir les options"])
-TreeAI:RegisterSlash("perf", function() TreeAI:PrintPerf() end, "les modules qui coûtent le plus (CPU)")
--- (4.3 V43) UNE commande « profil » : la 1re (perso | compte) était écrasée par celle-ci → les deux usages ici
-TreeAI._profilSaves = slash.profil and slash.profil.fn
+TreeAI:RegisterSlash("perf", function() TreeAI:PrintPerf() end, "coût des fonctions : mesuré en jeu (ms réelles), les plus chères d'abord")
+-- (5.1 CLEAN, audit B13) UN nom pour le profil des fonctions : « Simple » (l'essentiel fiable, par défaut) ou
+-- « Complet » (tout, bêta compris). « Mode sûr », « sur », « tout », « essentiel » : anciens noms, toujours acceptés.
+local PROFILE_WORD = { simple = "sur", sur = "sur", ["sûr"] = "sur", safe = "sur", complet = "tout", tout = "tout",
+  all = "tout", leger = "essentiel", ["léger"] = "essentiel", essentiel = "essentiel" }
 TreeAI:RegisterSlash("profil", function(rest)
-  local profilSaves = TreeAI._profilSaves
   rest = tostring(rest or ""):lower()
-  if rest == "sûr" or rest == "safe" then rest = "sur" end
-  if profilSaves and (rest == "perso" or rest == "char" or rest == "personnage" or rest == "compte" or rest == "account") then
-    return profilSaves(rest)
+  if rest == "perso" or rest == "char" or rest == "personnage" or rest == "compte" or rest == "account" then
+    return reglagesSlash(rest)   -- ancien usage (réglages par perso) : /tai reglages
   end
-  if rest == "tout" or rest == "essentiel" or rest == "sur" then TreeAI:SetModuleProfile(rest) end
+  if PROFILE_WORD[rest] then TreeAI:SetModuleProfile(PROFILE_WORD[rest]) end
   local p = TreeAI:ModuleProfile()
-  TreeAI:Print("Profil des modules : " .. (TreeAI.MODULE_PROFILE_LABEL[p] or p) .. "  (/tai profil sur | essentiel | tout ; perso | compte : réglages)")
-end, "sur | essentiel | tout : profil des modules ; perso | compte : réglages propres à ce perso ou communs")
+  TreeAI:Print("Profil : " .. (TreeAI.MODULE_PROFILE_LABEL[p] or p) .. ". Pour changer : /tai profil simple | complet")
+end, "profil [simple | complet] : Simple = l'essentiel fiable ; Complet = toutes les fonctions (bêta comprises)")
 TreeAI:RegisterSlash("modules", function()
   for name, mod in TreeAI:IterModules() do
     TreeAI:Print("  " .. (mod.title or name) .. " (" .. name .. "): " .. onoff(mod:IsEnabled()))
   end
 end, L["liste des modules"])
 TreeAI:RegisterSlash("module", function(rest)
-  local name, state = rest:match("^(%S+)%s*(%S*)")
+  local name, state = tostring(rest or ""):match("^(%S+)%s*(%S*)")
   local mod
   if name then
     for n, m in TreeAI:IterModules() do
@@ -4876,19 +5117,32 @@ TreeAI:RegisterSlash("module", function(rest)
     end
   end
   if not mod then TreeAI:Print(L["Module introuvable."]); return end
-  local enable = not mod:IsEnabled()
-  if state == "on" then enable = true elseif state == "off" then enable = false end
-  TreeAI:SetModuleEnabled(name, enable)
-  TreeAI:Print((mod.title or name) .. ": " .. onoff(enable))
+  -- (5.1 CLEAN) sans « on » / « off » : l'état, rien n'est changé
+  local want = TreeAI.ParseOnOff(state)
+  if want == nil then
+    local on = mod.db and mod.db.enabled ~= false
+    TreeAI:Print(("%s : %s. Pour changer : /tai module %s %s"):format(tostring(mod.title or name), onoff(on), name, on and "off" or "on"))
+    return
+  end
+  TreeAI:SetModuleEnabled(name, want)
+  TreeAI:Print((mod.title or name) .. ": " .. onoff(want))
 end, L["<Nom> on|off"])
+-- guidage des quêtes (l'interrupteur de la bande) : même contrat — nu = l'état
+TreeAI:RegisterSlash("guide", TreeAI:SlashSwitch({ cmd = "guide", label = "Guidage des quêtes",
+  get = function() return TreeAI:QuestGuideOn() end,
+  set = function(on)
+    local S = TreeAI.modules.Shortcuts
+    if S and type(S.SetGuide) == "function" then S.SetGuide(on) else TreeAI:SetQuestGuide(on) end
+  end,
+  on = "allumé (trajet, flèche, zone, quêtes à prendre)", off = "coupé (TreeAI ne guide plus tes quêtes)" }),
+  "guide [on | off] : tout le guidage des quêtes (comme l'interrupteur de la bande)")
+end
 TreeAI:RegisterSlash("sync", function()
   if TreeAI:SendHello() then TreeAI:Print(L["Synchro envoyée au groupe."])
   else TreeAI:Print(L["Pas de groupe (ou comms désactivées)."]) end
 end, L["synchroniser avec le groupe"])
-TreeAI:RegisterSlash("debug", function()
-  TreeAI.settings.debug = not TreeAI.settings.debug
-  TreeAI:Print("Debug: " .. onoff(TreeAI.settings.debug))
-end, L["mode debug"])
+TreeAI:RegisterSlash("debug", TreeAI:SlashSwitch({ cmd = "debug", label = "Debug",
+  get = function() return TreeAI.settings.debug end, set = function(on) TreeAI.settings.debug = on end }), L["mode debug"])
 TreeAI:RegisterSlash("statut", function()
   local s = TreeAI:UpdateSummary()
   TreeAI:Print(strformat("v%s | %s %s | %s | %s: %d/%d", TreeAI.version, tostring(s.className or "?"),
@@ -4897,11 +5151,8 @@ TreeAI:RegisterSlash("statut", function()
   for _ in pairs(TreeAI.db.group.peers) do n = n + 1 end
   TreeAI:Print(L["Amis TreeAI connus"] .. ": " .. n)
 end, L["état de l'addon"])
-TreeAI:RegisterSlash("test", function()
-  TreeAI:Suggest("core:test1", L["Exemple: conseil d'information."], 1, { ttl = 20 })
-  TreeAI:Suggest("core:test2", L["Exemple: conseil utile."], 2, { ttl = 20 })
-  TreeAI:Suggest("core:test3", L["Exemple: alerte urgente !"], 3, { ttl = 20, sound = false })
-end, L["afficher des suggestions de test"])
+-- (5.1 CLEAN) « /tai test » = l'autotest (Modules/SelfTest.lua) : l'ancienne commande du cœur, écrasée au chargement
+-- depuis la 3.9, est retirée
 
 ---------------------------------------------------------------------------
 -- Lifecycle
@@ -4918,6 +5169,26 @@ function TreeAI:ADDON_LOADED(_, name)
     pcall(_G.RegisterAddonMessagePrefix, self.PREFIX)
   end
   if self.InitOptions then safecall(self.InitOptions, self) end
+end
+
+--- (5.1 CLEAN, audit B13) UNE fenêtre à la fois : ouvrir la fenêtre TreeAI cache l'ancien panneau ; ouvrir le panneau
+--- (ancienne interface, encore accessible à la main) ferme la fenêtre. Posé une fois, à la connexion, autour des
+--- fonctions de UI.lua / Window.lua (aucune des deux n'est modifiée).
+function TreeAI:_OneShell()
+  if self._oneShell then return end
+  local W = self.Window
+  if not (W and type(W.Open) == "function" and type(self.ShowPanel) == "function") then return end
+  self._oneShell = true
+  local openW, showP = W.Open, self.ShowPanel
+  W.Open = function(...)
+    local p = TreeAI.GetPanel and TreeAI:GetPanel()
+    if W._active and p and p.IsShown and p:IsShown() and TreeAI.HidePanel then TreeAI:HidePanel() end
+    return openW(...)
+  end
+  self.ShowPanel = function(me, ...)
+    if W._active and W.IsOpen and W.IsOpen() and W.Close then W.Close() end
+    return showP(me, ...)
+  end
 end
 
 function TreeAI:PLAYER_LOGIN()
@@ -4948,6 +5219,7 @@ function TreeAI:PLAYER_LOGIN()
   safecall(self._BuildModulesTab, self)
   if self._liteNotice then self:After(3, function() TreeAI:_LiteNotice() end) end
   if self._safeNotice then self:After(3, function() TreeAI:_SafeNotice() end) end
+  safecall(self._OneShell, self)
   self:Fire("READY")
   self:StartAutoRefresh()
   -- premier lancement : petit assistant en 3 étapes (hors combat)
@@ -4961,6 +5233,7 @@ end
 
 function TreeAI:PLAYER_LOGOUT()
   if self.db then safecall(self.UpdateSummary, self) end
+  if self.db then safecall(self._SavePerf, self) end
   if self.db then safecall(self._SaveRecentAlerts, self) end
 end
 

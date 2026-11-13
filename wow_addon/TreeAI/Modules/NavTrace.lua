@@ -16,7 +16,7 @@ local NT = {}
 T.NavTrace = NT
 NT.MAX, NT.MAX_BYTES, NT.PENDING, NT.SAME_S = 300, 30000, 40, 10
 
-local function pass(ok, ...) if ok then return ... end return nil end
+local function pass(ok, ...) if ok then return ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw((...), "NavTrace") end return nil end
 local function try(fn, ...) if type(fn) ~= "function" then return nil end return pass(pcall(fn, ...)) end
 local function G(n) return rawget(_G, n) end
 local function inCombat() return T.InCombat and T:InCombat() or false end

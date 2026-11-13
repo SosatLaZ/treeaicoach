@@ -48,6 +48,7 @@ return function(M, ctx)
 
   -- 2. Lua errors of our modules -> TreeAIDB.diag.errors (module + message, deduped, 30 max)
   local Boom = T:RegisterModule("Boom", {})
+  T:SetModuleEnabled("Boom", true)   -- (5.1) default profile « sur » : a new module is off until switched on
   Boom:RegisterEvent("PLAYER_FLAGS_CHANGED", function() error("boom-test") end)
   M.FireEvent("PLAYER_FLAGS_CHANGED")
   M.FireEvent("PLAYER_FLAGS_CHANGED")

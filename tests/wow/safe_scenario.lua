@@ -17,7 +17,8 @@ return function(M, ctx)
       check(mod(n)._active ~= true and mod(n).db.enabled == false, n .. " (bêta) off in mode sûr")
     end
   end
-  check(nBeta >= 26, "most modules are bêta (" .. nBeta .. ")")   -- (4.0.1) ZonePlan, PathDraw, Highlight : mode sûr
+  -- (4.0.1) ZonePlan, PathDraw, Highlight : mode sûr ; (5.1) 7 modules retirés, Hunter / Talents / PathLearn : mode sûr
+  check(nBeta >= 15, "most modules are bêta (" .. nBeta .. ")")
   check(not T:IsBeta("Quests") and not T:IsBeta("Compass") and not T:IsBeta("Speed") and T:IsBeta("Auction"), "safe set")
 
   -- one-line notice
@@ -27,7 +28,7 @@ return function(M, ctx)
   for _, e in ipairs(T:GetTabLines("now")) do if e.id == "core:safe" then notice = e end end
   check(notice == nil, "« Mode sûr » : pas dans « Maintenant »")
   for _, e in ipairs(T:GetSuggestions()) do if e.id == "core:safe" then notice = e end end
-  check(notice and notice.ownPage == "modules" and notice.text == "Mode sûr : les fonctions bêta sont à activer dans le menu"
+  check(notice and notice.ownPage == "modules" and notice.text == "Profil Simple : les autres fonctions (bêta) s'allument dans « Fonctions »"
     and notice.onClick, "notice « Mode sûr : … » (page « Fonctions »)")
 
   -- Plus → Modules: bêta tag, one click toggles
@@ -36,7 +37,7 @@ return function(M, ctx)
     if e.id == "mod:Boost" then boost = e end
     if e.id == "core:profile" then head = e end
   end
-  check(head and head.text:find("Mode sûr", 1, true), "modules tab: profile line says mode sûr")
+  check(head and head.text:find("Profil Simple", 1, true), "modules tab: profile line says « Profil Simple »")
   check(boost and boost.text:find("bêta", 1, true) and boost.text:find("OFF", 1, true), "Boost line: OFF + bêta")
   T:UserAction(boost.onClick)
   check(mod("Boost")._active == true, "one click: Boost on (no /reload)")
@@ -74,7 +75,12 @@ return function(M, ctx)
 
   -- (4.0.1) ZonePlan, PathDraw, Highlight (+ Glow, la bibliothèque des lueurs) : mode sûr. Un joueur 4.0 en mode sûr
   -- les reçoit UNE fois, sauf ceux qu'il a coupés lui-même (un clic = db.modChoice)
-  for n in pairs(T.SAFE_ADDED) do check(T.SAFE_MODULES[n] and not T:IsBeta(n) and mod(n)._active == true, n .. " on in mode sûr (4.0.1)") end
+  -- (5.1) Hunter is in the default too, for a hunter only (class module)
+  for n in pairs(T.SAFE_ADDED) do
+    local m = mod(n)
+    local other = m and type(m.classes) == "table" and not m.classes[T:PlayerClass() or "?"]
+    check(T.SAFE_MODULES[n] and not T:IsBeta(n) and (other or m._active == true), n .. " on in mode sûr (4.0.1)")
+  end
   check(T.SAFE_MODULES.Glow, "Glow (lueurs de Highlight) in the safe set")
   local db = TreeAIDB
   for _, n in ipairs({ "ZonePlan", "PathDraw" }) do mod(n).db.enabled = false; T._ModuleDisable(mod(n)) end   -- état 4.0 (bêta)

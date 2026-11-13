@@ -103,6 +103,10 @@ assert(ctx.item("hs") == nil, "no healthstone")
 local pf = ctx.item("petfood")
 assert(pf == 2287 or pf == 4592, "petfood " .. tostring(pf))
 
+-- (5.1 CLEAN) a hunter who never installed anything starts with the 5 essentials; this spec tests the full set
+assert(M:Preset() == "essentiel", "new hunter: the 5 essentials by default " .. tostring(M:Preset()))
+M.char.preset = "complet"
+M:ForgetMemo()
 M:OnEnable()
 assert(suggestions.ready == "Nouvelles macros prêtes : clique pour installer", "one macro line")
 
@@ -149,10 +153,15 @@ known[2643] = true
 events.SPELLS_CHANGED(M, "SPELLS_CHANGED")
 assert(macros["TAI Tir"].body:find("[mod:shift] Flèches multiples", 1, true), macros["TAI Tir"].body)
 
--- empty bags: consumable macro gets a placeholder, never an empty /use
+-- empty bags (5.1 CLEAN): the macro keeps its last text — never a « /run print » chat line, never an empty /use
 bags = {}
 events.BAG_UPDATE_DELAYED(M, "BAG_UPDATE_DELAYED")
-assert(macros["TAI Repas"].body:find("^/run print"), macros["TAI Repas"].body)
+assert(macros["TAI Repas"].body:find("item:3770", 1, true) and not macros["TAI Repas"].body:find("/run", 1, true),
+  macros["TAI Repas"].body)
+assert(macros["TAI Monture"] == nil, "no mount item: TAI Monture is never created (it used to fire the Hearthstone)")
+for name, m in pairs(macros) do
+  assert(not m.body:find("item:6948", 1, true) and not m.body:find("/run print", 1, true), name .. ": " .. m.body)
+end
 
 -- spec: hunter without talents -> leveling spec "bete"; Tir uses the BM variant (hawk unknown -> arcane)
 assert(M:Spec() == "bete", "leveling spec " .. tostring(M:Spec()))

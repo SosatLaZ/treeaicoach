@@ -26,7 +26,7 @@ T.Speed = S
 
 local floor, max = math.floor, math.max
 local fmt = string.format
-local function pass(ok, ...) if ok then return ... end return nil end
+local function pass(ok, ...) if ok then return ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw((...), "Speed") end return nil end
 local function try(fn, ...) if type(fn) ~= "function" then return nil end return pass(pcall(fn, ...)) end
 local function G(name) return rawget(_G, name) end
 local function C(ns, fn) local t = G(ns) return type(t) == "table" and t[fn] or nil end

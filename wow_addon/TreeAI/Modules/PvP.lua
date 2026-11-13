@@ -41,7 +41,7 @@ T.PvP = M
 local TAB = "pvp"
 local MACRO = "TAI Cible"
 
-local function pass(ok, ...) if ok then return ... end return nil end
+local function pass(ok, ...) if ok then return ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw((...), "PvP") end return nil end
 local function try(fn, ...) if type(fn) ~= "function" then return nil end return pass(pcall(fn, ...)) end
 local function api(name) return rawget(G, name) end
 local function secret(v) local f = api("issecretvalue") return type(f) == "function" and try(f, v) and true or false end
@@ -1012,7 +1012,7 @@ function M:AutoRefresh()
 end
 
 T:RegisterSlash("kos", function(rest)
-  if not M.Active() then T:Print("Aides PvP désactivées : /tai pvp pour les activer") return end
+  if not M.Active() then T:Print("Aides JcJ coupées : /tai pvp on pour les allumer") return end
   rest = tostring(rest or "")
   if rest == "liste" or rest == "list" then
     local n = 0
@@ -1028,7 +1028,7 @@ T:RegisterSlash("kos", function(rest)
 end, "kos [Nom|liste] : liste KOS JcJ (ajoute / retire, alerte quand il est près)")
 
 T:RegisterSlash("jcj", function()
-  if not M.Active() then T:Print("Aides PvP désactivées : /tai pvp pour les activer") return end
+  if not M.Active() then T:Print("Aides JcJ coupées : /tai pvp on pour les allumer") return end
   local s = M:SessionStats()
   T:Print(("JcJ : %d honneur cette session (%d/h), %d victoires honorables, %d morts en BG"):format(s.honor, s.perHour, s.hk, s.deaths))
   local _, list = M.BestBG(M.char and M.char.history)

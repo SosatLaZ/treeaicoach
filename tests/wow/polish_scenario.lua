@@ -128,14 +128,15 @@ return function(M, ctx)
   check(#groups >= 6, "commandes groupées (" .. #groups .. " rubriques)")
   local cmds = {}
   for _, g in ipairs(groups) do for _, it in ipairs(g.items) do cmds[it.cmd] = g.title end end
-  check(cmds.edit and cmds.placer and cmds.mode and cmds.quetes and cmds.macros, "edit, placer, mode, quêtes, macros listés")
+  -- (5.1 CLEAN) « mode » s'appelle « conseils » dans l'aide (l'ancien nom marche toujours, sans y être listé)
+  check(cmds.edit and cmds.placer and cmds.conseils and not cmds.mode and cmds.quetes and cmds.macros, "edit, placer, conseils, quêtes, macros listés")
   -- clic sur une ligne = même fonction que la commande
   T:ShowHelp(1)
   local row
-  for _, r in ipairs(H.rows) do if r.cmd == "mode" then row = r end end
+  for _, r in ipairs(H.rows) do if r.cmd == "conseils" then row = r end end
   local before = #M.output
   if row then row:Click("LeftButton") end
-  check(row and #M.output > before, "ligne « mode » cliquée -> commande lancée")
+  check(row and #M.output > before, "ligne « conseils » cliquée -> commande lancée")
   H:Hide()
 
   -- 7. placement automatique : écran 1920×1080 avec minimap, barres, chat, suivi, cible

@@ -26,7 +26,7 @@ local G = _G
 local floor, max, min, ceil = math.floor, math.max, math.min, math.ceil
 local fmt, tconcat, tsort = string.format, table.concat, table.sort
 local function g(name) return rawget(G, name) end
-local function pass(ok, ...) if ok then return ... end return nil end
+local function pass(ok, ...) if ok then return ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw((...), "ProfGuide") end return nil end
 local function try(fn, ...) if type(fn) ~= "function" then return nil end return pass(pcall(fn, ...)) end
 local function secret(v) local f = g("issecretvalue") return type(f) == "function" and try(f, v) and true or false end
 local function pub(v) if secret(v) then return nil end return v end

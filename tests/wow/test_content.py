@@ -1,6 +1,7 @@
 """CONTENTFIX (round 5, in-game screenshot): silence while dead / ghost / on a taxi (buff reminders also mounted /
 resting), one single macro line, death recap without invented numbers, clean objective text, no glyphs the WoW
 fonts cannot draw, « Mode simple » default preset offered once to existing users."""
+# (5.1 CLEAN) harness default = the player's profile (« sur ») ; this file tests modules that are off there: « tout »
 import re
 import shutil
 import subprocess
@@ -16,7 +17,7 @@ ADDON = ROOT / "wow_addon" / "TreeAI"
 @pytest.mark.parametrize("flavor", ["modern", "legacy", "forever"])
 @pytest.mark.parametrize("cls", ["HUNTER", "WARRIOR"])
 def test_content_scenario(flavor, cls):
-    r = subprocess.run(["lua5.1", str(ROOT / "tests/wow/harness.lua"), "-q", "--flavor", flavor, "--class", cls,
+    r = subprocess.run(["lua5.1", str(ROOT / "tests/wow/harness.lua"), "-q", "--profile", "tout", "--flavor", flavor, "--class", cls,
                         "--scenario", str(ROOT / "tests/wow/content_scenario.lua"), str(ADDON)],
                        capture_output=True, text=True, timeout=120, cwd=ROOT)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]
@@ -28,7 +29,7 @@ def test_content_scenario(flavor, cls):
 @pytest.mark.parametrize("cls", ["HUNTER", "MAGE", "WARRIOR", "PRIEST", "ROGUE"])
 def test_every_line_robust(flavor, cls):
     # every line of every module, in dead / ghost / combat / taxi / instance / solo / group / level 1 / 60
-    r = subprocess.run(["lua5.1", str(ROOT / "tests/wow/harness.lua"), "-q", "--flavor", flavor, "--class", cls,
+    r = subprocess.run(["lua5.1", str(ROOT / "tests/wow/harness.lua"), "-q", "--profile", "tout", "--flavor", flavor, "--class", cls,
                         "--scenario", str(ROOT / "tests/wow/robustness_scenario.lua"), str(ADDON)],
                        capture_output=True, text=True, timeout=180, cwd=ROOT)
     assert r.returncode == 0, r.stdout[-4000:] + r.stderr[-2000:]

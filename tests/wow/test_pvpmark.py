@@ -1,4 +1,5 @@
 """Modules/PvPMark.lua: enemy attackable players marked on nameplates (own frames only, taint-safe), harness scenario."""
+# (5.1 CLEAN) harness default = the player's profile (« sur ») ; this file tests modules that are off there: « tout »
 from __future__ import annotations
 
 import re
@@ -36,7 +37,7 @@ def test_taint_rules():
 @lua
 @pytest.mark.parametrize("flavor", ["forever", "modern"])
 def test_pvpmark_scenario(flavor):
-    r = subprocess.run(["lua5.1", str(HERE / "harness.lua"), "-q", "--flavor", flavor, "--class", "HUNTER",
+    r = subprocess.run(["lua5.1", str(HERE / "harness.lua"), "-q", "--profile", "tout", "--flavor", flavor, "--class", "HUNTER",
                         "--scenario", str(HERE / "pvpmark_scenario.lua"), str(ADDON)],
                        cwd=ROOT, capture_output=True, text=True, timeout=300)
     assert r.returncode == 0 and "RESULT ok" in r.stdout, r.stdout[-4000:] + r.stderr[-2000:]

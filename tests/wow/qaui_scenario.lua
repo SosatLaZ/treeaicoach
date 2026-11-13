@@ -97,7 +97,10 @@ return function(M, ctx)
   -- UI-08 / W-01 : « Tout va bien (…) » only for what really runs
   local ag = W.AllGoodText()
   if prof == "sur" then
-    check(ag == "Rien d'urgent : continue ton étape.", "mode sûr: no false « Tout va bien » (" .. ag .. ")")
+    -- (5.1 CLEAN) the hunter helper runs in the default profile now: « familier » is checked for real, nothing else
+    local H = T.modules.Hunter
+    local want = (H and H._active) and "Rien d'urgent : continue ton étape. Tout va bien (familier)." or "Rien d'urgent : continue ton étape."
+    check(ag == want, "mode sûr: no false « Tout va bien » (" .. ag .. ")")
   else
     check(ag:find("Tout va bien (sacs, réparation", 1, true) and ag:find("familier", 1, true), "tout: checks named (" .. ag .. ")")
   end
@@ -176,10 +179,10 @@ return function(M, ctx)
   end
   check(#dupPages == 0, "options: no repeated section title (" .. table.concat(dupPages, ", ") .. ")")
   -- W-20 / W-21 / UI-38 : names
-  check(T.modules.Quick.title == "Barre de quête" and T.modules.QuickTravel.title == "Voyage et groupe", "renamed bars")
+  check(T.modules.Quick == nil and T.modules.QuickTravel.title == "Voyage et groupe", "renamed bars (Quick removed in 5.1)")
   check(T.tabs.modules and T.tabs.modules.title == "Fonctions", "tab « Fonctions »")
   -- UI-20 : no missing glyph in option labels / key hints
-  for _, n in ipairs({ "Region", "Highlight" }) do
+  for _, n in ipairs({ "Highlight" }) do
     for _, o in ipairs(T.modules[n] and T.modules[n].options or {}) do
       check(not tostring(o.label):find("→", 1, true) and not tostring(o.label):find("✓", 1, true), n .. " option label glyphs: " .. tostring(o.label))
     end
@@ -222,8 +225,7 @@ return function(M, ctx)
   -- UI-10 / UI-11 : Boussole = a toggle (no chat), Radar only when its module runs
   local ent = {}
   for _, e in ipairs(H.Entries()) do ent[e.id] = e end
-  local Rd = T.modules.Radar
-  check((ent.radar ~= nil) == (Rd ~= nil and Rd._active == true), "Radar entry only when Radar runs")
+  check(ent.radar == nil and T.modules.Radar == nil, "no Radar entry (Radar removed in 5.1)")
   if ent.boussole then
     local cf = rawget(_G, "TreeAICompassFrame")
     local was = cf and cf:IsShown()

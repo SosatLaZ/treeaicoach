@@ -135,7 +135,7 @@ def test_pro_macros():
     assert burst.startswith("#showtooltip Tir rapide\n/cast Tir rapide") and burst.endswith("/cast Tir des arcanes")
     assert "/cast Fureur sanguinaire" in burst and "/use 13" in burst
     pan = _body("TAI Pro Panique", level=30)
-    assert "/stopattack" in pan and "/petfollow" in pan and pan.endswith("[mod:shift][nocombat] Piège givrant; Feindre la mort")
+    assert "/stopattack" in pan and "/petfollow" in pan and pan.endswith("/cast [nocombat] Piège givrant; Feindre la mort")
     assert _body("TAI Pro Panique", level=28) is None                   # Feign Death at 30
     mel = _body("TAI Pro Melee")
     assert "/castsequence reset=target Coupure d'ailes, null" in mel and "/cast Attaque du raptor" in mel
@@ -205,9 +205,7 @@ def test_data_and_window_contract():
     assert "p.before" in win
     src = (ADDON / "Modules" / "Macros.lua").read_text(encoding="utf-8")
     assert 'before = "modules"' in src and "useOnKeyDown" in src
-    qf = (ADDON / "Modules" / "QuickFight.lua").read_text(encoding="utf-8")
-    for bad in ("CreateMacro", "EditMacro", "CastSpellByName"):
-        assert bad not in qf
+    assert not (ADDON / "Modules" / "QuickFight.lua").exists()   # (5.1 CLEAN) the combat bar is removed
 
 
 @pytest.mark.skipif(not shutil.which("lua5.1"), reason="lua5.1 absent")

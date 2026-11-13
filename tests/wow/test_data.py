@@ -38,7 +38,7 @@ def test_corpse_run_single_owner():
     s = src("Speed")
     assert "GetCorpseMapPosition" in s and "PLAYER_UNGHOST" in s and "PLAYER_DEAD" in s
     assert 'source = "corpse"' in s and "SetTarget" in s
-    assert "T.Speed" in src("Radar")  # Radar defers its corpse line to Speed
+    assert not (HERE.parents[1] / "wow_addon/TreeAI/Modules/Radar.lua").exists()  # (5.1 CLEAN) Radar removed: Speed alone
     assert "st.corpse" in src("Compass")
 
 

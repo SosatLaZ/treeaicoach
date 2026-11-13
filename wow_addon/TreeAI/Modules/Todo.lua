@@ -53,6 +53,7 @@ local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
   local ok, a, b, c, d = pcall(fn, ...)
   if ok then return a, b, c, d end
+  local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw(a, "Todo") end   -- (5.1 CLEAN, B9) compté
   return nil
 end
 local function now() return try(_G.GetTime) or 0 end

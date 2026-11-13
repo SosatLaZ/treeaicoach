@@ -1,4 +1,5 @@
 """Modules/Boost.lua (module « Rares »): syntax, no global, and the harness scenario (three API flavours, hunter)."""
+# (5.1 CLEAN) harness default = the player's profile (« sur ») ; this file tests modules that are off there: « tout »
 import shutil
 import subprocess
 from pathlib import Path
@@ -25,7 +26,7 @@ def test_boost_syntax_no_globals():
 @pytest.mark.skipif(not shutil.which("lua5.1"), reason="lua5.1 absent")
 @pytest.mark.parametrize("flavor", ["modern", "legacy", "forever"])
 def test_boost_scenario(flavor):
-    r = subprocess.run(["lua5.1", str(ROOT / "tests/wow/harness.lua"), "-q", "--flavor", flavor, "--class", "HUNTER",
+    r = subprocess.run(["lua5.1", str(ROOT / "tests/wow/harness.lua"), "-q", "--profile", "tout", "--flavor", flavor, "--class", "HUNTER",
                         "--scenario", str(ROOT / "tests/wow/boost_scenario.lua"), str(ADDON)],
                        capture_output=True, text=True, timeout=60, cwd=ROOT)
     assert r.returncode == 0, r.stdout + r.stderr

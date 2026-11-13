@@ -20,7 +20,7 @@ return function(M, ctx)
     M.macroFail, M.macroBlockedCalls = nil, 0
     local c = Mc.char or {}
     c.installed, c.bodies, c.setup = {}, {}, false
-    c.opts, c.preset = {}, nil   -- (MACRO3) the storm clicked the « Macros » page (presets, settings)
+    c.opts, c.preset = {}, "complet"   -- (MACRO3, 5.1: the full set) the storm clicked the « Macros » page (presets, settings)
     Mc:ClearBlocked()
     Mc:ClearSpellCache()
     if Mc.copy then Mc.copy:Hide() end

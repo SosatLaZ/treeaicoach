@@ -6,6 +6,7 @@
 * a compass point saved before a /reload is not restored without a click (F3, real SavedVariables);
 * the app solver keeps a quest of the log that is on the way (F26).
 Fake character / quest ids, real map ids and bounds of the client."""
+# (5.1 CLEAN) harness default = the player's profile (« sur ») ; this file tests modules that are off there: « tout »
 from __future__ import annotations
 
 import os
@@ -25,7 +26,7 @@ ALLOW = ["LibQuestieDB", "QuestDB", "NpcDB", "ObjectDB", "ItemDB", "TreeAIPlan",
 
 
 def _harness(flavor: str, scenario: Path, *extra: str, env: dict | None = None) -> subprocess.CompletedProcess:
-    cmd = [LUA, str(HERE / "harness.lua"), "-q", "--flavor", flavor, "--class", "HUNTER"]
+    cmd = [LUA, str(HERE / "harness.lua"), "-q", "--profile", "tout", "--flavor", flavor, "--class", "HUNTER"]
     for a in ALLOW:
         cmd += ["--allow", a]
     cmd += [*extra, "--scenario", str(scenario), str(ADDON)]

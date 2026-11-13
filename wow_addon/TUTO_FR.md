@@ -1,80 +1,90 @@
-# TreeAI pour WoW Forever — démarrage rapide
+# TreeAI pour WoW Forever — démarrage rapide (5.x)
+
+TreeAI conseille, tu joues : rien ne part sans ton clic (règles de Blizzard), rien en combat, rien dans le chat.
 
 ## Installer
 
-- **Automatique** : lance TreeAI Coach, page **WoW Forever** → **Installer l'addon** (il trouve ton dossier WoW ;
-  sinon **Parcourir**). Relance le jeu : un nouvel addon n'apparaît qu'après un redémarrage de WoW.
-- **À la main** : supprime d'abord l'ancien dossier `…\AddOns\TreeAI` s'il existe (des fichiers retirés
-  resteraient sinon), puis dézippe `TreeAI-addon.zip` dans `…\World of Warcraft\_forever_\Interface\AddOns\` (tu
-  dois avoir `…\AddOns\TreeAI\TreeAI.toc`), relance le jeu, coche **TreeAI Coach** dans la liste des AddOns.
-- Tes amis installent le même addon pour se voir en groupe.
+- **Automatique** : TreeAI Coach, page **WoW Forever** → **Installer l'addon**, puis relance le jeu (un nouvel addon
+  n'apparaît qu'après un redémarrage de WoW, pas après un /reload).
+- **À la main** : supprime l'ancien dossier `…\AddOns\TreeAI`, dézippe `TreeAI-addon.zip` dans
+  `…\World of Warcraft\_forever_\Interface\AddOns\` (tu dois avoir `…\AddOns\TreeAI\TreeAI.toc`), relance le jeu,
+  coche **TreeAI Coach** dans la liste des AddOns.
 
-## Les 3 choses à savoir
+## La bande d'actions rapides
 
-1. **Tout part de la pastille de la minimap** (le bouton rond au bord de la carte) : clic = la **fenêtre TreeAI**
-   (Maintenant, Quêtes, Trajet, Groupe, Options…), clic droit = le **menu rapide**. La première fois, une
-   **visite guidée** de 60 secondes montre où cliquer ; elle se rejoue depuis le menu (« Visite guidée »).
-2. **Ta prochaine étape** est sur la carte « Prochaine étape » et la **boussole** la vise (distance, temps de
-   trajet). Clic sur une ligne = l'action ; survol = le pourquoi ; clic droit sur un conseil = caché 2 h.
-3. **TreeAI conseille, tu joues** : rien ne part sans ton clic (règles de Blizzard), rien en combat.
+La bande de boutons TreeAI (déplaçable), un clic par bouton :
 
-## Le menu de la pastille
-
-Clic droit sur la pastille : le menu rapide.
-
-| Entrée | À quoi ça sert |
+| Bouton | Ce qu'il fait |
 |---|---|
-| Maintenant, Quêtes, Groupe, HV, Infos… | ouvre cette page dans la fenêtre TreeAI |
-| Recherche, Meilleur familier | ce qui vaut le détour près de toi, la meilleure bête à apprivoiser |
-| Macros | les macros prêtes pour ta classe : un clic pour les créer, puis glisse-les sur ta barre |
-| Fenêtre « À faire » | toutes tes quêtes, triées, à épingler |
-| Boussole, Radar | les afficher ou les cacher |
-| Options | taille, transparence, sons ; une page par fonction |
-| Fonctions bêta (n/m) | la liste des fonctions bêta : un clic pour en allumer ou en couper une |
-| Erreurs, Blocages | préparer le fichier d'erreurs ; les actions refusées par le jeu (doit rester à 0) |
-| Panneau, Déplacer les cadres, Réinitialiser | afficher / cacher ; glisser (molette = taille) ; tout remettre en place |
-| Visite guidée | revoir où cliquer |
+| Guidage quêtes | allume ou coupe TOUT le guidage des quêtes (trajet, boussole, repères) |
+| Rendre | le trajet passe par les PNJ qui attendent tes quêtes finies, au plus court |
+| Prendre | le trajet va chercher les meilleures quêtes près de toi |
+| Suivant | l'étape est faite (ou tu la sautes) : la suivante |
+| Zone | tout faire dans ta zone, et les zones conseillées pour ton niveau |
+| Vite | une seule consigne « fais ça maintenant », pour le plus d'XP par heure |
+| Sacs · Équipement · Métiers | les pages du même nom |
+| Groupe | les quêtes à faire ensemble ; seul : rejoindre un groupe |
+| TreeAI | la fenêtre TreeAI (toutes les pages, la recherche, les réglages) |
 
-Une entrée n'apparaît que si sa fonction est là. Sans la pastille : `/tai menu`.
+Déplacer la bande : `/tai edit` (glisser, molette = taille). La remettre en place : `/tai interface reset`.
+La **Visite guidée** (`/tai visite`) montre où cliquer ; elle se lance seule la première fois.
 
-## « Bêta », ça veut dire quoi ?
+## Le guidage des quêtes
 
-TreeAI démarre en **mode sûr** : seules les fonctions solides tournent (quêtes, boussole, trajet, course au
-corps, macros, panneau, erreurs). Les autres — chasseur (familier, munitions), groupe, HV, zone de travail,
-raccourcis… — sont **bêta** : testées hors du jeu seulement, elles peuvent se tromper. Elles sont coupées ; menu →
-**Fonctions bêta**, un clic pour en essayer une (pas besoin de /reload). « Revenir au mode sûr » remet tout comme
-au début.
+Un seul interrupteur : le bouton « Guidage quêtes » de la bande, ou `/tai guide on` / `/tai guide off`
+(`/tai guide` seul dit s'il est allumé, sans rien changer). Coupé, TreeAI ne dit plus où aller ; le reste (sacs,
+équipement, métiers, familier) continue. Tu préfères la flèche de Suivi Forever ? `/tai guidage forever` : jamais
+deux flèches à la fois. Le suivi de quêtes du jeu reste le tien : TreeAI ne le cache ni ne le remplace.
 
-## Signaler un bug
+## Sacs, équipement, métiers
 
-1. En jeu : menu → **Erreurs** (ou `/tai erreurs`).
-2. Tape `/reload` : le jeu sauvegarde et TreeAI Coach écrit le fichier.
-3. Envoie `%APPDATA%\TreeAICoach\TreeAI-erreurs.txt` (TreeAI Coach, page WoW Forever → **Erreurs WoW : ouvrir
-   le fichier**), avec une phrase sur ce que tu faisais.
+- **Sacs** (`/tai sacs`) : ce qui est à vendre, à garder, à mettre à l'HV ou à la banque. Ce qu'un métier ou une
+  amélioration attend n'est pas proposé à la vente.
+- **Équipement** (`/tai equipement`) : ce que tu peux mettre de mieux tout de suite, les prochaines pièces à viser.
+  TreeAI lit ta spécialisation ; si elle est fausse, `/tai spe` la corrige.
+- **Métiers** (`/tai metiers`) : le plan pour monter ton métier, étape par étape, et où acheter.
+
+## Les macros
+
+Fenêtre TreeAI → **Macros**, hors combat. Le bouton **« Tutoriel : quoi poser, sur quelle touche »** dit, pour chaque
+macro : ce qu'elle fait, ce qui est automatique, où la poser sur ta barre, la touche conseillée. Pour un chasseur
+neuf, 5 macros d'office : Tir (1), Familier (V), Pièges (E), Aspects (X), Feindre (Maj+E). Une macro que tu as
+modifiée n'est jamais écrasée ; une macro qui n'a rien à faire (pas de monture, pas de potion dans le sac) n'est pas
+créée. Une touche = une action, comme le veut Blizzard.
+
+## Ce qui tourne d'office
+
+Profil **Simple** (d'office) : quêtes, trajet, boussole, groupe, sacs, équipement, métiers, macros, talents, et pour
+un chasseur l'aide au familier (mort, absent, mécontent, points de dressage) et aux munitions. Le reste (HV,
+statistiques mesurées, confort automatique…) s'allume une fonction à la fois : fenêtre TreeAI → **Fonctions**, ou
+`/tai profil complet` pour tout (`/tai profil simple` pour revenir). Accepter / rendre les quêtes tout seul n'est
+jamais allumé sans toi : `/tai quetesauto on` (après avoir allumé « Confort »).
+
+## Commandes utiles
+
+`/tai aide` (la liste) · `/tai fenetre` · `/tai guide` · `/tai zone` · `/tai vite` · `/tai sacs` ·
+`/tai equipement` · `/tai spe` · `/tai metiers` · `/tai macros` · `/tai groupe` · `/tai talents` · `/tai profil` ·
+`/tai perf` · `/tai pics` · `/tai erreurs`. Une commande sans `on` / `off` dit l'état et ne change rien.
+
+## Envoyer le rapport d'erreurs
+
+1. En jeu : `/tai erreurs`.
+2. Tape `/reload` : le jeu sauvegarde, TreeAI Coach écrit le fichier.
+3. Envoie `%APPDATA%\TreeAICoach\TreeAI-erreurs.txt` (TreeAI Coach, page WoW Forever → **Erreurs WoW : ouvrir le
+   fichier**), avec une phrase sur ce que tu faisais.
+
+Le fichier contient les erreurs Lua, les actions bloquées par le jeu, les **erreurs avalées** (ce qui échoue sans
+rien afficher : l'endroit, combien de fois, le premier message), les pics de lenteur et le **temps réel par module**
+mesuré dans ton jeu pendant ta dernière session. Les chiffres de performance du changelog sont **mesurés en
+simulation** ; ceux de ce fichier viennent de ta machine.
 
 ## FAQ
 
-**Ça lague ?** Reste en mode sûr : c'est le plus léger. Coupe les fonctions bêta dont tu ne te sers pas (menu →
-Fonctions bêta). `/tai perf` dit ce qui coûte le plus. Si ça saccade encore, envoie le fichier d'erreurs.
+**Ça lague ?** `/tai perf` dit ce qui coûte le plus dans ton jeu (millisecondes réelles), `/tai pics` les moments
+lents. Coupe ce dont tu ne te sers pas (fenêtre TreeAI → Fonctions). Si ça saccade encore, envoie le rapport.
 
-**« TreeAI a été bloqué » ou « Échec des actions d'interface » ?** Clique « Ignorer », puis menu → **Blocages** :
-la liste doit être vide. Sinon, envoie le fichier d'erreurs : chaque blocage y figure avec la fonction en cause.
-TreeAI ne modifie jamais les fenêtres de Blizzard et n'agit pas en combat.
+**« TreeAI a été bloqué » ?** Clique « Ignorer » et envoie le rapport : chaque blocage y figure avec la fonction en
+cause.
 
-**Et Suivi Forever (SPF) ou Questie ?** Par défaut, **TreeAI guide seul** : sa boussole et ses étapes. Questie garde
-ses icônes, et TreeAI lit sa base pour savoir où sont tes objectifs. Tu préfères la flèche de Suivi Forever ?
-Options → **Guidage** (ou `/tai guidage forever`) : SPF guide, TreeAI cache sa boussole et ses lignes en double.
-Jamais deux flèches à la fois.
-
-**Mes macros ?** Menu → **Macros**, hors combat : aperçu, un clic pour créer, puis glisse-les sur ta barre. Elles
-s'appellent « TAI … » ; une macro que tu as modifiée n'est jamais écrasée. Plus de place (120 compte, 30 perso) :
-supprime-en via Échap → Macros, ou prends la fenêtre copier-coller proposée. Une touche = une action, comme le
-veut Blizzard.
-
-**L'HV dit « Aucun achat-revente sûr pour l'instant » ?** C'est normal au début : TreeAI ne propose un achat que
-s'il a la preuve que l'objet se revend (3 jours d'historique, plusieurs scans espacés de quelques heures, au moins
-3 vendeurs, un prix stable). Fais un **scan complet** à chaque passage (Blizzard : une fois par 15 min) et survole
-la ligne pour le pourquoi. L'HV est une fonction bêta : menu → Fonctions bêta.
-
-**L'addon n'apparaît pas ?** Vérifie le chemin `…\AddOns\TreeAI\TreeAI.toc`, relance le jeu (un /reload ne suffit
-pas) et coche « Charger les add-ons périmés » si besoin. En jeu, `/tai` montre où est la pastille.
+**L'addon n'apparaît pas ?** Vérifie le chemin `…\AddOns\TreeAI\TreeAI.toc`, relance le jeu et coche « Charger les
+add-ons périmés » si besoin.

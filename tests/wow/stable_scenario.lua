@@ -370,7 +370,9 @@ return function(M, ctx)
   check(ar.safe <= 1, "au calme : un module « autoIdleSafe » n'est pas appelé, même si un autre ne l'est pas (" .. ar.safe .. ")")
   ar.safe = 0
   M.FireEvent("PLAYER_MONEY")
-  M.Advance(8, 0.2)
+  -- (5.1 CLEAN) au calme et immobile, le cycle bat toutes les 9 s (3 s × 3) : le suivant peut être 9 s plus loin selon
+  -- sa phase (qui dépend du nombre de minuteurs créés avant lui) — 10 s couvrent toujours un cycle entier
+  M.Advance(10, 0.2)
   check(ar.safe >= 1, "un événement : il est rappelé au cycle suivant (" .. ar.safe .. ")")
   T:SetModuleEnabled("ZzCalme", false) T:SetModuleEnabled("ZzCycle", false)
   check(Ps and Pp, "sondes du cycle")

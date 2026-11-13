@@ -77,9 +77,6 @@ return function(M, ctx)
   end
   reset()
   -- les barres qui possèdent déjà un geste (manger, bandage, aspect, monture) : coupées pour tester nos lignes
-  local qfWas, quickWas = T.modules.QuickFight and T.modules.QuickFight._active, T.modules.Quick and T.modules.Quick._active
-  T:SetModuleEnabled("QuickFight", false)
-  T:SetModuleEnabled("Quick", false)
 
   local function ev(key) local r = C.Evaluate(key) return r and r.text end
   local function yes(key, pat)
@@ -134,9 +131,6 @@ return function(M, ctx)
   M.player.power = 560
   no("eatDrink", "mana presque plein")
   M.player.power = 150
-  T:SetModuleEnabled("QuickFight", true)
-  no("eatDrink", "la barre de combat a son bouton « Manger et boire »")
-  T:SetModuleEnabled("QuickFight", false)
   auras({ aura({ name = "Boisson", spellId = 430, duration = 18 }) })
   M.player.power, M.player.health = 300, 400
   yes("eatDrink", "Mange aussi pendant que tu bois")
@@ -401,14 +395,14 @@ return function(M, ctx)
     local rows = W.CardModel(3)
     check(rows[1] and rows[1].notice and rows[1].entry and rows[1].entry.id == "Coach:" .. tostring(first),
       "carte : le conseil pro en avis « i » (" .. tostring(rows[1] and rows[1].entry and rows[1].entry.id) .. ")")
-    T:Suggest("core:safe", "Mode sûr : les fonctions bêta sont à activer dans le menu", 2, { ttl = 30, tab = "now", kind = "always" })
+    T:Suggest("core:safe", "Profil Simple : les autres fonctions (bêta) s'allument dans « Fonctions »", 2, { ttl = 30, tab = "now", kind = "always" })
     C.Pick()
     local hide0 = C.Shown()
     T:ClearSuggestion("Coach:" .. tostring(hide0))
     C.ResetCooldowns()
     reset()
     M.player.rested = 9000
-    T:Suggest("core:safe", "Mode sûr : les fonctions bêta sont à activer dans le menu", 2, { ttl = 30, tab = "now", kind = "always" })
+    T:Suggest("core:safe", "Profil Simple : les autres fonctions (bêta) s'allument dans « Fonctions »", 2, { ttl = 30, tab = "now", kind = "always" })
     C.RunAll()
     check(C.Shown() ~= nil and C.CardId() == nil, "carte : l'avis « mode sûr » garde sa place (pas de conseil pro sur la carte)")
     T:ClearSuggestion("core:safe")
@@ -526,8 +520,6 @@ return function(M, ctx)
   M.bags[4] = bag4
   T.API.BagChanged()
   Q.lastList = savedList
-  if qfWas then T:SetModuleEnabled("QuickFight", true) end
-  if quickWas then T:SetModuleEnabled("Quick", true) end
   reset()
   check(#M.blocked == 0, "aucune action bloquée (" .. #M.blocked .. ")")
 end

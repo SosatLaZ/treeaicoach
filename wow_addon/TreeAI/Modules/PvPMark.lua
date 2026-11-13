@@ -34,7 +34,7 @@ local PM = T:RegisterModule("PvPMark", {
 T.PvPMark = PM
 
 local floor = math.floor
-local function pass(ok, ...) if ok then return ... end return nil end
+local function pass(ok, ...) if ok then return ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw((...), "PvPMark") end return nil end
 local function try(fn, ...) if type(fn) ~= "function" then return nil end return pass(pcall(fn, ...)) end
 local function api(name) return rawget(G, name) end
 local function call(name, ...) local f = api(name) if type(f) == "function" then return try(f, ...) end end

@@ -7,9 +7,9 @@
 return function(M, ctx)
   local T = TreeAI
   local check = ctx.check
-  local QP, W, A, Q, DM, X = T.QuestPins, T.Watch, T.Addons, T.QoL, T.Meter, T.Export
-  check(QP and W and A and Q and DM and X, "QuestPins + Watch + Addons + QoL + Meter + Export loaded")
-  if not (QP and W and A and Q and DM and X) then return end
+  local QP, A, Q, DM, X = T.QuestPins, T.Addons, T.QoL, T.Meter, T.Export
+  check(QP and A and Q and DM and X and not T.Watch, "QuestPins + Addons + QoL + Meter + Export loaded ; Watch removed (5.1)")
+  if not (QP and A and Q and DM and X) then return end
   local function near(a, b, eps) return a and b and math.abs(a - b) <= (eps or 1e-6) end
   local function blocked() return #(M.blocked or {}) end
   local function viol(kind) local n = 0 for _, v in ipairs(M.violations) do if not kind or v.kind == kind then n = n + 1 end end return n end
@@ -256,158 +256,10 @@ return function(M, ctx)
   M.FireEvent("QUEST_LOG_UPDATE")
   M.Advance(1, 0.1)
 
-  -- ------------------------------------------------------------------ Watch « Suivi TreeAI »
-  local Qm = T.modules.Quests
-  if Qm and Qm.Update then Qm.Update() end
-  W.db.shown = true              -- (the harness storm clicked every button, our « close » included)
-  W.Apply()
-  W.Render()
-  local f = _G.TreeAIWatchFrame
-  check(f and f:IsShown() and W.rowsShown and W.rowsShown >= 5, "Suivi TreeAI shown (" .. tostring(W.rowsShown) .. " rows)")
-  local texts, objRow, turnRow = {}, nil, nil
-  for i = 1, W.rowsShown or 0 do
-    local r = W.rows[i]
-    texts[#texts + 1] = tostring(r.fs:GetText()) .. "|" .. tostring(r.rt:GetText())
-    if r.rowd and r.rowd.kind == "obj" and r.qe and r.qe.q.id == 1001 then objRow = r end
-    if r.rowd and r.rowd.kind == "turn" then turnRow = r end
-  end
-  local blob = table.concat(texts, " / ")
-  check(blob:find("[27] Loups", 1, true) and blob:find("Loup tué 2/6", 1, true) and blob:find("Rendre à Maire", 1, true),
-    "rows: quest, objective with progress, turn-in with the NPC: " .. blob)
-  check(objRow and tostring(objRow.rt:GetText()):find("^%d+ m [NESO]+ · %d+ min$"), "live distance · direction · time: " .. tostring(objRow and objRow.rt:GetText()))
-  check(turnRow and tostring(turnRow.rt:GetText()):find("m NE · %d+ min"), "turn-in distance + direction (north-east): " .. tostring(turnRow and turnRow.rt:GetText()))
-  check(objRow and objRow.bar:IsShown() and objRow.barBg:IsShown(), "objective progress bar")
-  -- live updates: only changed rounded values are rewritten, nothing when still
-  local w0 = W.textWrites
-  W.UpdateTexts()
-  check(W.textWrites == w0, "same position: no text rewritten")
-  M.pos = { mapID = 1424, x = 0.47, y = 0.55 }
-  M.Advance(0.05, 0.05)            -- (the core reads the position once per instant)
-  W.UpdateTexts()
-  check(W.textWrites > w0, "player moved: distances rewritten (" .. (W.textWrites - w0) .. ")")
-  M.pos = { mapID = 1424, x = 0.50, y = 0.50 }
-  M.Advance(0.05, 0.05)
-  W.UpdateTexts()
-  -- sort toggle
-  W.ToggleSort()
-  M.Advance(0.5, 0.1)
-  check(W.db.sort == 2 and f.sortBtn.t:GetText() == "Par distance", "header toggle: « Par distance »")
-  W.ToggleSort()
-  M.Advance(0.5, 0.1)
-  check(W.db.sort == 1 and f.sortBtn.t:GetText() == "Ordre du trajet", "back to route order")
-  -- quest item: secure button out of combat only
-  M.Advance(0.5, 0.1)
-  local it = W.items[1]
-  check(it and it:IsShown() and it:GetAttribute("type") == "item" and it:GetAttribute("item") == "item:9001" and it:GetParent() == UIParent,
-    "quest item: secure button (type=item) on UIParent, placed at the row")
-  -- right-click menu
-  local entries = W.MenuEntries(objRow and objRow.qe)
-  local names = {}
-  for _, e in ipairs(entries) do names[#names + 1] = e.text end
-  local nm = table.concat(names, " / ")
-  check(nm:find("Guider ici", 1, true) and nm:find("Retirer du suivi", 1, true) and nm:find("Abandonner", 1, true), "menu: guide, hide, abandon: " .. nm)
-  for _, e in ipairs(entries) do if e.text == "Retirer du suivi" then T:UserAction(e.fn) end end
-  M.Advance(0.5, 0.1)
-  local still = false
-  for i = 1, W.rowsShown do local r = W.rows[i] if r.qe and r.qe.q.id == 1001 then still = true end end
-  check(not still and W.char.hidden[1001], "« Retirer du suivi » hides the quest")
-  W.char.hidden = {}
-  W.Render()
-  -- (4.0.3 integ) REPLACE → pilote auto : a quest parked by the pilot leaves the tracker (one « En pause (n) » line)
-  -- and the map (no objective area) on BRAIN_PARKED ; a quest ready to turn in never does
-  do
-    local hadBrain = T.Brain
-    local Bn = hadBrain or {}
-    local oldParked, oldList = Bn.Parked, Bn.ParkedList
-    local paused = { [1001] = { k = "far", t = "autre continent", n = "Loups" }, [1002] = { k = "grey", t = "grise", n = "Crocs" } }
-    Bn.Parked = function(q) return paused[tonumber(q)] end
-    Bn.ParkedList = function() return { { q = 1001, k = "far", t = "autre continent", n = "Loups" } } end
-    T.Brain = Bn
-    T:Fire("BRAIN_PARKED")
-    M.Advance(1, 0.1)
-    local has1001, has1002, pauseRow = false, false, nil
-    for i = 1, W.rowsShown or 0 do
-      local r = W.rows[i]
-      if r.qe and r.qe.q.id == 1001 then has1001 = true end
-      if r.qe and r.qe.q.id == 1002 then has1002 = true end
-      if r.kind == "paused" then pauseRow = r end
-    end
-    check(not has1001 and has1002 and pauseRow and tostring(pauseRow.fs:GetText()):find("En pause (1)", 1, true),
-      "Suivi TreeAI: parked quest hidden, ready-to-turn-in kept, « En pause (1) » line: " .. tostring(pauseRow and pauseRow.fs:GetText()))
-    local obj1001, turn1002 = false, false
-    for _, p in ipairs(QP.Pins()) do
-      if tostring(p.key):find("^o:1001:") then obj1001 = true end
-      if p.kind == "turnin" then for _, q in ipairs(p.qs) do if q.id == 1002 then turn1002 = true end end end
-    end
-    check(not obj1001 and turn1002, "QuestPins: no objective area for a parked quest, the « ? » of a finished one kept")
-    Bn.Parked, Bn.ParkedList = oldParked, oldList
-    T.Brain = hadBrain
-    T:Fire("BRAIN_PARKED")
-    M.Advance(1, 0.1)
-    local back, pr = false, false
-    for i = 1, W.rowsShown or 0 do
-      local r = W.rows[i]
-      if r.qe and r.qe.q.id == 1001 then back = true end
-      if r.kind == "paused" then pr = true end
-    end
-    local objBack = false
-    for _, p in ipairs(QP.Pins()) do if tostring(p.key):find("^o:1001:") then objBack = true end end
-    check(back and not pr and objBack, "resumed (BRAIN_PARKED): the quest is back in the tracker and on the map")
-  end
-  -- in combat: the progress is written in place (text, bar), nothing re-laid out, nothing blocked
-  W.Render()
-  local rendersBefore, bBefore = W.renders, blocked()
-  M.EnterCombat()
-  M.quests[1].objectives[1].text, M.quests[1].objectives[1].have = "Loup tué : 3/6", 3
-  M.FireEvent("QUEST_LOG_UPDATE")
-  if Qm and Qm.Update then Qm.Update() end
-  W.Render()
-  local prog
-  for i = 1, W.rowsShown do local r = W.rows[i] if r.rowd and r.rowd.kind == "obj" and r.qe and r.qe.q.id == 1001 then prog = r end end
-  check(prog and tostring(prog.fs:GetText()):find("Loup tué 3/6", 1, true) and W.renders == rendersBefore and blocked() == bBefore,
-    "in combat: progress « 3/6 » written in place, no re-layout, nothing blocked: " .. tostring(prog and prog.fs:GetText()))
-  M.LeaveCombat()
-  M.Advance(1, 0.1)
-  -- (4.2 ROUTE42) the game's tracker: never hidden, never moved — the column is anchored UNDER it
-  local tf = CreateFrame("Frame", "ObjectiveTrackerFrame", UIParent)
-  tf.__protected = true          -- worst case: its quest item buttons are secure
-  tf:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -60, -230)
-  tf:Show()
-  local tfPts = #tf.__points
-  check(W.TakeOver() == false and tf:IsShown() and not W.replaced, "the game's tracker is never taken over (option removed)")
-  if W.char then W.char.pos = nil end
-  W._force = true
-  W.Render()
-  local wfa = _G.TreeAIWatchFrame
-  local ap = { wfa:GetPoint(1) }
-  check(ap[2] == tf and ap[1] == "TOPRIGHT" and ap[3] == "BOTTOMRIGHT" and W.anchoredTo == "ObjectiveTrackerFrame",
-    "Suivi TreeAI anchored under the game's tracker")
-  M.EnterCombat()
-  W.Render()
-  M.LeaveCombat()
-  M.Advance(0.5, 0.1)
-  check(tf:IsShown() and (tf.__alpha or 1) == 1 and #tf.__points == tfPts and blocked() == b0, "tracker untouched, in and out of combat")
-  -- our window hidden in combat (alpha), shown again before the end of the fight: visible, never a transparent
-  -- frame that would take the clicks
-  local wf = _G.TreeAIWatchFrame
-  M.EnterCombat()
-  W.db.shown = false
-  W:OnOptionChanged("shown")
-  check(wf.__alpha == 0, "in combat: Suivi TreeAI hidden by alpha")
-  W.db.shown = true
-  W:OnOptionChanged("shown")
-  check(wf:IsShown() and wf.__alpha == 1, "shown again in the same fight: alpha back to 1 (" .. tostring(wf.__alpha) .. ")")
-  M.LeaveCombat()
-  M.Advance(0.5, 0.1)
-  check(wf:IsShown() and wf.__alpha == 1 and blocked() == b0, "after the fight: still shown (the pending hide gave up)")
-  -- Questie tracker still on : (4.2) the column sits under it, no row offers to cut it anymore.
+  -- (5.1 CLEAN) the Watch « Suivi TreeAI » section went with Watch.lua (off for everyone since 4.1)
   -- (5.1 LOOK) READ-ONLY: TreeAI no longer writes in Questie's (or Shortest Path Forever's) options — the « silence »
   -- writers are gone ; the « Autres addons » page says what TreeAI reads and what it leaves, each line switchable
   _G.Questie.db.profile.enabled, _G.Questie.db.profile.trackerEnabled = true, true
-  W.Render()
-  local qrow
-  for i = 1, W.rowsShown do if W.rows[i].kind == "questie" then qrow = W.rows[i] end end
-  check(not qrow, "(4.2) no « cut Questie's tracker » row in the column")
   check(A.SilenceQuestie == nil and A.RestoreQuestie == nil and A.SetSPFTracker == nil and A.SPFChoose == nil,
     "(5.1) no function writes in another addon's options any more")
   local p = _G.Questie.db.profile
@@ -460,14 +312,8 @@ return function(M, ctx)
   A.SetLink("spf", "arrow", true)
 
   -- ------------------------------------------------------------------ QoL: grey selling / repair, never twice
-  local K = T.modules.Quick
   M.SetBagItem(2, 1, 4865, 3)
   local sold0 = M.sold or 0
-  if K then K.db.autoSell, K.db.autoRepair = true, true end
-  check(not K or Q.QuickDoesIt() == (K._active and true or false), "Quick doing it is detected")
-  if K and K._active then
-    T:SetModuleEnabled("Quick", false)
-  end
   Q.db.sellRepair = true
   M.SetMerchant(true)
   M.Advance(1, 0.1)

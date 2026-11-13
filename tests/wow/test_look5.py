@@ -21,7 +21,7 @@ ADDON = ROOT / "wow_addon" / "TreeAI"
 MODS = ADDON / "Modules"
 LUA = shutil.which("lua5.1")
 MINE = ["Window.lua", "WindowPages.lua", "JournalPage.lua", "Shortcuts.lua", "Hub.lua", "Binds.lua", "Tour.lua", "Addons.lua",
-        "Theme.lua", "Meter.lua", "Quick.lua", "QuickFight.lua"]
+        "Theme.lua", "Meter.lua"]   # (5.1 CLEAN) Quick / QuickFight removed
 
 
 def code(path: Path) -> str:

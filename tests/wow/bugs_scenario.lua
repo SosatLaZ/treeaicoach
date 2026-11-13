@@ -18,6 +18,7 @@ return function(M, ctx)
 
   -- an error in a module (safecall) + one through the chained error handler + a blocked action
   local Boom = T:RegisterModule("BoomX", {})
+  T:SetModuleEnabled("BoomX", true)   -- (5.1) default profile « sur » : a new module is off until switched on
   Boom:RegisterEvent("PLAYER_FLAGS_CHANGED", function() error("boomx-test") end)
   M.FireEvent("PLAYER_FLAGS_CHANGED")
   B.OnLuaError("Interface\\AddOns\\TreeAI\\Modules\\Quests.lua:12: handler-test")

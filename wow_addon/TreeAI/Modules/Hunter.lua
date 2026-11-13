@@ -312,22 +312,27 @@ local function bagItemIDsRaw()
 end
 local function bagItemIDs()
   local t = (GetTime and GetTime()) or 0
-  if not bagCache or t - bagCacheAt > 30 then bagCache, bagCacheAt = bagItemIDsRaw(), t end
+  -- (5.1 CLEAN) avec le flux des sacs du cœur, la liste ne vieillit pas : M:OnBagsChanged l'efface à chaque changement
+  if not bagCache or (not M._flow and t - bagCacheAt > 30) then bagCache, bagCacheAt = bagItemIDsRaw(), t end
   return bagCache
 end
 
+-- (5.1 CLEAN) une lecture directe (avant : pcall du cœur à chaque passage — 20 fois par événement de familier)
 local function inCombat()
-  if type(TreeAI.InCombat) == "function" then
-    local ok, r = pcall(TreeAI.InCombat, TreeAI)
-    if ok and r ~= nil then return r and true or false end
-  end
-  if InCombatLockdown and InCombatLockdown() then return true end
+  if InCombatLockdown then return InCombatLockdown() and true or false end
   return (UnitAffectingCombat and UnitAffectingCombat("player")) and true or false
 end
 
 -- Réglages (compte) : M.db fourni par le cœur (defaults fusionnés), sinon repli TreeAIDB.modules.Hunter.
 -- (4.2 FIX42) aides en plus (barre piège / Feindre la mort, ennemi qui fuit) : coupées par défaut, rien de plus à l'écran
-local DEFAULTS = { enabled = true, bar = true, trapBar = false, fdTimer = false, fleeAlert = false, ammoWarn = 200, tab = true }
+-- (5.1 CLEAN) le module entre dans le profil par défaut sous sa forme légère : familier (mort / absent / mécontent /
+-- points de dressage), munitions, aspect DANGEREUX en combat (Guépard / Meute). Les rappels « active le Faucon »,
+-- « pose la Marque » avant chaque pull (pullTips) et la barre de tir (bar) sont des options, coupées d'office.
+-- (5.1 CLEAN) l'onglet « Chasseur » de l'ancien panneau aussi (la fenêtre TreeAI a sa page Chasseur → Familier, lue
+-- dans le jeu) : chaque onglet de plus se recalcule à chaque rendu du panneau
+local DEFAULTS = { enabled = true, bar = false, pullTips = false, trapBar = false, fdTimer = false, fleeAlert = false,
+  ammoWarn = 200, tab = false }
+local settingsDone
 local function settings()
   local d = type(M.db) == "table" and M.db or nil
   if not d then
@@ -337,7 +342,11 @@ local function settings()
     d = type(root.modules.Hunter) == "table" and root.modules.Hunter or {}
     root.modules.Hunter = d
   end
-  for k, v in pairs(DEFAULTS) do if d[k] == nil then d[k] = v end end
+  -- (5.1 CLEAN) les défauts sont posés une fois par table (avant : la boucle à chaque lecture d'une option)
+  if d ~= settingsDone then
+    for k, v in pairs(DEFAULTS) do if d[k] == nil then d[k] = v end end
+    settingsDone = d
+  end
   return d
 end
 
@@ -358,7 +367,9 @@ local function suggest(id, text, prio, every, extra)
   local last = lastSaid[id]
   if last and last.text == text and t - last.at < (every or 30) then return end
   lastSaid[id] = { text = text, at = t }
-  local o = { cooldown = every or 30, ttl = math.max(every or 30, 20), module = "Hunter" }
+  -- (5.1 CLEAN) la ligne vit plus longtemps que l'intervalle de rappel (+45 s : le tour de 30 s la redit avant) : elle ne
+  -- disparaît plus une seconde pour réapparaître (deux rendus pour rien) ; clear() l'efface dès que c'est réglé
+  local o = { cooldown = every or 30, ttl = (every or 30) + 45, module = "Hunter" }
   if type(extra) == "table" then for k, v in pairs(extra) do o[k] = v end end
   if type(M.Suggest) == "function" then
     pcall(M.Suggest, M, id, text, prio or 1, o)          -- id préfixé "Hunter:" par le cœur
@@ -367,6 +378,8 @@ local function suggest(id, text, prio, every, extra)
   end
 end
 local function clear(id)
+  -- (5.1 CLEAN) rien dit = rien à effacer (avant : un appel au cœur par ligne possible, à chaque passage)
+  if lastSaid[id] == nil then return end
   lastSaid[id] = nil
   if type(M.Clear) == "function" then
     pcall(M.Clear, M, id)
@@ -452,25 +465,40 @@ function M.Mood()
   return h, dmg, rate
 end
 
+local feedSet
+local FEED_IDS = { [S.FEED_EFFECT] = true }
+-- (5.1 CLEAN) un familier mort disparaît de l'écran peu après : « Appel du familier » échoue alors (« ton familier est
+-- mort »). On retient qu'on l'a vu mort jusqu'à ce qu'il revienne vivant, pour conseiller le bon sort.
+local function revivePet()
+  suggest("petdead", "Ressuscite ton familier : « " .. (spellName(S.REVIVE) or "Ressusciter le familier") .. " » hors combat", 3, 60)
+end
 function M:CheckPet()
   if not (UnitExists and UnitExists("pet")) then
-    if knows(S.CALL) and not inCombat() and not (IsMounted and IsMounted())
+    if (knows(S.CALL) or M.petDead) and not inCombat() and not (IsMounted and IsMounted())
         and not (UnitOnTaxi and UnitOnTaxi("player")) and not (UnitIsDeadOrGhost and UnitIsDeadOrGhost("player")) then
-      suggest("nopet", "Appelle ton familier : « " .. (spellName(S.CALL) or "Appel du familier") .. " »", 1, 300)
+      if M.petDead and knows(S.REVIVE) then clear("nopet") revivePet()
+      elseif knows(S.CALL) then
+        clear("petdead")
+        suggest("nopet", "Appelle ton familier : « " .. (spellName(S.CALL) or "Appel du familier") .. " »", 1, 300)
+      end
     end
     return
   end
   clear("nopet")
   if UnitIsDead and UnitIsDead("pet") then
-    suggest("petdead", "Ressuscite ton familier : « " .. (spellName(S.REVIVE) or "Ressusciter le familier") .. " » hors combat", 3, 60)
+    M.petDead = true
+    revivePet()
     return
   end
+  M.petDead = nil
   clear("petdead")
   local happy, dmg, loyaltyRate = M.Mood()
   if not happy then return end
-  local feeding = hasAura("pet", "HELPFUL", nameSet({ S.FEED_EFFECT }), { [S.FEED_EFFECT] = true })
-  if feeding or happy >= 3 then clear("hungry"); return end
+  if happy >= 3 then clear("hungry"); return end
   if inCombat() then return end   -- on ne nourrit pas en combat : la ligne attend la fin du combat
+  -- (5.1 CLEAN) l'effet « nourri » n'est lu que s'il change la réponse (familier pas heureux, hors combat)
+  feedSet = feedSet or nameSet({ S.FEED_EFFECT })
+  if hasAura("pet", "HELPFUL", feedSet, FEED_IDS) then clear("hungry"); return end
   -- une seule ligne « Nourris ton familier » : verbe d'abord, nourriture en clair ; le pourquoi dans l'infobulle
   local food, quality = self:BestFood()
   local what = food and (itemName(food) .. (quality == "partial" and " (un peu faible pour son niveau)" or ""))
@@ -563,9 +591,12 @@ local ammoMemo = { at = -100 }
 --- (CLEAN) une lecture partagée par passage (Chasseur + barre de combat la demandent dans la même seconde)
 function M:AmmoInfo()
   local t = now()
-  if ammoMemo.info and t - ammoMemo.at < 1.5 then return ammoMemo.info end
+  if ammoMemo.info and t - ammoMemo.at < 1.5 and t >= ammoMemo.at then return ammoMemo.info end
+  -- (5.1 CLEAN) hors combat, avec le flux des sacs du cœur : rien ne change sans lui (M:OnBagsChanged remet à zéro)
+  if ammoMemo.info and ammoMemo.ooc and M._flow and not inCombat() then return ammoMemo.info end
   local info = ammoRaw()
   ammoMemo.info, ammoMemo.at = info.kind and info or nil, t   -- sans arme à distance lue : pas gardé (arc équipé à l'instant)
+  ammoMemo.ooc = not inCombat()
   return info
 end
 ammoRaw = function()
@@ -654,6 +685,8 @@ local aspectMemo = { gen = -1, at = -1e9 }
 local auraGen = 0
 function M.AuraChanged() auraGen = auraGen + 1 end
 function M:CheckAspect()
+  -- (5.1 CLEAN) rappels coupés : seul l'aspect dangereux EN COMBAT compte — hors combat, aucune lecture
+  if not opt("pullTips") and not inCombat() then clear("aspect") return end
   local anyKnown = false
   for _, id in ipairs(COMBAT_ASPECTS) do if knows(id) then anyKnown = true end end
   if not anyKnown then return end
@@ -666,15 +699,16 @@ function M:CheckAspect()
   end
   local combatOn, travelOn, travelName = am.combatOn, am.travelOn, am.travelName
   local best = knows(S.HAWK) and spellName(S.HAWK) or spellName(S.MONKEY)
+  local tips = opt("pullTips") and true or false
   if inCombat() then
     if travelOn then
       suggest("aspect", "Change d'aspect : « " .. travelName .. " » en combat = hébété à chaque coup", 3, 10)
-    elseif combatOn == false and travelOn == false then   -- nil = auras masquées par le jeu : on ne sait pas, on se tait
+    elseif tips and combatOn == false and travelOn == false then   -- nil = auras masquées par le jeu : on ne sait pas, on se tait
       suggest("aspect", "Active « " .. (best or "Aspect du faucon") .. " » (Singe si ça tape au corps à corps)", 2, 25)
     else
       clear("aspect")
     end
-  elseif combatOn == false and travelOn == false and hostileTarget() and not (UnitAffectingCombat and UnitAffectingCombat("target")) then
+  elseif tips and combatOn == false and travelOn == false and hostileTarget() and not (UnitAffectingCombat and UnitAffectingCombat("target")) then
     suggest("aspect", "Active « " .. (best or "Aspect du faucon") .. " » avant le pull", 2, 60,
       { tooltip = "Macro « TAI Aspects » (panneau Macros) : clic = Faucon, Maj = Guépard pour voyager." })
   else
@@ -684,6 +718,7 @@ end
 
 local markedGUID
 function M:CheckMark()
+  if not opt("pullTips") then clear("mark") return end
   if inCombat() or not knows(S.MARK) or not hostileTarget() then clear("mark") return end
   if UnitAffectingCombat and UnitAffectingCombat("target") then return end
   local guid = UnitGUID and pub(UnitGUID("target"))
@@ -1016,11 +1051,15 @@ end
 
 local tabSig
 local lastPush = -100
+local tabBuilt = false
 function M:PushTab(force)
   if not (TreeAI.SetTabLines and opt("tab")) then return end
   local t = now()
+  -- (5.1 CLEAN) la fiche n'est refaite que si quelqu'un la regarde (onglet du panneau affiché ; le tour de 30 s la
+  -- rattrape) — la première construction, à la connexion, a toujours lieu : l'onglet doit exister
+  if not force and tabBuilt and TreeAI.TabShown and not TreeAI:TabShown(TAB) then return end
   if not force and t - lastPush < 10 then return end   -- la fiche suit sans courir : au plus toutes les 10 s
-  lastPush = t
+  lastPush, tabBuilt = t, true
   local ok, lines = pcall(self.TabLines, self)
   if not ok or type(lines) ~= "table" then return end
   local parts = {}
@@ -1088,14 +1127,53 @@ local EVENTS = {
   "PLAYER_SWING", "CHAT_MSG_MONSTER_EMOTE",
 }
 
+-- (5.1 CLEAN) chaque événement n'est écouté que si une aide allumée s'en sert : au défaut (familier, munitions, aspect
+-- dangereux en combat), ni les déplacements, ni les sorts, ni les auras de tout le groupe ne passent par le module
+local EVENT_NEED = {
+  START_AUTOREPEAT_SPELL = "bar", STOP_AUTOREPEAT_SPELL = "bar", PLAYER_SWING = "bar", UNIT_SPELLCAST_START = "bar",
+  PLAYER_STARTED_MOVING = "bar", PLAYER_STOPPED_MOVING = "bar",
+  UNIT_SPELLCAST_SUCCEEDED = "cast", UNIT_AURA = "pullTips", PLAYER_TARGET_CHANGED = "pullTips",
+  CHAT_MSG_MONSTER_EMOTE = "fleeAlert",
+}
+M.EVENT_NEED = EVENT_NEED
+-- événements d'unité : le joueur et son familier seulement (filtrés par le jeu avec RegisterUnitEvent)
+local UNIT_ONLY = { UNIT_PET = { "player" }, UNIT_HAPPINESS = { "pet" }, UNIT_INVENTORY_CHANGED = { "player" },
+  UNIT_SPELLCAST_SUCCEEDED = { "player" }, UNIT_SPELLCAST_START = { "player" }, UNIT_AURA = { "player" } }
+local function needOn(need)
+  if not need then return true end
+  if need == "cast" then return (opt("bar") or opt("trapBar") or opt("fdTimer") or opt("pullTips")) and true or false end
+  return opt(need) and true or false
+end
+--- (5.1 CLEAN) (dés)inscrit les événements selon les aides allumées ; rappelé quand une option change
+function M:SyncEvents()
+  if not (frame and self.enabled) then return end
+  M._evOn = M._evOn or {}
+  for _, e in ipairs(EVENTS) do
+    local want = needOn(EVENT_NEED[e]) and not (M._flow and (e == "BAG_UPDATE_DELAYED" or e == "UNIT_INVENTORY_CHANGED"))
+      and not (TreeAI.EventAllowed and not TreeAI:EventAllowed(e))
+    if want and not M._evOn[e] then
+      local u = UNIT_ONLY[e]
+      if u and frame.RegisterUnitEvent then pcall(frame.RegisterUnitEvent, frame, e, u[1], u[2])
+      else pcall(frame.RegisterEvent, frame, e) end
+      M._evOn[e] = true
+    elseif not want and M._evOn[e] then
+      if frame.UnregisterEvent then pcall(frame.UnregisterEvent, frame, e) end
+      M._evOn[e] = nil
+    end
+  end
+end
+
 local UNIT_EVENTS = { UNIT_PET = true, UNIT_HAPPINESS = true, UNIT_INVENTORY_CHANGED = true,
   UNIT_SPELLCAST_SUCCEEDED = true, UNIT_SPELLCAST_START = true, UNIT_AURA = true }
-local coal = { window = false, pending = false }   -- (4.4 SMART) événements regroupés (voir la fin de M:OnEvent)
+local coal = { till = -1, pending = false }   -- (4.4 SMART) événements regroupés (voir la fin de M:OnEvent)
+local combatTicker
 function M:OnEvent(ev, ...)
   if ev == "PLAYER_STARTED_MOVING" then M.moving = true return end   -- barre de tir : « Ne bouge pas ! »
   if ev == "PLAYER_STOPPED_MOVING" then M.moving = false return end
   if ev == "UNIT_PET" or ev == "PET_BAR_UPDATE" then abilityMemo.at, foodMemo.at = -100, -100 end   -- autre familier
-  if ev == "BAG_UPDATE_DELAYED" or ev == "UNIT_INVENTORY_CHANGED" then ammoMemo.at = -100 end   -- munitions relues
+  if ev == "BAG_UPDATE_DELAYED" or ev == "UNIT_INVENTORY_CHANGED" or ev == "PLAYER_REGEN_DISABLED" then   -- munitions relues
+    ammoMemo.at, ammoMemo.ooc = -100, false
+  end
   -- (LITE) événements d'unité : seulement le joueur et son familier (pas tout le groupe à chaque sort)
   if UNIT_EVENTS[ev] then
     local unit = ...
@@ -1132,30 +1210,45 @@ function M:OnEvent(ev, ...)
   if ev == "PLAYER_REGEN_DISABLED" then
     if trap then trap.fight = true end
     clear("mark")
+    combatTicker(true)
     self:CheckAspect()
     return
   end
-  if ev == "PLAYER_REGEN_ENABLED" then self:OnLeaveCombat() end
+  if ev == "PLAYER_REGEN_ENABLED" then combatTicker(false) self:OnLeaveCombat() end
   -- (4.4 SMART) rafales (sacs, inventaire, bonheur / barre du familier : 5 à 20 par combat ou par butin) : le premier
   -- événement est traité tout de suite, les suivants des 0,4 s qui suivent en UN seul passage à la fin de la fenêtre
+  -- (5.1 CLEAN) avec le flux des sacs du cœur, les flèches tirées pendant le combat arrivent par M:OnBagsChanged
+  -- (sacs retenus pendant le combat, relâchés à la fin) : la sortie du combat ne relit plus les sacs une 2e fois
   if ev == "BAG_UPDATE_DELAYED" or ev == "UNIT_INVENTORY_CHANGED" or ev == "PLAYER_ENTERING_WORLD"
-      or ev == "PLAYER_REGEN_ENABLED" then
+      or (ev == "PLAYER_REGEN_ENABLED" and not M._flow) then
     coal.ammo = true
   end
   if ev == "PLAYER_REGEN_ENABLED" or ev == "PLAYER_ENTERING_WORLD" then coal.train = true end
-  if coal.window and TreeAI.After then coal.pending = true return end
-  self:FlushEvents()
-  if TreeAI.After then
-    coal.window = true
-    TreeAI:After(M.COALESCE, function()
-      coal.window = false
-      if coal.pending then coal.pending = false M:FlushEvents() end
-    end)
+  -- (5.1 CLEAN) les sacs passent par le flux regroupé du cœur (M:OnBagsChanged) : ici, il ne reste que le familier
+  -- et le combat ; un rappel n'est posé que pour une vraie rafale (avant : un minuteur après CHAQUE événement)
+  local t = now()
+  if t < coal.till and t >= coal.till - M.COALESCE then
+    -- la suite d'une rafale : UN passage à la fin de la fenêtre (un seul rappel par rafale)
+    if not coal.pending and TreeAI.After then
+      TreeAI:After(coal.till - t + 0.05, function() if coal.pending then pcall(M.FlushEvents, M) end end)
+    end
+    coal.pending = true
+    return
   end
+  coal.till = t + M.COALESCE
+  self:FlushEvents()
 end
 M.COALESCE = 0.4
+--- les sacs ont changé (flux regroupé du cœur) : munitions recomptées, nourriture du familier relue si elle sert
+function M:OnBagsChanged()
+  ammoMemo.at, ammoMemo.ooc, bagCache, foodMemo.at = -100, false, nil, -100
+  self:CheckAmmo()
+  if lastSaid.hungry then self:CheckPet() end   -- la ligne « Nourris ton familier » nomme la nourriture du sac
+  self:PushTab()
+end
 function M:FlushEvents()
   if not self.enabled then return end
+  coal.pending = false
   if coal.ammo then coal.ammo = false self:CheckAmmo() end
   self:CheckPet()
   if coal.train then coal.train = false self:CheckTraining(); self:CheckAspect() end
@@ -1176,32 +1269,53 @@ function M:Enable()
   if type(TreeAI.TAB_OWNER) == "table" then TreeAI.TAB_OWNER[TAB] = "Hunter" end
   if type(TreeAI.MODULE_TAB) == "table" then TreeAI.MODULE_TAB.Hunter = TAB end
   frame = frame or CreateFrame("Frame")
-  for _, e in ipairs(EVENTS) do
-    if not (TreeAI.EventAllowed and not TreeAI:EventAllowed(e)) then pcall(frame.RegisterEvent, frame, e) end
+  -- (5.1 CLEAN) sacs : le flux regroupé du cœur (un appel ≥ 0,3 s après la rafale, jamais dans l'image du butin, relevé
+  -- des sacs partagé avec Sacs / Équipement) au lieu de notre propre BAG_UPDATE_DELAYED
+  local flow = type(TreeAI.OnBags) == "function"
+  if flow and not M._bagFlow then
+    M._bagFlow = true
+    pcall(TreeAI.OnBags, TreeAI, M, function() if M.enabled then pcall(M.OnBagsChanged, M) end end)
   end
+  M._flow, M._evOn = flow, {}
+  M:SyncEvents()
   frame:SetScript("OnEvent", function(_, ev, ...)
     local ok, err = pcall(M.OnEvent, M, ev, ...)
     if not ok and TreeAI.Debug then pcall(TreeAI.Debug, TreeAI, "Hunter: " .. tostring(err)) end
     if not ok and TreeAI._errorHook then pcall(TreeAI._errorHook, err, "Hunter:" .. tostring(ev)) end
   end)
-  if not self._slowTicker and TreeAI.NewTicker then
-    self._slowTicker = TreeAI:NewTicker(5, function()
-      if not M.enabled then return end
-      -- (4.4 SMART) hors combat, un passage sur deux (10 s) : le familier ne change guère sans événement
-      M._slowN = (M._slowN or 0) + 1
-      if not inCombat() and M._slowN % 2 == 1 then return end
-      pcall(M.CheckPet, M)
-      -- (V5H) en combat : le strict nécessaire continue (cible / aspect, vie du familier, munitions toutes les 10 s)
-      if inCombat() then
+  -- (5.1 CLEAN) le minuteur de 5 s n'existe QUE pendant un combat (créé à l'entrée, annulé à la sortie) : hors
+  -- combat, les événements du familier / des sacs et le cycle du cœur suffisent — aucun réveil de l'ordonnanceur
+  combatTicker = function(on)
+    if on and not M._slowTicker and TreeAI.NewTicker and M.enabled then
+      M._slowTicker = TreeAI:NewTicker(5, function()
+        if not M.enabled then return end
+        if not inCombat() then combatTicker(false) clear("petlow") return end
+        pcall(M.CheckPet, M)
+        -- (V5H) en combat : le strict nécessaire continue (cible / aspect, vie du familier, munitions toutes les 10 s)
         pcall(M.CheckAspect, M) pcall(M.CheckPetHealth, M)
         M._ammoTick = (M._ammoTick or 0) + 1
         if M._ammoTick % 2 == 0 then pcall(M.CheckAmmo, M) end
-      else clear("petlow") end
-    end, M)
+      end, M)
+    elseif not on and M._slowTicker then
+      M._slowTicker:Cancel()
+      M._slowTicker = nil
+      clear("petlow")
+    end
+  end
+  if inCombat() then combatTicker(true) end
+  if not M._fullTicker and TreeAI.NewTicker then
+    M._fullTicker = TreeAI:NewTicker(30, function() pcall(M.FullCheck) end, M)
+    if M._fullTicker and M._fullTicker.IdleStretch then M._fullTicker:IdleStretch(4) end
   end
   if type(self.On) == "function" and not self.summaryHooked then
     self.summaryHooked = true
-    pcall(self.On, self, "SUMMARY", function() if M.enabled then pcall(M.Snapshot, M) end end)
+    -- (5.1 CLEAN) l'instantané pour l'appli : écrit à la déconnexion (PLAYER_LOGOUT ci-dessus) ; le résumé du cœur
+    -- (chaque pièce ramassée, chaque zone) ne le refait qu'au plus toutes les 5 min
+    local lastSnap = -1e9
+    pcall(self.On, self, "SUMMARY", function()
+      local t = now()
+      if M.enabled and (t - lastSnap >= 300 or t < lastSnap) then lastSnap = t pcall(M.Snapshot, M) end
+    end)
   end
   if IsLoggedIn and IsLoggedIn() then pcall(M.OnEvent, M, "PLAYER_ENTERING_WORLD") end
 end
@@ -1213,7 +1327,9 @@ function M:OnDisable()
     if frame.UnregisterAllEvents then frame:UnregisterAllEvents() end
     frame:SetScript("OnUpdate", nil)
   end
+  M._evOn = {}
   if self._slowTicker then self._slowTicker:Cancel(); self._slowTicker = nil end
+  if self._fullTicker then self._fullTicker:Cancel(); self._fullTicker = nil end
   if bar then bar:Hide() end
   if trapBar then trapBar:Hide() end
   trap = nil
@@ -1223,17 +1339,26 @@ end
 
 function M:OnOptionChanged(key, value)
   if key == "bar" and not value and bar then bar:Hide() end
+  if key == "pullTips" and not value then clear("mark") clear("aspect") end
   if key == "fleeAlert" and not value then clear("flee") end
   if (key == "trapBar" or key == "fdTimer") and not value and trapBar then M:TrapTick() end
-  if key == "tab" then tabSig = nil M:PushTab(true) end
+  if key == "tab" then
+    tabSig = nil
+    if value and TreeAI.RegisterTab then pcall(TreeAI.RegisterTab, TreeAI, TAB, "Chasseur", 4.6) end
+    if value then M:PushTab(true)
+    elseif TreeAI.SetTabLines and TreeAI.tabs and TreeAI.tabs[TAB] then pcall(TreeAI.SetTabLines, TreeAI, TAB, {}, "Hunter") end
+  end
+  pcall(M.SyncEvents, M)   -- (5.1 CLEAN) une aide allumée / coupée : ses événements suivent
 end
 
 -- Déclaration auprès du cœur (agent B) : défauts, classe, options auto-rendues.
-M.defaults = { enabled = true, bar = true, trapBar = false, fdTimer = false, fleeAlert = false, ammoWarn = 200, tab = true }
+M.defaults = { enabled = true, bar = false, pullTips = false, trapBar = false, fdTimer = false, fleeAlert = false,
+  ammoWarn = 200, tab = false }
 M.classes = { HUNTER = true }
 M.title = "Chasseur"
 M.options = {
   { key = "tab", type = "toggle", label = "Onglet « Chasseur » : fiche du familier et des munitions" },
+  { key = "pullTips", type = "toggle", label = "Rappels avant le pull : « active le Faucon », « pose la Marque » sur un élite" },
   { key = "bar", type = "toggle", label = "Barre de tir automatique (se tait si les barres de swing du jeu sont affichées)" },
   { key = "trapBar", type = "toggle", label = "Barre de piège : posé, recharge (mode édition pour déplacer)" },
   { key = "fdTimer", type = "toggle", label = "Feindre la mort : recharge de 30 s dans la barre de piège" },
@@ -1252,10 +1377,11 @@ elseif CreateFrame then
   boot:SetScript("OnEvent", function() pcall(M.Enable, M) end)
 end
 
--- (5.0 STABLE) au calme (aucun événement, joueur immobile) : rien à refaire — le cycle complet du cœur (30 s) suffit
-M.autoIdleSafe = true
-function M:AutoRefresh()
-  if InCombatLockdown and InCombatLockdown() then return end
+-- (5.1 CLEAN, entrée dans le profil par défaut) plus de passage dans le cycle du cœur (toutes les 3 s en marchant) :
+-- un tour complet toutes les 30 s hors combat (2 min immobile), voir M:Enable ; les événements du familier, des sacs
+-- et du combat font le reste.
+function M.FullCheck()
+  if not M.enabled or inCombat() then return end
   pcall(M.CheckPet, M); pcall(M.CheckAmmo, M); pcall(M.CheckAspect, M); pcall(M.CheckTraining, M)
   pcall(M.PushTab, M)
 end

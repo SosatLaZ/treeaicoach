@@ -69,7 +69,7 @@ GG.MAX_BAG = 12             -- objets échangeables annoncés au plus
 GG.MAX_TRADES = 8
 
 -- ===================================================================================== utilitaires (appels gardés)
-local function pass(ok, ...) if ok then return ... end return nil end
+local function pass(ok, ...) if ok then return ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw((...), "GroupGear") end return nil end
 local function try(fn, ...) if type(fn) ~= "function" then return nil end return pass(pcall(fn, ...)) end
 local function g(name) return rawget(G, name) end
 local function secret(v) local f = g("issecretvalue") return v ~= nil and type(f) == "function" and try(f, v) and true or false end

@@ -125,10 +125,48 @@ def test_where_and_why_for_every_macro():
     assert "Maj+E" in where_for("Maj+E")
 
 
-def test_mount_and_hearth_macro():
-    m = next(m for m in macros_for("HUNTER") if m.name == "TAI Monture")
-    body = simulate_macro("HUNTER", m, "bete", 40)
-    assert "/dismount [mounted]" in body and "/use [mod:shift] item:" in body
+def test_mount_macro_never_holds_the_hearthstone():
+    """(5.1 CLEAN, audit B10) « TAI Monture » = mount / dismount only. Its suggested key is Maj+Z: the old
+    « /use [mod:shift] Pierre de foyer » clause was true on every press, and the fallback variant was the
+    Hearthstone alone. No template of any class uses the Hearthstone any more."""
+    from treeaicoach.wow.macros.spells import CLASSES
+    for cls in CLASSES:
+        m = next(m for m in macros_for(cls) if m.name == "TAI Monture")
+        assert len(m.variants) == 1 and m.kind == "consumable"
+        body = simulate_macro(cls, m, spec_ids(cls)[0], 40)
+        assert body.split("\n") == ["#showtooltip", "/use [nomounted] item:99999", "/dismount [mounted]"], body
+        for other in macros_for(cls):
+            for v in other.variants:
+                assert "{item:hearth}" not in v and "print(" not in v, (cls, other.name)
+
+
+def test_suggested_key_never_holds_a_tested_modifier():
+    """(5.1 CLEAN) bound on « Maj+B », « [nomod:shift] » never ran (TAI Repas never ate) and « [mod:shift] » ran
+    on every press (TAI Monture = Hearthstone, TAI Defense = Dissuasion, TAI Pro Panique = trap instead of Feign)."""
+    from treeaicoach.wow.macros.generator import lint_key
+    from treeaicoach.wow.macros.spells import CLASSES
+    from treeaicoach.wow.macros.templates import Macro
+    for cls in CLASSES:
+        for m in macros_for(cls):
+            assert lint_key(m) == [], (cls, m.name, m.key)
+    trap = Macro("TAI X", "x", "Maj+Z", ("/use [mod:shift] {item:food}",))
+    assert lint_key(trap) and "Maj+Z" in lint_key(trap)[0]
+    assert lint_key(Macro("TAI X", "x", "Maj+B", ("/use [nomod:shift] {item:food}",)))
+    assert lint_key(Macro("TAI X", "x", "Ctrl+1", ("/run SetRaidTarget(\"target\",IsControlKeyDown() and 7 or 8)",)))
+    assert lint_key(Macro("TAI X", "x", "Maj+B", ("/use [nomod] {item:food}",)))
+    assert lint_key(Macro("TAI X", "x", "Ctrl+4", ("/focus [mod:shift,@target]",))) == []   # another modifier: click only
+    assert lint_key(Macro("TAI X", "x", "Z", ("/use [mod:shift] {item:food}",))) == []
+
+
+def test_hunter_defaults_are_useful_for_a_hunter():
+    """(5.1 CLEAN) « TAI Mana » exists for a hunter but is switched off; the meal macro eats AND drinks."""
+    mana = next(m for m in macros_for("HUNTER") if m.name == "TAI Mana")
+    assert not mana.default and not mana.in_simple and not mana.in_pro
+    assert next(m for m in macros_for("PRIEST") if m.name == "TAI Mana").default
+    repas = next(m for m in macros_for("HUNTER") if m.name == "TAI Repas")
+    assert simulate_macro("HUNTER", repas, "bete", 40).split("\n") == ["#showtooltip", "/use item:99999", "/use item:99999"]
+    defense = next(m for m in macros_for("HUNTER") if m.name == "TAI Defense")
+    assert not defense.default and defense.key == "-"
 
 
 def test_data_exports_where():

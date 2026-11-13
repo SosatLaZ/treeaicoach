@@ -143,17 +143,27 @@ return function(M, ctx)
   for _ = 1, 6 do M.FireEvent("UNIT_AURA", "player") end
   M.FireEvent("UNIT_STATS", "player")
   M.Advance(1.5, 0.5)
-  check(reads == 1, "rafale UNIT_AURA/UNIT_STATS -> 1 seule relecture : " .. reads)
+  -- (5.1 CLEAN) la fiche est relue À LA DEMANDE (export, onglet), plus après chaque rafale d'auras ni chaque combat
+  check(reads == 0, "rafale UNIT_AURA/UNIT_STATS -> aucune relecture tant que personne ne demande la fiche : " .. reads)
   local sh = S:Sheet()
+  check(reads == 1, "demandée : une relecture (elle avait changé) : " .. reads)
   check(sh.agi == 120 and sh.rap == 320 and sh.ap == 120 and near(sh.rcrit, 8.2) and sh.armor == 1200, "fiche lue")
   check(sh.rdmg and sh.rdmg[1] == 40 and sh.rdmg[2] == 60, "dégâts à distance")
+  S:Sheet()
+  check(reads == 1, "redemandée sans changement : pas relue")
+  for _ = 1, 6 do M.FireEvent("UNIT_AURA", "player") end
+  S:Sheet()
+  check(reads == 1, "un simple buff : pas relue avant 5 min")
   M.EnterCombat()
   M.FireEvent("UNIT_STATS", "player")
   M.Advance(1.5, 0.5)
+  S:Sheet()
   check(reads == 1, "en combat : pas de relecture")
   M.LeaveCombat()
   M.Advance(1.5, 0.5)
-  check(reads == 2, "relue à la sortie du combat")
+  check(reads == 1, "sortie du combat : toujours pas de relecture d'office")
+  S:Sheet()
+  check(reads == 2, "relue à la demande après le combat")
   S.ReadSheet = oldRead
 
   -- ------------------------------------------------------------ temps de kill, XP/h, vitesse

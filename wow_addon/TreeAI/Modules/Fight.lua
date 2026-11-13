@@ -35,7 +35,7 @@ local TAB = "info"
 ---------------------------------------------------------------------------------------------------
 -- utilitaires défensifs (valeurs secrètes de Forever → nil)
 ---------------------------------------------------------------------------------------------------
-local function pass(ok, ...) if ok then return ... end return nil end
+local function pass(ok, ...) if ok then return ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw((...), "Fight") end return nil end
 local function try(fn, ...) if type(fn) ~= "function" then return nil end return pass(pcall(fn, ...)) end
 local function secret(v) local f = rawget(G, "issecretvalue") return type(f) == "function" and try(f, v) and true or false end
 local function sv(v) if v == nil or secret(v) then return nil end return v end

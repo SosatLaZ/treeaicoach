@@ -1,5 +1,6 @@
 """Finder (agent FINDER): hunter pet table builder (tools/wow_build_pets.py → Data/Pets.lua) and the in-game
 « Chercher » module (best pet now, generic finder, route hand-off). Fake beasts / NPCs only in the scenario."""
+# (5.1 CLEAN) harness default = the player's profile (« sur ») ; this file tests modules that are off there: « tout »
 from __future__ import annotations
 
 import importlib.util
@@ -119,7 +120,7 @@ def test_toc_and_hooks():
 @needs_lua
 @pytest.mark.parametrize("flavor", ["modern", "forever"])
 def test_scenario(flavor):
-    r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--flavor", flavor, "--class", "HUNTER",
+    r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--profile", "tout", "--flavor", flavor, "--class", "HUNTER",
                         "--allow", "ShortestPathForever", "--scenario", "tests/wow/finder_scenario.lua", str(ADDON)],
                        cwd=ROOT, capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stdout + r.stderr
