@@ -1973,6 +1973,11 @@ function PL.NpcModel()
   if not kind then return nil end
   local lines, btn, more = {}, nil, {}
   local comps = PL.ComponentLines()
+  -- (5.0 INTEG) un autre addon affiche déjà la liste des composants de métier en permanence (colonne « Suivi Forever »
+  -- de Shortest Path Forever) : pas de 2e liste ici — la carte ne garde que ce que TreeAI ajoute (boutons d'achat exact
+  -- pendant une session / des courses, recettes du maître)
+  local col = type(T.OtherColumn) == "function" and T:OtherColumn() or nil
+  if type(col) == "table" and col.reagents then comps = {} end
   -- (5.0 INTEG) UNE seule carte « vendre + réparer » chez le marchand : celle de l'assistant d'inventaire (T.Bags) ;
   -- cette carte-ci garde son rôle « métiers » (composants à acheter, recettes) sans bouton en double
   local bagsCard = C and type(C.BagsCard) == "function" and C.BagsCard() or false

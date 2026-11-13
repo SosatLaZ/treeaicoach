@@ -239,7 +239,12 @@ return function(M, ctx)
     local lines = II.Build({ id = 2604, name = "Teinture rouge", classID = 7, quality = 1, sellPrice = 50 }, { bag = true, count = 5 }, false)
     local txt = {}
     for _, l in ipairs(lines or {}) do txt[#txt + 1] = T.PlainText and T.PlainText(l[1]) or l[1] end
-    check(table.concat(txt, "\n"):find("Pas besoin : sert en Couture", 1, true), "item tooltip line: the precise verdict (ItemInfo)")
+    -- (5.0 INTEG) the precise verdict is said ONCE on the tooltip: by the inventory assistant's line when it has one
+    -- (« TreeAI · Vends … : Pas besoin : sert en Couture … », fed by the profession keeper), else by ItemInfo
+    local inInfo = table.concat(txt, "\n"):find("Pas besoin : sert en Couture", 1, true) ~= nil
+    local tip = T.Bags and T.Bags.TipLine and T.Bags.TipLine(2604) or nil
+    local inBags = type(tip) == "string" and tip:find("Pas besoin : sert en Couture", 1, true) ~= nil
+    check(inInfo ~= inBags, "item tooltip: the precise verdict, exactly once (ItemInfo " .. tostring(inInfo) .. " / Sacs " .. tostring(inBags) .. " : " .. tostring(tip) .. ")")
   end
   local HL = T.modules.Highlight
   if HL and HL.Apply then

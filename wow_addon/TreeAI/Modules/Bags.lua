@@ -1119,11 +1119,43 @@ function M.Grouped(list)
   return out
 end
 --- objets gris vendables, au format des anciens appelants (Inventaire / Confort / barre de quête) : liste, valeur
+--- (5.0 INTEG) SEULS les avis des objets gris sont calculés ici (quelques-uns) : ces appelants tournent hors d'un clic
+--- (résumé du trajet rapide, ligne « vends tes gris »…) et ne doivent jamais déclencher l'avis de tous les sacs d'un coup
+--- (c'était la pire image « ville » du profil complet : 3,5 ms). Les listes déjà prêtes sont réutilisées.
 function M.GreyItems()
-  local sl = M.SellList(true)
-  local list = {}
-  for i, e in ipairs(sl.list) do list[i] = { bag = e.bag, slot = e.slot, value = e.value, link = INFO[e.id] and INFO[e.id].link, id = e.id } end
-  return list, sl.value
+  local list, value = {}, 0
+  if not M._active then return list, value end
+  local s = snapshot()
+  context()
+  local L = M._lists
+  if L and L.gen == C.gen and L.seen == s.seen and now() - L.t < TTL then
+    for _, e in ipairs(L.sell) do
+      if e.grey then
+        list[#list + 1] = { bag = e.bag, slot = e.slot, value = e.value, link = INFO[e.id] and INFO[e.id].link, id = e.id }
+        value = value + e.value
+      end
+    end
+    return list, value
+  end
+  for _, key in ipairs(s.list) do
+    local id = s.id[key]
+    local it = itemInfo(id)
+    if it and it.q == 0 then
+      local bag, slot = floor(key / 1000), key % 1000
+      local v = M.Verdict(id, bag, slot)
+      if v.action == "sell" then
+        local val = floor((it.sell or 0) * s.n[key] + 0.5)
+        list[#list + 1] = { bag = bag, slot = slot, value = val, link = it.link, id = id }
+        value = value + val
+      end
+    end
+  end
+  tsort(list, function(a, b2)
+    if a.value ~= b2.value then return a.value < b2.value end
+    if a.bag ~= b2.bag then return a.bag < b2.bag end
+    return a.slot < b2.slot
+  end)
+  return list, value
 end
 
 --- prépare les avis de tous les objets des sacs par petits paquets (une image chacun), puis appelle cb
@@ -1156,6 +1188,14 @@ function M.Warm(cb)
   if #todo == 0 then if cb then cb() end return 0 end
   tsort(todo)
   local i = 0
+  -- (5.0 INTEG) le joueur a une fenêtre ouverte devant lui (marchand, banque, sacs) : ces paquets passent en tête de la
+  -- file des travaux répartis (T:SpreadFirst) — sa carte n'attend pas derrière un plan d'équipement ou de métier
+  local function spread(fn, ctx)
+    local urgent = M.merchantOpen or M.bankOpen or anyBagShown()
+    if urgent and T.SpreadFirst then T:SpreadFirst(M, fn, nil, nil, nil, nil, ctx)
+    elseif T.Spread then T:Spread(M, fn, nil, nil, nil, nil, ctx)
+    else fn() end
+  end
   local function step()
     if not M._active then return end
     local n = 0
@@ -1164,13 +1204,13 @@ function M.Warm(cb)
       M.Verdict(todo[i])
     end
     if i < #todo then
-      if T.Spread then T:Spread(M, step, nil, nil, nil, nil, "Bags:avis") else step() end
+      spread(step, "Bags:avis")
     elseif cb then
       -- la suite (pastilles, carte, liste) dans sa propre image : jamais avec le dernier paquet d'avis
-      if T.Spread then T:Spread(M, function() if M._active then cb() end end, nil, nil, nil, nil, "Bags:suite") else cb() end
+      spread(function() if M._active then cb() end end, "Bags:suite")
     end
   end
-  if T.Spread then T:Spread(M, step, nil, nil, nil, nil, "Bags:avis") else step() end
+  spread(step, "Bags:avis")
   return #todo
 end
 
@@ -2339,14 +2379,14 @@ function M.Refresh()
   if inCombat() then M._afterCombat = true return end
   M.CheckFull()
   if anyBagShown() then M.QueueOverlays() else OV.stale = true end
-  if M.merchantOpen then M.Warm(function() M.UpdateCard() end) end
+  if M.merchantOpen then M.Warm(function() M.UpdateCard() stripSoon() end) end
   if M.bankOpen then M.Warm(function() M.UpdateBankCard() end) end
   if M.merchantOpen or resting() then M.UpdateStock() end
   if pageShown() and T.Window.Dirty then T.Window.Dirty() end
   -- (5.0 INTEG) en ville / sacs ouverts : les listes sont tenues à jour (par petits paquets) → pastille « Sacs » vraie
   -- (hors des sacs ouverts / du marchand : au plus une fois par 20 s — un butin en ville ne refait pas tout)
-  local open = anyBagShown() or M.merchantOpen
-  if (open or (resting() and now() - (M._listsAt or -100) >= 20)) and M.SellCount() == nil then
+  local open = anyBagShown()
+  if not (M.merchantOpen or M.bankOpen) and (open or (resting() and now() - (M._listsAt or -100) >= 20)) and M.SellCount() == nil then
     M._listsAt = now()
     M.Warm(function() M.Lists() stripSoon() end)
   end

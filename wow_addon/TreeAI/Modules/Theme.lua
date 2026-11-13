@@ -1335,6 +1335,25 @@ local function nearCompass(a)
   local Sc = T.Shortcuts
   local sr = type(Sc) == "table" and type(Sc.StripRect) == "function" and Sc.Strip and Sc.Strip() and meth(Sc.Strip(), "IsShown") and Sc.StripRect() or nil
   if sr and cx - aw / 2 < sr.l + sr.w and sr.l < cx + aw / 2 and top - ah < sr.b + sr.h and sr.b < top then return false end
+  -- (5.0 INTEG) jamais sur le cadre d'un autre addon (flèche d'un guide, compteur… nommé ou non) : sous la boussole si
+  -- c'est libre, sinon à sa droite ou à sa gauche, sinon la place du cœur (choisie sur tout l'écran)
+  local left = cx - aw / 2
+  if type(T.SpotIsFree) == "function" then
+    local cw = (tonumber(w) or 0) * k
+    local cands = { { left, top - ah }, { l * k + cw + 8, top + 6 + 4 }, { l * k - 8 - aw, top + 6 + 4 } }
+    local pick
+    for _, c in ipairs(cands) do
+      if c[1] >= 4 and c[1] + aw <= W - 4 and c[2] >= H * 0.5 and c[2] + ah <= H - 2 then
+        local okF, free = pcall(T.SpotIsFree, T, c[1], c[2], aw, ah, 2)
+        local onStrip = sr and c[1] < sr.l + sr.w and sr.l < c[1] + aw and c[2] < sr.b + sr.h and sr.b < c[2] + ah
+        if okF and free and not onStrip then pick = c break end
+      end
+    end
+    if not pick then return false end
+    meth(a, "ClearAllPoints")
+    meth(a, "SetPoint", "TOPLEFT", G.UIParent, "TOPLEFT", pick[1] / as, (pick[2] + ah - H) / as)
+    return true
+  end
   meth(a, "ClearAllPoints")
   meth(a, "SetPoint", "TOP", G.UIParent, "TOP", (cx - W / 2) / as, (top - H) / as)
   return true
@@ -1352,7 +1371,11 @@ local function oneToast(e)
     a.left = math.max(tonumber(a.left) or 0, Th:ToastSeconds(e and e.text))
     if a.left > Th.TOKENS.toast.max then a.left = Th.TOKENS.toast.max end
   end
-  if meth(a, "IsShown") then pcall(nearCompass, a) end
+  if meth(a, "IsShown") then
+    local okN, placed = pcall(nearCompass, a)
+    -- pas de place libre près de la boussole : la place du cœur (choisie sur tout l'écran), pas celle d'une alerte d'avant
+    if not (okN and placed) and not (T.IsPlayerPlaced and T:IsPlayerPlaced("alert")) and T.ApplyAlertSettings then pcall(T.ApplyAlertSettings, T) end
+  end
 end
 Th._OneToast = oneToast
 

@@ -40,7 +40,8 @@ def test_no_bag_event_work_and_no_onupdate():
     assert '"BAG_UPDATE"' not in src
     assert "OnUpdate" not in src and "NewTicker" not in src
     assert 'type(T.OnBags) == "function"' in src and 'RegisterEvent("BAG_UPDATE_DELAYED"' in src
-    assert "T:Spread(M, step" in src                      # the big recompute is sliced, one chunk per frame
+    # the big recompute is sliced, one chunk per frame (5.0 INTEG: at the head of the queue when a window is open)
+    assert "spread(step, \"Bags:avis\")" in src and "T:Spread(M, fn" in src and "T:SpreadFirst(M, fn" in src
     assert "if inCombat() then M._afterCombat = true return end" in src
 
 

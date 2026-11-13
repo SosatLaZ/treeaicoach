@@ -947,13 +947,31 @@ function S.OnScreen()
   local b = H * fy(rp or pt) + y * k - h * fy(pt)
   return l >= -4 and b >= -4 and l + w <= W + 4 and b + h <= H + 4
 end
-function S.Avoid(W, H)
+--- (5.0 INTEG) les cadres d'unité du jeu sont remplacés par ceux d'un addon (le portrait du joueur, toujours montré
+--- par le jeu, est caché) : leurs places d'origine ne sont plus réservées — le coin haut gauche est peut-être libre
+function S.UnitFramesReplaced()
+  local pf = rawget(G, "PlayerFrame")
+  if type(pf) ~= "table" then return false end
+  return meth(pf, "IsShown") ~= true
+end
+--- generic = vrai : aussi tout cadre visible d'un autre addon posé sur l'écran, nommé ou non (T:ScreenObstacles :
+--- compteurs, cadres d'unité, barres…) — demandé seulement quand on CHOISIT une place (jamais à chaque rafraîchissement)
+function S.Avoid(W, H, generic)
   local out, seen = {}, {}
   local function push(r) if r and not (r.w >= W * 0.9 and r.h >= H * 0.6) then out[#out + 1] = r end end
+  local replaced = S.UnitFramesReplaced()
   local function add(n)
     if seen[n] then return end
     seen[n] = true
-    local r = S.RectOf(n, RESERVE[n])
+    local reserve = RESERVE[n]
+    if reserve and replaced and n ~= "TreeAICompassFrame" then
+      -- cadre d'origine caché parce qu'un addon le remplace : ni sa place, ni sa place « d'origine » inventée
+      local r0 = S.RectOf(n, false)
+      if r0 and AURAS_BELOW[n] then r0.b, r0.h = r0.b - AURAS_BELOW[n], r0.h + AURAS_BELOW[n] end
+      push(r0)
+      return
+    end
+    local r = S.RectOf(n, reserve)
     if not r and FALLBACK[n] and type(rawget(G, n)) == "table" then r = FALLBACK[n](W, H) r.name = n end
     if r and AURAS_BELOW[n] then r.b, r.h = r.b - AURAS_BELOW[n], r.h + AURAS_BELOW[n] end
     push(r)
@@ -982,8 +1000,34 @@ function S.Avoid(W, H)
     local cw, ch = ((tonumber(Cm.W) or 150) + 30) * k, ((tonumber(Cm.H) or 74) + 30) * k
     push({ l = W / 2 - cw / 2, b = H - 70 - ch, w = cw, h = ch, name = "TreeAICompassSlot" })
   end
+  if generic and type(T.ScreenObstacles) == "function" then
+    local ok, list = pcall(T.ScreenObstacles, T)
+    for _, r in ipairs(ok and type(list) == "table" and list or {}) do
+      local n = r.name
+      if not (type(n) == "string" and (n:find("^TreeAI") or seen[n])) and finite(r.l) and finite(r.b) and finite(r.w) and finite(r.h) then
+        if type(n) == "string" then seen[n] = true end
+        push({ l = r.l, b = r.b, w = r.w, h = r.h, name = n or "cadre d'un autre addon" })
+      end
+    end
+  end
   S.WatchCompass()
   return out
+end
+--- la bande posée automatiquement est-elle sur un cadre d'un autre addon (nommé ou non) ? Regard ponctuel (après la
+--- connexion, quand les autres addons ont fini de poser leurs cadres) : si oui, elle reprend une place libre.
+function S.Recheck()
+  if not (strip and stripOn()) or S.placed ~= "auto" or inCombat() then return false end
+  local W, H = screen()
+  local rc = stripRect()
+  if not (W and rc) then return false end
+  if type(T.ObstaclesChanged) == "function" then pcall(T.ObstaclesChanged, T) end
+  for _, r in ipairs(S.Avoid(W, H, true)) do
+    if overlaps(rc, r, 1) and not tostring(r.name or ""):find("^TreeAICompass") then
+      S.PlaceStrip(true)
+      return true
+    end
+  end
+  return false
 end
 local function overlaps(a, b, m)
   m = m or 0
@@ -1101,6 +1145,8 @@ function S.PlaceStrip(force)
     show()
     return true
   end
+  -- une place va être CHOISIE : on regarde aussi les cadres des autres addons, nommés ou non (une lecture, gardée 20 s)
+  avoid = S.Avoid(W, H, true)
   -- taille de la bande dans chaque forme : lue si elle est déjà connue, sinon UNE disposition pour la mesurer (les
   -- essais ci-dessous ne redisposent rien : au plus deux mesures puis la forme retenue)
   local function size(compact)
@@ -1715,9 +1761,20 @@ function S:OnEnable()
     if not (strip and stripOn()) or (S.char and S.char.strip and S.OnScreen() ~= false) then return end
     S.PlaceStrip()
   end
-  for _, ev in ipairs({ "GROUP_ROSTER_UPDATE", "PLAYER_ENTERING_WORLD", "UI_SCALE_CHANGED", "DISPLAY_SIZE_CHANGED" }) do
-    self:RegisterEvent(ev, function() soon() T:After(1, replace) end)
+  -- (5.0 INTEG) les autres addons posent leurs cadres pendant les secondes qui suivent l'entrée en jeu / un changement
+  -- d'écran : deux regards ponctuels (8 s et 25 s après), puis plus rien — jamais de surveillance continue
+  local function recheckLater()
+    local t = tonumber(try(G.GetTime)) or 0
+    if S._recheckAt and t - S._recheckAt < 5 then return end
+    S._recheckAt = t
+    T:After(8, function() if S._active then pcall(S.Recheck) end end)
+    T:After(25, function() if S._active then pcall(S.Recheck) end end)
   end
+  for _, ev in ipairs({ "GROUP_ROSTER_UPDATE", "PLAYER_ENTERING_WORLD", "UI_SCALE_CHANGED", "DISPLAY_SIZE_CHANGED" }) do
+    local screenEv = ev ~= "GROUP_ROSTER_UPDATE"
+    self:RegisterEvent(ev, function() soon() T:After(1, replace) if screenEv then recheckLater() end end)
+  end
+  recheckLater()
   -- « cacher en combat » (option) : la bande s'efface à l'entrée en combat et revient à la sortie
   self:RegisterEvent("PLAYER_REGEN_DISABLED", function() if strip and S.db and S.db.hideCombat then meth(strip, "Hide") end end)
   self:RegisterEvent("PLAYER_REGEN_ENABLED", function()

@@ -1546,6 +1546,24 @@ function TreeAI:Spread(owner, fn, a1, a2, a3, a4, ctx)
   SP.n = SP.n + 1
   SP.q[SP.n] = { owner = owner, fn = fn, a1 = a1, a2 = a2, a3 = a3, a4 = a4, ctx = ctx }
 end
+--- (5.0 INTEG) comme Spread, mais en TÊTE de file : ce que le joueur attend devant une fenêtre qu'il vient d'ouvrir
+--- (carte du marchand, pièces sur ses sacs) passe avant les calculs de fond (plan d'équipement, plans de métier…) —
+--- toujours un seul travail par image.
+function TreeAI:SpreadFirst(owner, fn, a1, a2, a3, a4, ctx)
+  if type(fn) ~= "function" then return end
+  if not isMod(owner) then owner = nil end
+  if not ensureSched() then return runAs(owner, fn, a1, a2, a3, a4) end
+  local e = { owner = owner, fn = fn, a1 = a1, a2 = a2, a3 = a3, a4 = a4, ctx = ctx }
+  if SP.n < SP.h then SP.h, SP.n = 1, 1 SP.q[1] = e return end
+  if SP.h > 1 then
+    SP.h = SP.h - 1
+    SP.q[SP.h] = e
+  else
+    for i = SP.n, SP.h, -1 do SP.q[i + 1] = SP.q[i] end
+    SP.q[SP.h] = e
+    SP.n = SP.n + 1
+  end
+end
 --- (4.4 SMART) comme Fire, mais chaque abonné dans sa propre image (messages lourds et pas pressés : SUMMARY)
 function TreeAI:FireSpread(message, ...)
   local list = messages[message]

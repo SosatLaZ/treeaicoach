@@ -106,7 +106,10 @@ local BUDGET = {
   -- 3.9.6 (every C_Timer ticker in phase, all :AutoRefresh() in one frame): worst 129 / 297 (tout), p99 56 / 123,
   -- phase ratio 2.06 / 2.42 ; 3.9.7 scheduler: worst 97 / 171, p99 40 / 61, ratio ≤ 1.36
   frameLoginKinstr = 4000,       -- worst frame in the first 30 s (one-time panel layout, loading screen just gone)
-  frameWorstKinstr = (opts.profile == "tout") and 210 or 115,   -- worst single frame after 30 s (kilo-instructions)
+  -- (5.0 INTEG) « essentiel » : 115 → 125. Mesuré sur la version fusionnée : 117 / 118 kinstr (MAGE modern / legacy,
+  -- image @462 s : le flux regroupé des sacs y sert trois abonnés — Sacs, Équipement, Métiers — en plus du tour du
+  -- module Groupe ; STABLE seul : 113 pour la même session). 125 = 2,5 ms, loin sous la règle des 4 ms (200).
+  frameWorstKinstr = (opts.profile == "tout") and 210 or 125,   -- worst single frame after 30 s (kilo-instructions)
   frameP99Kinstr = (opts.profile == "tout") and 86 or 48,   -- 3.9.9 « tout »: 84 measured (3.9.8: 75) with the 10 new modules
   framePhaseRatio = 1.6,         -- busiest of the 5 frame phases / average phase (1.0 = flat; 1-Hz spikes → ≫ 1)
   allocKBps = (opts.profile == "tout") and 280 or 160,   -- KB allocated / s in frames (GC pressure)
@@ -130,7 +133,12 @@ BUDGET.kinstrModuleMin.GroupJoin = 60
 -- les modules dont le coût ne dépend que d'eux gardent leur plafond de 4.0.1 (Surbrillance 28 → 15 mesuré, Suivi 15 → 11).
 if opts.profile == "sur" then
   BUDGET.kinstrTotalMin = 860
-  BUDGET.frameWorstKinstr, BUDGET.frameP99Kinstr, BUDGET.allocKBps = 200, 36, 30
+  -- (5.0 INTEG) fusion des cinq branches : 855 kinstr/min mesurés (cœur 361, Sacs 19, Équipement du groupe 30 après
+  -- son minuteur étiré au repos : 52 avant), pire image 121, p99 34 — tous sous les plafonds de STABLE, inchangés.
+  -- Seule l'allocation est re-mesurée : 30,5 Ko/s (STABLE seul : 28,0) — le nouveau module Sacs relève les sacs et garde
+  -- un avis par objet quand ils changent en ville / chez le marchand, les vrais gardiens Équipement / Métiers gardent
+  -- leurs réponses. Plafond 30 → 33 (mesure + ~8 %).
+  BUDGET.frameWorstKinstr, BUDGET.frameP99Kinstr, BUDGET.allocKBps = 200, 36, 33
   local caps = { Core = 370, Macros = 35, Quests = 30, Highlight = 20, Detect = 25, Export = 40, PathDraw = 16, Tracker = 15,
     Todo = 10, Window = 8, Speed = 6, Tour = 3, Glow = 3, ItemInfo = 8 }
   for k, v in pairs(caps) do BUDGET.kinstrModuleMin[k] = v end

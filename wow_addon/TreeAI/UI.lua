@@ -3228,6 +3228,75 @@ do
   end
   TreeAI._LightRects = lightRects
 
+  -- (5.0 INTEG) OBSTACLES GÉNÉRIQUES : tout cadre visible posé sur UIParent par le jeu ou par un AUTRE addon, nommé ou
+  -- non (compteurs de dégâts, cadres d'unité d'un addon, barres d'action, flèche d'un guide…). Sert à choisir une place
+  -- (bande d'actions, alerte) : lu SEULEMENT quand on place quelque chose, jamais dans un OnUpdate, et gardé 20 s
+  -- (plusieurs placements de suite = une lecture). Lecture bon marché : les enfants directs d'UIParent (quelques
+  -- centaines), pas tous les cadres du client. Les fenêtres que le joueur ouvre et ferme (panneaux du jeu, sacs,
+  -- boîtes de dialogue, infobulles) n'en font pas partie : on ne fuit pas une fenêtre de passage.
+  ;(function()   -- (dans une fonction : le fichier a déjà ses 200 variables locales)
+  local OB = { at = -100, list = nil, sig = nil }
+  OB.STRATA = { DIALOG = true, HIGH = true, FULLSCREEN = true, FULLSCREEN_DIALOG = true, TOOLTIP = true, BACKGROUND = true }
+  OB.NAME = {}
+  for w in ("ContainerFrame StaticPopup DropDownList GameMenu LootFrame GroupLootFrame MerchantFrame BankFrame MailFrame TradeFrame GossipFrame QuestFrame CharacterFrame SpellBookFrame WorldMapFrame FriendsFrame AuctionFrame AuctionHouseFrame ClassTrainerFrame TradeSkillFrame CraftFrame ItemRefTooltip GameTooltip ShoppingTooltip HelpFrame InterfaceOptions SettingsPanel VideoOptions AddonList TalentFrame PlayerTalentFrame InspectFrame TaxiFrame LFG PVP Baganator Bagnon AdiBags BattlefieldFrame ReadyCheck RolePoll ColorPicker OpenMail ItemText PetStable TabardFrame GuildRegistrar Petition Calendar Collections EncounterJournal Communities MacroFrame KeyBinding ChatConfig TimeManagerFrame Stopwatch"):gmatch("%S+") do OB.NAME[#OB.NAME + 1] = w end
+  function OB.transient(f, name)
+    if OB.STRATA[call(f, "GetFrameStrata") or ""] then return true end
+    if type(name) == "string" then
+      for _, pre in ipairs(OB.NAME) do if name:sub(1, #pre) == pre then return true end end
+      local pw, sf = _G.UIPanelWindows, _G.UISpecialFrames
+      if type(pw) == "table" and pw[name] ~= nil then return true end
+      if type(sf) == "table" then for i = 1, #sf do if sf[i] == name then return true end end end
+    end
+    return false
+  end
+  --- { { l, b, w, h, name }, … } en unités d'UIParent ; maxAge = durée de vie acceptée (20 s par défaut, 0 = relire)
+  function TreeAI:ScreenObstacles(maxAge)
+    local W, H = screenSize()
+    if not W then return {} end
+    local t = (type(_G.GetTime) == "function" and _G.GetTime()) or 0
+    local sig = math.floor(W) .. "x" .. math.floor(H)
+    if OB.list and OB.sig == sig and t - OB.at <= (tonumber(maxAge) or 20) then return OB.list end
+    local out, seen = {}, {}
+    for _, r in ipairs(lightRects(W, H)) do out[#out + 1] = r if r.name and _G[r.name] then seen[_G[r.name]] = true end end
+    local P = _G.UIParent
+    local kids = (type(P) == "table" and type(P.GetChildren) == "function") and { pcall(P.GetChildren, P) } or { false }
+    if kids[1] then
+      local maxArea = W * H * 0.30
+      for i = 2, #kids do
+        local f = kids[i]
+        if type(f) == "table" and not seen[f] and call(f, "IsVisible") then
+          seen[f] = true
+          local r = rectOf(f, W, H)
+          if r and r.w * r.h <= maxArea and not OB.transient(f, r.name) then out[#out + 1] = r end
+        end
+      end
+    end
+    OB.list, OB.at, OB.sig = out, t, sig
+    TreeAI._obstScans = (TreeAI._obstScans or 0) + 1
+    return out
+  end
+  function TreeAI:ObstaclesChanged() OB.list = nil end
+  --- la place l, b, w, h (unités d'UIParent) est-elle libre de tout obstacle ? → vrai, ou faux + le nom du 1er obstacle
+  function TreeAI:SpotIsFree(l, b, w, h, margin)
+    margin = margin or 0
+    for _, r in ipairs(self:ScreenObstacles()) do
+      if l < r.l + r.w + margin and r.l < l + w + margin and b < r.b + r.h + margin and r.b < b + h + margin then
+        return false, r.name or "cadre sans nom"
+      end
+    end
+    return true
+  end
+  end)()
+  --- (5.0 INTEG) un autre addon affiche déjà en permanence une colonne « trajet + composants de métier » (Shortest Path
+  --- Forever : « Suivi Forever ») → { name, route = true, reagents = true } ; sinon nil. TreeAI n'en affiche pas une 2e.
+  function TreeAI:OtherColumn()
+    local spf = rawget(_G, "ShortestPathForever")
+    local Q = self.modules and self.modules.Quests
+    local o = Q and type(Q.others) == "function" and Q.others() or nil
+    if type(spf) ~= "table" and not (type(o) == "table" and o.route) then return nil end
+    return { name = "Suivi Forever", route = true, reagents = true }
+  end
+
   --- Obstacles (nouveaux ou changés) sur le cadre `id` placé en l, b, w, h.
   local function blockers(id, rects, l, b, w, h)
     local hits, area = {}, 0
