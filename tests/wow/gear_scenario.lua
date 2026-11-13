@@ -102,19 +102,17 @@ return function(M, ctx)
   local txt = ""
   for _, l in ipairs(lines) do txt = txt .. (l.text or "") .. "\n" end
   ctx.check(txt:find("Priorité des stats : Agilité"), "French stat priority line")
-  ctx.check(txt:find("Torse : Gilet porté") and txt:find("Gilet%-test agile"), "slot line with next upgrade")
-  ctx.check(txt:find("Gilet%-test agile %(emplacement vide%)") or txt:find("Gilet%-test agile %(nettement mieux%)"),
-    "verdict in words, never « +X % »")
-  ctx.check(not txt:find("%+%d+ %%"), "no estimated percentage shown: " .. txt)
-  ctx.check(txt:find("Liste de courses"), "shopping list lines")
+  -- (5.0 GEAR) one verdict per slot, verb first, ONE number (DPS for a hunter), same rows as the page
+  ctx.check(txt:find("Achète Gilet%-test agile · ≈ %+%d+,%d DPS"), "verdict line: verb + item + DPS gain: " .. txt)
+  ctx.check(txt:find("Spé : "), "spec and its source always shown: " .. txt)
+  ctx.check(not txt:find("%+%d+ %%"), "hunter = DPS model: no percentage: " .. txt)
+  ctx.check(txt:find("Achats conseillés : 2 objet"), "purchases summed against the free budget: " .. txt)
   ctx.check(txt:find("tu n'en as pas"), "ammo warning line")
   ctx.check(txt:find("DPS"), "ranged weapon DPS / speed shown")
   -- clicks (the user prefers the interface): expand a slot, bump the horizon, recalc
   local chestLine
-  for _, l in ipairs(lines) do if l.text:find("Torse :") then chestLine = l end end
-  ctx.check(chestLine and chestLine.onClick, "slot line clickable")
-  if chestLine then chestLine.onClick() end
-  ctx.check(Gr.expanded[5], "click expands the slot")
+  for _, l in ipairs(lines) do if l.text:find("Gilet%-test agile") then chestLine = l end end
+  ctx.check(chestLine and chestLine.onClick and chestLine.clickHint and chestLine.tooltip, "verdict line: one click to go + detail in the tooltip")
   local hz
   for _, l in ipairs(T:GetTabLines("gear") or {}) do if l.text:find("^Horizon") then hz = l end end
   ctx.check(hz and hz.onClick, "horizon line clickable")
@@ -129,16 +127,15 @@ return function(M, ctx)
   ctx.check(s.gear and #s.gear.slots == 17 and s.gear.hunter and s.gear.priority, "summary.gear written")
 
   -- 3. coroutine path: paused in combat, finishes out of combat
-  Gr.MarkDirty()
   T.Data.Gear.items[990011] = { 9, 25, 2, 4, 2, "3:7", 0, 0, 30, 2, 900, "Brassards-test", 0 }
+  Gr._resetIndex()   -- (a row added to the client table: never happens in game)
   M.EnterCombat()
-  Gr:AutoRefresh()
-  M.Advance(2)
-  ctx.check(not (Gr.plan.slots[9] and Gr.plan.slots[9][1]), "no computation in combat")
+  Gr.MarkDirty()     -- (5.0) one timer 5 s after the request, no AutoRefresh method (Gear is out of the core cycle)
+  for _ = 1, 8 do M.Advance(1) end
+  ctx.check(not (Gr.plan.slots[9] and Gr.plan.slots[9][1]) and not Gr.Busy(), "no computation in combat")
   M.LeaveCombat()
-  M.Advance(1)
-  Gr:AutoRefresh()
-  for _ = 1, 50 do M.Advance(0.2) end
+  for _ = 1, 400 do if not Gr.Pending() then break end M.Advance(0.2) end   -- one slice per frame (T:Spread)
+  ctx.check(Gr.AutoRefresh == nil, "no AutoRefresh method: Gear never keeps the core's refresh cycle awake")
   ctx.check(Gr.plan.slots[9] and Gr.plan.slots[9][1] and Gr.plan.slots[9][1].id == 990011, "background plan finished")
 
   T.Data.Gear.items, T.Data.Gear.crafted = realItems, realCrafted
@@ -185,11 +182,11 @@ return function(M, ctx)
   if fn then
     fn(GameTooltip)
     local joined = table.concat(GameTooltip.__lines, " | ")
-    ctx.check(joined:find("TreeAI : nettement mieux que ce que tu portes"), "upgrade in words: " .. joined)
+    ctx.check(joined:find("TreeAI : nettement mieux pour toi — ≈ +0,7 DPS (remplace Gilet usé)", 1, true), "upgrade: verdict + number: " .. joined)
     ctx.check(joined:find("Se vend 3 pa au marchand"), "vendor price line: " .. joined)
     GameTooltip.__item, GameTooltip.__lines = 90104, {}
     fn(GameTooltip)
-    ctx.check(table.concat(GameTooltip.__lines, " "):find("pas pour toi %(armure que tu ne peux pas porter%)"), "plate refused")
+    ctx.check(table.concat(GameTooltip.__lines, " "):find("pas pour toi — armure que tu ne peux pas porter", 1, true), "plate refused")
     GameTooltip.__item = nil
   end
   if II then T:SetModuleEnabled("ItemInfo", true) end

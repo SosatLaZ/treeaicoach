@@ -297,21 +297,6 @@ function M.RangedModel()
   model = { dps = (lo + hi) / 2 / speed, gen = bg, t = now() }
   return model
 end
-local function hunterGain(delta, slot)
-  local m = M.RangedModel()
-  if not (m and m.dps > 0) then return nil end
-  local rap = 0
-  for k, v in pairs(delta) do
-    if k == "ITEM_MOD_AGILITY_SHORT" then rap = rap + 2 * v
-    elseif k == "ITEM_MOD_RANGED_ATTACK_POWER_SHORT" or k == "ITEM_MOD_ATTACK_POWER_SHORT" then rap = rap + v
-    elseif k ~= DPS and not NEUTRAL[k] and not tostring(k):find("^RESISTANCE%d_NAME$") then
-      return nil   -- toucher, critique… : pas dans le modèle, on ne devine pas
-    end
-  end
-  local d = (slot == 18 and (delta[DPS] or 0) or 0) + rap / 14
-  return 100 * d / m.dps, m.dps, m.dps + d
-end
-
 ---------------------------------------------------------------------------------------------------
 -- Sections : chacune pose au plus UNE ligne (label, texte, ton) + des détails (Maj), et note ce qui rend l'objet
 -- utile (st.keep) pour le verdict de la valeur
@@ -351,64 +336,38 @@ end
 function SEC.upgrade(it, c, o, st)
   if it.classID == 6 then return ammo(it, o, st) end
   local Gm, E = gear()
-  if not (Gm and E.EQUIP_SLOTS and E.CanUse and E.UpgradePct) then return end
+  if not (Gm and E.EQUIP_SLOTS and E.CanUse and Gm.Score and Gm.ScoreLine) then return end
   if not E.EQUIP_SLOTS[it.equipLoc] or c.equipped or not it.link then return end
-  local links, slot = replaced(E, it)
+  local links = replaced(E, it)
   for _, l in ipairs(links or {}) do if l == it.link then return end end   -- c'est celui que tu portes
   if reservedFor(Gm, it.id, myClass()) then
     o.label, o.tone, o.text = "Pas pour toi", "bad", "réservé à d'autres classes"
     return
   end
-  local ok, why = E.CanUse(it.link)
-  if not ok then
-    local lv = tonumber(tostring(why or ""):match("portable au niveau (%d+)"))
-    if lv then
-      o.label, o.tone, o.text = "Pas encore", "warn", fmt("%s portables au niv %d", ARMOR_FR[it.subID] or "armure", lv)
-      st.later = lv
-    else
-      o.label, o.tone, o.text = "Pas pour toi", "bad", why or "non utilisable"
+  -- (5.0 GEAR) UN verdict, le même partout : T.Gear.Score (valeur pour TA spé, « ≈ +2,1 DPS » ou « +12 % »,
+  -- détail par stat) ; stats illisibles → « inconnu », jamais un score deviné
+  local sc = Gm.Score(it.link)
+  if type(sc) ~= "table" or sc.equip == false then return end
+  local label, text, kind = Gm.ScoreLine(sc)
+  if not label then return end
+  o.label, o.text = label, text or ""
+  o.tone = (kind == "good" and "good") or (kind == "bad" and "bad") or (kind == "warn" and "warn") or "info"
+  if sc.known == false then st.partial, st.unknown = true, true return end   -- relu à la prochaine infobulle (pas mis en cache)
+  if sc.usable == false then
+    if sc.later then
+      st.later = sc.later
+      o.text = fmt("%s portables au niv %d", ARMOR_FR[it.subID] or "armure", sc.later)
     end
     return
   end
-  local pct = tonumber((try(E.UpgradePct, it.link)))
-  if not pct then st.partial = true return end   -- stats pas encore reçues
-  local word, kind = Gm.Verdict(pct)
-  if not word then return end
-  local new, old = statsOf(E, it.link) or {}, {}
-  for _, l in ipairs(links) do addStats(old, statsOf(E, l), 1) end
-  local delta = {}
-  addStats(delta, new, 1)
-  addStats(delta, old, -1)
-  for k, v in pairs(delta) do if abs(v) < 0.05 then delta[k] = nil end end
-  local w = try(E.Weights) or {}
-  local parts = {}
-  if pct >= 999 then parts[1] = "emplacement vide" end
-  local nd, od = tonumber(new[DPS]), tonumber(old[DPS])
-  if od and nd then parts[#parts + 1] = fmt("DPS %s → %s", dec(od), dec(nd))
-  elseif nd or od then parts[#parts + 1] = "DPS " .. dec(nd or 0) end
-  local sp, nAll = statParts(delta, w, max(1, 3 - (nd and 1 or 0)))
-  for _, s in ipairs(sp) do parts[#parts + 1] = s end
-  if #parts == 0 then parts[1] = "mêmes stats" end
-  local extra = ""
-  if myClass() == "HUNTER" then
-    local g, d0, d1 = hunterGain(delta, slot)
-    if g and abs(g) >= 0.5 then
-      extra = fmt(" (≈ %s%d %% de dégâts)", g >= 0 and "+" or "-", floor(abs(g) + 0.5))
-      o.details[#o.details + 1] = fmt("Dégâts à distance ≈ %s → %s DPS (estimation : 1 Agi = 2 PA à distance, 14 PA = 1 DPS)", dec(d0), dec(d1))
-    end
-  end
-  if it.minLevel > level() then extra = extra .. fmt(" · niv %d requis", it.minLevel) end
-  -- (4.3 V43) « … pour toi » : la ligne du dessous dit « Pour ton groupe »
-  o.label = ((word == "emplacement vide" and "Mieux") or (word == "équivalent" and "Pareil") or (word:gsub("^%l", string.upper))) .. " pour toi"
-  o.tone = (kind == "good" and "good") or (kind == "bad" and "bad") or "info"
-  o.text = tconcat(parts, ", ") .. extra
-  if kind == "good" then st.keep, st.upgrade = st.keep or "amélioration", pct end
-  local names = {}
-  for _, l in ipairs(links) do names[#names + 1] = linkName(l) or "?" end
-  o.details[#o.details + 1] = "Comparé à : " .. (#names > 0 and tconcat(names, " + ") or "rien (emplacement vide)")
-  if nAll > #sp then
-    local all = statParts(delta, w)
-    o.details[#o.details + 1] = "Toutes les stats : " .. tconcat(all, ", ")
+  if sc.kind == "good" then st.keep, st.upgrade = st.keep or "amélioration", sc.pct end
+  o.details[#o.details + 1] = "Comparé à : " .. ((sc.replaces and #sc.replaces > 0) and tconcat(sc.replaces, " + ") or "rien (emplacement vide)")
+  for _, l in ipairs(sc.lines or {}) do o.details[#o.details + 1] = l end
+  local V = Gm.Value
+  local model = V and V.ModelText and try(V.ModelText)
+  if model then o.details[#o.details + 1] = model end
+  if sc.src and sc.src ~= "jeu" then
+    o.details[#o.details + 1] = "Stats lues : " .. (sc.src == "données" and "tables du jeu" or "infobulle") .. "."
   end
 end
 
@@ -554,6 +513,7 @@ local function madeFor(E, it, members, Gm)
 end
 function SEC.group(it, c, o, st)
   if c.equipped or c.merchant or c.reward or it.equipLoc == "" or it.classID == 6 then return end
+  if st.unknown then return end   -- (5.0 GEAR) stats illisibles : on ne dit pas « Besoin pour toi » sans savoir
   local Gm, E = gear()
   local Dg = T.Dungeon
   if not (E and E.EQUIP_SLOTS and E.EQUIP_SLOTS[it.equipLoc] and type(Dg) == "table" and Dg.Members and Dg.LootItem) then return end

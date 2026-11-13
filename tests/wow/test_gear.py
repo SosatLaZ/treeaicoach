@@ -59,7 +59,7 @@ def test_offline_upgrades_hunter_rules():
 
 def test_gear_context_and_ai_hook():
     summary = {"gear": {
-        "priority": "Agilité > DPS de l'arme à distance",
+        "priority": "Agilité > DPS de l'arme à distance", "specName": "Précision", "specSource": "api",
         "slots": [{"slot": "Torse", "item": "Gilet", "score": 5,
                    "next": {"name": "Gilet-test", "gain": 156, "where": "marchand Marchand-test", "cost": 5000}},
                   {"slot": "Mains", "item": None, "score": 0,
@@ -68,6 +68,7 @@ def test_gear_context_and_ai_hook():
         "hunter": {"ranged": "Arc-test", "dps": 8, "speed": 2.3, "ammo": "flèches", "ammoOK": False}}}
     ctx = gear.gear_context({"chars": {"x": {"summary": summary}}})
     assert ctx["priorite_stats"].startswith("Agilité")
+    assert ctx["spe"] == "Précision (lue dans les talents)"   # (5.0 GEAR) the AI knows the spec and its source
     assert ctx["ameliorations"][0].startswith("Mains: Gants-test (nouvel emplacement)")
     assert "50 pa" in ctx["ameliorations"][1]
     assert "MANQUANTES" in ctx["chasseur"]

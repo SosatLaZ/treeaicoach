@@ -37,6 +37,10 @@ WEAPONS = {"HUNTER": {0, 1, 2, 3, 6, 7, 8, 10, 13, 15, 16, 18}, "WARRIOR": {0, 1
            "SHAMAN": {0, 1, 4, 5, 10, 13, 15}}
 
 
+# where the addon got the spec from (Modules/GearSpec.lua: T.Gear.Spec().source)
+SPEC_SOURCE_FR = {"api": "lue dans les talents", "spells": "déduite des sorts connus", "manual": "choisie par le joueur"}
+
+
 def data() -> dict:
     global _DATA
     with _LOCK:
@@ -153,6 +157,10 @@ def gear_context(db_or_char: Any, limit: int = 6) -> dict:
         out: dict[str, Any] = {}
         if g.get("priority"):
             out["priorite_stats"] = str(g["priority"])[:220]
+        # (5.0 GEAR) the spec the addon scores gear for, and where it comes from (talents read / spells / chosen)
+        if g.get("specName"):
+            src = SPEC_SOURCE_FR.get(str(g.get("specSource")), "")
+            out["spe"] = str(g["specName"])[:60] + (f" ({src})" if src else "")
         ups = []
         for row in g.get("slots") or []:
             n = row.get("next") if isinstance(row, dict) else None

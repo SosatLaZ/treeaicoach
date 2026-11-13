@@ -87,8 +87,9 @@ return function(M, ctx)
 
   -- 1. Amélioration --------------------------------------------------------------------------------
   local lines, j = show(91001)
-  check(has(j, "Nettement mieux pour toi : +6 Agi, +3 End"), "upgrade in words + key numbers: " .. j)
-  check(j:find("≈ %+%d+ %% de dégâts"), "hunter: ≈ % of ranged damage: " .. j)
+  -- (5.0 GEAR) ONE number from Gear's value model (T.Gear.Score), the same on the page and in the reward pick
+  check(has(j, "Nettement mieux pour toi : ≈ +0,9 DPS (remplace Gilet usé)"), "upgrade: verdict + ONE number + what it replaces: " .. j)
+  check(j:find("≈ %+%d+,%d DPS"), "hunter: ≈ DPS (14 PA = 1 DPS, 1 Agi = 2 PA à distance): " .. j)
   check(not has(j, "que ce que tu portes"), "Gear's old line silent (one owner): " .. j)
   check(#lines <= 6, "≤ 6 lines")
   local _, jWorn = show(91002)
@@ -98,10 +99,13 @@ return function(M, ctx)
   _, j = show(91006)
   check(has(j, "Pas pour toi : armure que tu ne peux pas porter"), "plate refused: " .. j)
   _, j = show(91004)
-  check(has(j, "Nettement mieux pour toi : DPS 9,8 → 14,5, +2 Agi"), "weapon DPS delta: " .. j)
-  check(j:find("≈ %+%d+ %% de dégâts"), "bow: ≈ % damage: " .. j)
+  check(j:find("Nettement mieux pour toi : ≈ %+%d+,%d DPS %(remplace Arc court%)"), "weapon: DPS gain vs the worn bow: " .. j)
+  M.shift = true
+  _, j = show(91004)
+  check(has(j, "Arme 9,8 → 14,5 DPS") and has(j, "+2 Agilité"), "bow: Maj shows the weapon DPS and each stat: " .. j)
+  M.shift = false
   _, j = show(91009)
-  check(j:find("[Mm]ieux pour toi :") and has(j, "+5 Agi") and has(j, "-6 End"), "ring compared with the weaker ring (sta): " .. j)
+  check(j:find("[Mm]ieux pour toi :") and has(j, "remplace Anneau de l'ours"), "ring compared with the weaker ring (sta): " .. j)
   M.shift = true
   _, j = show(91009)
   check(has(j, "Comparé à : Anneau de l'ours"), "Maj: which worn item: " .. j)
@@ -109,11 +113,11 @@ return function(M, ctx)
   _, j = show(91010)
   check(has(j, "niv 30 requis"), "level requirement: " .. j)
   _, j = show(91011)
-  check(has(j, "Pareil pour toi : mêmes stats"), "same stats → Pareil: " .. j)
+  check(has(j, "Pareil pour toi : comme Gilet usé"), "same value → Pareil: " .. j)
   _, j = show(91012)
-  check(has(j, "Moins bien pour toi : -2 Agi") or has(j, "Moins bien pour toi : -1 End"), "worse → Moins bien: " .. j)
+  check(has(j, "Moins bien pour toi : ≈ -0,3 DPS (Gilet usé reste meilleur)"), "worse → Moins bien, with the loss: " .. j)
   _, j = show(91013)
-  check(has(j, "Mieux pour toi : emplacement vide, +1 Toucher") and not has(j, "≈"), "empty slot; hit not in the damage model → no %: " .. j)
+  check(has(j, "ieux pour toi : emplacement vide") and not has(j, "survie"), "empty slot said as such: " .. j)
   -- reserved to other classes (client class mask, Data/Gear.lua): never « Mieux »
   local GD = T.Data and T.Data.Gear and T.Data.Gear.items
   if GD then
@@ -328,7 +332,7 @@ return function(M, ctx)
   check(raw[1] and raw[1]:find("^|cff%x%x%x%x%x%xNettement mieux pour toi|r : "), "label coloured, text plain: " .. tostring(raw[1]))
   M.shift = true
   local lS, jS = show(91001)
-  check(has(jS, "Comparé à : Gilet usé") and has(jS, "estimation : 1 Agi = 2 PA à distance") and not has(jS, "(Maj : détails)"),
+  check(has(jS, "Comparé à : Gilet usé") and has(jS, "+6 Agilité : +0,9 DPS") and has(jS, "1 Agi = 2 PA à distance") and not has(jS, "(Maj : détails)"),
     "Maj: details, no hint: " .. jS)
   check(#lS <= 14, "Maj: bounded")
   M.shift = false
@@ -379,7 +383,7 @@ return function(M, ctx)
   pend, pn = II.Pending()
   check(not pend[91030] and pn == 0, "ITEM_DATA_LOAD_RESULT handled (no more waiting)")
   _, j = show(91030)
-  check(has(j, "Mieux") and has(j, "+4 Agi"), "after loading: the real lines: " .. j)
+  check(has(j, "ieux pour toi") and has(j, "DPS"), "after loading: the real lines: " .. j)
 
   -- 12. combat : rien de secret comparé, lignes du cache ou calculées sans lire la fiche --------------------
   M.EnterCombat()
@@ -446,7 +450,7 @@ return function(M, ctx)
   T:SetModuleEnabled("ItemInfo", false)
   check(not II.Owns(), "off: not the owner")
   _, j = show(91001)
-  check(not has(j, "Nettement mieux pour toi :") and (has(j, "que ce que tu portes") or not (T.modules.Gear and T.modules.Gear._active)),
+  check(not has(j, "Nettement mieux pour toi :") and (has(j, "TreeAI : nettement mieux pour toi") or not (T.modules.Gear and T.modules.Gear._active)),
     "ItemInfo off: nothing from it, Gear's own line back: " .. j)
   T:SetModuleEnabled("ItemInfo", true)
   check(II._active and II.Owns(), "back on")

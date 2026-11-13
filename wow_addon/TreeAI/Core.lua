@@ -1737,7 +1737,7 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Pro = { lite = false, desc = "Conseils avancés (repos, sacs, trajets)" },
   Session = { lite = false, desc = "Ma session : bilan, pourquoi je meurs, pause, monture" },
   Errands = { lite = false, desc = "Guichets : courrier, maître de classe (prix réel), vols, appel prêt" },
-  Gear = { lite = false, desc = "Équipement : récompense de quête, plan par emplacement (onglet « Équipement »)" },
+  Gear = { lite = false, desc = "Équipement : ta spé, ce qui est mieux pour toi, stuff rentable (page « Équipement »)" },   -- (5.0 GEAR) sûr : Gear.lua s'y inscrit
   ItemInfo = { lite = true, desc = "Infos objets (infobulles) : amélioration, groupe, valeur, quête, métiers, familier, sources" },
   Talents = { lite = false, desc = "Talents : où mettre tes points" },
   Prof = { lite = false, desc = "Métiers : montée la moins chère, récolte (nœuds, dépeçage)" },

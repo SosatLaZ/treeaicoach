@@ -552,6 +552,17 @@ function GG.Trades()
   return out
 end
 
+--- (5.0 GEAR) garde-fou de vente : un objet de MES sacs qu'un ami du groupe porterait mieux n'est jamais « à vendre »
+--- → « utile à Bravo (ton groupe) » ou nil
+function GG.TradeFor(id)
+  if not (GG._active and id and inGroup() and #order > 0) then return nil end
+  for _, tr in ipairs(GG.Trades()) do
+    local tid = tr.mine and tr.link and tonumber(tostring(tr.link):match("item:(%d+)"))
+    if tid == id and type(tr.to) == "table" and not tr.to.me then return "utile à " .. tostring(tr.to.name) .. " (ton groupe)" end
+  end
+  return nil
+end
+
 -- ===================================================================================== résumé d'un membre
 local function ago(t0)
   if not t0 then return nil end
@@ -958,6 +969,14 @@ function GG:OnLootRoll(rollID)
   end
   local name = str(select(2, try(g("GetLootRollItemInfo"), rollID)))
   local text = GG.RollText(link, name)
+  if not text and link then
+    -- (5.0 GEAR) personne d'autre de connu : au moins TON gain, chiffré (même verdict que l'infobulle) — jamais de jet
+    local Gm = T.Gear
+    local sc = type(Gm) == "table" and Gm._active and type(Gm.Score) == "function" and try(Gm.Score, link) or nil
+    if type(sc) == "table" and sc.known and sc.usable and sc.kind == "good" and not sc.req then
+      text = fmt("Jet %s : mieux pour toi (%s) → Besoin", q(name or (sc.item and sc.item.name) or "objet"), tostring(sc.text))
+    end
+  end
   if not text then return end
   S.rolls = S.rolls or {}
   S.rolls[#S.rolls + 1] = text

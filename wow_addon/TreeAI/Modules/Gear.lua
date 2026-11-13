@@ -1,26 +1,34 @@
--- TreeAI — module Équipement (agent GEAR, CLEAN 4.0) : tout ce qui juge un objet, informatif seulement.
---  • Moteur d'évaluation (repris du module Boost) : poids de stats par classe / arbre le plus rempli, objets portables,
---    comparaison avec ce que tu portes. Les poids sont ESTIMÉS : on dit « mieux / nettement mieux », jamais « +21 % ».
---  • Infobulles d'objets : « TreeAI : nettement mieux que ce que tu portes » / « pas pour toi : … », prix de vente.
---  • Récompense de quête : le bouton du meilleur choix est entouré (jamais choisi à ta place).
---  • Plan par emplacement : meilleures améliorations « bientôt » (niveau requis ≤ niveau + horizon) parmi ~5 000 objets
---    du client (Data/Gear.lua) + tes sacs + les récompenses des quêtes de ton journal, et OÙ les obtenir (sacs,
---    récompense, donjon, monstre, marchand, artisanat, HV) ; onglet « Équipement ».
---  • Chasseur : DPS / vitesse de l'arme à distance, munitions assorties (flèches / balles), mailles au niv 40.
--- Rien n'est équipé, acheté ou cliqué à la place du joueur. QuestieDB en LECTURE seule. Calculs hors combat,
--- par tranches (coroutine) ; Lua 5.1, aucune globale, toutes les API testées.
+-- TreeAI — module Équipement (agent GEAR ; 5.0 : « un vrai assistant pour l'armure »). Informatif : rien n'est
+-- acheté, choisi ni jeté à ta place ; « équiper » = ton clic, hors combat.
+--  • Gear.lua (ce fichier) : tables (armures / armes par classe, emplacements), plan par emplacement parmi ~5 000
+--    objets du client (Data/Gear.lua) + tes sacs + les récompenses des quêtes du journal, et OÙ les obtenir (sacs,
+--    récompense, donjon, monstre, marchand, artisanat, HV), récompense de quête entourée, infobulle de repli.
+--  • GearSpec.lua : TA spé (talents lus par le jeu → sorts de talent connus → ton choix) : T.Gear.Spec().
+--  • GearValue.lua : la valeur d'un objet en UN nombre (« ≈ +3,2 DPS » / « +12 % ») : T.Gear.Score(lien).
+--  • GearRent.lua : « Stuff rentable » (Équipe / Achète / Fais la quête / Attends le niveau N / Garde), budget et
+--    réserve monture, flèches dans les sacs, garde-fou de vente, page « Équipement » : T.Gear.BestNow().
+-- Coût : le plan complet ne tourne que si l'équipement, le niveau, la spé ou le journal changent (jamais sur un
+-- simple changement de sac : les sacs sont lus en direct, verdict en cache par lien) ; par tranches (coroutine), hors
+-- combat ; zéro travail au repos. QuestieDB en LECTURE seule. Lua 5.1, aucune globale, toutes les API testées.
 local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not T or not T.RegisterModule then return end
 local API = T.API or {}
 local G = _G
 
+-- (5.0) demandé par le joueur (« fais un vrai assistant pour l'armure ») : allumé en mode sûr, une fois, sauf s'il
+-- l'a coupé lui-même (même mécanique que Prof / CityRun / Group en 4.1)
+if type(T.SAFE_MODULES) == "table" then T.SAFE_MODULES.Gear = true end
+if type(T.SAFE_ADDED) == "table" then T.SAFE_ADDED.Gear = 5 end
+if (tonumber(T.SAFE_V) or 0) < 5 then T.SAFE_V = 5 end
+
 local M = T:RegisterModule("Gear", {
   title = "Équipement",
   defaults = { enabled = true, tab = true, suggest = true, horizon = 3, ah = true, quests = true,
-               dungeons = true, crafted = true, vendors = true, maxPerSlot = 3, tooltip = true, rewards = true },
+               dungeons = true, crafted = true, vendors = true, maxPerSlot = 3, tooltip = true, rewards = true, arrows = true },
   charDefaults = { shopping = {} },
   options = {
+    { key = "arrows", type = "toggle", label = "Flèche verte sur les améliorations dans tes sacs", section = "Équipement" },
     { key = "tooltip", type = "toggle", label = "Infobulles d'objets quand « Infos objets » est coupé : mieux ou pas, prix de vente", section = "Équipement" },
     { key = "rewards", type = "toggle", label = "Entourer la meilleure récompense de quête (jamais choisie à ta place)", section = "Équipement" },
     { key = "tab", type = "toggle", label = "Onglet « Équipement » (emplacement par emplacement)", section = "Équipement" },
@@ -90,6 +98,9 @@ local S = {
   SPD = "ITEM_MOD_SPELL_DAMAGE_DONE_SHORT", HEAL = "ITEM_MOD_SPELL_HEALING_DONE_SHORT",
   HIT = "ITEM_MOD_HIT_RATING_SHORT", CRIT = "ITEM_MOD_CRIT_RATING_SHORT", DEF = "ITEM_MOD_DEFENSE_SKILL_RATING_SHORT",
   ARMOR = "RESISTANCE0_NAME", DPS = "ITEM_MOD_DAMAGE_PER_SECOND_SHORT",
+  -- (5.0 GEAR) stats que les objets de Forever portent aussi (tables du client : 13 / 14 / 15 / 43 / 50)
+  MP5 = "ITEM_MOD_POWER_REGEN0_SHORT", DODGE = "ITEM_MOD_DODGE_RATING_SHORT", PARRY = "ITEM_MOD_PARRY_RATING_SHORT",
+  BLOCK = "ITEM_MOD_BLOCK_RATING_SHORT", XARMOR = "ITEM_MOD_EXTRA_ARMOR_SHORT",
 }
 local function W(t) -- t = { STR=1, ..., MDPS=, RDPS= }
   local w = { MDPS = t.MDPS or 0, RDPS = t.RDPS or 0 }
@@ -143,30 +154,29 @@ local SLOTS = {
 }
 
 local function specTab()
-  if not G.GetTalentTabInfo then return nil end
-  local best, bestPts = nil, 0
-  for tab = 1, (try(G.GetNumTalentTabs) or 3) do
-    local r = pack(pcall(G.GetTalentTabInfo, tab))
-    if r[1] then
-      for i = 2, r.n do -- Era : name, icon, points… ; Mainline : id, name, desc, icon, points…
-        local v = r[i]
-        if type(v) == "number" and v >= 0 and v <= 61 and i >= 3 then
-          if v > bestPts then best, bestPts = tab, v end
-          break
-        end
-      end
-    end
-  end
-  return best
+  -- (5.0 GEAR) LA spé du joueur : GearSpec.lua (talents lus par le jeu, sorts de talent connus, sinon son choix)
+  if M.SpecTree then return M.SpecTree() end
+  return nil
 end
-local function weights()
+local function staticWeights()
   local cw = WEAPONS[playerClass()] and WEIGHTS[playerClass()] or WEIGHTS.WARRIOR
   local tab = specTab()
   return (tab and cw[tab]) or cw.default
 end
+local function weights()
+  -- (5.0 GEAR) poids de TA spé à TON niveau : GearValue.lua (DPS réel pour les spés physiques, points sinon)
+  local V = M.Value
+  local w = V and V.Weights and V.Weights()
+  return w or staticWeights()
+end
 local liveStats = {}
 local function itemStats(link)
   if not link then return nil end
+  local V = M.Value
+  if V and V.Item then   -- (5.0 GEAR) une seule lecture d'objet : jeu → tables du client → infobulle, en cache par lien
+    local it = V.Item(link)
+    return it and it.st or nil
+  end
   local c = liveStats[link]
   if c then return c end
   local st
@@ -176,18 +186,36 @@ local function itemStats(link)
   liveStats[link] = st
   return st
 end
---- Score d'une table de stats (clés ITEM_MOD_*, comme GetItemStats) pour un emplacement
-local function scoreStats(st, slot, w)
+--- Score d'une table de stats (clés ITEM_MOD_*, comme GetItemStats) pour un emplacement ; speed = vitesse de l'arme
+--- (chasseur : une arme à distance lente vaut plus à DPS égal — poids w.a + w.b × vitesse)
+local function scoreStats(st, slot, w, speed)
   if type(st) ~= "table" then return nil end
   w = w or weights()
-  local sc = 0
+  local sc, hard = 0, 0
+  local comfort = w.comfort
   for k, v in pairs(st) do
-    if k == S.DPS then sc = sc + (tonumber(v) or 0) * ((slot == 18) and w.RDPS or w.MDPS)
-    elseif w[k] then sc = sc + (tonumber(v) or 0) * w[k] end
+    if k == S.DPS then
+      local wt
+      if slot == 18 then
+        wt = w.RDPS or 0
+        if w.b and wt > 0 then wt = wt * ((w.a or 1) + w.b * (tonumber(speed) or 2.8)) end
+      elseif slot == 17 then wt = w.OHDPS or w.MDPS or 0
+      else wt = w.MDPS or 0 end
+      sc, hard = sc + (tonumber(v) or 0) * wt, hard + (tonumber(v) or 0) * wt
+    elseif type(w[k]) == "number" then
+      local x = (tonumber(v) or 0) * w[k]
+      sc = sc + x
+      if not (comfort and comfort[k]) then hard = hard + x end
+    end
   end
-  return sc
+  return sc, hard   -- valeur totale, part « dégâts » (sans Endurance / mana / armure pour les spés physiques)
 end
-local function scoreLink(link, slot, w) return scoreStats(itemStats(link), slot, w) end
+local function scoreLink(link, slot, w)
+  local V = M.Value
+  local it = V and V.Item and V.Item(link)
+  if it then return scoreStats(it.st, slot, w, it.speed) end
+  return scoreStats(itemStats(link), slot, w)
+end
 local function wornLink(slot) return try(g("GetInventoryItemLink"), "player", slot) end
 --- Peut-on porter cet objet ? -> ok, raison (texte court)
 local function canUse(link)
@@ -200,12 +228,21 @@ local function canUse(link)
     if lvl < need then return false, "portable au niveau " .. need end
   elseif classID == 2 and subID then
     if not (WEAPONS[cls] or {})[subID] then return false, "arme que tu ne sais pas manier" end
+    -- (5.0) chasseur : Tir automatique et tous les tirs demandent un arc, un fusil ou une arbalète
+    if cls == "HUNTER" and subID == 16 then return false, "arme de jet : tes tirs demandent un arc, un fusil ou une arbalète" end
   end
   if minLevel and minLevel > lvl then return true, "niveau " .. minLevel .. " requis" end
   return true
 end
 --- Écart de score avec l'équipement porté, en % (nil = stats inconnues ; 999 = emplacement vide)
 local function upgradePct(link)
+  if M.Score and type(link) == "string" then   -- (5.0 GEAR) même nombre que l'infobulle et la page
+    local sc = M.Score(link)
+    if type(sc) == "table" then
+      if sc.pct then return sc.pct end
+      if sc.known == false then return nil end   -- stats illisibles : inconnu, jamais un score
+    end
+  end
   local _, _, _, _, _, _, _, _, equipLoc = itemInfo(link)
   local slots = equipLoc and SLOTS[equipLoc]
   if not slots then return nil end
@@ -233,6 +270,7 @@ local function upgradePct(link)
 end
 ENG.STAT_KEYS, ENG.WEIGHTS, ENG.ARMOR_LEVEL, ENG.WEAPON_TYPES, ENG.DUAL_LEVEL, ENG.EQUIP_SLOTS = S, WEIGHTS, ARMOR, WEAPONS, DUAL, SLOTS
 ENG.Weights, ENG.ScoreStats, ENG.ScoreLink, ENG.ItemStats, ENG.SpecTab = weights, scoreStats, scoreLink, itemStats, specTab
+ENG.StaticWeights = staticWeights
 ENG.CanUse, ENG.UpgradePct = canUse, upgradePct
 M.Engine = ENG
 -- contrat partagé (Quick, Dungeon, Abandon… et l'ancien module Boost) : mêmes poids, une seule copie
@@ -263,7 +301,8 @@ local INV_SLOTS_DEFAULT = { INVTYPE_HEAD = { 1 }, INVTYPE_NECK = { 2 }, INVTYPE_
 local CLASS_BIT = { WARRIOR = 1, PALADIN = 2, HUNTER = 3, ROGUE = 4, PRIEST = 5, SHAMAN = 7, MAGE = 8, WARLOCK = 9, DRUID = 11 }
 -- stat (id client) -> clé ITEM_MOD du moteur (S.*)
 local STAT_ID = { [3] = "AGI", [4] = "STR", [5] = "INT", [6] = "SPI", [7] = "STA", [12] = "DEF", [31] = "HIT",
-  [32] = "CRIT", [38] = "AP", [39] = "RAP", [41] = "HEAL", [42] = "SPD", [45] = "SP" }
+  [32] = "CRIT", [38] = "AP", [39] = "RAP", [41] = "HEAL", [42] = "SPD", [45] = "SP",
+  [13] = "DODGE", [14] = "PARRY", [15] = "BLOCK", [43] = "MP5", [50] = "XARMOR" }
 local STAT_FR = { AGI = "Agilité", STR = "Force", INT = "Intelligence", SPI = "Esprit", STA = "Endurance",
   DEF = "Défense", HIT = "Toucher", CRIT = "Critique", AP = "Puissance d'attaque", RAP = "PA à distance",
   HEAL = "Soins", SPD = "Dégâts des sorts", SP = "Puissance des sorts", ARMOR = "Armure",
@@ -336,17 +375,22 @@ M.Rec = rec
 local statCache = {}
 --- Stats (clés ITEM_MOD du moteur) d'un objet du client, calculées comme l'infobulle.
 function M.StatsOf(id)
-  if statCache[id] then return statCache[id] end
-  local r, B = rec(id), boost()
-  if not r or not B then return nil end
-  local S = B.STAT_KEYS
-  local st = {}
-  for sid, v in tostring(r.statStr or ""):gmatch("(%d+):(%-?%d+)") do
-    local k = STAT_ID[tonumber(sid)]
-    if k and S[k] then st[S[k]] = (st[S[k]] or 0) + tonumber(v) end
+  local st = statCache[id]
+  if st then return st end
+  local D = data()
+  local r = D and D.items and D.items[id]
+  if not r then return nil end
+  st = {}
+  local str = r[6]
+  if str and str ~= "" then
+    for sid, v in str:gmatch("(%d+):(%-?%d+)") do
+      local k = STAT_ID[tonumber(sid)]
+      k = k and S[k]
+      if k then st[k] = (st[k] or 0) + tonumber(v) end
+    end
   end
-  if (r.armor or 0) > 0 then st[S.ARMOR] = r.armor end
-  if (r.dps or 0) > 0 then st[S.DPS] = r.dps end
+  if (r[9] or 0) > 0 then st[S.ARMOR] = r[9] end
+  if (r[7] or 0) > 0 then st[S.DPS] = r[7] end
   statCache[id] = st
   return st
 end
@@ -363,6 +407,8 @@ end
 function M.Ctx()
   local B = boost()
   local c = { class = T:PlayerClass(), level = level(), horizon = tonumber(opt("horizon")) or 3 }
+  c.maxLevel = max(c.level, tonumber((try(g("GetMaxPlayerLevel")))) or 60)
+  c.horizon = max(0, min(c.horizon, c.maxLevel - c.level))   -- (5.0) rien « au niveau 61 »
   c.spec = B and B.SpecTab and try(B.SpecTab) or nil
   c.w = B and try(B.Weights) or {}
   c.money = (API.Money and try(API.Money)) or tonumber((try(g("GetMoney")))) or 0
@@ -388,6 +434,7 @@ function M.Usable(r, c)
     need = max(need, lv)
   elseif r.cls == 2 then
     if not (B.WEAPON_TYPES[c.class] or {})[r.sub] then return false, nil, "arme non utilisable" end
+    if c.class == "HUNTER" and r.sub == 16 then return false, nil, "arme de jet : pas pour tes tirs" end
   end
   if need > c.level + c.horizon then return false, need, "trop haut" end
   return true, need
@@ -406,24 +453,31 @@ end
 function M.ScoreItem(idOrLink, slot, c)
   local B = boost()
   if not B or not idOrLink then return nil end
+  local w = c and c.w
   local id = itemID(idOrLink)
+  -- un lien (sacs, récompense, porté) : ses vraies stats (suffixe aléatoire compris) ; un n° : les tables du client
+  if type(idOrLink) == "string" then
+    local V = M.Value
+    local it = V and V.Item and V.Item(idOrLink)
+    if it and it.st then return B.ScoreStats(it.st, slot, w, it.speed) end
+    if it then return nil end
+  end
   local st = id and M.StatsOf(id)
-  if st then return B.ScoreStats(st, slot, c and c.w) end
-  if type(idOrLink) == "string" then return B.ScoreLink(idOrLink, slot, c and c.w) end
+  if st then local r = rec(id) return B.ScoreStats(st, slot, w, r and r.speed) end   -- (total, part dégâts)
+  if type(idOrLink) == "string" then return B.ScoreLink(idOrLink, slot, w) end
 end
 
 function M.Current(c)
   local cur = {}
   for _, slot in ipairs(SLOT_LIST) do
     local link, id = equippedLink(slot), equippedID(slot)
-    local name = link and (link:match("%[(.-)%]")) or (id and rec(id) and rec(id).name) or nil
-    local s = (link or id) and (M.ScoreItem(link or id, slot, c) or 0) or 0
     local r = id and rec(id)
-    if slot == 18 and c.class == "HUNTER" and r and (r.speed or 0) > 0 then
-      s = s * (1 + max(-0.15, min(0.15, (r.speed - 2.6) * 0.15)))
-    end
+    local name = link and (link:match("%[(.-)%]")) or (r and r.name) or nil
+    local s0, h0
+    if link or id then s0, h0 = M.ScoreItem(link or id, slot, c) end
+    local s = s0 or 0
     local _, _, _, _, _, _, _, _, equipLoc, _, _, classID, subID = itemInfo(link or id or 0)
-    cur[slot] = { id = id, link = link, name = name, score = s, inv = r and r.inv, equipLoc = equipLoc,
+    cur[slot] = { id = id, link = link, name = name, score = s, hard = h0 or 0, unknown = ((link or id) and s0 == nil) or nil, inv = r and r.inv, equipLoc = equipLoc,
       cls = (r and r.cls) or classID, sub = (r and r.sub) or subID, dps = r and r.dps, speed = r and r.speed }
   end
   local mh = cur[16]
@@ -560,8 +614,13 @@ function M.Sources(id, c)
   if bagItems[id] then add("bag", "dans tes sacs : équipe-le", 0, 0, { now = true }) end
   local lr = logRewards[id]
   if lr and opt("quests") then add("quest", "récompense de « " .. lr.title .. " » (dans ton journal)", 10, 0, { qid = lr.qid, log = true, now = true }) end
-  -- modules optionnels (contrats lus seulement s'ils existent)
-  local Dg = mod("Dungeon")
+  -- modules optionnels (contrats lus seulement s'ils existent) ; lus une fois par plan (c.mods)
+  local mods = c.mods
+  if not mods then
+    mods = { Dg = mod("Dungeon") or false, Pf = mod("Prof") or false, A = mod("Auction") or false, db = questie() or false }
+    c.mods = mods
+  end
+  local Dg = mods.Dg
   if Dg and Dg.ItemSource and opt("dungeons") then
     local s = try(Dg.ItemSource, id)
     if type(s) == "table" and s.text then
@@ -570,12 +629,12 @@ function M.Sources(id, c)
         now = not tonumber(s.dmin) or c.level >= tonumber(s.dmin) - 2 })
     end
   end
-  local Pf = mod("Prof")
+  local Pf = mods.Pf
   if Pf and Pf.CraftInfo and opt("crafted") then
     local s = try(Pf.CraftInfo, id)
     if type(s) == "table" and s.text then add("craft", s.text, tonumber(s.min) or 15, tonumber(s.cost) or 0, { now = s.can ~= false }) end
   end
-  local db = questie()
+  local db = mods.db
   local qi = db and db.QueryItemSingle
   if qi then
     if opt("quests") then
@@ -639,7 +698,7 @@ function M.Sources(id, c)
     else add("craft", ("fabriqué par un artisan (%s ~%d) — ami / canal commerce"):format(pname, cr[2]), 25, 0) end
   end
   -- hôtel des ventes (jamais pour un objet lié quand ramassé)
-  local A = mod("Auction")
+  local A = mods.A
   if opt("ah") and A and A.Stats and not (r and r.bind == 1) then
     local st = try(A.Stats, id)
     local p = type(st) == "table" and tonumber(st.market) or nil
@@ -658,9 +717,18 @@ end
 -- Planificateur
 ---------------------------------------------------------------------------------------------------
 -- prépare un objet (données client ou lien des sacs / du journal) : utilisable ? quels emplacements ?
+--- objet de test ou retiré du jeu resté dans les tables du client (« [PÉRIMÉ] … », « 3800 Test 2h Axe 63 blue ») :
+--- jamais proposé (il n'existe pas en jeu)
+local function junkName(name)
+  name = tostring(name or "")
+  return name == "" or name:find("^%[") ~= nil or name:find("TEST", 1, true) ~= nil or name:find("%f[%a]Test%f[%A]") ~= nil
+    or name:find("Testing", 1, true) ~= nil
+end
+M.JunkName = junkName
 local function prepare(id, link, c)
   local r = rec(id)
   local invName
+  if r and not link and junkName(r.name) then return nil end
   if r then
     invName = INV[r.inv]
     local ok, need = M.Usable(r, c)
@@ -690,21 +758,28 @@ local function candidateFor(r, slot, c, cur)
     if c.twoHand or not (d and c.level >= d) then return nil end
   end
   if cur[slot] and cur[slot].id == r.id then return nil end
-  local new = M.ScoreItem(M.StatsOf(r.id) and r.id or r.link, slot, c)
-  -- chasseur : arme à distance lente = Visée plus forte (±5 % par 0,1 s… plafonné à ±15 %)
-  if new and slot == 18 and c.class == "HUNTER" and (r.speed or 0) > 0 then
-    new = new * (1 + max(-0.15, min(0.15, (r.speed - 2.6) * 0.15)))
-  end
-  local pct = gainPct(new, oldScore(cur, slot, invName))
+  -- (5.0 GEAR) objet porté illisible : on ne compare pas (jamais « mieux » contre un score inconnu)
+  if cur[slot] and cur[slot].unknown then return nil end
+  if invName == "INVTYPE_2HWEAPON" and cur[17] and cur[17].unknown then return nil end
+  local new, newHard = M.ScoreItem(r.link or r.id, slot, c)
+  local old = oldScore(cur, slot, invName)
+  local pct = gainPct(new, old)
   if not pct or pct < MIN_GAIN then return nil end
-  return { id = r.id, link = r.link, name = r.name, req = r.req, need = r.need, pct = pct, score = new, inv = r.inv,
+  -- (5.0) spé à dégâts : un objet qui fait PERDRE des dégâts n'est pas une amélioration, même avec plus d'Endurance
+  if c.w and c.w.unit == "dps" then
+    local oldHard = (invName == "INVTYPE_2HWEAPON") and ((cur[16] and cur[16].hard or 0) + (cur[17] and cur[17].hard or 0))
+      or (cur[slot] and cur[slot].hard or 0)
+    if (newHard or 0) < oldHard - 0.05 then return nil end
+  end
+  return { id = r.id, link = r.link, name = r.name, req = r.req, need = r.need, pct = pct, score = new, old = old,
+    delta = new - old, inv = r.inv,
     invName = invName, cls = r.cls, sub = r.sub, dps = r.dps, speed = r.speed, bind = r.bind }
 end
 
 -- valeur réaliste : gain ÷ racine de l'effort (minutes équivalentes), malus si niveau pas encore atteint
 local function value(cand, src, c)
   local wait = max(0, (cand.need or 0) - c.level) * 45
-  return min(cand.pct, 300) / math.sqrt(10 + src.effort + wait)
+  return (cand.delta or min(cand.pct, 300)) / math.sqrt(10 + src.effort + wait)
 end
 
 local function pickBest(cands, c, n)
@@ -718,65 +793,194 @@ local function pickBest(cands, c, n)
   return cands
 end
 
-local function planSlots(c, cur, ids, yieldEvery)
-  local per = {}
-  for _, slot in ipairs(SLOT_LIST) do per[slot] = {} end
-  for i, e in ipairs(ids) do
-    if yieldEvery and i % yieldEvery == 0 and coroutine.running() then coroutine.yield() end
-    local r = prepare(e.id, e.link, c)
-    for _, slot in ipairs(r and r.slots or {}) do
-      local cd = per[slot] and candidateFor(r, slot, c, cur)
-      if cd then local l = per[slot] l[#l + 1] = cd end
+M._resetIndex = function() end   -- (tests : plus d'index gardé en mémoire)
+local EMPTY = {}
+--- un objet des tables (ligne brute r) est-il un candidat pour un emplacement ? Sans aucune table temporaire :
+--- classe (masque), armure / arme, niveau, puis le score ; la table du candidat n'est créée que s'il gagne.
+local function fastCandidate(id, r, c, cur, per, only)
+  if not r then return end
+  local invName = INV[r[1]]
+  local slots = invName and SLOTS[invName]
+  if not slots then return end
+  if only and not (only[slots[1]] or (slots[2] and only[slots[2]])) then return end   -- plan partiel : pas cet emplacement
+  local mask = r[13]
+  if mask and mask > 0 then
+    local bit = CLASS_BIT[c.class]
+    if bit and floor(mask / 2 ^ (bit - 1)) % 2 == 0 then return end
+  end
+  local need, cls, sub = r[2] or 0, r[4], r[5]
+  if cls == 4 and sub and sub > 0 and r[1] ~= 16 then
+    local lv = (ARMOR[c.class] or EMPTY)[sub]
+    if not lv then return end
+    if lv > need then need = lv end
+  elseif cls == 2 then
+    if not (WEAPONS[c.class] or EMPTY)[sub] then return end
+    if c.class == "HUNTER" and sub == 16 then return end
+  end
+  if need > c.level + c.horizon then return end
+  local st, w, checked
+  for i = 1, #slots do
+    local slot = slots[i]
+    local l = per[slot]
+    local e = cur[slot]
+    local okSlot = l and not (only and not only[slot]) and not (e and (e.id == id or e.unknown))
+    if okSlot and slot == 17 and (c.twoHand or invName == "INVTYPE_WEAPON") then
+      local d = DUAL[c.class]
+      if c.twoHand or not (d and c.level >= d) then okSlot = false end
+    end
+    if okSlot and invName == "INVTYPE_2HWEAPON" and cur[17] and cur[17].unknown then okSlot = false end
+    if okSlot then
+      st = st or M.StatsOf(id)
+      w = w or c.w
+      local new, newHard = scoreStats(st, slot, w, r[8])
+      local old, oldHard
+      if invName == "INVTYPE_2HWEAPON" then
+        old = (cur[16] and cur[16].score or 0) + (cur[17] and cur[17].score or 0)
+        oldHard = (cur[16] and cur[16].hard or 0) + (cur[17] and cur[17].hard or 0)
+      else
+        old, oldHard = e and e.score or 0, e and e.hard or 0
+      end
+      local pct
+      if old <= 0 then pct = new > 0 and 999 or 0 else pct = (new - old) / old * 100 end
+      if pct >= MIN_GAIN and not (w.unit == "dps" and (newHard or 0) < oldHard - 0.05) then
+        if checked == nil then checked = not junkName(r[12]) end
+        if checked then
+          l[#l + 1] = { id = id, name = r[12], req = r[2], need = need, pct = pct, score = new, old = old, delta = new - old,
+            inv = r[1], invName = invName, cls = cls, sub = sub, dps = r[7], speed = r[8], bind = r[10] }
+        end
+      end
     end
   end
-  return per
 end
 
---- Calcul complet (synchrone). Le module l'appelle par tranches via une coroutine (yield toutes les N lignes).
-function M.Plan(yieldEvery)
+--- Calcul (synchrone). Le module l'appelle par tranches via une coroutine. `only` = { [emplacement] = true } : ne
+--- refaire que ces emplacements (un objet équipé ne change que le sien), le reste vient du plan précédent `prev`.
+function M.Plan(yieldEvery, only, prev)
   local c = M.Ctx()
+  local function pause() if yieldEvery and coroutine.running() then coroutine.yield() end end
   craftAt = -100
   scanBags()
   M.ScanLogRewards()
   srcCache = {}
   local cur = M.Current(c)
-  local ids, seen, n = {}, {}, 0
-  local function push(id, link) if id and not seen[id] then seen[id] = true ids[#ids + 1] = { id = id, link = link } end end
-  for id, link in pairs(bagItems) do push(id, link) end
-  for id, e in pairs(logRewards) do push(id, e.link) end
+  if only and (next(only) == nil or not (prev and prev.slots and prev.ctx and prev.ctx.level == c.level and prev.ctx.horizon == c.horizon
+      and prev.ctx.w and c.w and prev.ctx.w.id == c.w.id)) then
+    only = nil   -- les poids ont bougé (plafond de toucher, niveau, spé…) : tout refaire
+  end
+  local per = {}
+  for _, slot in ipairs(SLOT_LIST) do per[slot] = {} end
+  -- 1. objets à lien (sacs, récompenses du journal) : peu nombreux, leurs vraies stats (suffixe aléatoire compris)
+  local seen = {}
+  local function linked(id, link)
+    if seen[id] then return end
+    seen[id] = true
+    local r = prepare(id, link, c)
+    for _, slot in ipairs(r and r.slots or EMPTY) do
+      if per[slot] and not (only and not only[slot]) then
+        local cd = candidateFor(r, slot, c, cur)
+        if cd then local l = per[slot] l[#l + 1] = cd end
+      end
+    end
+  end
+  for id, link in pairs(bagItems) do linked(id, link) end
+  for id, e in pairs(logRewards) do linked(id, e.link) end
+  pause()
+  -- 2. objets du client de niveau requis utile (index par niveau), par tranches courtes
+  -- (une passe sur les ~5 000 lignes, sans index gardé en mémoire : le filtre de niveau coûte ~8 instructions par
+  -- ligne ; la tranche se compte en « poids » : 1 par ligne écartée, 12 par objet examiné)
   local D = data()
   local lo, hi = c.level - 12, c.level + c.horizon
-  for id, r in pairs(D and D.items or {}) do
-    n = n + 1
-    if yieldEvery and n % yieldEvery == 0 and coroutine.running() then coroutine.yield() end
+  local budget, load = yieldEvery and yieldEvery * 2 or nil, 0
+  for id, r in pairs(D and D.items or EMPTY) do
     local req = r[2] or 0
-    if req >= lo and req <= hi then push(id, nil) end
+    if req >= lo and req <= hi and not seen[id] then
+      load = load + 12
+      fastCandidate(id, r, c, cur, per, only)
+    else
+      load = load + 1
+    end
+    if budget and load >= budget then load = 0 pause() end
   end
-  table.sort(ids, function(a, b) return a.id < b.id end)
-  local per = planSlots(c, cur, ids, yieldEvery and floor(yieldEvery / 4))
-  if yieldEvery and coroutine.running() then coroutine.yield() end
+  pause()
   -- ne garder que les 10 plus gros gains par emplacement avant de chercher les sources (coût Questie borné)
-  local plan = { ctx = c, cur = cur, slots = {}, time = (g("GetTime") and g("GetTime")()) or 0 }
+  local plan = { ctx = c, cur = cur, slots = {}, now = {}, nowUsed = {}, top = {}, time = (g("GetTime") and g("GetTime")()) or 0 }
   local used = {}
+  local function byDelta(a, b) if a.delta ~= b.delta then return a.delta > b.delta end return a.id < b.id end
+  --- les k meilleurs d'une liste (gain décroissant, puis n°), sans la trier en entier (les listes des emplacements
+  --- vides ont des centaines d'objets)
+  local function topK(l, k, wearable)
+    local out, n = {}, 0
+    for i = 1, #l do
+      local cd = l[i]
+      if not wearable or (cd.need or 0) <= c.level then
+        local last = out[n]
+        -- (comparaison en ligne : presque tous les objets sont moins bons que le k-ième, pas d'appel pour eux)
+        if n < k or cd.delta > last.delta or (cd.delta == last.delta and cd.id < last.id) then
+          local j = (n < k) and n + 1 or n
+          while j > 1 and byDelta(cd, out[j - 1]) do out[j] = out[j - 1] j = j - 1 end
+          out[j] = cd
+          if n < k then n = n + 1 end
+        end
+      end
+    end
+    return out
+  end
   for _, slot in ipairs(SLOT_LIST) do
-    local l = per[slot]
-    table.sort(l, function(a, b) if a.pct ~= b.pct then return a.pct > b.pct end return a.id < b.id end)
-    -- (4.3 V43) « le meilleur maintenant » : les 6 plus gros gains portables dès aujourd'hui, à part (avant la coupe à 10)
-    local nowC = {}
-    for _, cd in ipairs(l) do if (cd.need or 0) <= c.level and #nowC < 6 then nowC[#nowC + 1] = cd end end
-    plan.now, plan.nowUsed = plan.now or {}, plan.nowUsed or {}
-    plan.now[slot] = M.BestNow(nowC, c, plan.nowUsed)
-    while #l > 10 do table.remove(l) end
-    local best = pickBest(l, c, max(1, tonumber(opt("maxPerSlot")) or 3) + 1)
-    -- anneaux / bijoux : ne pas proposer le même objet (unique) pour les deux emplacements
-    if (slot == 12 or slot == 14) and best[1] and used[best[1].id] then table.remove(best, 1) end
-    if best[1] then used[best[1].id] = true end
-    while #best > (tonumber(opt("maxPerSlot")) or 3) do table.remove(best) end
-    plan.slots[slot] = best
-    if yieldEvery and coroutine.running() then coroutine.yield() end
+    if only and not only[slot] then   -- emplacement inchangé : le résultat précédent (les sources n'ont pas bougé)
+      plan.slots[slot], plan.now[slot], plan.top[slot] = prev.slots[slot] or {}, prev.now and prev.now[slot] or nil, prev.top and prev.top[slot] or 0
+      local b = plan.slots[slot][1]
+      if b then used[b.id] = true end
+      local nw = plan.now[slot]
+      if nw and (nw.invName == "INVTYPE_FINGER" or nw.invName == "INVTYPE_TRINKET") then plan.nowUsed[nw.id] = true end
+    else
+      local l = per[slot]
+      -- (4.3 V43) « le meilleur maintenant » : les 6 plus gros gains portables dès aujourd'hui, à part
+      local nowC = topK(l, 6, true)
+      -- (5.0) le meilleur score portable aujourd'hui (barres de « Mon équipement »)
+      local topNow = 0
+      for i = 1, #l do
+        local cd = l[i]
+        if cd.score > topNow and (cd.need or 0) <= c.level then topNow = cd.score end
+      end
+      plan.top[slot] = topNow
+      plan.now[slot] = M.PickNow(nowC, c, plan.nowUsed)
+      -- durée d'utilité : niveau où un objet nettement meilleur (≥ 10 %) des tables devient portable
+      local function life(cd)
+        local lv
+        local thr, base = cd.score * 1.10, max(cd.need or 0, c.level)
+        for i = 1, #l do
+          local o = l[i]
+          if o.score >= thr and (o.need or 0) > base and o.id ~= cd.id and (not lv or o.need < lv) then lv = o.need end
+        end
+        return lv
+      end
+      if plan.now[slot] then plan.now[slot].life = life(plan.now[slot]) end
+      pause()
+      -- les 8 plus gros gains avant de chercher les sources (coût Questie borné)
+      local best = pickBest(topK(l, 8), c, max(1, tonumber(opt("maxPerSlot")) or 3) + 1)
+      -- anneaux / bijoux : ne pas proposer le même objet (unique) pour les deux emplacements
+      if (slot == 12 or slot == 14) and best[1] and used[best[1].id] then table.remove(best, 1) end
+      if best[1] then used[best[1].id] = true end
+      while #best > (tonumber(opt("maxPerSlot")) or 3) do table.remove(best) end
+      if best[1] and best[1].life == nil then best[1].life = life(best[1]) end
+      plan.slots[slot] = best
+      pause()
+    end
+  end
+  -- (5.0) la comparaison chiffrée de chaque piste retenue, ici (par tranches) et pas à l'affichage
+  if M.CompareCand then
+    for _, slot in ipairs(SLOT_LIST) do
+      if not (only and not only[slot]) then
+        local nw = plan.now[slot]
+        if nw and nw.cmp == nil then nw.cmp = M.CompareCand(nw, slot) or false end
+        for _, cd in ipairs(plan.slots[slot]) do if cd.cmp == nil then cd.cmp = M.CompareCand(cd, slot) or false end end
+        pause()
+      end
+    end
   end
   plan.shopping = M.Shopping(plan)
   plan.hunter = M.HunterNotes(plan)
+  statCache = {}   -- les stats lues pour ce plan ne restent pas en mémoire (les pistes retenues gardent les leurs)
   return plan
 end
 
@@ -815,13 +1019,13 @@ function M.GroupCrafter(pname, need)
 end
 --- parmi des candidats portables dès maintenant : le plus gros gain dont une source est faisable tout de suite
 --- (sacs, quête faisable, donjon faisable à 4, marchand / HV dans tes moyens, ton artisanat ou celui du groupe)
-function M.BestNow(cands, c, used)
+function M.PickNow(cands, c, used)
   local best
   for _, cd in ipairs(cands) do
     if not (used and used[cd.id]) then
       local src
       for _, e in ipairs(M.Sources(cd.id, c)) do if e.now then src = e break end end
-      if src and (not best or cd.pct > best.pct or (cd.pct == best.pct and src.effort < best.nowSrc.effort)) then
+      if src and (not best or cd.delta > best.delta or (cd.delta == best.delta and src.effort < best.nowSrc.effort)) then
         best = cd
         best.nowSrc = src
       end
@@ -835,14 +1039,35 @@ end
 local GAIN_KEYS = { { "AGI", "Agi" }, { "RAP", "PA dist." }, { "AP", "PA" }, { "STA", "Endu" }, { "HIT", "Toucher" },
   { "CRIT", "Crit" }, { "INT", "Intel" }, { "STR", "Force" }, { "SPI", "Esprit" }, { "SP", "Puiss. sorts" } }
 --- gain réel en stats (« +3,2 DPS · +4 Agi · +10 PA dist. ») : objet proposé moins objet porté (données du client)
+--- (5.0) compare un candidat du plan à ce que tu portes dans `slot` (même calcul que T.Gear.Score) → résultat ou nil
+function M.CompareCand(cd, slot)
+  local V = M.Value
+  if not (V and V.Compare and cd) then return nil end
+  local it = V.Item(cd.link or cd.id)
+  local w = V.Weights()
+  if not (it and it.st and w) then return nil end
+  local olds = {}
+  local function add(s)
+    local l = wornLink(s)
+    if l then olds[#olds + 1] = { slot = s, link = l, it = V.Item(l) } end
+  end
+  if cd.invName == "INVTYPE_2HWEAPON" then add(16) add(17) else add(slot) end
+  return V.Compare(it, olds, slot, w)
+end
 function M.GainText(cd, worn, slot)
+  local head
+  if cd then
+    if cd.cmp == nil then cd.cmp = M.CompareCand(cd, slot) or false end
+    head = cd.cmp and cd.cmp.text or nil
+  end
   local a = cd and M.StatsOf(cd.id)
-  if not a then return nil end
+  if not a then return head end
   local b = (worn and worn.id and M.StatsOf(worn.id)) or (worn and worn.link and itemStats(worn.link)) or {}
   local out = {}
   local function n(t, k) return tonumber(t[k]) or 0 end
+  if head then out[#out + 1] = head end
   local dd = n(a, S.DPS) - n(b, S.DPS)
-  if (slot == 18 or slot == 16) and math.abs(dd) >= 0.1 then
+  if not head and (slot == 18 or slot == 16) and math.abs(dd) >= 0.1 then
     out[#out + 1] = ((dd > 0 and "+" or "") .. ("%.1f DPS"):format(dd)):gsub("%.", ",")
   end
   local w = M.Weights and M.Weights() or {}
@@ -906,6 +1131,7 @@ local KIND_FR = { bag = "sacs", quest = "quête", boss = "donjon", drop = "butin
   ah = "HV", world = "butin" }
 local GO_FR = { boss = "Clic : la page du donjon", craft = "Clic : la page Métiers", ah = "Clic : chercher à l'HV (ou y aller)",
   bag = "Dans tes sacs : clic droit pour l'équiper" }
+function M.GoHint(kind) return GO_FR[kind] or "Clic : la boussole t'y mène" end
 --- lignes « Le meilleur maintenant » (page Équipement) : une par emplacement, gain réel, coût, temps, clic = y aller
 function M.NowRows(plan)
   plan = plan or M.plan
@@ -1049,19 +1275,23 @@ function M.Lines(plan)
   local function add(text, prio, tip, click) lines[#lines + 1] = { text = text, prio = prio or 1, tooltip = tip, onClick = click } end
   -- commandes = vrais petits boutons dans la barre de l'onglet (control = true), pas des lignes de texte
   add(("Recalculer (objets jusqu'au niv %d)"):format(c.level + c.horizon),
-    1, { "Recalcule tout de suite (hors combat).", "Sinon : automatique à chaque changement d'équipement / de sac / de niveau." }, rescan)
+    1, { "Recalcule tout de suite (hors combat).", "Sinon : automatique quand ton équipement, ton niveau, ta spé ou ton journal change." }, rescan)
   lines[#lines].control, lines[#lines].label = true, "Recalculer"
   add(("Horizon : niveau +%d"):format(c.horizon), 1,
     { "Montre aussi les objets que tu pourras porter bientôt.", "Clic : +2 (0 à 10)." }, bumpHorizon)
   lines[#lines].control, lines[#lines].label = true, ("Horizon +%d"):format(c.horizon)
-  add("Priorité des stats : " .. priorityText(c), 1, { "Poids de stats estimés (classe, arbre de talents le plus rempli) :",
-    "les comparaisons disent « mieux » ou « nettement mieux », jamais un pourcentage.",
-    "Spé détectée = arbre de talents le plus rempli." })
+  -- (5.0) la spé et sa source, toujours ; clic = la page (3 boutons pour la changer)
+  if M.SpecText then
+    add(M.SpecText(), 1, { "TreeAI adapte les poids d'équipement à ta spé.", "Clic : la page Équipement pour la changer." }, selectTab)
+  end
+  local V = M.Value
+  add("Priorité des stats : " .. priorityText(c), 1, { V and V.ModelText and V.ModelText() or "Poids de stats par classe et par spé.",
+    "Le détail de chaque objet est dans son infobulle." })
   local h = plan.hunter
   if h then
     if h.ranged then
       local t = ("Arme à distance : %s%s"):format(h.ranged.name or "?", weaponTxt(h.ranged))
-      if h.ranged.speed and h.ranged.speed > 0 and h.ranged.speed < 2.6 then t = t .. " — rapide : vise ≥ 2,8 s pour Visée" end
+      if h.ranged.speed and h.ranged.speed > 0 and h.ranged.speed < 2.6 then t = t .. " — rapide : à DPS égal, une arme lente frappe plus fort" end
       add(t, 1)
     else add("Aucune arme à distance : c'est ta vraie arme, priorité absolue !", 3) end
     if h.ammoNeed and not h.ammoOK then add(("Munitions : ton arme tire des %s et tu n'en as pas !"):format(AMMO_FR[h.ammoNeed]), 3)
@@ -1069,80 +1299,34 @@ function M.Lines(plan)
     if h.ammoSwitch then add("Attention : la prochaine arme change de munitions (" .. h.ammoSwitch .. ")", 2) end
     if h.mail then add(h.mail, c.level >= 38 and 2 or 1) end
   end
-  -- règle d'affichage : une ligne par emplacement qui a une VRAIE piste (« Torse : Gilet → Gilet agile (+12 %) ·
-  -- marchand ») ; durée, coût, score et alternatives dans l'infobulle ; emplacements sans piste sûre (butin
-  -- aléatoire / inconnu) regroupés en UNE ligne ; « rien de mieux » = pas de ligne.
-  local nUp, weak, none = 0, {}, 0
-  for _, slot in ipairs(SLOT_LIST) do
-    local e = plan.cur[slot] or {}
-    local best = plan.slots[slot] or {}
-    local cd = best[1]
-    local head = e.name and ("%s : %s"):format(SLOT_FR[slot] or slot, e.name) or ((SLOT_FR[slot] or slot) .. " (vide)")
-    if cd and cd.src and cd.src.kind == "world" then
-      nUp = nUp + 1
-      weak[#weak + 1] = ("%s : %s — %s"):format(SLOT_FR[slot] or slot, cd.name or "?", cd.src.text or "?")
-    elseif cd then
-      nUp = nUp + 1
-      local s = cd.src or {}
-      local lvl = (cd.need or 0) > c.level and (" — niv " .. cd.need) or ""
-      local gain = (cd.pct and cd.pct < 999) and (" (" .. pctText(cd.pct) .. ")") or ""
-      local where = tostring(s.text or "?"):gsub(" — .*$", "")
-      local text = ("%s → %s%s%s · %s"):format(head, cd.name or "?", gain, weaponTxt(cd), where)
-      local tip = { (cd.pct and cd.pct >= 999) and ("Emplacement vide : tout objet est un gain" .. lvl)
-          or (pctText(cd.pct):gsub("^%l", string.upper) .. " que ce que tu portes" .. lvl),
-        "Où : " .. (s.text or "?") }
-      -- effort : seulement ce qui se mesure (sacs, marchand, quête du journal, HV) ; fabriqué / butin / boss : pas de
-      -- durée inventée, le prix seul s'il est connu
-      if NO_EFFORT[s.kind] then
-        if (s.cost or 0) > 0 then tip[#tip + 1] = "Prix : " .. money(s.cost) end
-      else
-        tip[#tip + 1] = "Effort : " .. (s.kind == "bag" and "maintenant" or dur(s.min)) .. (((s.cost or 0) > 0) and (" · " .. money(s.cost)) or "")
-      end
-      if e.name then tip[#tip + 1] = ("Porté : %s (score %d)"):format(e.name, floor((e.score or 0) + 0.5)) end
-      for i = 2, #(cd.sources or {}) do tip[#tip + 1] = "  ou " .. cd.sources[i].text end
-      for i = 2, #best do
-        local o = best[i]
-        tip[#tip + 1] = ("Alternative : %s (%s) — %s"):format(o.name or "?", pctText(o.pct), o.src and o.src.text or "?")
-      end
-      local prio = (s.kind == "bag" or (cd.pct >= BIG_GAIN and (cd.need or 0) <= c.level)) and 2 or 1
-      local open = M.expanded[slot]
-      tip[#tip + 1] = open and "Clic : replier" or "Clic : voir toutes les sources et alternatives"
-      add(text, prio, tip, function() M.expanded[slot] = not M.expanded[slot] republish() end)
-      if open then
-        for i = 2, #(cd.sources or {}) do add(("      ou %s · %s"):format(cd.sources[i].text, dur(cd.sources[i].min)), 1) end
-        for i = 2, #best do
-          local o = best[i]
-          add(("      alternative : %s (%s) — %s"):format(o.name or "?", pctText(o.pct), o.src and o.src.text or "?"), 1)
-        end
-      end
+  -- une ligne par emplacement qui a quelque chose à faire (les « Garde » sont comptés, pas listés)
+  local rows = M.Rent and M.Rent(plan) or {}
+  local keep, nUp, buyN, buyCost = 0, 0, 0, 0
+  for _, r in ipairs(rows) do
+    if r.action == "keep" then keep = keep + 1
     else
-      none = none + 1
+      nUp = nUp + 1
+      lines[#lines + 1] = { text = r.text, right = r.right, prio = r.prio or 1, tooltip = r.tooltip, onClick = r.onClick,
+        clickHint = r.clickHint, kind = "gear", slot = r.slot, action = r.action }
+      if r.action == "buy" then buyN, buyCost = buyN + 1, buyCost + (r.cost or 0) end
     end
   end
-  if #weak > 0 then
-    local names = {}
-    for i, w in ipairs(weak) do if i <= 4 then names[#names + 1] = (w:match("^(.-) :")) end end
-    weak[#weak + 1] = "Pas de source sûre : garde un œil sur l'HV et le butin des monstres."
-    add(("Surveille l'HV et le butin : %s%s"):format(table.concat(names, ", "), #weak - 1 > 4 and "…" or ""), 1, weak)
-  end
-  local sh = plan.shopping or {}
-  if #sh > 0 then
-    add(("Liste de courses : %d objet(s), %s au total (tu as %s)"):format(#sh, money(sh.total or 0), money(c.money)), 2)
-    for _, e in ipairs(sh) do
-      add(("  %s %s (%s) — %s%s"):format(e.affordable and "•" or "×", e.name or "?", pctText(e.pct), e.where or "",
-        e.affordable and "" or " (pas assez d'or)"), e.affordable and 1 or 1)
-    end
+  if buyN > 0 then
+    local bud = rows.budget or {}
+    add(("Achats conseillés : %d objet(s), %s au total (budget libre : %s)"):format(buyN, money(buyCost), money(bud.free or c.money)), 2)
   end
   if nUp == 0 then add("Équipement au top pour ton niveau : rien à chercher pour l'instant.", 1)
-  elseif none > 0 and lines[1] and lines[1].control then
+  elseif keep > 0 and lines[1] and lines[1].control then
     local tip = lines[1].tooltip
-    if type(tip) == "table" then tip[#tip + 1] = ("%d emplacement(s) déjà au mieux pour ton niveau."):format(none) end
+    if type(tip) == "table" then tip[#tip + 1] = ("%d emplacement(s) déjà au mieux pour ton niveau."):format(keep) end
   end
   return lines
 end
 
 function M.Summary(plan)
   local out = { level = plan.ctx.level, spec = plan.ctx.spec, priority = priorityText(plan.ctx), slots = {}, shopping = {} }
+  local sp = M.Spec and M.Spec()   -- (5.0) la spé et d'où elle vient (pour l'appli)
+  if sp and sp.tree then out.specName, out.specSource = sp.name, sp.source end
   for _, slot in ipairs(SLOT_LIST) do
     local e, cd = plan.cur[slot] or {}, (plan.slots[slot] or {})[1]
     local row = { slot = SLOT_FR[slot], item = e.name, score = floor((e.score or 0) * 10 + 0.5) / 10 }
@@ -1169,41 +1353,60 @@ end
 function M:Publish(plan)
   self.plan = plan
   if not plan then return end
+  M._rent, M._pubSig = nil, nil
   if opt("tab") and T.SetTabLines then pcall(T.SetTabLines, T, "gear", M.Lines(plan)) end
+  M._linesFor = plan
   local s = T.Summary and T:Summary()
   if type(s) == "table" then s.gear = M.Summary(plan) end
   self.char.shopping = {}
   for _, e in ipairs(plan.shopping or {}) do self.char.shopping[#self.char.shopping + 1] = { id = e.id, cost = e.cost } end
-  if not opt("suggest") then self:Clear("upgrade") return end
-  -- meilleure amélioration immédiate : sacs d'abord, sinon la plus rentable portable maintenant ; « Maintenant » ne
-  -- reçoit qu'une action concrète (équiper, acheter au marchand, choisir en récompense d'une quête du journal) :
-  -- fabriqué / butin / boss / HV restent dans l'onglet « Équipement »
+  M.PublishNow()
+  if M.AskSpecOnce then M.AskSpecOnce() end
+end
+--- (5.0) « Maintenant » : UNE action concrète (équiper, acheter au marchand, quête du journal), la plus rentable ;
+--- appelée après un plan et après un changement de sac (les sacs sont lus en direct)
+function M.PublishNow()
+  if not M._active then return end
+  -- les lignes de l'onglet ne sont refaites que si les améliorations des sacs ont changé (pas à chaque butin)
+  local up = M.BagUpgrades and M.BagUpgrades()
+  local sig = tostring(M.plan and M.plan.time)
+  for _, e in ipairs(up and up.list or {}) do sig = sig .. ":" .. tostring(e.id) end
+  if sig == M._pubSig then return end
+  M._pubSig = sig
+  if M.plan and M._linesFor ~= M.plan and opt("tab") and T.SetTabLines then pcall(T.SetTabLines, T, "gear", M.Lines(M.plan)) end
+  M._linesFor = nil
+  if not opt("suggest") then M:Clear("upgrade") return end
   local top
-  for _, slot in ipairs(SLOT_LIST) do
-    local cd
-    for _, c in ipairs(plan.slots[slot] or {}) do if c.src and NOW_KIND[c.src.kind] then cd = c break end end
-    if cd and (cd.need or 0) <= plan.ctx.level and cd.src and (not top or cd.value > top.value or cd.src.kind == "bag") then
-      if not (top and top.src.kind == "bag" and cd.src.kind ~= "bag") then top = cd top.slot = slot end
+  if M.plan then
+    for _, r in ipairs(M.BestNow and M.BestNow() or {}) do
+      if r.action == "equip" or r.action == "buy" or (r.action == "quest" and (r.prio or 1) >= 2) then
+        if not top or (r.action == "equip" and top.action ~= "equip") then top = r end
+        if top.action == "equip" then break end
+      end
     end
+  else   -- pas encore de plan : les sacs suffisent pour dire « Équipe X »
+    local best
+    for _, e in pairs(up and up.bySlot or {}) do if not best or (e.sc.delta or 0) > (best.sc.delta or 0) then best = e end end
+    if best then top = { action = "equip", text = ("Équipe %s · %s"):format(best.sc.item and best.sc.item.name or "?", best.sc.text or "mieux") } end
   end
-  -- verbe selon la source (on n'« équipe » que ce qui est dans les sacs) ; jamais une piste vague dans « Maintenant »
-  local VERB = { bag = "Équipe", vendor = "Achète", ah = "Achète à l'HV", craft = "Fais fabriquer", quest = "Choisis en récompense",
-    boss = "Vise en donjon", drop = "Va chercher" }
-  if top and top.name and top.src.kind ~= "world" and (top.src.kind == "bag" or top.pct >= 10) then
-    local gain = top.pct < 999 and (", " .. pctText(top.pct)) or ""
-    self:Suggest("upgrade", ("%s %s (%s%s)"):format(VERB[top.src.kind] or "Vise", top.name, SLOT_FR[top.slot] or "?", gain),
-      top.src.kind == "bag" and 2 or 1, { ttl = 600, cooldown = 300, onClick = selectTab,
-        tooltip = { "Où : " .. (top.src.text or "?"), "Clic : onglet « Équipement »." } })
+  if top then
+    if top.action == "buy" and M.AskMountOnce then M.AskMountOnce() end
+    M:Suggest("upgrade", top.text, top.action == "equip" and 2 or 1, { ttl = 600, cooldown = 300, onClick = selectTab,
+      tooltip = { "Clic : la page Équipement." } })
   else
-    self:Clear("upgrade")
+    M:Clear("upgrade")
   end
 end
 
 ---------------------------------------------------------------------------------------------------
 -- Exécution (hors combat, par tranches)
 ---------------------------------------------------------------------------------------------------
-local job, dirty, lastRun = nil, true, -1000
+local job, dirty, lastRun = nil, false, -1000   -- (5.0) pas de plan tant que rien ne le demande (voir M.WantPlan)
+local dirtySlots   -- nil = tout ; { [emplacement] = true } = seulement ceux-là (objet équipé)
 function M:ScanNow()
+  -- (5.0) un calcul par tranches en cours a des entrées périmées : il ne doit pas écraser ce résultat-ci
+  if M._cancelJob then M._cancelJob() end
+  dirtySlots = {}
   local ok, plan = pcall(M.Plan)
   if ok and plan then self:Publish(plan) return plan end
   if not ok then self:Debug("plan:", plan) end
@@ -1211,39 +1414,80 @@ end
 
 -- (4.4 SMART) la minuterie des tranches n'existe que pendant un calcul : au repos, zéro travail (avant : un rappel
 -- toutes les 0,1 s pour toujours, ≈ 600 réveils / min de l'ordonnanceur pour rien)
-local function stopTicker() if M._ticker then M._ticker:Cancel() M._ticker = nil end end
-local function step()
-  if not job then stopTicker() return end
-  if T:InCombat() then return end
+-- (5.0) les tranches du plan passent par T:Spread : une par image, et seulement dans une image sans autre travail lourd
+-- (avant : une minuterie de 0,1 s qui s'ajoutait à ce que l'image faisait déjà). Sans T:Spread : un rappel de 0,1 s.
+local stepGen, stepQueued = 0, false
+local step
+local function spreadStep(gen)
+  if gen ~= stepGen then return end   -- calcul annulé entre-temps
+  stepQueued = false
+  step()
+end
+local function queueStep()
+  if stepQueued or not job then return end
+  stepQueued = true
+  local gen = stepGen
+  if T.Spread then T:Spread(M, spreadStep, gen) else T:After(0.1, function() spreadStep(gen) end) end
+end
+local function stopTicker() stepGen, stepQueued = stepGen + 1, false end
+step = function()
+  if not job then return end
+  if T:InCombat() then return end   -- repris à la fin du combat (COMBAT_END)
   local ok, res = coroutine.resume(job)
   if not ok then M:Debug("plan:", res) job = nil stopTicker() return end
   if coroutine.status(job) == "dead" then
     job = nil
     stopTicker()
     if res then M:Publish(res) end
+  else
+    queueStep()
   end
 end
 
+M._cancelJob = function() job = nil stopTicker() end
 function M:Start()
   if job or T:InCombat() then return end
   dirty, lastRun = false, (g("GetTime") and g("GetTime")()) or 0
-  job = coroutine.create(function() return M.Plan(400) end)
+  local only, prev = dirtySlots, M.plan
+  dirtySlots = {}
+  job = coroutine.create(function() return M.Plan(400, only, prev) end)
   step()
-  if job and not M._ticker and T.NewTicker then M._ticker = T:NewTicker(0.1, step, M) end
 end
 
--- (4.4 SMART) recalcul seulement quand une entrée a changé (équipement, sacs, niveau, quête prise, talents : markDirty) ;
--- filet de sécurité toutes les 10 min (avant : un plan complet toutes les 2 min même sans rien de neuf)
-M.REPLAN_MAX = 600
-function M:AutoRefresh()
-  if T:InCombat() then return end
-  if job then step() return end
-  local t = (g("GetTime") and g("GetTime")()) or 0
-  if dirty and t - lastRun >= 5 or t - lastRun >= M.REPLAN_MAX then self:Start() end
+-- (5.0) recalcul seulement quand une entrée a changé (équipement, niveau, spé, quête prise : markDirty) ; un simple
+-- changement de sac ne relance PAS le plan (sacs lus en direct par GearRent) ; aucun plan périodique, aucune méthode
+-- AutoRefresh (le module ne compte pas dans le cycle du cœur) : un seul rappel, 5 s après la demande, hors combat.
+function M.Busy() return job ~= nil end
+--- un plan est demandé ou en cours (tests, page)
+function M.Pending() return dirty or job ~= nil end
+local kickQueued = false
+local function kick(delay)
+  if kickQueued or not M._active then return end
+  kickQueued = true
+  T:After(delay or 5, function()
+    kickQueued = false
+    if not dirty or job or not M._active then return end
+    if T:InCombat() then M._kickAfterCombat = true return end
+    M:Start()
+  end)
 end
-
-local function markDirty() dirty = true srcCache = {} craftAt = -100 end
+M.Kick = kick
+local function markDirty() dirty = true dirtySlots = nil srcCache = {} craftAt = -100 M._rent = nil M._bagStale = true kick() end
 M.MarkDirty = markDirty
+--- le premier plan n'est calculé que quand il sert : page Équipement ouverte, niveau gagné, marchand / HV ouvert,
+--- quête rendue (zéro travail pour qui ne fait rien) ; ensuite seuls les changements le relancent
+function M.WantPlan() if not M.plan and not job and not dirty then markDirty() end end
+local PAIR = { [11] = 12, [12] = 11, [13] = 14, [14] = 13, [16] = 17, [17] = 16 }
+--- un emplacement a changé (objet équipé) : seul lui (et son jumeau : anneaux, bijoux, mains) est à refaire
+local function markSlot(slot)
+  slot = tonumber(slot)
+  if not slot or not SLOT_FR[slot] or not M.plan then return markDirty() end
+  dirty = true
+  M._rent, M._bagStale = nil, true
+  if dirtySlots then dirtySlots[slot] = true if PAIR[slot] then dirtySlots[PAIR[slot]] = true end end
+  kick()
+end
+M.MarkSlot = markSlot
 
 ---------------------------------------------------------------------------------------------------
 -- Récompense de quête : le meilleur choix est entouré (jamais choisi à ta place)
@@ -1293,39 +1537,47 @@ function M.RewardGlowShown() return (glow and glow:IsShown()) and true or false 
 function M.RankQuestRewards()
   local n = try(G.GetNumQuestChoices) or 0
   if n < 2 then return nil end
-  local bestUp, bestUpPct, bestSell, bestSellV = nil, MIN_GAIN, nil, -1
+  local bestUp, bestUpPct, bestDelta, bestSc, bestSell, bestSellV = nil, MIN_GAIN, nil, nil, nil, -1
   for i = 1, n do
     local link = try(G.GetQuestItemLink, "choice", i)
     local _, _, count, _, isUsable = try(G.GetQuestItemInfo, "choice", i)
     if link then
       if canUse(link) and isUsable ~= false then
-        local pct = upgradePct(link)
-        if pct and pct >= bestUpPct then bestUp, bestUpPct = i, pct end
+        local sc = M.Score and M.Score(link) or nil
+        local pct = (sc and sc.pct) or (not sc and upgradePct(link)) or nil
+        local delta = sc and sc.delta or pct
+        -- (5.0) le plus gros gain en VALEUR (pas en % de la pièce : +50 % d'un anneau < +10 % d'un arc)
+        if pct and pct >= MIN_GAIN and (bestDelta == nil or (delta or 0) > bestDelta) then
+          bestUp, bestUpPct, bestDelta, bestSc = i, pct, delta or 0, sc
+        end
       end
       local sell = (tonumber((select(11, itemInfo(link)))) or 0) * (tonumber(count) or 1)
       if sell > bestSellV then bestSell, bestSellV = i, sell end
     end
   end
-  if bestUp then return bestUp, bestUpPct, "upgrade" end
+  if bestUp then return bestUp, bestUpPct, "upgrade", bestSc end
   if bestSell then return bestSell, bestSellV, "sell" end
 end
 function M.OnQuestComplete()
   if not opt("rewards") then return end
   T:After(0.3, function()
-    local i, v, why = M.RankQuestRewards()
+    local i, v, why, sc = M.RankQuestRewards()
     if not i then hideGlow() return end
     local link = try(G.GetQuestItemLink, "choice", i)
     local name = (link and itemInfo(link)) or ("choix " .. i)
     showGlow(rewardButton(i))
+    M.lastReward = { i = i, why = why }
     local txt
     if why == "upgrade" then
+      local num = sc and sc.text and sc.text ~= "emplacement vide" and (" (" .. sc.text .. ")") or ""
       txt = v >= 999 and ("Prends « " .. name .. " » : ton emplacement est vide")
-        or ("Prends « " .. name .. " » : " .. pctText(v) .. " que ce que tu portes")
+        or ("Prends « " .. name .. " » : " .. pctText(v) .. " que ce que tu portes" .. num)
     else
       txt = "Prends « " .. name .. " » : aucune amélioration, c'est elle qui se vend le plus (" .. money(v) .. ")"
     end
-    M:Suggest("reward", txt, 2, { ttl = 60, cooldown = 5, sound = false,
-      tooltip = { "Récompense entourée en vert : c'est toi qui cliques.", "Poids de stats estimés pour ta classe." } })
+    local tip = { "Récompense entourée en vert : c'est toi qui cliques." }
+    for _, l in ipairs(sc and sc.lines or {}) do tip[#tip + 1] = l end
+    M:Suggest("reward", txt, 2, { ttl = 60, cooldown = 5, sound = false, tooltip = tip })
   end)
 end
 
@@ -1343,18 +1595,15 @@ function M.DecorateItem(tip, link)
   if not opt("tooltip") or not tip or not tip.AddLine or not link then return end
   local _, _, _, _, _, _, _, _, equipLoc, _, sell = itemInfo(link)
   if equipLoc and SLOTS[equipLoc] then
-    local ok, why = canUse(link)
-    if not ok then
-      tip:AddLine("TreeAI : pas pour toi (" .. (why or "?") .. ")", 0.6, 0.6, 0.6)
+    local sc = M.Score and M.Score(link) or nil
+    local label, text, kind = nil, nil, nil
+    if sc and M.ScoreLine then label, text, kind = M.ScoreLine(sc) end
+    if label then
+      local c = VERDICT_COLOR[kind] or (kind == "warn" and VERDICT_COLOR.same) or { 0.6, 0.6, 0.6 }
+      tip:AddLine("TreeAI : " .. label:gsub("^%u", string.lower) .. ((text and text ~= "") and (" — " .. text) or ""), c[1], c[2], c[3])
     else
-      local word, kind = M.Verdict(upgradePct(link))
-      if word then
-        local text = (kind == "good" and word == "emplacement vide") and "TreeAI : emplacement vide, équipe-le"
-          or (word == "équivalent" and "TreeAI : équivalent à ce que tu portes")
-          or ("TreeAI : " .. word .. " que ce que tu portes")
-        local c = VERDICT_COLOR[kind] or VERDICT_COLOR.same
-        tip:AddLine(text .. (why and (" (" .. why .. ")") or ""), c[1], c[2], c[3])
-      end
+      local ok, why = canUse(link)
+      if not ok then tip:AddLine("TreeAI : pas pour toi (" .. (why or "?") .. ")", 0.6, 0.6, 0.6) end
     end
   end
   local ah = auctionValue(link)
@@ -1398,25 +1647,77 @@ end
 function M:OnEnable()
   if T.RegisterTab then pcall(T.RegisterTab, T, "gear", "Équipement", 45) end
   hookTooltips()
+  local function equipChanged(_, _, slot)
+    local V = M.Value
+    if V and V.EquipChanged then V.EquipChanged() end
+    if V and V.ResetSkills then V.ResetSkills() end
+    if not M.plan then M._rent, M._bagStale = nil, true return end   -- pas encore de plan : rien à refaire
+    if slot then markSlot(slot) else markDirty() end
+  end
   self:RegisterEvent("QUEST_COMPLETE", function() M.OnQuestComplete() end)
   self:RegisterEvent("QUEST_FINISHED", function() hideGlow() M:Clear("reward") end)
-  self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", function() markDirty() end)
-  self:RegisterEvent("PLAYER_LEVEL_UP", function() markDirty() statCache = {} end)
-  self:RegisterEvent("BAG_UPDATE_DELAYED", function() markDirty() end)
-  self:RegisterEvent("QUEST_ACCEPTED", function() markDirty() end)
-  self:RegisterEvent("CHARACTER_POINTS_CHANGED", function() markDirty() end)
-  self:On("COMBAT_END", function() if job then T:After(1, step) end end)
+  self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", equipChanged)
+  self:RegisterEvent("PLAYER_LEVEL_UP", function()
+    if M.SpecDirty then M.SpecDirty(false) end
+    if M.ResetWeights then M.ResetWeights() end
+    local V = M.Value
+    if V and V.EquipChanged then V.EquipChanged() end
+    markDirty()   -- un niveau de plus : de nouveaux objets deviennent portables
+  end)
+  for _, ev in ipairs({ "MERCHANT_SHOW", "AUCTION_HOUSE_SHOW", "QUEST_TURNED_IN" }) do
+    self:RegisterEvent(ev, function() M.WantPlan() end)   -- moments où un achat / une récompense se décide
+  end
+  -- le joueur joue (il se déplace, 30 s après l'activation) : un premier plan, une fois ; immobile / absent : rien
+  local enabledAt = (g("GetTime") and g("GetTime")()) or 0
+  self:RegisterEvent("PLAYER_STARTED_MOVING", function()
+    if M.plan or job then M:UnregisterEvent("PLAYER_STARTED_MOVING") return end
+    if ((g("GetTime") and g("GetTime")()) or 0) - enabledAt < 30 then return end
+    M:UnregisterEvent("PLAYER_STARTED_MOVING")
+    M.WantPlan()
+  end)
+  -- (5.0) une quête prise ne relance le plan que si elle apporte une récompense d'équipement nouvelle
+  local rewardSig, rewardQueued = nil, false
+  self:RegisterEvent("QUEST_ACCEPTED", function()
+    if rewardQueued then return end
+    rewardQueued = true
+    T:After(2, function()
+      rewardQueued = false
+      local ids = {}
+      for id in pairs(M.ScanLogRewards()) do ids[#ids + 1] = id end
+      table.sort(ids)
+      local sig = table.concat(ids, ",")
+      if rewardSig ~= nil and sig ~= rewardSig and M.plan then markDirty() end
+      rewardSig = sig
+    end)
+  end)
+  -- (5.0) en groupe / seul : l'Endurance ne pèse pas pareil → poids relus quand ça bascule (pas à chaque mouvement du groupe)
+  local grouped = try(g("IsInGroup")) and true or false
+  self:RegisterEvent("GROUP_ROSTER_UPDATE", function()
+    local now = try(g("IsInGroup")) and true or false
+    if now ~= grouped then grouped = now if M.ResetWeights then M.ResetWeights() end if M.plan then markDirty() end end
+  end)
+  self:On("COMBAT_END", function()   -- (un seul rappel par message et par module : les trois parties passent ici)
+    if job then T:After(1, function() step() end)
+    elseif M._kickAfterCombat then M._kickAfterCombat = false kick(2) end
+    if M.SpecCombatEnd then M.SpecCombatEnd() end
+    if M.RentCombatEnd then M.RentCombatEnd() end
+    if M.Value and M.Value.CombatEnd then M.Value.CombatEnd() end
+  end)
   self:On("SUMMARY", function(m) if m.plan then local s = T:Summary() if type(s) == "table" then s.gear = M.Summary(m.plan) end end end)
-  if self._ticker then self._ticker:Cancel() self._ticker = nil end
-  T:After(8, function() M:AutoRefresh() end)
+  if M.SpecEnable then M.SpecEnable() end
+  if M.RentEnable then M.RentEnable() end
+  if dirty then kick(8) end
 end
 
 function M:OnDisable()
-  if self._ticker then self._ticker:Cancel() self._ticker = nil end
+  if M._cancelJob then M._cancelJob() end
   job = nil
   hideGlow()
+  if M.RentDisable then M.RentDisable() end
   self:Clear("upgrade")
   self:Clear("reward")
+  self:Clear("spec")
+  self:Clear("mount")
 end
 
 if T.RegisterSlash then
