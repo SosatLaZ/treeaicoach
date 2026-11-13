@@ -133,6 +133,21 @@ function Q.SellAndRepair()
       parts[#parts + 1] = "Réparation : pas assez d'or (" .. Fmoney(cost) .. ")"
     end
   end
+  -- (5.0 BAGS) les gris passent par l'assistant d'inventaire : avis préparés par petits paquets, chaque pile relue
+  -- juste avant d'être vendue, jamais un gris qu'un gardien réclame
+  local B = T.Bags
+  if type(B) == "table" and B._active and type(B.SellGreys) == "function" and type(B.Warm) == "function" then
+    B.Warm(function()
+      if not merchantOpen or inCombat() then return end
+      local n, value = B.SellGreys()
+      if (tonumber(n) or 0) > 0 then
+        Q.stats.sold = Q.stats.sold + n
+        parts[#parts + 1] = fmt("Vendu : %d objet%s gris (%s)", n, n > 1 and "s" or "", Fmoney(value))
+      end
+      if #parts > 0 then note(table.concat(parts, " · ")) end
+    end)
+    return parts
+  end
   local list, value = greyItems()
   if #list > 0 then
     local i = 0

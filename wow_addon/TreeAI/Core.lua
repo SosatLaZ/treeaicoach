@@ -1751,6 +1751,7 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   QuickFight = { lite = true, combat = true, desc = "Barre de combat : manger, familier, aspect, pull, prêt ou pas" },
   Leveling = { lite = false, desc = "Progression : repos, zone dangereuse, talents, compétence d'arme" },
   Inventory = { lite = false, desc = "Inventaire : sacs, réparation, vente des gris, nourriture" },
+  Bags = { lite = true, desc = "Sacs : quoi garder, vendre, mettre à l'HV ou à la banque ; ce qu'il te manque" },   -- (5.0 BAGS)
   Classes = { lite = false, combat = true, desc = "Conseils de classe (autres classes)" },
   Stats = { lite = true, desc = "Statistiques mesurées : XP/h et or/h (avec leur durée de mesure), kills, drops" },
   Route = { lite = true, desc = "Itinéraire le plus rapide entre les étapes" },

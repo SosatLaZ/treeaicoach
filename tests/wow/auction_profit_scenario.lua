@@ -75,8 +75,9 @@ return function(M, ctx)
     check(tx:find("tile:Vendre tes sacs à l'HV : +", 1, true) and tx:find("tile:Acheter-revendre : +", 1, true)
       and not tx:find("bénéfice possible", 1, true) and tx:find("en vente à l'HV", 1, true) and tx:find("gagné cette semaine", 1, true),
       "page: the numbers on top (bags vs flips never mixed): " .. tx)
-    check(tx:find("tile:Scanner", 1, true) and tx:find("tile:Acheter-revendre", 1, true) and tx:find("tile:Vendre mes sacs", 1, true)
-      and tx:find("tile:Mes métiers", 1, true), "page: the 4 big buttons: " .. texts())
+    -- (5.0 BAGS) no duplicate tiles: the two figures above ARE the lists; the action row = Scanner · Ce qu'il te manque · Mes métiers
+    check(tx:find("tile:Scanner", 1, true) and tx:find("tile:Ce qu'il te manque", 1, true) and tx:find("tile:Mes métiers", 1, true)
+      and not tx:find("tile:Vendre mes sacs", 1, true), "page: the 3 big buttons, no duplicate: " .. texts())
     check(tx:find("Ouvre l'HV et clique Scanner", 1, true), "empty state says what to do: " .. tx)
     local q0 = #M.ah.queries
     M.Hw(A.ScanSmart, W)

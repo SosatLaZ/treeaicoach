@@ -937,6 +937,7 @@ function M.FinishScan(j)
   M.CheckOwned()
   M.BuildQueue()
   M.Refresh()
+  if T.Bags and T.Bags.Invalidate then pcall(T.Bags.Invalidate) end   -- (5.0 BAGS) nouveaux prix : avis des sacs refaits
 end
 
 local function processScan(src, full, total, by)
@@ -983,6 +984,7 @@ function M.ApplyItemListings(id, rows)
     addSel(rec, today(), sellersOf(it))
     rec.last = now()
   end
+  if T.Bags and T.Bags.Invalidate then pcall(T.Bags.Invalidate, id) end   -- (5.0 BAGS) prix de cet objet relu
   return it
 end
 
@@ -1115,8 +1117,28 @@ function M.Gold()
   return { total = total, reserve = reserve, parts = parts, free = free, budget = budget, cap = cap, spent = spent,
     listed = listed, held = held, invested = listed + held }
 end
--- (4.2 FIX42) ce qu'il faut garder (ProfLevel.KeepOf : compos de tes plans de métier, objets de tes quêtes)
+-- (5.0 BAGS) l'assistant d'inventaire quand il est allumé : UN avis « vendre / garder » pour tout l'addon
+local function brain()
+  local B = T.Bags
+  if type(B) == "table" and B._active and type(B.Verdict) == "function" then return B end
+  return nil
+end
+M.Brain = brain
+-- ce qu'il faut garder de cet objet : (5.0 BAGS) T.Bags.Verdict (gardiens : quêtes, potions, munitions, métiers,
+-- équipement…) — seul un avis « HV » ou « marchand » laisse des piles à vendre ; sinon l'ancien chemin
+-- (4.2 FIX42 : ProfLevel.KeepOf, compos de tes plans de métier, objets de tes quêtes)
 local function keepOf(id)
+  local B = brain()
+  if B then
+    local ok, v = pcall(B.Verdict, id)
+    -- (un objet absent des sacs — achat-revente, banque — garde l'ancien chemin : le besoin des métiers)
+    if ok and type(v) == "table" and not v.off and n0(v.have) > 0 then
+      -- un surplus reconnu (avis « HV » / « marchand », ou pile entamée) : on garde ce que les gardiens réclament ;
+      -- sinon tout est gardé (rien à mettre en vente)
+      if n0(v.surplus) > 0 then return n0(v.keep), v.rest and v.rest.why or (n0(v.keep) > 0 and v.why or nil), v end
+      return n0(v.have), v.why, v
+    end
+  end
   local P = T.ProfLevel
   if not (P and type(P.KeepOf) == "function") then return 0, nil end
   local ok, n, why = pcall(P.KeepOf, id)
@@ -1427,6 +1449,14 @@ function M.TargetIDs()
       if item and item.itemID and not item.noValue and (item.quality or 1) >= 1 and (M.Stats(item.itemID) or M.cur[item.itemID]) then add(item.itemID) end
     end
   end
+  -- (5.0 BAGS) objets des sacs « à l'HV, prix inconnu » et ce qu'il te manque : leur prix d'abord
+  local B = brain()
+  if B then
+    local okL, L = pcall(B.Lists)
+    for _, e in ipairs(okL and type(L) == "table" and L.ah or {}) do add(e.id) end
+    local okS, sh = pcall(B.Shopping)
+    for _, e in ipairs(okS and type(sh) == "table" and sh or {}) do add(e.id) end
+  end
   for _, d in ipairs(M.deals or {}) do add(d.id) end
   return ids
 end
@@ -1682,12 +1712,14 @@ function M.SellAdvice()
   local out = {}
   for id, count in pairs(bag) do
     -- (4.2 FIX42) seulement le surplus : « garde 12, vends 18 » (compos de tes plans, objets de quête)
-    local keep, why = keepOf(id)
+    local keep, why, v = keepOf(id)
     local spare = count - keep
     if spare > 0 and not M.Odd(id) and (M.Stats(id) or M.cur[id] or M.browse[id]) then
       local stack = select(8, M.ItemInfo(id))
       local s = M.PostPrice(id, min(spare, max(1, n0(stack))))
       s.have, s.keep, s.keepWhy = spare, keep > 0 and keep or nil, why
+      -- (5.0 BAGS) même seuil que l'avis des sacs : « marchand » là-bas = « marchand » ici (jamais deux avis)
+      if v and v.action == "sell" and s.better == "ah" then s.better = "vendor" end
       if s.unit or s.vendor > 0 then out[#out + 1] = s end
     end
   end
@@ -1732,7 +1764,12 @@ function M.PostList()
       if qty > 0 then
         local s = M.PostPrice(id, qty)
         if s.split and s.split < qty then qty = s.split s = M.PostPrice(id, qty) end
-        if s.unit and s.better == "ah" then
+        local okPost = s.unit and s.better == "ah"
+        if okPost and brain() then   -- (5.0 BAGS) l'avis des sacs dit « marchand » : pas à l'HV (même seuil partout)
+          local okV, v = pcall(brain().Verdict, id)
+          okPost = okV and type(v) == "table" and v.action ~= "sell"
+        end
+        if okPost then
           s.bag, s.slot, s.have = bag, slot, have
           left[id].listed = left[id].listed + qty
           left[id].spare = left[id].spare - qty
@@ -2518,7 +2555,14 @@ function M.PageModel()
   local n, v, t = ownedSummary()
   local rd = M.RealmData()
   local last = (M.lastScan and M.lastScan.t) or (M.db and n0(M.db.lastScanT) > 0 and M.db.lastScanT) or nil
-  return { gold = g, realized = r, bags = bags, vendorN = vendorN, bagGain = bagGain, groups = groups,
+  -- (5.0 BAGS) ce qu'il te manque (stock conseillé) : la liste d'achats de l'HV
+  local need = {}
+  local B = brain()
+  if B and type(B.Shopping) == "function" then
+    local okS, sh = pcall(B.Shopping)
+    if okS and type(sh) == "table" then need = sh end
+  end
+  return { gold = g, realized = r, bags = bags, vendorN = vendorN, bagGain = bagGain, groups = groups, need = need,
     planGain = n0(M.planGain), possible = n0(M.planGain) + bagGain, ownedN = n, ownedV = v, ownedT = t,
     tracked = rd and n0(rd.n) or 0, lastScan = last, scanned = last ~= nil or (rd and n0(rd.n) > 0) }
 end
@@ -2550,23 +2594,33 @@ function M.RenderPage(Ly, W)
   local week = n0(m.realized.week)
   -- (4.2 FIX42) deux gains JAMAIS additionnés : vendre ce que tu as déjà (sacs) ≠ acheter pour revendre (de l'or engagé)
   local nBags = #m.bags
+  local view = M.view or "flips"
+  -- (5.0 BAGS) une seule rangée de chiffres : les deux premiers SONT les listes (plus de tuile en double dessous)
   Ly.tiles({
     { "Vendre tes sacs à l'HV : +" .. money(m.bagGain), nBags > 0 and (nBags .. " objet" .. (nBags > 1 and "s" or "") .. " mieux payé" .. (nBags > 1 and "s" or "") .. " qu'au marchand")
         or "rien de mieux qu'au marchand", function() M.view = "bags" end,
       { "Ce que tu as déjà : vendu à l'HV plutôt qu'au marchand (net, risque d'invendu compris).",
-        "Net : commission 5 % (15 % en HV neutre) et dépôt perdu si invendu déjà déduits." } },
+        "Net : commission 5 % (15 % en HV neutre) et dépôt perdu si invendu déjà déduits.",
+        "Jamais ce que tu dois garder (potions, munitions, quêtes, compos de tes métiers) : l'avis de la page « Sacs »." },
+      view == "bags", "Clic : la liste" },
     { "Acheter-revendre : +" .. money(m.planGain), #m.groups > 0 and (#m.groups .. " achat" .. (#m.groups > 1 and "s" or "") .. " sûr" .. (#m.groups > 1 and "s" or ""))
         or "rien de sûr pour l'instant", function() M.view = "flips" end,
       { "De l'or engagé : acheté à l'HV, revendu plus cher (ventes mesurées entre tes scans).",
-        "Net : commission et dépôt déjà déduits. Jamais additionné à la vente de tes sacs." } },
+        "Net : commission et dépôt déjà déduits. Jamais additionné à la vente de tes sacs." },
+      view == "flips", "Clic : la liste" },
     { ("%d vente%s · %s"):format(m.ownedN, m.ownedN > 1 and "s" or "", money(m.ownedV)), "en vente à l'HV", nil,
       { m.ahOpen and "Lu à l'instant" or ("Vu à l'HV " .. ago(m.ownedT)) } },
     { (week >= 0 and "+" or "") .. money(week), "gagné cette semaine", nil,
       { ("Aujourd'hui %s · total %s"):format(money(m.realized.today), money(m.realized.total)), "Lu dans le courrier de l'HV (ventes − achats)." } },
   }, 2)
-  local nBuy = #m.groups
-  local view = M.view or "flips"
   local function pick(v) return function() M.view = v end end
+  local need = m.need or {}
+  local needSub = "rien : ton stock est bon"
+  if #need > 0 then
+    local parts = {}
+    for i, e in ipairs(need) do if i <= 2 then parts[#parts + 1] = ("%d %s"):format(n0(e.n), tostring(e.label)) end end
+    needSub = table.concat(parts, ", ") .. (#need > 2 and "…" or "")
+  end
   local scanSub = M.Scanning() and ("lecture " .. M.Scanning())
     or (not M.ahOpen and "ouvre l'HV d'abord")
     or (M.FullCooldown() > 0 and ("complet dans " .. mmss(M.FullCooldown()) .. " · ciblé maintenant"))
@@ -2574,15 +2628,14 @@ function M.RenderPage(Ly, W)
   Ly.tiles({
     { "Scanner", scanSub, function() scanHere(W) end, { "Lit les prix de l'HV (scan complet 1 fois / 15 min, sinon tes objets).",
       "Plusieurs scans espacés sur 2-3 jours mesurent ce qui se vend vraiment." }, false, M.ahOpen and "Clic : scanner" or "Ouvre l'HV d'abord" },
-    { "Acheter-revendre", nBuy > 0 and (nBuy .. " objet" .. (nBuy > 1 and "s" or "") .. " · +" .. money(m.planGain)) or "rien de sûr pour l'instant",
-      pick("flips"), { "Seulement avec la preuve que ça se revend (ventes mesurées entre tes scans)." }, view == "flips", "Clic : la liste" },
-    { "Vendre mes sacs", #m.bags > 0 and (#m.bags .. " à l'HV · +" .. money(m.bagGain) .. " vs marchand") or "rien de mieux qu'au marchand",
-      pick("bags"), { "Compare l'HV (net, risque d'invendu compris) au prix du marchand, objet par objet." }, view == "bags", "Clic : la liste" },
+    { "Ce qu'il te manque", needSub, pick("need"), { "Potions, nourriture, munitions : le stock conseillé pour ton niveau (page « Sacs »).",
+      "Ici : leur prix à l'HV quand il est connu." }, view == "need", "Clic : la liste" },
     { "Mes métiers", "ce que tu fabriques et vends", pick("craft"), { "Coût des composants contre prix de vente mesuré à l'HV." },
       view == "craft", "Clic : la liste" },
-  }, 2)
+  }, 3)
   if view == "bags" then M.RenderBags(Ly, W, m)
   elseif view == "craft" then M.RenderCraft(Ly, W, m)
+  elseif view == "need" then M.RenderNeed(Ly, W, m)
   else M.RenderFlips(Ly, W, m) end
   -- toujours : mes ventes en cours (si on en a vu) et le bilan court
   local owned = {}
@@ -2647,6 +2700,25 @@ function M.RenderBags(Ly, W, m)
           ("Dépôt %s (perdu si invendu), commission déduite."):format(money(s.deposit)),
           s.proof and "Ventes mesurées entre tes scans." or "Peu de ventes mesurées : prix d'après les annonces.",
           "À l'HV : bouton « Poster » du panneau TreeAI (1 clic = 1 mise en vente)." } })
+    end
+  end
+end
+--- (5.0 BAGS) « Ce qu'il te manque » : le stock conseillé par l'assistant d'inventaire, avec le prix d'HV s'il est connu
+function M.RenderNeed(Ly, W, m)
+  local need = m.need or {}
+  if Ly.header("Ce qu'il te manque (à acheter)", "hv:need", #need) then
+    if #need == 0 then
+      Ly.text(brain() and "Rien : tes potions, ta nourriture et tes munitions suffisent pour ton niveau."
+        or "L'assistant d'inventaire (« Sacs ») est coupé : allume-le pour voir ce qu'il te manque.", "S", "muted")
+    end
+    for _, e in ipairs(need) do
+      local price = e.ah and ("HV ≈ %s/u (%s) → ~%s"):format(money(e.ah), tostring(e.ahSrc or "?"), money(n0(e.ah) * n0(e.n)))
+        or (e.src == "marchand" and (e.npc and ("chez un marchand : " .. e.npc) or "chez un marchand") or "pas de prix à l'HV : scanne")
+      Ly.row({ text = ("%s%s — %s"):format(e.name or tostring(e.label), " ×" .. n0(e.n), price), prio = 2,
+        onClick = (e.id and M.ahOpen) and function() M.SearchItem(e.id) end or nil, actionText = "chercher à l'HV",
+        tooltip = { ("Tu en as %d, stock conseillé : %d."):format(n0(e.have), n0(e.want)),
+          e.src == "marchand" and "Un marchand en vend : souvent moins cher qu'à l'HV." or nil,
+          "L'achat reste ton clic dans la fenêtre de l'HV." } })
     end
   end
 end
