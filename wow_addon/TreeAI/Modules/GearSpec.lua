@@ -488,6 +488,7 @@ function M.AskSpecOnce()
   -- juste après la connexion le jeu n'a pas encore chargé les talents : on ne demande qu'après une 2e lecture
   local t = num(try(g("GetTime"))) or 0
   if SP.enabledAt and t - SP.enabledAt < M.SPEC_ASK_AFTER then return false end
+  if type(T.Quiet) == "table" and type(T.Quiet.Ok) == "function" and not T.Quiet.Ok("spec") then return false end   -- (5.1 LOOK) calme
   c.specAsked = true
   local names = M.TreeNames(s.class)
   M:Suggest("spec", ("Quelle est ta spé ? (clic : %s, %s ou %s)"):format(names[1], names[2], names[3]), 2,

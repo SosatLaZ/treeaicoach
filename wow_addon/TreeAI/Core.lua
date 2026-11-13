@@ -4966,6 +4966,8 @@ end
 -- en combat), et ne s'ouvre pas si le joueur l'a déjà fini (ou passé) entre-temps. Abandon après ~5 min.
 function TreeAI:_MaybeWizard(tries)
   if not self.db or self.db.onboarded or not self.ShowWizard then return end
+  -- (5.1 LOOK) plus de fenêtre qui s'ouvre seule à la connexion : une petite ligne « Régler · Plus tard » (Tour.lua)
+  if type(self.Hello) == "function" then return self:Hello() end
   local st = self.PlayerState and self:PlayerState(true) or {}
   if (st.dead or st.ghost or st.taxi or st.inInstance or st.inCombat) and (tries or 0) < 10 then
     self:After(30, function() self:_MaybeWizard((tries or 0) + 1) end)

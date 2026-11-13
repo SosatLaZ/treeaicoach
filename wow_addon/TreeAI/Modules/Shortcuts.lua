@@ -1,7 +1,10 @@
--- TreeAI — module Shortcuts (5.0, agent LOOK) : la BANDE D'ACTIONS RAPIDES, impossible à rater, un clic = l'action.
---   Quêtes [● Guidage quêtes ON] : Rendre · Prendre · Suivant · Zone · Vite  |  Perso : Sacs · Équipement · Métiers  |
---   Groupe  |  TreeAI
--- Chaque bouton = icône du jeu + mot court dessous + pastille de nombre (coin haut droit) + sa touche (coin haut gauche).
+-- TreeAI — module Shortcuts (5.1, agent LOOK) : la BANDE D'ACTIONS RAPIDES — UNE rangée fine, un clic = l'action.
+--   [● Guide ON]  Rendre 2 · Prendre · Zone  |  Sacs · Équip. · Métiers  |  Groupe  |  TreeAI
+-- (5.1 LOOK) « moins agressif » : une seule rangée de ~26 px réels (icône de 14 + mot court + nombre en accent), fond
+-- noir translucide sans liseré doré, estompée au repos (60 %) et en combat (30 %), pleine au survol ; « Suivant » et
+-- « Vite » ne sont plus sur la bande d'office (option « Boutons en plus », leurs touches et /tai boutons marchent
+-- toujours) ; plus de titres de groupe ni de bouton « Touches… » (réglages → Touches).
+-- Chaque bouton = icône du jeu + mot court à droite + son nombre ; la touche est dans l'infobulle.
 -- Un clic FAIT la chose : changer le mode de quêtes (T.QuestBrain), passer l'étape, ouvrir le choix de zone, lancer la
 -- session métier, ouvrir la carte du module (S.SetAction : les modules Sacs / Équipement y branchent leur action
 -- directe) ; clic droit = la page de la fenêtre. La pastille « Guidage quêtes » allume / coupe TOUT le guidage de
@@ -28,13 +31,15 @@ local S = T:RegisterModule("Shortcuts", {
   title = "Actions rapides",
   description = "La bande d'actions rapides : Guidage quêtes ON / OFF, Rendre, Prendre, Suivant, Zone, Vite, Sacs, Équipement, Métiers, Groupe, TreeAI.",
   defaults = { enabled = true, strip = true, text = true, keys = true, stripLocked = false, stripScale = 100,
-               keysHint = true, hideCombat = false, guide = true,
+               keysHint = true, hideCombat = false, guide = true, more = false, fade = true,
                actionBar = false, dock = true, locked = false, labels = true, scale = 100 },
   charDefaults = { pos = nil, strip = nil },
   options = {
     { section = "Actions rapides", key = "strip", type = "toggle", label = "Afficher la bande d'actions rapides" },
-    { key = "text", type = "toggle", label = "Un mot sous chaque icône (décoché : mode compact, icônes seules)" },
-    { key = "keys", type = "toggle", label = "Afficher la touche de chaque bouton" },
+    { key = "text", type = "toggle", label = "Un mot à côté de chaque icône (décoché : mode compact, icônes seules)" },
+    { key = "more", type = "toggle", label = "Boutons en plus sur la bande : Suivant, Vite" },
+    { key = "fade", type = "toggle", label = "Bande estompée au repos et en combat (pleine au survol)" },
+    { key = "keys", type = "toggle", label = "Dire la touche de chaque bouton dans son infobulle" },
     { key = "hideCombat", type = "toggle", label = "Cacher la bande pendant les combats" },
     { key = "stripLocked", type = "toggle", label = "Verrouiller la bande (elle ne bouge plus)" },
     { key = "stripScale", type = "range", label = "Taille de la bande (%)", min = 70, max = 150, step = 5 },
@@ -75,7 +80,7 @@ local DEFS = {
     bind = "TREEAI_QB_PICKUP", match = { "pickup", "pick", "prendre", "take", "accept", "available" }, page = "quests",
     title = "Quêtes à prendre",
     tip = "Un clic : le trajet va chercher les meilleures quêtes près de toi (XP par minute trajet compris, suites, groupe, niveau)." },
-  { id = "suivant", group = "quetes", quest = true, label = "Suivant", icon = ICON .. "Ability_Rogue_Sprint",
+  { id = "suivant", group = "quetes", quest = true, extra = true, label = "Suivant", icon = ICON .. "Ability_Rogue_Sprint",
     bind = "TREEAI_STRIP_SUIVANT", page = "quests",
     title = "Étape suivante",
     tip = "Un clic : passe à l'étape suivante (celle-ci est faite, ou tu veux la sauter)." },
@@ -83,14 +88,14 @@ local DEFS = {
     match = { "zone", "here", "ici", "all", "tout" }, page = "quests",
     title = "Tout faire ici · choisir ma zone",
     tip = "Un clic : tout faire dans ta zone, et la liste des zones pour toi, classées (quêtes, trajet, XP/h, groupe)." },
-  { id = "vite", group = "quetes", quest = true, label = "Vite", icon = ICON .. "Spell_Nature_Swiftness", bind = "TREEAI_QB_FASTLVL",
+  { id = "vite", group = "quetes", quest = true, extra = true, label = "Vite", icon = ICON .. "Spell_Nature_Swiftness", bind = "TREEAI_QB_FASTLVL",
     match = { "fastlvl", "fast", "vite", "speed", "monter" }, page = "quests",
     title = "Monter vite",
     tip = "Un clic : une seule consigne « fais ça maintenant », pour le plus d'XP par heure." },
   { id = "sacs", group = "perso", label = "Sacs", icon = ICON .. "INV_Misc_Bag_08", bind = "TREEAI_STRIP_SACS", page = "bags",
     title = "Sacs",
     tip = "Un clic : tes sacs s'ouvrent avec ce qui est à vendre, à garder, à mettre à l'HV ou à la banque." },
-  { id = "equip", group = "perso", label = "Équipement", icon = ICON .. "INV_Chest_Chain", bind = "TREEAI_STRIP_EQUIP", page = "gear",
+  { id = "equip", group = "perso", label = "Équipement", short = "Équip.", icon = ICON .. "INV_Chest_Chain", bind = "TREEAI_STRIP_EQUIP", page = "gear",
     title = "Équipement",
     tip = "Un clic : ce que tu peux équiper de mieux tout de suite, et les prochaines pièces à viser." },
   -- « Métiers » : seulement si tu as un métier de fabrication ; pastille = achats en attente du plan ;
@@ -273,7 +278,7 @@ function S.State()
   local out = {}
   for _, d in ipairs(DEFS) do
     if not d.hidden and (not d.optional or S.HasProf()) then
-      local st = { id = d.id, group = d.group, label = d.label, icon = d.icon, title = d.title, tip = d.tip, bind = d.bind }
+      local st = { id = d.id, group = d.group, label = d.label, short = d.short, extra = d.extra, icon = d.icon, title = d.title, tip = d.tip, bind = d.bind }
       local m = S.ModeFor(d.id, list)
       if m then
         st.mode = m.id
@@ -578,8 +583,9 @@ function S.TipLines(id)
   if d.page and id ~= "fenetre" and id ~= "equip" and not inFocus then add("Clic droit : la page de la fenêtre", 0.4, 0.8, 1) end
   return out
 end
-local function hideTip() local tt = G.GameTooltip if tt then meth(tt, "Hide") end end
+local function hideTip() local tt = G.GameTooltip if tt then meth(tt, "Hide") end if S.Hover then S.Hover(false) end end
 local function showTip(b)
+  if S.Hover then S.Hover(true) end
   local tt = G.GameTooltip
   if not tt then return end
   local lines = S.TipLines(b.id)
@@ -590,13 +596,45 @@ local function showTip(b)
 end
 
 -- ===================================================================== bande : cadre et boutons
-local strip, grip, keysBtn, pill
-local btns, caps, seps = {}, {}, {}
+local strip, grip, pill
+local btns, seps = {}, {}
 local function K() local th = Th() return th and th.TOKENS or nil end
+-- (5.1) une rangée : t = bouton (h = hauteur, icon, gap, pad, compact = icône seule), s = bande (pad, grip, sep)
 local function dims()
   local k = K()
-  local t, s = k and k.tile or { w = 46, h = 42, icon = 22, gap = 2, compact = 28 }, k and k.strip or { cap = 16, pad = 4, grip = 10, sep = 9 }
+  local sl = k and k.slim or { h = 22, icon = 14, gap = 1, pad = 6 }
+  local t = { h = sl.h, icon = sl.icon, gap = sl.gap, pad = sl.pad, w = 0, compact = (k and k.tile and k.tile.compact) or 22 }
+  local s = k and k.strip or { cap = 16, pad = 2, grip = 8, sep = 7 }
   return t, s
+end
+--- un bouton de la bande est-il montré ? (« Suivant » / « Vite » : seulement avec l'option « Boutons en plus »)
+local function onStrip(st) return not st.extra or (S.db and S.db.more == true) end
+S.OnStrip = onStrip
+-- estompée au repos et en combat, pleine au survol (option « fade ») : aucun OnUpdate, un seul SetAlpha par changement
+local hoverGen = 0
+function S.Alpha()
+  local k = K()
+  local a = k and k.alpha or { idle = 0.60, combat = 0.30 }
+  if S._hover or not (S.db and S.db.fade ~= false) then return 1 end
+  if (T.IsEditMode and T:IsEditMode()) then return 1 end
+  return inCombat() and (a.combat or 0.30) or (a.idle or 0.60)
+end
+function S.ApplyAlpha()
+  if not strip then return end
+  local a = S.Alpha()
+  if S._alpha ~= a then S._alpha = a meth(strip, "SetAlpha", a) end
+end
+--- la souris entre sur la bande (ou un de ses boutons) / en sort ; la sortie attend 0,6 s (passage d'un bouton à l'autre)
+function S.Hover(on)
+  hoverGen = hoverGen + 1
+  if on then S._hover = true S.ApplyAlpha() return end
+  local gen = hoverGen
+  T:After(0.6, function()
+    if gen ~= hoverGen then return end
+    if strip and meth(strip, "IsMouseOver") then return end
+    S._hover = false
+    S.ApplyAlpha()
+  end)
 end
 local function stripOn() return S._active and S.db and S.db.strip ~= false end
 local function stripLocked() return (S.db and S.db.stripLocked) or (T.FramesLocked and T:FramesLocked()) or false end
@@ -622,23 +660,21 @@ local function click(self, button)
   local fn = function() S.Do(self.id, button) end
   if T.UserAction then T:UserAction(fn) else T.safecall(fn) end
 end
---- bouton de repli (thème coupé / absent) : la même forme, sans les états du thème
+--- bouton de repli (thème coupé / absent) : la même forme (icône + mot à droite + nombre), sans les états du thème
 local function plainButton(name, parent)
   local ok, b = pcall(G.CreateFrame, "Button", name, parent)
   if not ok or not b then return nil end
   local t = dims()
-  meth(b, "SetSize", t.w, t.h)
+  meth(b, "SetSize", 60, t.h)
   meth(b, "RegisterForClicks", "LeftButtonUp", "RightButtonUp")
   b.bg = meth(b, "CreateTexture", nil, "BACKGROUND")
-  if b.bg then meth(b.bg, "SetAllPoints", b) color(b.bg, 0.09, 0.10, 0.13, 0.88) end
+  if b.bg then meth(b.bg, "SetAllPoints", b) color(b.bg, 0, 0, 0, 0) end
   local hl = meth(b, "CreateTexture", nil, "HIGHLIGHT")
-  if hl then meth(hl, "SetAllPoints", b) color(hl, 1, 1, 1, 0.10) end
+  if hl then meth(hl, "SetAllPoints", b) color(hl, 1, 1, 1, 0.07) end
   b.icon = meth(b, "CreateTexture", nil, "ARTWORK")
   b.label = fstring(b, "S", "text")
-  b.keyText = meth(b, "CreateFontString", nil, "OVERLAY", "NumberFontNormalSmallGray")
-  if b.keyText then meth(b.keyText, "SetPoint", "TOPLEFT", b, "TOPLEFT", 2, -2) end
-  b.count = meth(b, "CreateFontString", nil, "OVERLAY", "NumberFontNormalSmall")
-  if b.count then meth(b.count, "SetPoint", "TOPRIGHT", b, "TOPRIGHT", -2, -2) end
+  b.count = meth(b, "CreateFontString", nil, "OVERLAY", "GameFontHighlightSmall")
+  if b.count then meth(b.count, "SetTextColor", 0.45, 0.74, 1) end
   b.__plain = {}
   function b.SetLayout(self2, kind)
     local st = self2.__plain
@@ -648,12 +684,19 @@ local function plainButton(name, parent)
     meth(self2, "SetHeight", compact and t.compact or t.h)
     if self2.icon then
       meth(self2.icon, "ClearAllPoints")
-      meth(self2.icon, "SetSize", compact and (t.compact - 8) or t.icon, compact and (t.compact - 8) or t.icon)
-      meth(self2.icon, "SetPoint", compact and "CENTER" or "TOP", self2, compact and "CENTER" or "TOP", 0, compact and 0 or -4)
+      meth(self2.icon, "SetSize", t.icon, t.icon)
+      if compact then meth(self2.icon, "SetPoint", "CENTER", self2, "CENTER", 0, 0)
+      else meth(self2.icon, "SetPoint", "LEFT", self2, "LEFT", t.pad - 1, 0) end
     end
     if self2.label then
       meth(self2.label, "ClearAllPoints")
-      if compact then meth(self2.label, "Hide") else meth(self2.label, "SetPoint", "BOTTOM", self2, "BOTTOM", 0, 3) meth(self2.label, "Show") end
+      if compact then meth(self2.label, "Hide")
+      else meth(self2.label, "SetPoint", "LEFT", self2, "LEFT", t.pad - 1 + t.icon + 4, 0) meth(self2.label, "Show") end
+    end
+    if self2.count then
+      meth(self2.count, "ClearAllPoints")
+      if compact then meth(self2.count, "SetPoint", "TOPRIGHT", self2, "TOPRIGHT", -1, -1)
+      else meth(self2.count, "SetPoint", "LEFT", self2.label or self2, "RIGHT", 3, 0) end
     end
   end
   function b.Set(self2, v)
@@ -664,11 +707,11 @@ local function plainButton(name, parent)
       if v.icon:find("Icons", 1, true) then meth(self2.icon, "SetTexCoord", 0.08, 0.92, 0.08, 0.92) end
     end
     if v.label ~= nil and self2.label then st.label = v.label meth(self2.label, "SetText", v.label) end
-    if self2.keyText then meth(self2.keyText, "SetText", v.key or "") end
     local n = tonumber(v.count)
-    if self2.count then meth(self2.count, "SetText", (n and n > 0) and (n > 99 and "99+" or tostring(n)) or "") end
-    if v.disabled then color(self2.bg, 0.09, 0.10, 0.13, 0.5) elseif v.active then color(self2.bg, 0.36, 0.27, 0.06, 0.94)
-    else color(self2.bg, 0.09, 0.10, 0.13, 0.88) end
+    st.count = (n and n > 0) and n or nil
+    if self2.count then meth(self2.count, "SetText", st.count and (n > 99 and "99+" or tostring(n)) or "") end
+    if v.active and not v.disabled then color(self2.bg, 0.45, 0.74, 1, 0.16) else color(self2.bg, 0, 0, 0, 0) end
+    if self2.label then meth(self2.label, "SetTextColor", v.disabled and 0.45 or 0.9, v.disabled and 0.45 or 0.9, v.disabled and 0.48 or 0.9) end
     meth(self2.icon, "SetDesaturated", v.disabled and true or false)
   end
   function b.Fit(self2, minW)
@@ -676,11 +719,12 @@ local function plainButton(name, parent)
     if st.kind == "icon" then meth(self2, "SetWidth", minW or t.compact) return minW or t.compact end
     local tw = self2.label and tonumber(meth(self2.label, "GetStringWidth")) or 0
     if not tw or tw <= 0 then tw = ulen(st.label) * 5.6 end
-    local need = max(minW or t.w, floor(tw + 8 + 0.5))
+    local cw = st.count and (#tostring(st.count) * 6 + 3) or 0
+    local need = max(minW or 0, floor(t.pad - 1 + t.icon + 4 + tw + cw + t.pad + 0.5))
     meth(self2, "SetWidth", need)
     return need
   end
-  b:SetLayout("tile")
+  b:SetLayout("slim")
   return b
 end
 -- UN bouton par action : il change de forme (mot dessous / icône seule) sans qu'on en crée un second
@@ -689,7 +733,7 @@ local function newButton(def)
   local name = "TreeAIStrip_" .. def.id
   local b
   if th and th.ActionButton then
-    b = th:ActionButton(strip, { name = name, layout = "tile", icon = def.icon, label = def.label,
+    b = th:ActionButton(strip, { name = name, layout = "slim", icon = def.icon, label = def.short or def.label,
       onClick = click, onEnter = showTip, onLeave = hideTip })
   end
   if not b then
@@ -738,18 +782,21 @@ local function ensureStrip()
   if not ok or not f then return nil end
   strip = f
   local t, s = dims()
-  meth(f, "SetSize", 400, t.h + s.cap + 2 + 2 * s.pad)
+  meth(f, "SetSize", 400, t.h + 2 * s.pad)
   meth(f, "SetFrameStrata", "MEDIUM")
   meth(f, "SetFrameLevel", 20)   -- au-dessus des cadres du jeu de même strate (jamais couverte)
   meth(f, "SetAlpha", 1)
   meth(f, "SetClampedToScreen", true)
   meth(f, "SetMovable", true)
   meth(f, "EnableMouse", true)
+  -- (5.1) pleine au survol, estompée sinon (aucun OnUpdate : entrée / sortie de la souris)
+  meth(f, "SetScript", "OnEnter", function() S.Hover(true) end)
+  meth(f, "SetScript", "OnLeave", function() S.Hover(false) end)
   local th = Th()
   -- petit cadre posé sur l'écran : fond à moitié transparent, liseré 1 px (Theme « small ») ; les boutons sont pleins
   if not (th and th:Skin(f, "small")) then
     f.bgt = meth(f, "CreateTexture", nil, "BACKGROUND")
-    if f.bgt then meth(f.bgt, "SetAllPoints", f) color(f.bgt, 0.04, 0.05, 0.07, 0.5) end
+    if f.bgt then meth(f.bgt, "SetAllPoints", f) color(f.bgt, 0, 0, 0, 0.45) end
   end
   -- poignée : glisser = déplacer (sauf verrou), clic droit = réglages
   local okG, h = pcall(G.CreateFrame, "Button", "TreeAIStripGrip", f)
@@ -760,9 +807,9 @@ local function ensureStrip()
     meth(h, "SetPoint", "BOTTOMLEFT", f, "BOTTOMLEFT", 2, 2)
     meth(h, "RegisterForClicks", "RightButtonUp")
     meth(h, "RegisterForDrag", "LeftButton")
-    for i = 1, 3 do
+    for i = 1, 3 do   -- (5.1) trois petits points gris (plus de poignée dorée)
       local d = meth(h, "CreateTexture", nil, "ARTWORK")
-      if d then meth(d, "SetSize", 3, 3) meth(d, "SetPoint", "CENTER", h, "CENTER", 0, (2 - i) * 6) tcolor(d, "gold", 1, 0.82, 0.2, 1) end
+      if d then meth(d, "SetSize", 2, 2) meth(d, "SetPoint", "CENTER", h, "CENTER", 0, (2 - i) * 5) tcolor(d, "muted", 0.6, 0.6, 0.63, 0.8) end
     end
     local hl = meth(h, "CreateTexture", nil, "HIGHLIGHT")
     if hl then meth(hl, "SetAllPoints", h) color(hl, 1, 1, 1, 0.10) end
@@ -770,6 +817,7 @@ local function ensureStrip()
     meth(h, "SetScript", "OnDragStop", function() meth(f, "StopMovingOrSizing") saveStripPos() end)
     meth(h, "SetScript", "OnClick", openSettings)
     meth(h, "SetScript", "OnEnter", function(self)
+      S.Hover(true)
       local tt = G.GameTooltip
       if not tt then return end
       meth(tt, "SetOwner", self, "ANCHOR_BOTTOMRIGHT")
@@ -788,58 +836,31 @@ local function ensureStrip()
     if T.UserAction then T:UserAction(fn) else T.safecall(fn) end
   end
   if th and th.Pill then
-    pill = th:Pill(f, { name = "TreeAIStripGuide", label = "Guidage quêtes", h = s.cap, onClick = pillClick, onEnter = showTip, onLeave = hideTip })
+    pill = th:Pill(f, { name = "TreeAIStripGuide", label = "Guide", h = t.h - 4, onClick = pillClick, onEnter = showTip, onLeave = hideTip })
   end
   if not pill then
     local okP, p = pcall(G.CreateFrame, "Button", "TreeAIStripGuide", f)
     if okP and p then
       pill = p
-      meth(p, "SetSize", 120, s.cap)
+      meth(p, "SetSize", 70, t.h - 4)
       p.bg = meth(p, "CreateTexture", nil, "BACKGROUND")
       if p.bg then meth(p.bg, "SetAllPoints", p) end
       p.label = fstring(p, "S", "text")
       if p.label then meth(p.label, "SetPoint", "CENTER", p, "CENTER", 0, 0) end
       function p.SetOn(self2, on)
         self2.on = on and true or false
-        color(self2.bg, on and 0.10 or 0.16, on and 0.30 or 0.16, on and 0.14 or 0.18, 0.92)
-        meth(self2.label, "SetText", "Guidage quêtes : " .. (on and "ON" or "OFF"))
+        color(self2.bg, on and 0.45 or 1, on and 0.74 or 1, 1, on and 0.14 or 0.04)
+        meth(self2.label, "SetText", "Guide " .. (on and "ON" or "OFF"))
       end
-      function p.Fit(self2) meth(self2, "SetWidth", 130) return 130 end
+      function p.Fit(self2) meth(self2, "SetWidth", 70) return 70 end
       meth(p, "SetScript", "OnClick", pillClick)
       meth(p, "SetScript", "OnEnter", showTip)
       meth(p, "SetScript", "OnLeave", hideTip)
     end
   end
   if pill then pill.id, pill.entry = "guide", { id = "mod:strip:guide" } end
-  -- « Touches » : seulement tant qu'une liaison manque (clic = touches conseillées, clic droit = ne plus proposer)
-  local okK, kb = pcall(G.CreateFrame, "Button", "TreeAIStripKeys", f)
-  if okK and kb then
-    keysBtn = kb
-    meth(kb, "SetHeight", s.cap)
-    meth(kb, "RegisterForClicks", "LeftButtonUp", "RightButtonUp")
-    kb.bg = meth(kb, "CreateTexture", nil, "BACKGROUND")
-    if kb.bg then meth(kb.bg, "SetAllPoints", kb) tcolor(kb.bg, "tile", 0.09, 0.10, 0.13, 0.88) end
-    local hl = meth(kb, "CreateTexture", nil, "HIGHLIGHT")
-    if hl then meth(hl, "SetAllPoints", kb) color(hl, 1, 1, 1, 0.10) end
-    kb.text = fstring(kb, "S", "key")
-    if kb.text then meth(kb.text, "SetPoint", "CENTER", kb, "CENTER", 0, 0) meth(kb.text, "SetText", "Touches…") end
-    meth(kb, "SetScript", "OnClick", function(_, btn)
-      hideTip()
-      if btn == "RightButton" then if S.db then S.db.keysHint = false end S.LayoutStrip() return end
-      if T.UserAction then T:UserAction(S.SuggestKeys) else T.safecall(S.SuggestKeys) end
-    end)
-    meth(kb, "SetScript", "OnEnter", function(self)
-      local tt = G.GameTooltip
-      if not tt then return end
-      meth(tt, "SetOwner", self, "ANCHOR_BOTTOMRIGHT")
-      meth(tt, "AddLine", "Touches conseillées", 1, 0.82, 0.2)
-      meth(tt, "AddLine", "Un clic : Alt-1 à Alt-0 pour ces boutons, seulement sur les touches libres (rien n'est remplacé).",
-        0.9, 0.9, 0.9, true)
-      meth(tt, "AddLine", "Clic droit : ne plus proposer", 0.4, 0.8, 1)
-      meth(tt, "Show")
-    end)
-    meth(kb, "SetScript", "OnLeave", hideTip)
-  end
+  -- (5.1) plus de bouton « Touches… » sur la bande : « Touches conseillées » est dans les réglages (page Touches) et
+  -- dans le réglage en 3 étapes ; S.SuggestKeys / « /tai boutons touches » restent
   if T.RegisterMovable then
     T:RegisterMovable(f, "strip", "Actions rapides", {
       onMoved = function(point, x, y, sc)
@@ -1114,7 +1135,8 @@ function S.PlaceStrip(force)
   if not strip then return false end
   local k = stripScale()
   meth(strip, "SetScale", k)
-  meth(strip, "SetAlpha", 1)
+  S._alpha = nil
+  S.ApplyAlpha()
   local function show() if stripOn() and not (S.db.hideCombat and inCombat()) then meth(strip, "Show") end end
   local p = S.char and S.char.strip
   if type(p) == "table" and not okAnchor(p[1], p[3], p[4]) then S.char.strip, p = nil, nil end
@@ -1152,7 +1174,7 @@ function S.PlaceStrip(force)
   local function size(compact)
     local key = compact and "c" or "f"
     if not S.sizes[key] then S.LayoutStrip(compact) end
-    local z = S.sizes[key] or { tonumber(meth(strip, "GetWidth")) or 400, tonumber(meth(strip, "GetHeight")) or 68 }
+    local z = S.sizes[key] or { tonumber(meth(strip, "GetWidth")) or 400, tonumber(meth(strip, "GetHeight")) or 26 }
     return z[1] * k, z[2] * k
   end
   -- les cadres du jeu d'abord : sur un petit écran, plutôt sur un cadre TreeAI (boussole) que sur le groupe
@@ -1196,25 +1218,17 @@ end
 
 -- ===================================================================== disposition
 local lastWide
-local function caption(i, textStr)
-  local c = caps[i]
-  if not c then
-    c = fstring(strip, "S", "caption")
-    caps[i] = c
-  end
-  if c then meth(c, "SetText", textStr) end
-  return c
-end
 local function separator(i)
   local d = seps[i]
   if not d then
     d = meth(strip, "CreateTexture", nil, "ARTWORK")
-    if d then meth(d, "SetWidth", 1) tcolor(d, "smallBorder", 0.78, 0.62, 0.28, 0.55) end
+    if d then meth(d, "SetWidth", 1) tcolor(d, "border", 1, 1, 1, 0.10) end
     seps[i] = d
   end
   return d
 end
---- dispose les boutons par groupes ; compact = icônes seules (étroit, ou option « un mot » coupée)
+--- dispose les boutons sur UNE rangée, par groupes séparés d'un trait fin ; compact = icônes seules (étroit, ou
+--- option « un mot » coupée). La pastille « Guide ON / OFF » ouvre la rangée.
 function S.LayoutStrip(compact)
   if not stripOn() then if strip then meth(strip, "Hide") end return end
   if not ensureStrip() then return end
@@ -1223,9 +1237,9 @@ function S.LayoutStrip(compact)
   if compact == nil then compact = S.compact or false end
   if S.db.text == false then compact = true end
   -- 1re fois (connexion, /reload) : les boutons sont créés sur quelques images, 3 par image (jamais 10 boutons et
-  -- leurs 150 textures dans la même image), puis la bande est disposée et montrée
+  -- leurs textures dans la même image), puis la bande est disposée et montrée
   local missing = false
-  for _, st in ipairs(states) do if btns[st.id] == nil then missing = true break end end
+  for _, st in ipairs(states) do if onStrip(st) and btns[st.id] == nil then missing = true break end end
   if missing then
     local tnow = tonumber((G.GetTime and G.GetTime())) or 0
     if not S._building or tnow - S._building > 2 then
@@ -1235,7 +1249,7 @@ function S.LayoutStrip(compact)
         local n = 0
         while n < 3 and i < #states do
           i = i + 1
-          if btns[states[i].id] == nil then button(states[i].id) n = n + 1 end
+          if onStrip(states[i]) and btns[states[i].id] == nil then button(states[i].id) n = n + 1 end
         end
         if i < #states then T:After(0, step) return end
         S._building = nil
@@ -1247,58 +1261,63 @@ function S.LayoutStrip(compact)
   end
   S.compact = compact
   local t, s = dims()
-  local showKeys = S.db.keys ~= false
-  local capH = compact and 0 or (s.cap + 2)
   local bh = compact and t.compact or t.h
   local x = s.pad + s.grip + 2
-  local shown, nCap, nSep = {}, 0, 0
+  local shown, nSep = {}, 0
   local byGroup = {}
   for _, st in ipairs(states) do
-    local g = byGroup[st.group or "?"]
-    if not g then g = {} byGroup[st.group or "?"] = g end
-    g[#g + 1] = st
+    if onStrip(st) then
+      local g = byGroup[st.group or "?"]
+      if not g then g = {} byGroup[st.group or "?"] = g end
+      g[#g + 1] = st
+    end
   end
   local guideOn = S.GuideOn()
-  local first = true
+  -- la pastille du guidage : un point + « Guide ON » (compact : une icône qui s'éteint)
+  if compact then
+    local b = button("guide")
+    if b then
+      b:SetLayout("icon")
+      b:Set({ icon = "Interface\\Icons\\Ability_Tracking", active = guideOn, disabled = not guideOn })
+      meth(b, "ClearAllPoints")
+      meth(b, "SetPoint", "TOPLEFT", strip, "TOPLEFT", x, -s.pad)
+      b:Fit(t.compact)
+      meth(b, "Show")
+      shown[b] = true
+      x = x + t.compact + t.gap
+    end
+    if pill then meth(pill, "Hide") end
+  elseif pill then
+    pill:SetOn(guideOn)
+    local pw = pill:Fit()
+    meth(pill, "ClearAllPoints")
+    meth(pill, "SetPoint", "TOPLEFT", strip, "TOPLEFT", x, -s.pad - 2)
+    meth(pill, "Show")
+    shown[pill] = true
+    x = x + pw + 3
+  end
   for _, grp in ipairs(S.GROUPS) do
     local list = byGroup[grp.id]
     if list and #list > 0 then
-      if not first then
+      if grp.id ~= "quetes" then
         nSep = nSep + 1
         local d = separator(nSep)
         if d then
           meth(d, "ClearAllPoints")
-          meth(d, "SetPoint", "TOPLEFT", strip, "TOPLEFT", x + floor(s.sep / 2) - 1, -s.pad)
-          meth(d, "SetPoint", "BOTTOMLEFT", strip, "BOTTOMLEFT", x + floor(s.sep / 2) - 1, s.pad)
+          meth(d, "SetPoint", "TOPLEFT", strip, "TOPLEFT", x + floor(s.sep / 2), -s.pad - 5)
+          meth(d, "SetPoint", "BOTTOMLEFT", strip, "BOTTOMLEFT", x + floor(s.sep / 2), s.pad + 5)
           meth(d, "Show")
         end
         x = x + s.sep
       end
-      first = false
-      local gx = x
-      -- mode compact : la pastille devient la 1re icône du groupe Quêtes
-      if grp.id == "quetes" and compact then
-        local b = button("guide")
-        if b then
-          b:SetLayout("icon")
-          b:Set({ icon = "Interface\\Icons\\Ability_Tracking", active = guideOn, disabled = not guideOn })
-          meth(b, "ClearAllPoints")
-          meth(b, "SetPoint", "TOPLEFT", strip, "TOPLEFT", x, -s.pad)
-          b:Fit(t.compact)
-          meth(b, "Show")
-          shown[b] = true
-          x = x + t.compact + t.gap
-        end
-      end
       for _, st in ipairs(list) do
         local b = button(st.id)
         if b then
-          b:SetLayout(compact and "icon" or "tile")
-          b:Set({ icon = st.icon, label = st.label, key = showKeys and S.KeyShort(st.key) or false, count = st.count,
-            active = st.active, disabled = st.disabled })
-          local w = b:Fit(compact and t.compact or t.w)
+          b:SetLayout(compact and "icon" or "slim")
+          b:Set({ icon = st.icon, label = st.short or st.label, count = st.count, active = st.active, disabled = st.disabled })
+          local w = b:Fit(compact and t.compact or nil)
           meth(b, "ClearAllPoints")
-          meth(b, "SetPoint", "TOPLEFT", strip, "TOPLEFT", x, -s.pad - capH)
+          meth(b, "SetPoint", "TOPLEFT", strip, "TOPLEFT", x, -s.pad)
           meth(b, "Show")
           shown[b] = true
           b.w = w
@@ -1306,59 +1325,24 @@ function S.LayoutStrip(compact)
         end
       end
       x = x - t.gap
-      if not compact and grp.cap then
-        nCap = nCap + 1
-        local c = caption(nCap, grp.cap)
-        if c then
-          meth(c, "ClearAllPoints")
-          meth(c, "SetPoint", "TOPLEFT", strip, "TOPLEFT", gx + 2, -s.pad - 3)
-          meth(c, "Show")
-        end
-        if grp.id == "quetes" and pill then
-          local cw = (c and tonumber(meth(c, "GetStringWidth"))) or 0
-          if not finite(cw) or cw <= 0 then cw = ulen(grp.cap) * 5.4 end
-          pill:SetOn(guideOn)
-          local pw = pill:Fit()
-          meth(pill, "ClearAllPoints")
-          meth(pill, "SetPoint", "TOPLEFT", strip, "TOPLEFT", gx + 2 + floor(cw + 0.5) + 6, -s.pad)
-          meth(pill, "Show")
-          shown[pill] = true
-          x = max(x, gx + 2 + floor(cw + 0.5) + 6 + pw)   -- (groupe plus étroit que la pastille : elle fixe la largeur)
-        end
-      end
     end
   end
-  for i = nCap + 1, #caps do if caps[i] then meth(caps[i], "Hide") end end
   for i = nSep + 1, #seps do if seps[i] then meth(seps[i], "Hide") end end
-  if compact and pill then meth(pill, "Hide") end
   for _, b in pairs(btns) do if b and not shown[b] then meth(b, "Hide") end end
-  -- « Touches… » : dans la ligne des titres, à droite, tant qu'une liaison manque
-  local missing = #S.MissingKeys() > 0 and S.db.keysHint ~= false and showKeys
-  if keysBtn then
-    if missing and not compact then
-      local tw = tonumber(meth(keysBtn.text, "GetStringWidth")) or 0
-      if not finite(tw) or tw <= 0 then tw = 8 * 5.4 end
-      local w = floor(tw + 12)
-      meth(keysBtn, "SetWidth", w)
-      meth(keysBtn, "ClearAllPoints")
-      meth(keysBtn, "SetPoint", "TOPRIGHT", strip, "TOPLEFT", x, -s.pad)
-      meth(keysBtn, "Show")
-    else meth(keysBtn, "Hide") end
-  end
-  meth(strip, "SetSize", x + s.pad, bh + capH + 2 * s.pad)
-  S.sizes[compact and "c" or "f"] = { x + s.pad, bh + capH + 2 * s.pad }   -- (gardée : le placement compare sans redisposer)
+  meth(strip, "SetSize", x + s.pad + 2, bh + 2 * s.pad)
+  S.sizes[compact and "c" or "f"] = { x + s.pad + 2, bh + 2 * s.pad }   -- (gardée : le placement compare sans redisposer)
   local wide = tostring(compact) .. ":" .. floor(x)
   if wide ~= lastWide or not S.placed then lastWide = wide if not placing then S.PlaceStrip() end end
   if S.placed and not (S.db.hideCombat and inCombat()) then meth(strip, "Show") end
+  S.ApplyAlpha()
 end
 --- textes qui changent sans changer la taille : nombres, mode choisi, guidage (aussi en combat : cadres non protégés)
 function S.Paint()
-  local showKeys = not (S.db and S.db.keys == false)
   local guideOn = S.GuideOn()
   for _, st in ipairs(S.lastState or {}) do
     local b = btns[st.id]
-    if b then
-      b:Set({ icon = st.icon, label = st.label, key = showKeys and S.KeyShort(st.key) or false, count = st.count, active = st.active, disabled = st.disabled })
+    if b and onStrip(st) then
+      b:Set({ icon = st.icon, label = st.short or st.label, count = st.count, active = st.active, disabled = st.disabled })
     end
   end
   if pill and not S.compact then pill:SetOn(guideOn) end
@@ -1366,8 +1350,14 @@ function S.Paint()
   if gb and S.compact then gb:Set({ icon = "Interface\\Icons\\Ability_Tracking", active = guideOn, disabled = not guideOn }) end
 end
 local function sizeSig(states)
-  local t = { S.db and S.db.text ~= false and "T" or "t", S.db and S.db.keys ~= false and "K" or "k", #S.MissingKeys() }
-  for _, st in ipairs(states) do t[#t + 1] = (st.label or "") end
+  local t = { S.db and S.db.text ~= false and "T" or "t", S.db and S.db.more and "M" or "m" }
+  -- (5.1) le nombre est écrit après le mot : son nombre de chiffres change la largeur du bouton
+  for _, st in ipairs(states) do
+    if onStrip(st) then
+      local n = tonumber(st.count)
+      t[#t + 1] = (st.short or st.label or "") .. ((n and n > 0) and (":" .. #tostring(floor(n))) or "")
+    end
+  end
   return table.concat(t, ";")
 end
 local refreshPending, lastSizeSig = false, nil
@@ -1404,6 +1394,7 @@ function S.Dump()
   out[#out + 1] = "Guidage quêtes : " .. (S.GuideOn() and "ON" or "OFF")
   for _, st in ipairs(states) do
     local s = st.label .. ((tonumber(st.count) or 0) > 0 and (" (" .. st.count .. ")") or "")
+    if not onStrip(st) then s = s .. " (hors bande)" end
     if st.key then s = s .. " [" .. st.key .. "]" end
     if st.active then s = s .. " *" end
     if st.disabled then s = s .. " (coupé)" end
@@ -1419,7 +1410,7 @@ function S.DumpLine()
   for _, grp in ipairs(S.GROUPS) do
     local names = {}
     for _, st in ipairs(states) do
-      if st.group == grp.id then
+      if st.group == grp.id and onStrip(st) then
         names[#names + 1] = st.label .. ((tonumber(st.count) or 0) > 0 and (" (" .. st.count .. ")") or "") ..
           (st.key and (" [" .. st.key .. "]") or "") .. (st.active and " *" or "") .. (st.disabled and " (coupé)" or "")
       end
@@ -1776,9 +1767,14 @@ function S:OnEnable()
   end
   recheckLater()
   -- « cacher en combat » (option) : la bande s'efface à l'entrée en combat et revient à la sortie
-  self:RegisterEvent("PLAYER_REGEN_DISABLED", function() if strip and S.db and S.db.hideCombat then meth(strip, "Hide") end end)
+  -- (5.1) en combat la bande s'estompe (30 %), au repos 55 %, pleine au survol — un SetAlpha par changement d'état
+  self:RegisterEvent("PLAYER_REGEN_DISABLED", function()
+    if strip and S.db and S.db.hideCombat then meth(strip, "Hide") end
+    T:After(0, S.ApplyAlpha)
+  end)
   self:RegisterEvent("PLAYER_REGEN_ENABLED", function()
     if strip and S.db and S.db.hideCombat and stripOn() and S.placed then meth(strip, "Show") S.Refresh() end
+    T:After(0, S.ApplyAlpha)
   end)
   self:On("LAYOUT_DONE", replace)
   self:On("QUEST_MODE_CHANGED", function() S.Refresh(true) end)
@@ -1803,7 +1799,8 @@ function S:OnDisable()
   end)
 end
 function S:OnOptionChanged(key)
-  if key == "strip" or key == "text" or key == "keys" or key == "keysHint" then
+  if key == "fade" then S._alpha = nil S.ApplyAlpha() return end
+  if key == "strip" or key == "text" or key == "keys" or key == "keysHint" or key == "more" then
     lastSizeSig, lastWide, S.compact = nil, nil, nil
     if stripOn() then S.Refresh(true) elseif strip then meth(strip, "Hide") end
     return
@@ -1827,7 +1824,7 @@ function S.Reset(arg)
   if S.char then S.char.strip = nil end
   lastSizeSig, lastWide, S.compact, S.placed, S.autoSig = nil, nil, nil, nil, nil
   S.Refresh(true)
-  if strip then S.PlaceStrip(true) meth(strip, "SetAlpha", 1) end
+  if strip then S.PlaceStrip(true) S._alpha = nil S.ApplyAlpha() end
   if tostring(arg or ""):lower():find("action") then
     for _, n in ipairs({ "Quick", "QuickFight" }) do
       local m = T.modules and T.modules[n]
@@ -1847,7 +1844,7 @@ function S.ResetInterface(arg)
   if arg == "compact" or arg == "complet" then
     if S.db then S.db.text = (arg == "complet") end
     S:OnOptionChanged("text")
-    flash(arg == "compact" and "Bande : mode compact (icônes seules)." or "Bande : mots sous les icônes.")
+    flash(arg == "compact" and "Bande : mode compact (icônes seules)." or "Bande : un mot à côté de chaque icône.")
     return arg
   end
   if arg ~= "reset" and arg ~= "raz" then

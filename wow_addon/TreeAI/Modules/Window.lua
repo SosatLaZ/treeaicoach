@@ -29,7 +29,7 @@ local W = T:RegisterModule("Window", {
   description = "La fenêtre « TreeAI » (pastille de la minimap ou touche) et la petite carte « Prochaine étape ».",
   -- (4.1 STRIP) carte coupée d'office : les boutons rapides (Shortcuts.lua) prennent sa place en haut à gauche
   defaults = { enabled = true, card = false, replacePanel = true, cardSteps = 3, cardScale = 100 },
-  charDefaults = { page = "quests", collapsed = {}, dungeon = nil, sub = {} },
+  charDefaults = { page = "home", collapsed = {}, dungeon = nil, sub = {} },
   options = {
     { section = "Carte « Prochaine étape »", key = "card", type = "toggle", label = "Afficher la carte « Prochaine étape »" },
     { key = "replacePanel", type = "toggle", label = "La carte remplace le panneau texte (le panneau reste dans Outils)" },
@@ -76,12 +76,12 @@ local function color(tex, r, g, b, a)
   else meth(tex, "SetTexture", WHITE); meth(tex, "SetVertexColor", r, g, b, a or 1) end
 end
 local FONT = { S = "GameFontHighlightSmall", M = "GameFontHighlight", L = "GameFontNormalLarge", H = "GameFontNormalHuge" }
-local LINE_H = { S = 13, M = 15, L = 19, H = 24 }
-local AVG = { S = 5.4, M = 6.2, L = 8.2, H = 10.5 }
+local LINE_H = { S = 13, M = 15, L = 17, H = 19 }       -- (5.1) L = 14 px, H = 16 px (Theme V6)
+local AVG = { S = 5.4, M = 6.2, L = 7.2, H = 8.2 }
 local function text(parent, size, tokName, layer)
   local th = Th()
   local fs
-  if th and size ~= "H" then fs = th:Text(parent, size, tokName, layer)
+  if th then fs = th:Text(parent, size, tokName, layer)
   else
     fs = meth(parent, "CreateFontString", nil, layer or "OVERLAY", FONT[size] or FONT.M)
     if fs and th and tokName then meth(fs, "SetTextColor", th:Color(tokName)) end
@@ -177,7 +177,7 @@ local function newButton(parent)
     if e then
       meth(e, "SetPoint", p[1], b, p[1]); meth(e, "SetPoint", p[2], b, p[2])
       if p[3] then meth(e, "SetHeight", 1) else meth(e, "SetWidth", 1) end
-      color(e, r, g, bl, 0.9)
+      color(e, r, g, bl, 0.12)   -- (5.1) survol : un liseré blanc discret (plus de cadre doré)
     end
   end
   return b
@@ -212,7 +212,7 @@ local function newBadge(parent, size)
   meth(f.disc, "SetPoint", "TOPLEFT", f, "TOPLEFT", 2, -2)
   meth(f.disc, "SetPoint", "BOTTOMRIGHT", f, "BOTTOMRIGHT", -2, 2)
   meth(f.disc, "SetTexture", ROUND)
-  f.num = text(f, "M", "gold")
+  f.num = text(f, "M", "text")
   meth(f.num, "SetPoint", "CENTER", f, "CENTER", 0, 0)
   meth(f.num, "SetJustifyH", "CENTER")
   f.mark = meth(f, "CreateTexture", nil, "OVERLAY")
@@ -225,9 +225,9 @@ local function newBadge(parent, size)
   meth(f.icon, "SetTexCoord", 0.08, 0.92, 0.08, 0.92)
   meth(f.icon, "Hide")
   function f.Set(self2, n, mark, hot, icon)
-    local r, g, b = tok("gold", 1, 0.82, 0.2)
-    meth(self2.ring, "SetVertexColor", r, g, b, hot and 1 or 0.7)
-    meth(self2.disc, "SetVertexColor", 0.08, 0.07, 0.05, 1)
+    local r, g, b = tok(hot and "accent" or "muted", 0.6, 0.6, 0.63)   -- (5.1) anneau gris ; accent pour l'étape en cours
+    meth(self2.ring, "SetVertexColor", r, g, b, hot and 0.9 or 0.45)
+    meth(self2.disc, "SetVertexColor", 0.04, 0.04, 0.05, 1)
     meth(self2.num, "SetText", n and tostring(n) or "")
     if mark then meth(self2.mark, "SetTexture", mark); meth(self2.mark, "Show") else meth(self2.mark, "Hide") end
     if icon and not n then meth(self2.icon, "SetTexture", icon); meth(self2.icon, "Show") else meth(self2.icon, "Hide") end
@@ -512,8 +512,8 @@ local function buildCard()
   meth(hero, "SetPoint", "TOPLEFT", card, "TOPLEFT", 4, -4)
   meth(hero, "SetPoint", "TOPRIGHT", card, "TOPRIGHT", -4, -4)
   meth(hero, "SetHeight", HERO_H)
-  color(hero.bg, 0.30, 0.20, 0.06, 0.55)
-  border(hero, tok("border", 0.78, 0.62, 0.28, 0.9))
+  color(hero.bg, tok("tile", 1, 1, 1, 0.045))
+  border(hero, tok("borderSoft", 1, 1, 1, 0.06))
   hero.icon = meth(hero, "CreateTexture", nil, "ARTWORK")
   meth(hero.icon, "SetSize", 32, 32)
   meth(hero.icon, "SetPoint", "LEFT", hero, "LEFT", 8, 0)
@@ -583,7 +583,7 @@ local function buildCard()
   meth(mb, "SetPoint", "TOPRIGHT", hero, "TOPRIGHT", -4, -4)
   color(mb.bg, tok("button", 0.14, 0.15, 0.19, 0.9))
   border(mb, tok("borderSoft", 0.78, 0.62, 0.28, 0.5))
-  mb.t = text(mb, "S", "gold")
+  mb.t = text(mb, "S", "accent")
   meth(mb.t, "SetPoint", "CENTER", mb, "CENTER", 0, 0)
   meth(mb.t, "SetText", "Ouvrir")
   meth(mb, "SetScript", "OnClick", function() W.Toggle() end)
@@ -914,7 +914,7 @@ function W.RenderCard(force)
     r.badge:Set(s.n, s.mark, i == 1 or lead, s.icon)
     meth(r.title, "SetText", fitCard(safe(s.title or "")))
     if s.danger then meth(r.title, "SetTextColor", tok("prio3", 1, 0.3, 0.25))
-    elseif lead then meth(r.title, "SetTextColor", tok("gold", 1, 0.82, 0.2))
+    elseif lead then meth(r.title, "SetTextColor", tok("accent", 0.45, 0.74, 1))
     else meth(r.title, "SetTextColor", tok("text", 0.92, 0.92, 0.92)) end
     if lead then first = false end
     meth(r.sub, "SetText", fitCard(safe(s.sub or "")))
@@ -1046,22 +1046,28 @@ W.pageIndex = {}
 -- (5.0 LOOK) 11 catégories au plus, chacune avec son icône : Quêtes · Trajet · Groupe · Donjons · Équipement · Sacs ·
 -- Métiers · HV · Chasseur · Conseils · Réglages. Une catégorie n'apparaît que si son module a inscrit sa page
 -- (W.AddPage depuis son fichier) : « Sacs » arrive avec le module Sacs. « Macros & touches » est rangé dans Réglages.
-W.NAV = { "quests", "route", "group", "dungeon", "gear", "bags", "prof", "hv", "hunter", "coach", "settings" }
+-- (5.1 LOOK) « trop compliqué » → 9 catégories au plus, en mots simples, et UNE page d'accueil : Maintenant · Quêtes ·
+-- Groupe · Équipement · Sacs · Métiers · HV · Chasseur · Réglages. « Trajet » est un onglet de Quêtes, « Donjons » un
+-- onglet de Groupe, « Conseils » une ligne des Réglages : rien n'a disparu (W.Open("route" / "dungeon" / "coach"),
+-- la recherche et les touches y mènent toujours), il y a seulement moins de portes d'entrée.
+W.NAV = { "home", "quests", "group", "gear", "bags", "prof", "hv", "hunter", "settings" }
+-- onglets en haut d'une page de la navigation : { page mère = { elle-même, ses pages sœurs } }
+W.TABS = { quests = { "quests", "route" }, group = { "group", "dungeon" } }
 -- ancienne page fondue dans une autre (même contenu, même endroit) + noms français tapés à la main (/tai fenetre sacs)
-W.ALIAS = { now = "quests", perso = "gear", binds = "keys", sacs = "bags", inventory = "bags", inventaire = "bags",
+W.ALIAS = { now = "home", maintenant = "home", accueil = "home", perso = "gear", binds = "keys", sacs = "bags", inventory = "bags", inventaire = "bags",
   equipement = "gear", metiers = "prof", trajet = "route", groupe = "group", donjons = "dungeon", quetes = "quests",
   reglages = "settings", affichage = "display", touches = "keys", profil = "profile", conseils = "coach" }
 -- page pas (encore) inscrite par son module → la page la plus proche qui existe (jamais une fenêtre vide)
 W.FALLBACK = { bags = "gear", profile = "display" }
 -- page rangée sous une page de la navigation (hors navigation, surlignée sous sa page mère)
-W.PARENT = { journal = "quests", brain = "quests",
+W.PARENT = { journal = "quests", brain = "quests", route = "quests", dungeon = "group", coach = "settings",
   pet = "hunter", talents = "hunter", macros = "settings", keys = "settings", spellkeys = "settings",
   display = "settings", profile = "settings", modules = "settings", addons = "settings", options = "settings",
   tools = "settings", navlog = "settings", tab = "settings" }
 -- sous-pages de la page mère (dans cet ordre) ; la mère ouvre la dernière choisie. Onglets en haut de page, sauf
 -- W.SIDE : sous-liste à gauche façon Leatrix Plus (Réglages)
 W.SUBS = { hunter = { "pet", "talents" },
-  settings = { "display", "profile", "keys", "macros", "spellkeys", "modules", "addons", "options", "tools" } }
+  settings = { "display", "addons", "profile", "keys", "macros", "spellkeys", "coach", "modules", "options", "tools" } }
 W.SIDE = { settings = true }
 --- id demandé → id de la page réellement dessinée (alias résolus, page absente → la plus proche, page mère → sa sous-page)
 function W.Resolve(id)
@@ -1153,16 +1159,22 @@ local function newLay(width, x0)
     local b = acquire(pool("header", function()
       local f = newButton(content)
       meth(f, "SetHeight", 24)
-      color(f.bg, tok("button", 0.14, 0.15, 0.19, 0.95))
+      -- (5.1) un titre de section comme ceux de la colonne « Suivi Forever » : mot or, filet fin dessous, pas de boîte
+      color(f.bg, 0, 0, 0, 0)
+      f.rule = meth(f, "CreateTexture", nil, "ARTWORK")
+      meth(f.rule, "SetHeight", 1)
+      meth(f.rule, "SetPoint", "BOTTOMLEFT", f, "BOTTOMLEFT", 0, 1)
+      meth(f.rule, "SetPoint", "BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, 1)
+      color(f.rule, tok("border", 1, 1, 1, 0.10))
       f.icon = meth(f, "CreateTexture", nil, "ARTWORK")
-      meth(f.icon, "SetSize", 16, 16)
-      meth(f.icon, "SetPoint", "LEFT", f, "LEFT", 6, 0)
+      meth(f.icon, "SetSize", 14, 14)
+      meth(f.icon, "SetPoint", "LEFT", f, "LEFT", 2, 0)
       f.t = text(f, "M", "gold")
       meth(f.t, "SetWordWrap", false)
       f.n = text(f, "S", "muted")
       meth(f.n, "SetPoint", "RIGHT", f, "RIGHT", -26, 0)
       meth(f.n, "SetJustifyH", "RIGHT")
-      f.pm = text(f, "M", "gold")
+      f.pm = text(f, "M", "muted")
       meth(f.pm, "SetPoint", "RIGHT", f, "RIGHT", -8, 0)
       meth(f, "SetScript", "OnClick", function(self)
         if self.key and W.char then
@@ -1181,7 +1193,7 @@ local function newLay(width, x0)
     meth(b.icon, "SetTexture", icon)
     if icon then meth(b.icon, "Show") else meth(b.icon, "Hide") end
     meth(b.t, "ClearAllPoints")
-    meth(b.t, "SetPoint", "LEFT", b, "LEFT", icon and 28 or 8, 0)
+    meth(b.t, "SetPoint", "LEFT", b, "LEFT", icon and 22 or 2, 0)
     meth(b.t, "SetPoint", "RIGHT", b.n, "LEFT", -6, 0)
     meth(b.t, "SetText", safe(str))
     meth(b.n, "SetText", count and tostring(count) or "")
@@ -1238,7 +1250,7 @@ local function newLay(width, x0)
     meth(b.r, "SetText", safe(e.right or ""))
     local h = max(24, measure(b.t, safe(e.text), tw, "S") + 12)
     meth(b, "SetSize", Ly.col, h)
-    color(b.bg, tok("button", 0.14, 0.15, 0.19, (e.onClick and 0.55) or 0.25))
+    if e.onClick then color(b.bg, tok("tile", 1, 1, 1, 0.045)) else color(b.bg, 0, 0, 0, 0) end   -- (5.1) seule une ligne cliquable a un fond
     meth(b, "EnableMouse", true)
     at(b, PAD, Ly.y)
     rec("row", PAD, Ly.y, Ly.col, h, e.text)
@@ -1253,7 +1265,7 @@ local function newLay(width, x0)
       meth(f.icon, "SetSize", 40, 40)
       meth(f.icon, "SetPoint", "LEFT", f, "LEFT", 10, 0)
       meth(f.icon, "SetTexCoord", 0.08, 0.92, 0.08, 0.92)
-      f.t = text(f, "L", "gold")
+      f.t = text(f, "L", "text")
       meth(f.t, "SetPoint", "TOPLEFT", f, "TOPLEFT", 60, -9)
       meth(f.t, "SetWordWrap", false)
       f.s = text(f, "S", "text")
@@ -1268,8 +1280,8 @@ local function newLay(width, x0)
       return f
     end))
     meth(b, "SetSize", Ly.col, BLOCK.hero)
-    color(b.bg, 0.32, 0.21, 0.06, 0.65)
-    border(b, tok("border", 0.78, 0.62, 0.28, 0.9))
+    color(b.bg, tok("tile", 1, 1, 1, 0.045))
+    border(b, tok("borderSoft", 1, 1, 1, 0.06))
     meth(b.icon, "SetTexture", icon or (ICON .. "INV_Misc_Book_09"))
     for _, fs in ipairs({ b.t, b.s, b.s2 }) do meth(fs, "SetWidth", Ly.col - 72) end
     meth(b.t, "SetText", safe(title or ""))
@@ -1310,13 +1322,13 @@ local function newLay(width, x0)
     meth(b.s, "SetWidth", Ly.col - 52)
     meth(b.t, "SetText", safe(s.title))
     if s.danger then meth(b.t, "SetTextColor", tok("prio3", 1, 0.3, 0.25))
-    elseif hot then meth(b.t, "SetTextColor", tok("gold", 1, 0.82, 0.2))
+    elseif hot then meth(b.t, "SetTextColor", tok("accent", 0.45, 0.74, 1))
     else meth(b.t, "SetTextColor", tok("text", 0.92, 0.92, 0.92)) end
     meth(b.s, "SetText", safe(s.sub or ""))
     local h = BLOCK.step
     meth(b, "SetSize", Ly.col, h)
-    if hot then color(b.bg, 0.40, 0.30, 0.05, 0.55); border(b, tok("gold", 1, 0.82, 0.2, 0.9))
-    else color(b.bg, tok("button", 0.14, 0.15, 0.19, 0.75)); border(b, 0, 0, 0, 0) end
+    if hot then color(b.bg, tok("selected", 0.45, 0.74, 1, 0.18)); border(b, 0, 0, 0, 0)
+    else color(b.bg, tok("tile", 1, 1, 1, 0.045)); border(b, 0, 0, 0, 0) end
     at(b, PAD, Ly.y)
     rec("step", PAD, Ly.y, Ly.col, h, s.title)
     Ly.y = Ly.y + h + 3
@@ -1347,7 +1359,7 @@ local function newLay(width, x0)
     meth(b.t, "SetTextColor", r, g, bl)
     meth(b.s, "SetText", safe(sub or ""))
     meth(b, "SetSize", Ly.col, BLOCK.quest)
-    color(b.bg, tok("button", 0.14, 0.15, 0.19, 0.55))
+    color(b.bg, tok("tile", 1, 1, 1, 0.045))
     b.fn, b.titleText = onClick, label
     b.tipL, b.hint = tip, hint or (onClick and "Clic : guider vers cette quête" or nil)
     at(b, PAD, Ly.y)
@@ -1410,14 +1422,15 @@ local function newLay(width, x0)
     local bw = floor((Ly.col - (n - 1) * 4) / n)
     local p = pool("subtab", function()
       local f = newButton(content)
-      f.t = text(f, "S", "gold")
+      f.t = text(f, "M", "text")
       meth(f.t, "SetPoint", "CENTER", f, "CENTER", 0, 0)
       meth(f.t, "SetWordWrap", false)
+      meth(f.t, "SetJustifyH", "CENTER")
       f.line = meth(f, "CreateTexture", nil, "ARTWORK")
-      meth(f.line, "SetHeight", 2)
+      meth(f.line, "SetHeight", 1)
       meth(f.line, "SetPoint", "BOTTOMLEFT", f, "BOTTOMLEFT", 0, 0)
       meth(f.line, "SetPoint", "BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, 0)
-      color(f.line, tok("gold", 1, 0.82, 0.2, 1))
+      color(f.line, tok("accent", 0.45, 0.74, 1, 1))
       meth(f, "SetScript", "OnClick", function(self) if self.page then W.Select(self.page) end end)
       meth(f, "SetScript", "OnEnter", function(self) W.Tooltip(self, self.labelText, self.desc and { self.desc } or nil, "Clic : ouvrir") end)
       meth(f, "SetScript", "OnLeave", hideTip)
@@ -1430,8 +1443,9 @@ local function newLay(width, x0)
       meth(b, "SetSize", bw, 24)
       meth(b.t, "SetWidth", bw - 8)
       meth(b.t, "SetText", safe(label))
-      meth(b.t, "SetTextColor", tok(on and "text" or "gold", 1, 0.82, 0.2))
-      color(b.bg, tok(on and "selected" or "button", 0.14, 0.15, 0.19, on and 0.5 or 0.55))
+      -- (5.1) onglets : des mots, celui qui est choisi en accent avec un trait dessous — pas de boîtes
+      meth(b.t, "SetTextColor", tok(on and "accent" or "muted", 0.6, 0.6, 0.63))
+      color(b.bg, 0, 0, 0, 0)
       if on then meth(b.line, "Show") else meth(b.line, "Hide") end
       b.page, b.labelText, b.desc = it[1], it[2], it[4]
       local x = PAD + (i - 1) * (bw + 4)
@@ -1448,7 +1462,7 @@ local function newLay(width, x0)
     local th = 46
     local p = pool("tile", function()
       local f = newButton(content)
-      f.t = text(f, "M", "gold")
+      f.t = text(f, "M", "text")
       meth(f.t, "SetPoint", "TOPLEFT", f, "TOPLEFT", 10, -7)
       meth(f.t, "SetWordWrap", false)
       f.s = text(f, "S", "muted")
@@ -1468,11 +1482,11 @@ local function newLay(width, x0)
       meth(b.t, "SetText", safe(it[1]))
       meth(b.s, "SetText", safe(it[2] or ""))
       if it[5] then
-        color(b.bg, 0.40, 0.30, 0.05, 0.6); border(b, tok("gold", 1, 0.82, 0.2, 0.9))
-        meth(b.t, "SetTextColor", tok("text", 1, 1, 1))
+        color(b.bg, tok("selected", 0.45, 0.74, 1, 0.18)); border(b, 0, 0, 0, 0)
+        meth(b.t, "SetTextColor", tok("accent", 0.45, 0.74, 1))
       else
-        color(b.bg, tok("button", 0.14, 0.15, 0.19, 0.8)); border(b, tok("borderSoft", 0.78, 0.62, 0.28, 0.35))
-        meth(b.t, "SetTextColor", tok("gold", 1, 0.82, 0.2))
+        color(b.bg, tok("tile", 1, 1, 1, 0.045)); border(b, 0, 0, 0, 0)
+        meth(b.t, "SetTextColor", tok("text", 0.9, 0.9, 0.9))
       end
       b.fn, b.titleText, b.tipL, b.hint = it[3], it[1], it[4], it[6]
       local x = PAD + c * (bw + 8)
@@ -1490,13 +1504,19 @@ local function newLay(width, x0)
     if #keep == 0 then return 0 end
     cols = max(1, min(cols or 3, #keep, 3))
     local bw = floor((Ly.col - (cols - 1) * 8) / cols)
-    local bh = 44
+    -- (5.1) UNE action principale par page (la 1re : teinte d'accent), les autres discrètes ; tuiles moins hautes
+    local anySub, anyPrimary = false, false
+    for _, it in ipairs(keep) do
+      if type(it.sub) == "string" and it.sub ~= "" then anySub = true end
+      if it.primary ~= nil or it.active then anyPrimary = true end   -- (la page dit elle-même laquelle est LA principale)
+    end
+    local bh = anySub and 38 or 28
     local p = pool("action", function()
       local f = newButton(content)
       f.icon = meth(f, "CreateTexture", nil, "ARTWORK")
-      meth(f.icon, "SetSize", 24, 24)
-      meth(f.icon, "SetPoint", "LEFT", f, "LEFT", 10, 0)
-      f.t = text(f, "M", "gold")
+      meth(f.icon, "SetSize", 18, 18)
+      meth(f.icon, "SetPoint", "LEFT", f, "LEFT", 8, 0)
+      f.t = text(f, "M", "text")
       meth(f.t, "SetWordWrap", false)
       f.s = text(f, "S", "muted")
       meth(f.s, "SetWordWrap", false)
@@ -1522,11 +1542,11 @@ local function newLay(width, x0)
         meth(b.icon, "Show")
         if tostring(icon):find("Icons\\", 1, true) then meth(b.icon, "SetTexCoord", 0.08, 0.92, 0.08, 0.92) else meth(b.icon, "SetTexCoord", 0, 1, 0, 1) end
       else meth(b.icon, "Hide") end
-      local tx = icon and 42 or 12
+      local tx = icon and 32 or 10
       local hasSub = type(it.sub) == "string" and it.sub ~= ""
       meth(b.t, "ClearAllPoints"); meth(b.s, "ClearAllPoints")
-      meth(b.t, "SetPoint", "TOPLEFT", b, "TOPLEFT", tx, hasSub and -8 or -15)
-      meth(b.s, "SetPoint", "TOPLEFT", b, "TOPLEFT", tx, -25)
+      meth(b.t, "SetPoint", "TOPLEFT", b, "TOPLEFT", tx, hasSub and -5 or -floor((bh - 12) / 2))
+      meth(b.s, "SetPoint", "TOPLEFT", b, "TOPLEFT", tx, -21)
       local cnt = tonumber(it.count)
       local cw = (cnt and cnt > 0) and 26 or 0
       meth(b.t, "SetWidth", max(20, bw - tx - 8 - cw)); meth(b.s, "SetWidth", max(20, bw - tx - 8))
@@ -1538,12 +1558,17 @@ local function newLay(width, x0)
         color(b.bg, tok("button", 0.14, 0.15, 0.19, 0.45)); border(b, 0, 0, 0, 0)
         meth(b.t, "SetTextColor", tok("disabled", 0.5, 0.5, 0.52)); meth(b.icon, "SetDesaturated", true)
       elseif it.active then
-        color(b.bg, 0.40, 0.30, 0.05, 0.75); border(b, tok("gold", 1, 0.82, 0.2, 0.9))
-        meth(b.t, "SetTextColor", tok("text", 1, 1, 1)); meth(b.icon, "SetDesaturated", false)
+        color(b.bg, tok("selected", 0.45, 0.74, 1, 0.18)); border(b, 0, 0, 0, 0)
+        meth(b.t, "SetTextColor", tok("accent", 0.45, 0.74, 1)); meth(b.icon, "SetDesaturated", false)
+      elseif (it.primary == true) or (i == 1 and it.primary == nil and not anyPrimary) then
+        local ar, ag, ab = tok("accent", 0.45, 0.74, 1)
+        color(b.bg, ar, ag, ab, 0.20); border(b, ar, ag, ab, 0.45)
+        meth(b.t, "SetTextColor", 1, 1, 1); meth(b.icon, "SetDesaturated", false)
       else
-        color(b.bg, tok("button", 0.14, 0.15, 0.19, 0.95)); border(b, tok("borderSoft", 0.78, 0.62, 0.28, 0.35))
-        meth(b.t, "SetTextColor", tok("gold", 1, 0.82, 0.2)); meth(b.icon, "SetDesaturated", false)
+        color(b.bg, tok("tile", 1, 1, 1, 0.045)); border(b, 0, 0, 0, 0)
+        meth(b.t, "SetTextColor", tok("text", 0.9, 0.9, 0.9)); meth(b.icon, "SetDesaturated", false)
       end
+      b.primary = (not b.off and not it.active and ((it.primary == true) or (i == 1 and it.primary == nil and not anyPrimary))) or false
       b.fn, b.titleText = it[2], it[1]
       local tip3 = it[3]   -- une phrase (le geste) ou des lignes (contrat des lignes d'onglet : tooltip = { … })
       b.tipL = (type(tip3) == "table" and tip3) or (hasSub and { it.sub }) or nil
@@ -1554,6 +1579,69 @@ local function newLay(width, x0)
     end
     Ly.y = Ly.y + bh + sp().m
     return #keep
+  end
+  -- (5.1 LOOK) LIGNE « À FAIRE » (page Maintenant) : quoi + UN bouton qui le fait. line = { id, text, btn, fn, tip,
+  -- icon, prio, ask } (T.Now.Model). Clic sur la ligne ou sur son bouton = l'action ; clic droit = plus tard / masquer.
+  function Ly.todo(line)
+    if type(line) ~= "table" then return end
+    local b = acquire(pool("todo", function()
+      local f = newButton(content)
+      f.icon = meth(f, "CreateTexture", nil, "ARTWORK")
+      meth(f.icon, "SetSize", 16, 16)
+      meth(f.icon, "SetPoint", "LEFT", f, "LEFT", 8, 0)
+      f.t = text(f, "M", "text")
+      meth(f.t, "SetWordWrap", false)
+      meth(f.t, "SetJustifyV", "MIDDLE")
+      f.go = meth(f, "CreateTexture", nil, "ARTWORK")
+      f.g = text(f, "M", "accent")
+      meth(f.g, "SetJustifyH", "CENTER"); meth(f.g, "SetJustifyV", "MIDDLE")
+      meth(f.g, "SetWordWrap", false)
+      meth(f, "SetScript", "OnClick", function(self, btn)
+        if not (self.line and meth(self, "IsVisible")) then return end
+        local N = T.Now
+        if N and N.Run then N.Run(self.line, btn) elseif btn ~= "RightButton" and type(self.line.fn) == "function" then pcall(self.line.fn) end
+        W.Dirty() W.Render()
+      end)
+      meth(f, "SetScript", "OnEnter", function(self)
+        local l = self.line
+        if not l then return end
+        local lines = {}
+        for _, x in ipairs(type(l.tip) == "table" and l.tip or {}) do lines[#lines + 1] = type(x) == "table" and tostring(x[1] or "") or tostring(x) end
+        W.Tooltip(self, l.text, lines, l.btn and ("Clic : " .. l.btn) or nil)
+      end)
+      meth(f, "SetScript", "OnLeave", hideTip)
+      return f
+    end))
+    b.line = line
+    b.entry = { id = "mod:now:" .. tostring(line.id), text = line.text, onClick = line.fn }   -- (une action réelle : l'orage de clics du harnais la laisse)
+    local h = 30
+    meth(b, "SetSize", Ly.col, h)
+    color(b.bg, tok("tile", 1, 1, 1, 0.045))
+    meth(b.icon, "SetTexture", line.icon or (ICON .. "INV_Misc_Note_01"))
+    if tostring(line.icon or "Icons\\"):find("Icons\\", 1, true) then meth(b.icon, "SetTexCoord", 0.08, 0.92, 0.08, 0.92) else meth(b.icon, "SetTexCoord", 0, 1, 0, 1) end
+    local gw = 0
+    if line.btn then
+      gw = max(64, floor(ulen(line.btn) * AVG.M + 22))
+      meth(b.go, "ClearAllPoints")
+      meth(b.go, "SetPoint", "RIGHT", b, "RIGHT", -4, 0)
+      meth(b.go, "SetSize", gw, h - 8)
+      local ar, ag, ab = tok("accent", 0.45, 0.74, 1)
+      color(b.go, ar, ag, ab, 0.16)
+      meth(b.go, "Show")
+      meth(b.g, "ClearAllPoints")
+      meth(b.g, "SetPoint", "CENTER", b.go, "CENTER", 0, 0)
+      meth(b.g, "SetText", safe(line.btn))
+      meth(b.g, "Show")
+    else meth(b.go, "Hide") meth(b.g, "Hide") end
+    meth(b.t, "ClearAllPoints")
+    meth(b.t, "SetPoint", "LEFT", b, "LEFT", 32, 0)
+    meth(b.t, "SetWidth", max(40, Ly.col - 32 - gw - 14))
+    meth(b.t, "SetText", safe(line.text))
+    meth(b.t, "SetTextColor", tok((line.prio or 1) >= 3 and "prio3" or "text", 0.9, 0.9, 0.9))
+    at(b, PAD, Ly.y)
+    rec("todo", PAD, Ly.y, Ly.col, h, line.text)
+    Ly.y = Ly.y + h + 4
+    return b
   end
   -- BASCULE façon Leatrix : case + libellé + UNE ligne d'explication + « allumé / coupé » à droite.
   -- e = { label, desc, on = bool, set = fn(bool), id, disabled, tip = { lignes } }
@@ -1606,7 +1694,7 @@ local function newLay(width, x0)
     local hasDesc = type(e.desc) == "string" and e.desc ~= ""
     local h = hasDesc and 38 or 28
     meth(b, "SetSize", Ly.col, h)
-    color(b.bg, tok("button", 0.14, 0.15, 0.19, 0.55))
+    color(b.bg, 0, 0, 0, 0)   -- (5.1) une bascule = une ligne, pas une boîte
     color(b.box, tok(on and "on" or "off", 0.5, 0.5, 0.5, 1))
     if on then color(b.boxIn, 0.04, 0.05, 0.07, 0) else color(b.boxIn, 0.05, 0.06, 0.08, 1) end
     meth(b.t, "SetWidth", max(40, Ly.col - 30 - 70)); meth(b.s, "SetWidth", max(40, Ly.col - 38))
@@ -1631,7 +1719,7 @@ local function newLay(width, x0)
       f.dot = meth(f, "CreateTexture", nil, "ARTWORK")
       meth(f.dot, "SetSize", 10, 10)
       meth(f.dot, "SetPoint", "TOPLEFT", f, "TOPLEFT", 10, -11)
-      f.t = text(f, "L", "gold")
+      f.t = text(f, "L", "text")
       meth(f.t, "SetPoint", "TOPLEFT", f, "TOPLEFT", 28, -7)
       meth(f.t, "SetWordWrap", false)
       f.s = text(f, "S", "text")
@@ -1661,9 +1749,9 @@ local function newLay(width, x0)
       b.fn, b.titleText, b.subL, b.on = it[3], it[1], it[2] and { it[2] } or nil, on
       b.entry = { id = "mod:choice:" .. tostring(it[1]) }   -- (un choix de profil : l'orage de clics du harnais le laisse)
       if on then
-        color(b.bg, 0.40, 0.30, 0.05, 0.75); border(b, tok("gold", 1, 0.82, 0.2, 0.9)); color(b.dot, tok("on", 0.3, 0.85, 0.4, 1))
+        color(b.bg, tok("selected", 0.45, 0.74, 1, 0.18)); border(b, 0, 0, 0, 0); color(b.dot, tok("on", 0.45, 0.74, 1, 1))
       else
-        color(b.bg, tok("button", 0.14, 0.15, 0.19, 0.95)); border(b, tok("borderSoft", 0.78, 0.62, 0.28, 0.35)); color(b.dot, tok("off", 0.58, 0.58, 0.6, 1))
+        color(b.bg, tok("tile", 1, 1, 1, 0.045)); border(b, 0, 0, 0, 0); color(b.dot, tok("off", 0.58, 0.58, 0.6, 1))
       end
       local x = PAD + (i - 1) * (bw + 8)
       at(b, x, Ly.y)
@@ -1684,8 +1772,8 @@ local function newLay(width, x0)
       c.lines = {}
       return c
     end))
-    color(f.bg, tok("button", 0.14, 0.15, 0.19, 0.55))
-    border(f, tok("borderSoft", 0.78, 0.62, 0.28, 0.35))
+    color(f.bg, tok("tile", 1, 1, 1, 0.045))
+    border(f, 0, 0, 0, 0)
     local w = Ly.col
     local y = 8
     if title and title ~= "" then
@@ -1778,6 +1866,21 @@ W._newLay = newLay
 function W.SubBar(Ly, id)
   local p = W.pageIndex[id]
   local par = p and p.parent
+  -- (5.1) page de la navigation avec des pages sœurs (Quêtes | Trajet, Groupe | Donjons) : des onglets, sur chacune
+  local fam = W.TABS[id] or (par and W.TABS[par])
+  if fam then
+    local inFam = false
+    for _, c in ipairs(fam) do if c == id then inFam = true end end
+    if inFam then
+      local list = {}
+      for _, c in ipairs(fam) do
+        local cp = W.pageIndex[c]
+        if cp and (c == id or not cp.guard or W.PageOn({ guard = cp.guard })) then list[#list + 1] = { c, cp.short or cp.label, W.Badge(c), cp.desc } end
+      end
+      if #list > 1 and W.Query() == "" then Ly.tabs(list, id) end
+      return
+    end
+  end
   if not par then return end
   local subs = W.SUBS[par]
   if W.SIDE[par] then
@@ -2003,8 +2106,8 @@ local navSig
 local SIDE_W = 132        -- sous-liste des Réglages (façon Leatrix Plus)
 W.SIDE_W = SIDE_W
 local function selectedPage()
-  local id = W.Resolve(W.char and W.char.page or "quests")
-  return W.pageIndex[id] and id or (W.pageIndex.quests and "quests") or (W.PAGES[1] and W.PAGES[1].id)
+  local id = W.Resolve(W.char and W.char.page or "home")
+  return W.pageIndex[id] and id or (W.pageIndex.home and "home") or (W.pageIndex.quests and "quests") or (W.PAGES[1] and W.PAGES[1].id)
 end
 --- (4.1 LAYOUT) les pages de la navigation, dans l'ordre de W.NAV (puis toute autre page visible ajoutée par un
 --- module) ; W.PAGES est remis dans cet ordre (la pastille et les tests le lisent)
@@ -2043,21 +2146,22 @@ function W.BuildNav()
     local b = navButtons[i]
     if not b then
       b = newButton(nav)
-      meth(b, "SetSize", NAV_W - 16, 26)
+      meth(b, "SetSize", NAV_W - 16, 24)
       -- liseré gauche or quand la page est choisie (comme les listes de Leatrix / ElvUI)
       b.mark = meth(b, "CreateTexture", nil, "ARTWORK")
       meth(b.mark, "SetWidth", 3)
       meth(b.mark, "SetPoint", "TOPLEFT", b, "TOPLEFT", 0, 0)
       meth(b.mark, "SetPoint", "BOTTOMLEFT", b, "BOTTOMLEFT", 0, 0)
-      color(b.mark, tok("gold", 1, 0.82, 0.2, 1))
+      color(b.mark, tok("accent", 0.45, 0.74, 1, 1))
       b.icon = meth(b, "CreateTexture", nil, "ARTWORK")
-      meth(b.icon, "SetSize", 18, 18)
-      meth(b.icon, "SetPoint", "LEFT", b, "LEFT", 8, 0)
+      meth(b.icon, "SetSize", 16, 16)
+      meth(b.icon, "SetPoint", "LEFT", b, "LEFT", 9, 0)
       meth(b.icon, "SetTexCoord", 0.08, 0.92, 0.08, 0.92)
       b.t = text(b, "M", "text")
       meth(b.t, "SetPoint", "LEFT", b, "LEFT", 32, 0)
+      meth(b.t, "SetJustifyV", "MIDDLE")
       meth(b.t, "SetWordWrap", false)
-      b.badge = text(b, "S", "prio3")
+      b.badge = text(b, "S", "accent")
       meth(b.badge, "SetPoint", "RIGHT", b, "RIGHT", -6, 0)
       meth(b, "SetScript", "OnClick", function(self) if self.page then W.Select(self.page) end end)
       meth(b, "SetScript", "OnEnter", function(self)
@@ -2074,8 +2178,8 @@ function W.BuildNav()
     meth(b.t, "SetWidth", NAV_W - 16 - 32 - 22)
     b.page = p.id
     meth(b, "Show")
-    y = y + 28
-    if p.gapAfter then y = y + 8 end
+    y = y + 26
+    if p.gapAfter then y = y + 10 end
   end
   for i = #pages + 1, #navButtons do meth(navButtons[i], "Hide") navButtons[i].page = nil end
   W.navCount = #pages
@@ -2096,11 +2200,11 @@ function W.SideList(Ly, par, cur)
     meth(f.mark, "SetWidth", 2)
     meth(f.mark, "SetPoint", "TOPLEFT", f, "TOPLEFT", 0, 0)
     meth(f.mark, "SetPoint", "BOTTOMLEFT", f, "BOTTOMLEFT", 0, 0)
-    color(f.mark, tok("gold", 1, 0.82, 0.2, 1))
+    color(f.mark, tok("accent", 0.45, 0.74, 1, 1))
     f.t = text(f, "S", "text")
     meth(f.t, "SetPoint", "LEFT", f, "LEFT", 8, 0)
     meth(f.t, "SetWordWrap", false)
-    f.n = text(f, "S", "prio3")
+    f.n = text(f, "S", "accent")
     meth(f.n, "SetPoint", "RIGHT", f, "RIGHT", -4, 0)
     meth(f, "SetScript", "OnClick", function(self) if self.page and meth(self, "IsShown") then W.Select(self.page) end end)
     meth(f, "SetScript", "OnEnter", function(self) W.Tooltip(self, self.labelText, self.desc and { self.desc } or nil, "Clic : ouvrir") end)
@@ -2117,8 +2221,8 @@ function W.SideList(Ly, par, cur)
       meth(b, "SetWidth", SIDE_W)
       meth(b.t, "SetWidth", SIDE_W - 28)
       meth(b.t, "SetText", safe(label))
-      meth(b.t, "SetTextColor", tok(on and "gold" or "text", 0.92, 0.92, 0.92))
-      if on then color(b.bg, tok("selected", 0.78, 0.62, 0.28, 0.30)) meth(b.mark, "Show") else color(b.bg, 0, 0, 0, 0) meth(b.mark, "Hide") end
+      meth(b.t, "SetTextColor", tok(on and "accent" or "text", 0.92, 0.92, 0.92))
+      if on then color(b.bg, tok("selected", 0.45, 0.74, 1, 0.18)) meth(b.mark, "Show") else color(b.bg, 0, 0, 0, 0) meth(b.mark, "Hide") end
       local n = W.Badge(c)
       meth(b.n, "SetText", n and tostring(n) or "")
       b.page, b.labelText, b.desc = c, cp.label, cp.desc
@@ -2138,7 +2242,7 @@ end
 
 --- (4.1 LAYOUT) première ouverture : la moitié droite de l'écran (jamais au milieu, sur le personnage), largeur
 --- ajustée pour tenir dans cette moitié ; ensuite la fenêtre revient où le joueur l'a laissée (WindowState « main »)
-W.FIRST = { minW = 640, maxW = 820, h = 540, right = 12, y = 10 }
+W.FIRST = { minW = 640, maxW = 780, h = 480, right = 12, y = 10 }
 function W.FirstRect()
   local sw = tonumber(meth(G.UIParent, "GetWidth")) or 0
   local sh = tonumber(meth(G.UIParent, "GetHeight")) or 0
@@ -2151,10 +2255,25 @@ function W.FirstRect()
   if sh > 200 then h = max(420, min(F.h, floor(sh - 160))) end
   return w, h, sw, sh
 end
+--- (5.1) le suivi de quêtes du jeu (ou de Questie) à droite de l'écran : la fenêtre s'ouvre à SA gauche, jamais dessus
+--- (« garde le suivi de quêtes normal du jeu »). → décalage depuis le bord droit, ou nil (rien à éviter / pas la place)
+function W.TrackerInset(w, sw)
+  local Sc = T.Shortcuts
+  if not (type(Sc) == "table" and type(Sc.RectOf) == "function" and sw and sw > 200) then return nil end
+  local left
+  for _, n in ipairs({ "ObjectiveTrackerFrame", "QuestWatchFrame", "WatchFrame", "Questie_BaseFrame", "QuestieTrackerBaseFrame" }) do
+    local r = try(Sc.RectOf, n)
+    if type(r) == "table" and r.l > sw * 0.6 and r.w > 40 and r.h > 40 then left = min(left or r.l, r.l) end
+  end
+  if not left then return nil end
+  local inset = floor(sw - left + 8)
+  if sw - inset - w < sw * 0.30 then return nil end     -- elle irait sur le personnage : la place d'origine
+  return inset
+end
 function W.PlaceFirstTime(f)
-  local w, h = W.FirstRect()
+  local w, h, sw = W.FirstRect()
   meth(f, "SetSize", w, h)
-  anchorTo(f, "RIGHT", -W.FIRST.right, W.FIRST.y)
+  anchorTo(f, "RIGHT", -(W.TrackerInset(w, sw) or W.FIRST.right), W.FIRST.y)
 end
 --- (5.0) « /tai interface reset » : la fenêtre oublie sa place et sa taille (elle rouvrira à droite, taille d'origine)
 function W.ResetPlace()
@@ -2200,7 +2319,7 @@ local function buildWindow()
   meth(nav, "SetWidth", NAV_W)
   nav.bg = meth(nav, "CreateTexture", nil, "BACKGROUND")
   meth(nav.bg, "SetAllPoints", nav)
-  color(nav.bg, 0, 0, 0, 0.45)
+  color(nav.bg, 0, 0, 0, 0.22)
   win.nav = nav
   local drag = function(f)
     meth(f, "EnableMouse", true)
@@ -2217,12 +2336,12 @@ local function buildWindow()
   end
   drag(nav)
   win.logo = meth(nav, "CreateTexture", nil, "ARTWORK")
-  meth(win.logo, "SetSize", 32, 32)
-  meth(win.logo, "SetPoint", "TOPLEFT", nav, "TOPLEFT", PAD - 4, -14)
+  meth(win.logo, "SetSize", 24, 24)
+  meth(win.logo, "SetPoint", "TOPLEFT", nav, "TOPLEFT", PAD - 4, -16)
   meth(win.logo, "SetTexture", ICON .. "Ability_Hunter_BeastCall")
   meth(win.logo, "SetTexCoord", 0.08, 0.92, 0.08, 0.92)
   win.title = text(nav, "H", "gold")
-  meth(win.title, "SetPoint", "TOPLEFT", nav, "TOPLEFT", PAD + 34, -13)
+  meth(win.title, "SetPoint", "TOPLEFT", nav, "TOPLEFT", PAD + 28, -14)
   meth(win.title, "SetText", "TreeAI")
   win.ver = text(nav, "S", "muted")
   meth(win.ver, "SetPoint", "TOPLEFT", win.title, "BOTTOMLEFT", 1, -2)
@@ -2246,18 +2365,18 @@ local function buildWindow()
   win.top = top
   top.bg = meth(top, "CreateTexture", nil, "BACKGROUND")
   meth(top.bg, "SetAllPoints", top)
-  color(top.bg, 0, 0, 0, 0.25)
+  color(top.bg, 0, 0, 0, 0)
   local topRule = meth(top, "CreateTexture", nil, "ARTWORK")
   meth(topRule, "SetHeight", 1)
   meth(topRule, "SetPoint", "BOTTOMLEFT", top, "BOTTOMLEFT", 0, 0)
   meth(topRule, "SetPoint", "BOTTOMRIGHT", top, "BOTTOMRIGHT", 0, 0)
   color(topRule, tok("borderSoft", 0.78, 0.62, 0.28, 0.35))
   win.pageIcon = meth(top, "CreateTexture", nil, "ARTWORK")
-  meth(win.pageIcon, "SetSize", 28, 28)
-  meth(win.pageIcon, "SetPoint", "TOPLEFT", top, "TOPLEFT", PAD, -13)
+  meth(win.pageIcon, "SetSize", 24, 24)
+  meth(win.pageIcon, "SetPoint", "TOPLEFT", top, "TOPLEFT", PAD, -15)
   meth(win.pageIcon, "SetTexCoord", 0.08, 0.92, 0.08, 0.92)
   win.pageTitle = text(top, "L", "gold")
-  meth(win.pageTitle, "SetPoint", "TOPLEFT", top, "TOPLEFT", PAD + 36, -12)
+  meth(win.pageTitle, "SetPoint", "TOPLEFT", top, "TOPLEFT", PAD + 32, -13)
   meth(win.pageTitle, "SetWordWrap", false)
   win.pageSub = text(top, "S", "muted")
   meth(win.pageSub, "SetPoint", "TOPLEFT", win.pageTitle, "BOTTOMLEFT", 0, -3)
@@ -2265,10 +2384,10 @@ local function buildWindow()
   local close = newButton(top)
   meth(close, "SetSize", 24, 24)
   meth(close, "SetPoint", "TOPRIGHT", top, "TOPRIGHT", -8, -8)
-  close.t = text(close, "M", "bad")
+  close.t = text(close, "L", "muted")
   meth(close.t, "SetPoint", "CENTER", close, "CENTER", 0, 0)
+  meth(close.t, "SetJustifyH", "CENTER")
   meth(close.t, "SetText", "×")
-  border(close, tok("borderSoft", 0.78, 0.62, 0.28, 0.35))
   meth(close, "SetScript", "OnClick", function() W.Close() end)
   meth(close, "SetScript", "OnEnter", function(self) W.Tooltip(self, "Fermer", nil, "Clic : fermer (Échap aussi)") end)
   meth(close, "SetScript", "OnLeave", hideTip)
@@ -2355,9 +2474,9 @@ local function paintNav(cur)
   local navCur = W.NavOf(cur)
   for _, b in ipairs(navButtons) do
     local on = b.page == cur or b.page == navCur
-    if on then color(b.bg, tok("selected", 0.78, 0.62, 0.28, 0.30)) else color(b.bg, 0, 0, 0, 0) end
+    if on then color(b.bg, tok("selected", 0.45, 0.74, 1, 0.18)) else color(b.bg, 0, 0, 0, 0) end
     if on then meth(b.mark, "Show") else meth(b.mark, "Hide") end
-    meth(b.t, "SetTextColor", tok(on and "gold" or "text", 1, 0.82, 0.2))
+    meth(b.t, "SetTextColor", tok(on and "accent" or "text", 0.9, 0.9, 0.9))
     local n = b.page and W.Badge(b.page) or nil
     meth(b.badge, "SetText", n and tostring(n) or "")
   end
@@ -2450,6 +2569,9 @@ function W.Open(id)
   if not W:IsEnabled() then if T.ShowPanel then T:ShowPanel() end return end
   buildWindow()
   if not win then return end
+  -- (5.1) la fenêtre s'ouvre TOUJOURS sur « Maintenant » (une page, 5 lignes) ; une page précise seulement si on la
+  -- demande (bouton de la bande, lien, /tai fenetre sacs). Déjà ouverte : elle reste où le joueur est.
+  if not id and not (win and meth(win, "IsShown")) and W.pageIndex.home then id = "home" end
   if id then
     id = W.Resolve(id)
     if W.pageIndex[id] then remember(id) end
@@ -2522,6 +2644,43 @@ function W.NowActions(n)
   return out
 end
 -- (Quêtes, Donjons : WindowPages.lua, insérés ici dans l'ordre de la navigation)
+-- (5.1 LOOK) LA page d'accueil : « Maintenant » — 5 lignes au plus (T.Now.Model), chacune avec UN bouton qui fait la
+-- chose ou qui y mène. Rien d'autre sur la page : le reste est à un clic dans la colonne de gauche.
+function W.HomeLines()
+  local N = T.Now
+  if type(N) == "table" and N._active and N.Model then
+    local ok, lines = pcall(N.Model, 5)
+    if ok and type(lines) == "table" then return lines end
+  end
+  -- module « Maintenant » coupé : les lignes urgentes du cœur (danger, mort, sacs pleins), au plus 5
+  local out = {}
+  for _, e in ipairs(W.NowActions(5)) do
+    out[#out + 1] = { id = "urgent:" .. tostring(e.id), text = plain(e.text), prio = e.prio, icon = e.icon, btn = e.onClick and "Voir" or nil,
+      fn = e.onClick and function() W.Run(e) end or nil, entry = e }
+  end
+  return out
+end
+function W.RenderHome(Ly)
+  local lines = W.HomeLines()
+  local shown = 0
+  for _, l in ipairs(lines) do
+    if shown < 5 and W.Match(l.text, l.btn) then Ly.todo(l) shown = shown + 1 end
+  end
+  if shown == 0 and W.Query() == "" then
+    local N = T.Now
+    Ly.gap(sp().m)
+    Ly.text((N and N.IdleText and N.IdleText()) or allGoodText(), "M", "muted")
+  end
+  W.homeShown = shown
+end
+W.AddPage({ id = "home", label = "Maintenant", icon = TAB_ICON.now, title = "Maintenant",
+  desc = "Quoi faire tout de suite : 5 lignes au plus, un clic chacune",
+  sub = function()
+    local Sc = T.Shortcuts
+    local guide = not (Sc and Sc.GuideOn) or Sc.GuideOn()
+    return "Ce qu'il y a à faire tout de suite — un clic par ligne" .. (guide and "" or " · guidage des quêtes coupé")
+  end,
+  render = function(Ly) W.RenderHome(Ly) end })
 W.AddPage({ id = "quests", label = "Quêtes", icon = TAB_ICON.quests, title = "Quêtes", render = function(Ly) W.RenderTab(Ly, "quests") end })
 --- (4.1 LAYOUT) quêtes de mon journal qu'un membre du groupe peut prendre : { {title, questID|index} }, source
 --- (le cerveau des quêtes s'il est là, sinon la barre de quête : même règle « un membre ne l'a pas »)
@@ -2900,7 +3059,7 @@ W.DISPLAY = {
   { id = "guide", sec = "main", label = "Guidage des quêtes", preview = "Trajet, boussole et repères de quêtes : tout allumer ou tout couper d'un clic",
     on = function() local Sc = T.Shortcuts return not (Sc and Sc.GuideOn) or Sc.GuideOn() end,
     set = function(v) local Sc = T.Shortcuts if Sc and Sc.SetGuide then Sc.SetGuide(v) end end, combatOK = true },
-  { id = "strip", sec = "main", label = "Bande d'actions rapides", preview = "Rendre · Prendre · Suivant · Zone · Vite | Sacs · Équipement · Métiers | Groupe | TreeAI",
+  { id = "strip", sec = "main", label = "Bande d'actions rapides", preview = "Une rangée fine : Guide ON · Rendre · Prendre · Zone | Sacs · Équip. · Métiers | Groupe | TreeAI",
     on = function() local d = dbOf("Shortcuts") return modOn("Shortcuts") and not (d and d.strip == false) end,
     set = function(v) local d = dbOf("Shortcuts") if v and not modOn("Shortcuts") then setMod("Shortcuts", true) end
       if d then d.strip = v and true or false end
@@ -2913,10 +3072,22 @@ W.DISPLAY = {
     on = function() local d = dbOf("Shortcuts") return (d and d.hideCombat) and true or false end,
     set = function(v) local d = dbOf("Shortcuts") if d then d.hideCombat = v and true or false end
       local Sc = T.Shortcuts if Sc and Sc.OnOptionChanged then pcall(Sc.OnOptionChanged, Sc, "hideCombat") end end, combatOK = true },
-  { id = "alert", sec = "main", label = "Alertes (une à la fois, 8 à 15 s)", preview = "Danger, mort, sacs pleins, quête finie : une ligne qui s'efface seule",
+  { id = "stripFade", sec = "main", label = "Bande estompée au repos et en combat", preview = "60 % au repos, 30 % en combat, pleine dès que la souris passe dessus",
+    on = function() local d = dbOf("Shortcuts") return not (d and d.fade == false) end,
+    set = function(v) local d = dbOf("Shortcuts") if d then d.fade = v and true or false end
+      local Sc = T.Shortcuts if Sc and Sc.OnOptionChanged then pcall(Sc.OnOptionChanged, Sc, "fade") end end, combatOK = true },
+  { id = "nowBlock", sec = "main", label = "Petit bloc « Maintenant » (contre la colonne Suivi Forever)", preview = "3 lignes : quoi faire, un clic chacune — seulement si la place est libre",
+    on = function() local d = dbOf("Now") return modOn("Now") and not (d and d.block == false) end,
+    set = function(v) local d = dbOf("Now") if v and not modOn("Now") then setMod("Now", true) end
+      if d then d.block = v and true or false end
+      local Nw = T.Now if Nw and Nw.OnOptionChanged then pcall(Nw.OnOptionChanged, Nw, "block") end end, combatOK = true },
+  { id = "alert", sec = "main", label = "Alertes (une à la fois)", preview = "Danger, mort, sacs pleins, quête finie : une petite ligne qui s'efface seule",
     on = function() local a = T.settings and T.settings.alert return not (a and a.enabled == false) end,
     set = function(v) local a = T.settings and T.settings.alert if a then a.enabled = v and true or false end end, combatOK = true },
-  { id = "compass", sec = "main", label = "Boussole (en haut, au centre)", preview = "flèche + « 708 m · 2 min » + une ligne",
+  { id = "alertQuiet", sec = "main", label = "Alertes discrètes", preview = "Petites, 5 à 8 s, sans couleur vive (décoché : 8 à 15 s, texte rouge)",
+    on = function() local a = T.settings and T.settings.alert return not (a and a.quiet == false) end,
+    set = function(v) local a = T.settings and T.settings.alert if a then a.quiet = v and true or false end end, combatOK = true },
+  { id = "compass", sec = "main", label = "Boussole TreeAI (en haut, au centre)", preview = "flèche + « 708 m · 2 min » + une ligne — coupée d'office quand Suivi Forever guide",
     on = function() local d = dbOf("Compass") return modOn("Compass") and not (d and d.shown == false) end,
     set = function(v) local d = dbOf("Compass") if v and not modOn("Compass") then setMod("Compass", true) end
       if d then d.shown = v and true or false end
@@ -2981,7 +3152,7 @@ function W.DisplayState()
 end
 W.AddPage({ id = "display", label = "Affichage", icon = ICON .. "INV_Misc_Spyglass_02", title = "Affichage",
   desc = "Chaque élément que TreeAI pose à l'écran : une case pour l'allumer ou le couper",
-  sub = "Une case par élément. D'office : guidage, bande d'actions, boussole, pastille et ses repères.",
+  sub = "Une case par élément. D'office : guidage, bande fine, petit bloc « Maintenant », pastille et ses repères.",
   top = function()
     local out = {}
     if T.SetEditMode then
@@ -3238,8 +3409,8 @@ W.AddPage({ id = "options", label = "Options", icon = TAB_ICON.options, title = 
         meth(b.t, "SetWidth", listW - 16)
         meth(b.t, "SetText", e.label)
         local on = e.key == sel
-        if on then color(b.bg, tok("selected", 0.78, 0.62, 0.28, 0.30)) else color(b.bg, 0, 0, 0, 0) end
-        meth(b.t, "SetTextColor", tok(on and "gold" or "text", 0.9, 0.9, 0.9))
+        if on then color(b.bg, tok("selected", 0.45, 0.74, 1, 0.18)) else color(b.bg, 0, 0, 0, 0) end
+        meth(b.t, "SetTextColor", tok(on and "accent" or "text", 0.9, 0.9, 0.9))
         Ly.at(b, PAD, yy)
         Ly.rec("navrow", PAD, yy, listW, 20, e.label)
         yy = yy + 20
