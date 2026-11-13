@@ -838,6 +838,13 @@ function SEC.value(it, c, o, st)
   elseif it.sell > 0 and (it.quality == 0 or st.useless or (not tradable and (it.classID == 2 or it.classID == 4) and not st.later)) then
     verdict = "Vendre au marchand"
   end
+  -- (5.0 BAGS) un objet de tes sacs : UN seul avis « vendre / garder », celui de l'assistant d'inventaire (sa ligne
+  -- « TreeAI · Garde : … » juste dessous) — ici les faits seulement (prix marchand, HV)
+  local BG = T.Bags
+  if verdict and type(BG) == "table" and type(BG.HasTip) == "function" then
+    local okB, has = pcall(BG.HasTip, it.id)
+    if okB and has then verdict = nil end
+  end
   if #parts == 0 and (not verdict or verdict == "Garder") then return end   -- « Garder » seul : les autres lignes disent pourquoi
   -- le prix unitaire seul, le jeu l'écrit déjà (« Prix de vente ») : dans les détails seulement
   if #parts == 1 and count <= 1 and it.sell > 0 and (not verdict or verdict == "Garder") then o.compact = false end

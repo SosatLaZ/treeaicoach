@@ -66,10 +66,12 @@ local function pass(ok, ...) if ok then return ... end return nil end
 local function try(fn, ...) if type(fn) ~= "function" then return nil end return pass(pcall(fn, ...)) end
 local function g(name) return rawget(G, name) end
 local function meth(o, k, ...) if type(o) == "table" and type(o[k]) == "function" then return try(o[k], o, ...) end end
-local function secret(v) local f = g("issecretvalue") return v ~= nil and type(f) == "function" and try(f, v) and true or false end
-local function num(v) if v == nil or secret(v) then return nil end return tonumber(v) end
-local function pub(v) if secret(v) then return nil end return v end
-local function now() return num(try(g("GetTime"))) or 0 end
+-- valeurs secrètes (combat) : jamais comparées ni converties ; le test du jeu est lu une fois (appel direct, sans pcall)
+local ISV = type(g("issecretvalue")) == "function" and g("issecretvalue") or nil
+local function num(v) if v == nil or (ISV and ISV(v)) then return nil end return tonumber(v) end
+local function pub(v) if v ~= nil and ISV and ISV(v) then return nil end return v end
+local GT = type(g("GetTime")) == "function" and g("GetTime") or nil
+local function now() return GT and num(GT()) or 0 end
 local function epoch() return num(try(g("time"))) or 0 end
 local function opt(k) return not (M.db and M.db[k] == false) end          -- options allumées d'office
 local function optOn(k) return M.db ~= nil and M.db[k] == true end        -- options coupées d'office
@@ -95,6 +97,7 @@ local function note(msg) if T.ClickNote then T:ClickNote(msg) end end
 local function mod(name) local m = T.modules and T.modules[name] if type(m) == "table" and m._active then return m end return nil end
 local function after(sec, fn) if T.After then T:After(sec, fn) else fn() end end
 local function plural(n, one, many) return n .. " " .. ((n > 1) and many or one) end
+local anyBagShown                                           -- (défini avec les pastilles)
 
 -- ===================================================================== objets (données fixes, gardées)
 local INFO = {}
@@ -137,6 +140,22 @@ local function readSlot(bag, slot)
   return id, num(count) or 1, num(quality), locked and true or false, noValue and true or false, bound and true or false, link
 end
 M.ReadSlot = readSlot
+--- lecture minimale pour le relevé : id, nombre, liée (un seul appel protégé par case)
+local function slotFast(bag, slot)
+  if CC and CC.GetContainerItemInfo then
+    local ok, i = pcall(CC.GetContainerItemInfo, bag, slot)
+    if not ok or type(i) ~= "table" then return nil end
+    local id, c, b = i.itemID, i.stackCount, i.isBound
+    if ISV and (ISV(id) or ISV(c) or ISV(b)) then return nil end
+    if not id then
+      local link = pub(i.hyperlink)
+      id = type(link) == "string" and tonumber(link:match("item:(%d+)")) or nil
+    end
+    return id, c or 1, b and true or false
+  end
+  local id, c, _, _, _, bound = readSlot(bag, slot)
+  return id, c, bound
+end
 
 local S = { seen = -1, id = {}, n = {}, bound = {}, count = {}, list = {}, first = {}, dirty = {}, touch = {}, free = 0, total = 0, all = true }
 local V = {}          -- itemID → avis
@@ -153,7 +172,7 @@ local function dropItem(id)
     local p = cat and PLAN[cat]
     if p then
       -- le compte d'une potion change l'avis des autres potions de sa catégorie
-      for other in pairs(p.ids) do V[other] = nil S.touch[other] = true end
+      for other in pairs(p.ids or {}) do V[other] = nil S.touch[other] = true end
       PLAN[cat] = nil
     end
   end
@@ -183,7 +202,7 @@ local function snapshot()
   local nid, nn, nb, count, list, first, k = {}, {}, {}, {}, {}, {}, 0
   for bag = 0, (API.NumBags and API.NumBags() or 4) do
     for slot = 1, bagSlots(bag) do
-      local id, c, _, _, _, bound = readSlot(bag, slot)
+      local id, c, bound = slotFast(bag, slot)
       if id then
         local key = bag * 1000 + slot
         nid[key], nn[key] = id, c
@@ -208,6 +227,8 @@ local function snapshot()
   return S
 end
 M.Snapshot = snapshot
+--- relire les sacs à la prochaine demande, même sans événement (ouverture du marchand / de la banque, ton clic)
+function M.Rescan() S.seen = -1 M._lists, M._shop = nil, nil end
 --- combien tu en as dans tes sacs
 function M.Count(id) return snapshot().count[id] or 0 end
 
@@ -284,6 +305,9 @@ local function profRanks()
   if C.profs ~= nil then return C.profs or nil end
   local P = T.modules and T.modules.Prof
   local list = type(P) == "table" and P.profs or nil
+  if (type(list) ~= "table" or #list == 0) and type(P) == "table" and type(P.ScanProfessions) == "function" then
+    list = try(P.ScanProfessions)                           -- module Métiers coupé : la lecture du jeu, une fois par contexte
+  end
   if type(list) ~= "table" or #list == 0 then C.profs = false return nil end
   local map = {}
   for _, p in ipairs(list) do if type(p) == "table" and p.line then map[p.line] = tonumber(p.rank) or 0 end end
@@ -485,8 +509,16 @@ function M.UnregisterKeeper(name)
 end
 function M.Keepers() local out = {} for i, n in ipairs(ORDER) do out[i] = n end return out end
 
-local BUILTIN, BORDER = {}, {}
+local BUILTIN, BORDER, PRE = {}, {}, {}
 local function builtin(name, fn) BUILTIN[name] = fn BORDER[#BORDER + 1] = name end
+-- un gardien d'ici n'est appelé que s'il peut avoir un avis sur cet objet (test sans appel protégé)
+PRE["marque"] = function(id) return M.char and type(M.char.marks) == "table" and M.char.marks[id] ~= nil end
+PRE["consommable"] = function(id) local c = CAT[id] return c ~= nil and c.cat ~= "ammo" end
+PRE["munitions"] = function(id, it) return it.cls == 6 or (CAT[id] ~= nil and CAT[id].cat == "ammo") end
+PRE["familier"] = function(id) return PET[id] ~= nil end
+PRE["équipement"] = function(_, it) return (it.cls == 2 or it.cls == 4) and it.loc ~= nil end
+PRE["recette"] = function(_, it) return it.cls == 9 end
+PRE["métiers"] = function(_, it) return it.cls == 7 or it.cls == 5 or it.cls == 0 end
 
 -- tes marques : « garder », « banque », « vendre »
 function M.MarkOf(id) local m = M.char and type(M.char.marks) == "table" and M.char.marks[id] return m or nil end
@@ -575,6 +607,7 @@ local REAGENT = {
 }
 local CLASS_FR = { MAGE = "mage", PRIEST = "prêtre", PALADIN = "paladin", SHAMAN = "chaman", DRUID = "druide", WARLOCK = "démoniste",
   ROGUE = "voleur" }
+PRE["composant"] = function(id) return REAGENT[id] ~= nil end
 builtin("composant", function(id)
   local who = REAGENT[id]
   if not who then return nil end
@@ -638,22 +671,29 @@ builtin("équipement", function(id, it, _, bag, slot)
   if not (type(Gm) == "table" and type(Gm.CanUse) == "function") then return nil end
   local link = slotLink(id, bag, slot) or it.link or id
   local lv = level()
+  -- en groupe, une pièce échangeable peut servir à un ami : seul le gardien de GEAR le sait → ce pont ne dit pas « en trop »
+  local key = bag and slot and (bag * 1000 + slot) or S.first[id]
+  local bound = it.bind == 1 or (key and S.bound[key]) or false
+  local friends = (num(try(g("GetNumGroupMembers"))) or num(try(g("GetNumPartyMembers"))) or 0) > 0 and not bound
   local ok, why = try(Gm.CanUse, link)
   if ok == nil then return nil end
   if ok == false then
     if why == "non équipable" then return nil end
     local at = type(why) == "string" and tonumber(why:match("niveau (%d+)")) or nil
     if at and at <= lv + 10 then return huge, why, "bank" end
+    if friends then return nil end
     return 0, at and fmt("pas portable avant le niveau %d", at) or (why or "tu ne peux pas le porter")
   end
   if it.req > lv then
     if it.req <= lv + 10 then return huge, fmt("équipable au niveau %d", it.req), "bank" end
+    if friends then return nil end
     return 0, fmt("pas équipable avant le niveau %d", it.req)
   end
   local pct = num(try(Gm.UpgradePct, link))
   if pct == nil then return nil end                       -- stats inconnues : pas d'avis → gardé
   if pct >= 3 then return huge, pct >= 999 and "emplacement vide : équipe-le" or "mieux que ce que tu portes : équipe-le", "use" end
   if pct > -3 then return huge, "équivalent à ce que tu portes" end
+  if friends then return nil end
   return 0, "moins bien que ce que tu portes"
 end)
 
@@ -701,23 +741,49 @@ builtin("recette", function(id, it, _, bag, slot)
   if knownByTooltip(id, bag, slot) then return 0, "recette que tu connais déjà" end
 end)
 
--- pont Métiers (tant que PROF n'a pas inscrit son gardien) : seulement là où PROF calcule déjà ses plans (ville,
--- marchand, banque, HV, courses, page Métiers) — ailleurs pas d'avis, donc gardé
-builtin("métiers", function(id, _, have)
+-- pont Métiers (tant que PROF n'a pas inscrit son gardien) : une marchandise qui sert à une recette d'UN DE TES
+-- métiers est gardée (« sert à ton Travail du cuir ») ; le « en trop » précis (plan, quantités) viendra du gardien
+-- de PROF. Index des compos de TES métiers seulement, construit un métier par appel (jamais un gros calcul d'un coup).
+local MAT = { lines = {}, by = {}, todo = nil, gen = -1 }
+local function matIndex()
+  if MAT.gen ~= C.gen then
+    MAT.gen, MAT.todo = C.gen, nil
+    local ranks = profRanks()
+    if not ranks then MAT.known = false return nil end
+    MAT.known, MAT.todo = true, {}
+    for line in pairs(ranks) do if not MAT.lines[line] then MAT.todo[#MAT.todo + 1] = line end end
+    table.sort(MAT.todo)
+  end
+  if not MAT.known then return nil end
+  local line = MAT.todo and table.remove(MAT.todo)
+  if line then
+    MAT.lines[line] = true
+    local D = T.Data and T.Data.Recipes
+    for _, r in ipairs(type(D) == "table" and type(D.r) == "table" and D.r[line] or {}) do
+      local mats = r[10]
+      for i = 1, type(mats) == "table" and #mats or 0, 2 do
+        local mid = mats[i]
+        if mid and not (MAT.by[mid] and MAT.by[mid][line]) then
+          MAT.by[mid] = MAT.by[mid] or {}
+          MAT.by[mid][line] = true
+        end
+      end
+    end
+  end
+  if MAT.todo and #MAT.todo > 0 then return nil end           -- pas encore fini : pas d'avis (donc gardé)
+  return MAT.by
+end
+builtin("métiers", function(id)
   if EXT.prof then return nil end
-  local CR = T.CityRun
-  if not (type(CR) == "table" and CR._active and type(CR.Verdict) == "function") then return nil end
-  local PL = T.ProfLevel
-  local ctx = CR.run or CR.merchantOpen or CR.bankOpen or CR.ahOpen or M.merchantOpen or M.bankOpen
-    or (PL and PL.PageShown and try(PL.PageShown)) or (CR.InTown and try(CR.InTown))
-  if not ctx then return nil end
-  local v = try(CR.Verdict, id)
-  if type(v) ~= "table" then return nil end
-  local extra = min(have, tonumber(v.extra) or 0)
-  local why = type(v.text) == "string" and v.text or "sert à tes métiers"
-  if extra <= 0 then return huge, why end
-  if extra >= have then return 0, why end
-  return have - extra, why
+  local by = matIndex()
+  if not by then EXT.profSilent = true return nil end
+  local ranks, lines = profRanks(), by[id]
+  if not (lines and ranks) then return nil end
+  local names = {}
+  for line in pairs(lines) do if ranks[line] then names[#names + 1] = lineName(line) end end
+  if #names == 0 then return nil end
+  table.sort(names)
+  return huge, "sert à ton métier : " .. tconcat(names, ", ")
 end)
 
 -- ===================================================================== marchand ou HV : l'espérance honnête
@@ -802,6 +868,33 @@ local LABEL = { keep = "Garde", sell = "Vends au marchand", ah = "Vends à l'HV"
 M.LABEL = LABEL
 local function claimText(v) return v.why end
 
+-- un gardien répond : ses réclamations s'additionnent ; un « 0 + raison » est un avis « en trop »
+M._ask = {}
+function M._Ask(name, fn, id, it, have, bag, slot)
+  local Q = M._ask
+  local ok, n, w, wh, sf = pcall(fn, id, it, have, bag, slot)
+  if not ok then
+    -- un gardien en erreur réclame tout : dans le doute on ne vend pas
+    Q.all, Q.why, Q.keeper = true, Q.why or ("gardien « " .. name .. " » en erreur : je garde"), Q.keeper or name
+    Q.reasons[#Q.reasons + 1] = "gardien « " .. name .. " » en erreur"
+    if T._errorHook then pcall(T._errorHook, n, "Bags:keeper:" .. name) end
+    return
+  end
+  n = tonumber(n)
+  if not n then return end
+  w = type(w) == "string" and w ~= "" and w or nil
+  if n > 0 then
+    Q.keep = Q.keep + n
+    if n >= have then Q.all = true
+    elseif not sf and not Q.opinion then Q.opinion = fmt("en trop : il t'en faut %d (%s)", n, w or name) end
+    if w then Q.reasons[#Q.reasons + 1] = w end
+    if not Q.why or (wh == "use" and Q.where ~= "use") then Q.why, Q.keeper = w or name, name end
+    if wh == "use" or (wh == "bank" and Q.where == nil) then Q.where = wh end
+  elseif w then
+    Q.opinion = Q.opinion or w
+    Q.reasons[#Q.reasons + 1] = w
+  end
+end
 local function compute(id, bag, slot)
   local s = snapshot()
   local have = s.count[id] or 0
@@ -813,34 +906,23 @@ local function compute(id, bag, slot)
     return v
   end
   v.name, v.vendor = it.name, it.sell
-  local keep, all, opinion, where, why, keeper, soft = 0, false, nil, nil, nil, nil, false
-  local reasons = {}
-  local function ask(name, fn)
-    local ok, n, w, wh, sf = pcall(fn, id, it, have, bag, slot)
-    if not ok then
-      -- un gardien en erreur réclame tout : dans le doute on ne vend pas
-      all, why, keeper = true, why or "gardien « " .. name .. " » en erreur : je garde", keeper or name
-      reasons[#reasons + 1] = "gardien « " .. name .. " » en erreur"
-      if T._errorHook then pcall(T._errorHook, n, "Bags:keeper:" .. name) end
-      return
-    end
-    n = tonumber(n)
-    if not n then return end
-    w = type(w) == "string" and w ~= "" and w or nil
-    if n > 0 then
-      keep = keep + n
-      if n >= have then all = true elseif sf then soft = true elseif not opinion then opinion = fmt("en trop : il t'en faut %d (%s)", n, w or name) end
-      if w then reasons[#reasons + 1] = w end
-      if not why or (wh == "use" and where ~= "use") then why, keeper = w or name, name end
-      if wh == "use" or (wh == "bank" and where == nil) then where = wh end
-    elseif w then
-      opinion = opinion or w
-      reasons[#reasons + 1] = w
-    end
+  local Q = M._ask
+  Q.keep, Q.all, Q.opinion, Q.where, Q.why, Q.keeper, Q.reasons = 0, false, nil, nil, nil, nil, {}
+  EXT.profSilent = nil
+  buildTables()
+  for _, name in ipairs(BORDER) do
+    local pre = PRE[name]
+    if not pre or pre(id, it) then M._Ask(name, BUILTIN[name], id, it, have, bag, slot) end
   end
-  for _, name in ipairs(BORDER) do ask(name, BUILTIN[name]) end
-  for _, name in ipairs(ORDER) do ask(name, KEEPERS[name]) end
+  for _, name in ipairs(ORDER) do M._Ask(name, KEEPERS[name], id, it, have, bag, slot) end
+  local keep, all, opinion, where, why, keeper, reasons = Q.keep, Q.all, Q.opinion, Q.where, Q.why, Q.keeper, Q.reasons
   if it.q == 0 and not opinion then opinion = "objet gris : ne sert à rien" end
+  -- marchandise que personne ne réclame (et Métiers a pu répondre) : proposée à l'HV SEULEMENT si son prix y est connu
+  -- et nettement meilleur qu'au marchand — jamais vendue d'un clic au marchand sans un avis « en trop »
+  local market = false
+  if not opinion and keep == 0 and not all and it.cls == 7 and it.q >= 1 and not EXT.profSilent then
+    opinion, market = "personne ne le réclame", true
+  end
   v.reasons, v.keeper, v.where = reasons, keeper, where
   local kept = (all or keep >= have) and have or keep
   local surplus = have - kept
@@ -874,6 +956,10 @@ local function compute(id, bag, slot)
     return v
   end
   local action, value, d = venue(id, it, picked, boundAny)
+  if market and (action ~= "ah" or d.unknown) then
+    v.keep, v.surplus, v.action, v.why = have, 0, "keep", "je ne sais pas s'il te sert : je garde"
+    return v
+  end
   v.action, v.value, v.sellN, v.sel, v.opinion = action, value, picked, sel, opinion
   v.ah, v.ahSrc, v.ahSold, v.ahUnknown = d.ah, d.src, d.sold, d.unknown
   local tail
@@ -995,7 +1081,7 @@ end
 
 --- prépare les avis de tous les objets des sacs par petits paquets (une image chacun), puis appelle cb
 local WARM_CHUNK = 8
-function M.Warm(cb)
+local function stale()
   local s = snapshot()
   context()
   local todo, t = {}, now()
@@ -1003,6 +1089,12 @@ function M.Warm(cb)
     local v = V[id]
     if not v or v.gen ~= C.gen or t - v.t > TTL - 5 then todo[#todo + 1] = id end
   end
+  return todo
+end
+--- vrai quand tous les avis des sacs sont prêts (une page peut se dessiner sans rien calculer)
+function M.Ready() return #stale() == 0 end
+function M.Warm(cb)
+  local todo = stale()
   if #todo == 0 then if cb then cb() end return 0 end
   tsort(todo)
   local i = 0
@@ -1049,7 +1141,8 @@ local function shopEntry(cat, label, need, have, want, id)
     if p then e.ah, e.ahSrc = p, src parts[#parts + 1] = "HV ≤ " .. money(p) end
     local npc = M.char and type(M.char.vend) == "table" and M.char.vend[id]
     if type(npc) == "string" then e.npc = npc parts[#parts + 1] = "marchand " .. cut(npc, 20) end
-    e.name = itemName(id)
+    local it = itemInfo(id)
+    e.name = it and it.name or nil                          -- pas encore chargé par le jeu : pas de « objet 1710 »
   end
   if not e.npc and VENDOR_CAT[cat] then parts[#parts + 1] = "marchand" e.vendor = true end
   e.src = (e.npc or e.vendor) and "marchand" or (e.ah and "hv") or nil
@@ -1107,12 +1200,17 @@ function M.MissingText()
 end
 local function resting() return pub(try(g("IsResting"))) and true or false end
 function M.UpdateStock()
-  if not (M._active and opt("stock")) or inCombat() or not (resting() or M.merchantOpen) then M:Clear("stock") return nil end
+  if not (M._active and opt("stock")) or inCombat() or not (resting() or M.merchantOpen) then
+    M:Clear("stock")
+    if not M.merchantOpen and not resting() then M._stockHidden = nil end   -- reparti : la ligne reviendra à la prochaine ville
+    return nil
+  end
   local text = M.MissingText()
-  if not text then M:Clear("stock") return nil end
+  if not text or M._stockHidden then M:Clear("stock") return nil end
   M:Suggest("stock", text, 1, { ttl = 900, cooldown = 300, sound = false,
-    tooltip = { "Stock conseillé pour ton niveau (compté dans tes sacs).", "Page « Sacs » : le détail et pourquoi." },
-    onClick = function() M.OpenPage() end })
+    tooltip = { "Stock conseillé pour ton niveau (compté dans tes sacs).",
+      "Le détail et pourquoi : /tai sacs (fenêtre TreeAI, « HV » puis « Sacs »).", "Clic : ranger jusqu'à la prochaine ville" },
+    onClick = function() M._stockHidden = true M:Clear("stock") end })
   return text
 end
 
@@ -1135,6 +1233,14 @@ function M.FullText(free)
   local what = e.name .. (e.n > 1 and (" ×" .. e.n) or "")
   return fmt("%s : vends / jette %s (%s)", head, what, money(e.value)), e
 end
+--- ouvre les sacs du jeu (ton clic) : c'est là que l'objet le moins cher est marqué ; sans sacs du jeu, la page Sacs
+function M.ShowBags()
+  if anyBagShown() then return true end
+  local open = g("OpenAllBags")
+  if type(open) == "function" and pcall(open) then return true end
+  note("Ouvre tes sacs : l'objet le moins cher porte une croix rouge.")
+  return false
+end
 function M.CheckFull()
   if not (M._active and opt("warn")) or inCombat() then return end
   local free, total = 0, 0
@@ -1156,9 +1262,9 @@ function M.CheckFull()
     M:Suggest("full", text, free <= 0 and 3 or 2, { ttl = 600, cooldown = 120, sound = free <= 0,
       tooltip = { #sl.list > 0 and fmt("Chez un marchand : %s à vendre d'un clic (%s).", plural(#sl.list, "objet", "objets"), money(sl.value))
           or "Rien à vendre d'un clic pour l'instant.",
-        e and "L'objet le moins cher est entouré de rouge dans tes sacs." or nil,
+        e and "Dans tes sacs, l'objet le moins cher porte une croix rouge." or nil,
         "TreeAI ne détruit jamais rien : jeter reste ton geste." },
-      onClick = function() M.OpenPage() end })
+      actionText = "ouvrir tes sacs", onClick = function() M.ShowBags() end })
     M.QueueOverlays()
   end)
 end
@@ -1247,6 +1353,7 @@ function M.SellClick()
     local _, why = M.RepairNow(true)
     if why == "or" then note("Réparation : pas assez d'or.") end
   end
+  M.Rescan()
   local sl = M.SellList()
   local n = M.StartSale(sl.list, { click = true })
   M.UpdateCard()
@@ -1463,6 +1570,10 @@ function M.CardModel()
   local ls = M.lastSale
   if M.sale then
     m.label, m.enabled = fmt("Vente en cours… %d / %d", M.sale.i, #M.sale.q), false
+  elseif n > 0 and T.ShopSafe and T:ShopSafe() then
+    -- mode sûr (un blocage du jeu a été vu) : rien n'est vendu par TreeAI, la liste et les pièces restent
+    m.label, m.enabled = fmt("À vendre : %s · %s", plural(n, "objet", "objets"), money(sl.value)), false
+    m.info = "Mode sûr allumé : vends à la main (clic droit sur les objets marqués d'une pièce). /tai bloque achats l'explique."
   elseif n > 0 then
     m.label = fmt("Vendre %s · %s", plural(n, "objet", "objets"), money(sl.value)) .. (rep > 0 and (" + réparer " .. money(rep)) or "")
     m.info = (sl.rest > 0 and fmt("Puis %d autres au clic suivant. ", sl.rest) or "") .. "Survole : la liste (clic droit = garder). Rachat possible."
@@ -1600,6 +1711,7 @@ function M.BankClick()
   if inCombat() then note("Après le combat.") return 0 end
   if not M.bankOpen then return 0 end
   if T.ShopSafe and T:ShopSafe() then note("Mode sûr : range à la main.") return 0 end
+  M.Rescan()
   local plan = M.BankPlan()
   local done = 0
   if #plan.dep > 0 then
@@ -1754,7 +1866,7 @@ local function clearOverlays()
   for btn in pairs(OV.kind) do apply(btn, nil) end
   OV.btn, OV.n = {}, 0
 end
-local function anyBagShown()
+anyBagShown = function()
   for _, f in ipairs(bagFrames()) do if meth(f, "IsShown") then return f end end
   return nil
 end
@@ -1939,10 +2051,13 @@ function M.TipLine(id, bag, slot)
   id = tonumber(id)
   if not id or (snapshot().count[id] or 0) <= 0 then return nil end
   local v = M.Verdict(id, bag, slot)
-  if not v or v.off then return nil end
+  if not v or v.off or v.unknown then return nil end
+  if v.action == "keep" and not v.claimed then return nil end   -- « je ne sais pas » : rien à dire, rien d'affiché
   local c = TIP_COL[v.action] or TIP_COL.keep
   return "TreeAI · " .. M.Text(v), c[1], c[2], c[3]
 end
+--- vrai quand l'infobulle de cet objet porte notre avis (les autres lignes ne redisent alors pas « vends / garde »)
+function M.HasTip(id) return (M.TipLine(id)) ~= nil end
 local function onTip(tt, data)
   if tt ~= g("GameTooltip") or not M._active then return end
   if meth(tt, "IsForbidden") then return end
@@ -2034,7 +2149,24 @@ local function rowOf(r, kind)
   end
   return e
 end
+--- onglets « Sacs | Hôtel des ventes » en tête des deux pages (la navigation garde ses catégories : Sacs vit sous « HV »)
+function M.PageTabs(Ly, cur)
+  if type(Ly) ~= "table" or type(Ly.tabs) ~= "function" then return end
+  local sl = (M._active and M.Ready()) and M.SellList() or nil   -- la pastille seulement si les avis sont déjà prêts
+  Ly.tabs({ { "bags", "Sacs", sl and #sl.list > 0 and #sl.list or nil, "Vendre, ranger, ce qu'il te manque" },
+    { "hv", "Hôtel des ventes", nil, "Bénéfice : vendre tes sacs à l'HV, acheter-revendre, métiers" } }, cur)
+end
 function M.RenderPage(Ly, W)
+  M.PageTabs(Ly, "bags")
+  if not M.Ready() then
+    -- les avis se préparent par petits paquets (jamais tout dans l'image du clic) : la page se redessine quand c'est prêt
+    Ly.text("Je regarde tes sacs…", "M", "muted")
+    M.Warm(function()
+      if not (W and W.IsOpen and W.IsOpen() and W.char and W.char.page == "bags") then return end
+      if W.Render then W.Render() elseif W.Dirty then W.Dirty() end
+    end)
+    return
+  end
   local m = M.PageModel()
   Ly.tiles({
     { "Vendre", m.sellSub, function()
@@ -2149,10 +2281,10 @@ function M:OnEnable()
   self:RegisterEvent("MERCHANT_SHOW", function()
     if M.merchantOpen then return end
     M.merchantOpen, M.lastSale = true, nil
+    M.Rescan()
     after(0.3, function()
       if not M.merchantOpen then return end
       M.ReadMerchant()
-      if not EXT.prof then M.Invalidate() end               -- le pont Métiers ne répond que chez un PNJ : avis refaits
       M.Refresh()
     end)
     after(1.2, function() if M.merchantOpen and not M.sale then M.UpdateCard() end end)   -- la carte Métiers est arrivée : dessous
@@ -2164,7 +2296,8 @@ function M:OnEnable()
   end)
   self:RegisterEvent("BANKFRAME_OPENED", function()
     M.bankOpen = true
-    after(0.3, function() if M.bankOpen then if not EXT.prof then M.Invalidate() end M.Refresh() end end)
+    M.Rescan()
+    after(0.3, function() if M.bankOpen then M.Refresh() end end)
   end)
   self:RegisterEvent("BANKFRAME_CLOSED", function() M.bankOpen = false M.UpdateBankCard() end)
   self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", function(_, _, slot) onEquip(slot) end)
@@ -2179,9 +2312,20 @@ function M:OnEnable()
   hookBagFrames()
   hookThird()
   local W = T.Window
-  if W and type(W.AddPage) == "function" then
-    W.AddPage({ id = "bags", label = "Sacs", icon = M.ICON, title = "Sacs", desc = "Vendre, ranger, ce qu'il te manque",
+  if W and type(W.AddPage) == "function" and not M._page then
+    M._page = true
+    -- rangée sous « HV » (hors navigation : elle garde ses 11 catégories) ; les deux pages portent les mêmes onglets
+    W.AddPage({ id = "bags", hidden = true, parent = "hv", label = "Sacs", icon = M.ICON, title = "Sacs",
+      desc = "Vendre, ranger, ce qu'il te manque",
       render = function(Ly) if M._active then M.RenderPage(Ly, W) else Ly.empty("L'assistant d'inventaire est coupé (Réglages → Fonctions → Sacs).") end end })
+    local hv = W.pageIndex and W.pageIndex.hv
+    if type(hv) == "table" and type(hv.render) == "function" then
+      local orig = hv.render
+      W.AddPage({ id = "hv", render = function(Ly, ...)
+        if M._active then pcall(M.PageTabs, Ly, "hv") end
+        return orig(Ly, ...)
+      end })
+    end
   end
   after(4, function() hookBagFrames() hookThird() M.Refresh() end)
 end
