@@ -617,7 +617,10 @@ local function applySlot(btn, bag, slot, stats)
   local kind, e = M.Classify(it.itemID, nil, bag, slot)
   if not kind then   -- (4.1 CITYRUN) pastille « trop » sur une compo de métier en trop
     local CR = T.CityRun
-    if CR and type(CR.BagBadge) == "function" then
+    -- (5.0 INTEG) l'assistant d'inventaire pose déjà SA pièce (vendre / HV / banque) sur la case : pas de 2e avis ici
+    local BG = T.Bags
+    local bagsOwn = type(BG) == "table" and type(BG.OwnsOverlays) == "function" and BG.OwnsOverlays()
+    if not bagsOwn and CR and type(CR.BagBadge) == "function" then
       local okB, v = pcall(CR.BagBadge, it.itemID)
       if okB and type(v) == "table" then kind, e = "extra", v end
     end

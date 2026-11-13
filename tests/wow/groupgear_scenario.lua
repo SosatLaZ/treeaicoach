@@ -190,7 +190,7 @@ return function(M, ctx)
   M.Advance(8, 1)
   check(#inspected == n0, "aucune inspection en combat")
   M.LeaveCombat()
-  M.Advance(6, 1)
+  M.Advance(12, 1)   -- (5.0 INTEG: with nothing pending the ticker slows to 6 s — a friend back in range is read within ~6 s)
   check(#inspected == n0 + 1 and inspected[#inspected].name == "Delta" and not inspected[#inspected].combat,
     "hors combat et à portée : Delta inspecté")
   for i = 2, #inspected do check(inspected[i].t - inspected[i - 1].t >= 2, "≥ 2 s entre deux inspections") end
@@ -220,7 +220,7 @@ return function(M, ctx)
   check(#inspected == n0 + 1, "sans réponse : une demande, puis on attend (" .. (#inspected - n0) .. ")")
   check(R.Charlie.why == "pas de réponse du jeu" and R.Charlie.gearAt, "sans réponse : dit, l'ancien équipement gardé")
   M.group[2].gear = saved
-  M.Advance(20, 1)
+  M.Advance(26, 1)
   check(#inspected == n0 + 2 and R.Charlie.why == nil, "réessai 30 s plus tard : lu")
 
   -- un ami TreeAI demande l'équipement → renvoyé (et seulement alors)

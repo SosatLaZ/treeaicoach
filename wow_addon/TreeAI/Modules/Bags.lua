@@ -1138,6 +1138,17 @@ local function stale()
   end
   return todo
 end
+--- (5.0 INTEG) nombre d'objets à vendre pour la pastille du bouton « Sacs » : seulement si les listes sont FRAÎCHES
+--- (mêmes sacs, mêmes avis) — sinon nil (pas de pastille plutôt qu'un nombre périmé). Ne calcule rien.
+function M.SellCount()
+  local L = M._lists
+  if not (M._active and L and L.gen == C.gen and L.seen == bagGen() and now() - L.t < TTL) then return nil end
+  return #L.sell, L
+end
+local function stripSoon()
+  local Sc = T.Shortcuts
+  if type(Sc) == "table" and Sc._active and type(Sc.Refresh) == "function" then pcall(Sc.Refresh) end
+end
 --- vrai quand tous les avis des sacs sont prêts (une page peut se dessiner sans rien calculer)
 function M.Ready() return #stale() == 0 end
 function M.Warm(cb)
@@ -1660,6 +1671,8 @@ end
 --- (5.0 INTEG) vrai quand la carte « Vendre N objets + réparer » du marchand est la nôtre : les autres modules
 --- (Métiers, Courses en ville) n'affichent alors NI bouton de vente NI bouton de réparation
 function M.OwnsMerchant() return M._active == true and opt("card") and true or false end
+--- vrai quand les pièces « vendre / HV / banque » des cases de sac sont les nôtres (pas de 2e pastille « trop » d'un autre module)
+function M.OwnsOverlays() return M._active == true and opt("overlays") and true or false end
 function M.UpdateCard()
   local f = CARD.merchant
   if not (M._active and opt("card") and M.merchantOpen) or inCombat() then
@@ -2330,6 +2343,13 @@ function M.Refresh()
   if M.bankOpen then M.Warm(function() M.UpdateBankCard() end) end
   if M.merchantOpen or resting() then M.UpdateStock() end
   if pageShown() and T.Window.Dirty then T.Window.Dirty() end
+  -- (5.0 INTEG) en ville / sacs ouverts : les listes sont tenues à jour (par petits paquets) → pastille « Sacs » vraie
+  -- (hors des sacs ouverts / du marchand : au plus une fois par 20 s — un butin en ville ne refait pas tout)
+  local open = anyBagShown() or M.merchantOpen
+  if (open or (resting() and now() - (M._listsAt or -100) >= 20)) and M.SellCount() == nil then
+    M._listsAt = now()
+    M.Warm(function() M.Lists() stripSoon() end)
+  end
 end
 local function settle()
   if not M._pending then return end
@@ -2418,6 +2438,35 @@ function M:OnEnable()
   M.HookTooltip(g("TooltipDataProcessor"), type(En) == "table" and En.TooltipDataType or nil)
   hookBagFrames()
   hookThird()
+  -- (5.0 INTEG, contrat LOOK) le bouton « Sacs » de la bande : un clic = tes sacs ouverts avec les pièces (vendre / HV /
+  -- banque) ; pastille = objets à vendre (seulement quand le compte est frais) ; infobulle = ce qu'il y a à faire
+  local Sc = T.Shortcuts
+  if type(Sc) == "table" and type(Sc.SetAction) == "function" then
+    pcall(Sc.SetAction, "sacs", {
+      fn = function()
+        if not M._active then return false end
+        local ok = M.ShowBags()
+        if ok then M.Warm(function() M.Lists() M.QueueOverlays(true) stripSoon() end) end
+        return ok
+      end,
+      count = function() local n = M.SellCount() if n and n > 0 then return n end return nil end,
+      tip = function()
+        if not M._active then return nil end
+        local n, L = M.SellCount()
+        local out = {}
+        if n == nil then out[1] = "Ouvre tes sacs : TreeAI marque ce qui est à vendre, à l'HV, à la banque."
+        elseif n == 0 then out[1] = "Rien à vendre pour l'instant."
+        else
+          local v = 0
+          for _, e in ipairs(L.sell) do v = v + (e.value or 0) end
+          out[1] = fmt("Pastille : %s à vendre au marchand (%s)", plural(n, "objet", "objets"), money(v))
+          if #L.ah > 0 then out[#out + 1] = fmt("%s pour l'hôtel des ventes", plural(#L.ah, "objet", "objets")) end
+        end
+        local miss = M._shop and #M._shop > 0 and M.MissingText and M.MissingText() or nil
+        if type(miss) == "string" and miss ~= "" then out[#out + 1] = miss end
+        return out
+      end })
+  end
   local W = T.Window
   if W and type(W.AddPage) == "function" and not M._page then
     M._page = true
@@ -2454,10 +2503,10 @@ if T.RegisterSlash then
   local function marker(kind, done)
     return function(rest)
       local id = idOf(rest)
-      if not id then M:Print("Maj-clic sur l'objet après la commande (ex. /tai garde [objet]).") return end
-      if not M._active then M:Print("L'assistant d'inventaire est coupé.") return end
+      if not id then note("Maj-clic sur l'objet après la commande (ex. /tai garde [objet]).") return end
+      if not M._active then note("L'assistant d'inventaire est coupé.") return end
       M.Mark(id, kind)
-      M:Print(fmt("%s : %s", itemName(id), done))
+      note(fmt("%s : %s", itemName(id), done))
     end
   end
   if not (T.HasSlash and T:HasSlash("sacs")) then T:RegisterSlash("sacs", function() M.OpenPage() end, "sacs : la page Sacs (vendre, ranger, ce qu'il te manque)") end

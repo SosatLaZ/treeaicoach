@@ -690,10 +690,17 @@ function SEC.prof(it, c, o, st)
   local okV, v = false, nil
   if CR and type(CR.Verdict) == "function" then okV, v = pcall(CR.Verdict, it.id) end
   if okV and type(v) == "table" and v.text then
-    o.label, o.tone, o.text = "Métiers", v.tone or "info", v.text
-    for _, dtl in ipairs(v.details or {}) do o.details[#o.details + 1] = dtl end
     st.reagent = true
     if v.keep then st.keep = st.keep or "compo" end
+    -- (5.0 INTEG) un objet de tes sacs : UN seul avis « garde / vends / en trop », celui de l'assistant d'inventaire
+    -- (sa ligne « TreeAI · … » juste dessous, nourrie par le gardien « Métiers ») — jamais deux nombres différents
+    local BG = T.Bags
+    if not (c.merchant or c.reward) and type(BG) == "table" and type(BG.HasTip) == "function" then
+      local okB, has = pcall(BG.HasTip, it.id)
+      if okB and has then return end
+    end
+    o.label, o.tone, o.text = "Métiers", v.tone or "info", v.text
+    for _, dtl in ipairs(v.details or {}) do o.details[#o.details + 1] = dtl end
     return
   end
   local mask = linesUsing(it.id)

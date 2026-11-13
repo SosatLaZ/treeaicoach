@@ -662,10 +662,15 @@ function GG:Flush(force)
   for _, nm in ipairs(order) do if R[nm] and hasTreeAI(R[nm]) then anyAddon = true end end
   if not anyAddon and not S.hello then return false end   -- personne n'a TreeAI : on se tait (après le bonjour)
   local sentAny = false
+  S.flushWait = false
   for _, kind in ipairs({ "GGE", "GGB" }) do
     local p = kind == "GGE" and myGearPayload() or myBagsPayload()
-    if (p ~= S.sent[kind] or (force and S.wantSend)) and t - (S.sentAt[kind] or -1e9) >= (force and 5 or GG.SEND_GAP) then
-      if T:Send(kind, p, "PARTY") then S.sent[kind], S.sentAt[kind], sentAny = p, t, true end
+    if p ~= S.sent[kind] or (force and S.wantSend) then
+      if t - (S.sentAt[kind] or -1e9) >= (force and 5 or GG.SEND_GAP) and T:Send(kind, p, "PARTY") then
+        S.sent[kind], S.sentAt[kind], sentAny = p, t, true
+      else
+        S.flushWait = true                                   -- à envoyer dès que le délai le permet : le minuteur reste vif
+      end
     end
   end
   if S.wantReq and t - S.lastReq >= GG.REQ_GAP then
@@ -699,6 +704,7 @@ function GG:OnComm(kind, payload, sender)
   local ver, rest = payload:match("^(%d+);?(.*)$")
   if ver ~= "1" then return end
   m.addon = true
+  if GG.Wake then GG.Wake() end
   if kind == "GGQ" then
     S.wantSend = true
     return
@@ -1132,6 +1138,11 @@ local function hookWindow()
 end
 
 -- ===================================================================================== minuteur (en groupe seulement)
+-- (5.0 INTEG) le minuteur n'est vif (2 s) que s'il a quelque chose à faire (équipement / sacs à relire, envoi en
+-- attente, inspection en cours ou possible) ; sinon il s'étire à GG.TICK_QUIET (un ami trop loin n'est plus retenté
+-- toutes les 2 s : c'était ≈ 50 kinstr / min au repos, en groupe). Un événement utile le réveille tout de suite.
+GG.TICK_QUIET = 6
+local setPace
 function GG:Tick()
   if not inGroup() or #order == 0 then return end
   local t = now()
@@ -1139,21 +1150,38 @@ function GG:Tick()
   if S.gearDirty then S.gearDirty = false me.gearAt = nil readMine() end
   if S.bagsDirty and t - S.bagsAt >= 5 then S.bagsDirty = false self:ScanBags() bump() end
   self:Flush(S.wantSend)
-  self:TryInspect(t)
+  local who, why = self:TryInspect(t)
   if S.itemsLoaded and t - (S.loadedAt or -1e9) >= 2 then S.itemsLoaded, S.loadedAt = false, t bump() end
-end
-local function startTicker()
-  if GG._ticker or not T.NewTicker then return end
-  GG._ticker = T:NewTicker(GG.TICK, function() if GG:IsEnabled() then GG:Tick() end end, GG)
+  local busy = S.gearDirty or S.bagsDirty or S.wantSend or S.wantReq or S.hello or S.flushWait or S.itemsLoaded
+    or S.pend ~= nil or who ~= nil or why == "délai" or why == "attente" or why == "groupe" or why == "occupé"
+  if not busy then   -- un réessai daté (pas de réponse du jeu : 30 s) garde le rythme vif à son approche
+    for _, nm in ipairs(order) do
+      local m = R[nm]
+      if m and m.nextTry and m.nextTry > t and m.nextTry - t <= GG.TICK_QUIET then busy = true break end
+    end
+  end
+  setPace(busy and GG.TICK or GG.TICK_QUIET)
 end
 local function stopTicker()
   if GG._ticker and GG._ticker.Cancel then GG._ticker:Cancel() end
-  GG._ticker = nil
+  GG._ticker, GG._pace = nil, nil
 end
+setPace = function(sec)
+  if GG._pace == sec and GG._ticker then return end
+  if not T.NewTicker then return end
+  if GG._ticker and GG._ticker.Cancel then GG._ticker:Cancel() end
+  GG._pace = sec
+  GG._ticker = T:NewTicker(sec, function() if GG:IsEnabled() then GG:Tick() end end, GG)
+end
+local function startTicker() if not GG._ticker then setPace(GG.TICK) end end
+--- un événement utile (équipement, sacs, inspection, message d'un ami) : retour au rythme vif
+local function wake() if GG._ticker and GG._pace ~= GG.TICK then setPace(GG.TICK) end end
+GG.Wake = wake
 function GG:OnRoster()
   local added = self:ScanRoster()
   if inGroup() and #order > 0 then
     startTicker()
+    wake()
     if #added > 0 then
       S.hello, S.wantReq, S.wantSend = true, true, true
       S.gearDirty, S.bagsDirty = true, true
@@ -1178,13 +1206,13 @@ function GG:OnEnable()
   end
   self:RegisterEvent("GROUP_ROSTER_UPDATE", function() GG:OnRoster() end)
   self:RegisterEvent("PLAYER_ENTERING_WORLD", function() GG:OnRoster() S.gearDirty, S.bagsDirty = true, true end)
-  self:RegisterEvent("INSPECT_READY", function(_, _, guid) GG:OnInspect(guid) end)
-  self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", function() S.gearDirty = true S.bagsDirty = true end)
-  self:RegisterEvent("BAG_UPDATE_DELAYED", function() S.bagsDirty = true end)
+  self:RegisterEvent("INSPECT_READY", function(_, _, guid) GG:OnInspect(guid) wake() end)
+  self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", function() S.gearDirty = true S.bagsDirty = true wake() end)
+  self:RegisterEvent("BAG_UPDATE_DELAYED", function() S.bagsDirty = true wake() end)
   self:RegisterEvent("UNIT_INVENTORY_CHANGED", function(_, _, u)
     for _, nm in ipairs(order) do
       local m = R[nm]
-      if m and m.unit == u and m.src == "inspect" then m.changed = true end
+      if m and m.unit == u and m.src == "inspect" then m.changed = true wake() end
     end
   end)
   self:RegisterEvent("PLAYER_REGEN_DISABLED", function() S.pend = nil end)
@@ -1193,7 +1221,7 @@ function GG:OnEnable()
   self:RegisterEvent("START_LOOT_ROLL", function(_, _, rollID) GG:OnLootRoll(rollID) end)
   self:RegisterEvent("GET_ITEM_INFO_RECEIVED", function(_, _, id)
     id = num(id)
-    if id and waiting[id] then waiting[id], waitN = nil, max(0, waitN - 1) S.itemsLoaded = true end
+    if id and waiting[id] then waiting[id], waitN = nil, max(0, waitN - 1) S.itemsLoaded = true wake() end
   end)
   S.gearDirty, S.bagsDirty = true, true
   self:OnRoster()

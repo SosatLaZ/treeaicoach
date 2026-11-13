@@ -23,8 +23,13 @@ PHASES = ("login", "ville", "hub", "bg", "butin", "quetes", "repos")
 # whole-phase budgets, kinstr of TreeAI work per second (50 = 1 ms / s) = measured in 5.0 + ~15 %. The 4.3.6 code on
 # the same simulation (profile « sur »): login 530, ville 513, hub 178, bg 145, butin 196, quetes 300, and images over
 # 4 ms in every phase but bg (worst 7,7 ms).
-PER_SECOND = {"sur": {"login": 430, "ville": 150, "hub": 165, "bg": 100, "butin": 96, "quetes": 213, "repos": 13},
-              "tout": {"login": 515, "ville": 220, "hub": 210, "bg": 325, "butin": 118, "quetes": 237, "repos": 16}}
+# 5.0 INTEG (all five branches merged): « butin » re-measured — the phase opens a merchant and loots equipment, where
+# the merged build now does real work that STABLE alone did not have: Gear's first plan (≈ 470 QuestieDB reads charged
+# at 12-30 µs each, sliced by T:Spread) and the inventory verdicts for the merchant card (6 items per image). Measured:
+# sur 101, tout 116 kinstr / s (STABLE alone: 84 / 104), worst image 76 / 85 kinstr (1.5 / 1.7 ms). Budget = measure
+# + ~12 %. « login » sur measures 417 (budget unchanged). Every other phase is at or under its STABLE budget.
+PER_SECOND = {"sur": {"login": 430, "ville": 150, "hub": 165, "bg": 100, "butin": 113, "quetes": 213, "repos": 13},
+              "tout": {"login": 515, "ville": 220, "hub": 210, "bg": 325, "butin": 130, "quetes": 237, "repos": 16}}
 
 pytestmark = pytest.mark.skipif(not shutil.which("lua5.1"), reason="lua5.1 not installed")
 

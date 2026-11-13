@@ -559,7 +559,7 @@ end
 function PL.KeepFor(id)
   id = num(id)
   if not id or not enabled() then return 0, nil end
-  if keep.sig ~= keepSig() and not keep.busy and now() - keep.at > 2 then
+  if keep.sig ~= keepSig() and not keep.busy and now() - keep.at > (keep.map and 5 or 2) then   -- (1er calcul vite, puis ≤ 1 / 5 s)
     keep.at = now()
     PL.KeepSoon()
   end
@@ -699,6 +699,27 @@ function PL.OnEnable()
     end) and true or false
   end
   if not PL.keeperOn then T:After(3, function() PL.RegisterKeeper() end) end   -- Bags chargé après nous
+  -- (5.0 INTEG, contrat LOOK) le bouton « Métiers » de la bande : un clic = la session guidée (lancer / quitter) ;
+  -- pastille = achats en attente du plan ; allumé pendant la session ; infobulle = la prochaine étape
+  local Sc = T.Shortcuts
+  if type(Sc) == "table" and type(Sc.SetAction) == "function" then
+    pcall(Sc.SetAction, "metiers", {
+      fn = function()
+        if inCombat() or not enabled() or type(PL.ToggleFocus) ~= "function" then return false end   -- (la bande dit « après le combat »)
+        local line = type(PL.Line) == "function" and PL.Line() or nil
+        if not line and not PL.focus then return false end
+        PL.ToggleFocus(line)
+        return true
+      end,
+      count = function() local n = type(PL.PendingBuys) == "function" and tonumber(PL.PendingBuys()) or 0 if n > 0 then return n end return nil end,
+      active = function() return PL.focus ~= nil end,
+      tip = function()
+        if PL.focus and type(PL.steps) == "table" and PL.steps[1] and PL.steps[1].title then
+          return { "Session en cours — prochaine étape : " .. tostring(PL.steps[1].title), "Clic : quitter la session." }
+        end
+        return { "Clic : session guidée (achats exacts, banque, maître, fabrication)." }
+      end })
+  end
 end
 -- (5.0 INTEG) module coupé : le gardien se retire (le pont « Métiers » de Sacs reprend la main)
 local baseDisable = PL.OnDisable

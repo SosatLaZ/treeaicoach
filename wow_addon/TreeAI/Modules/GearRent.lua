@@ -123,6 +123,7 @@ local function slotLink(bag, slot)
   local info = API.BagItem and API.BagItem(bag, slot)
   return info and str(info.link)
 end
+local dropMemo = setmetatable({}, { __mode = "k" })   -- verdict (GearValue, gardé par lien) → son entrée « en trop » / « pareil »
 local function scanBag(bag, lv)
   local list = {}
   local n = API.BagSlots and tonumber((try(API.BagSlots, bag))) or 0
@@ -137,15 +138,19 @@ local function scanBag(bag, lv)
         elseif sc and sc.usable == false and sc.later and sc.later - lv <= 10 then
           list[#list + 1] = { bag = bag, slot = slot, id = id, link = link, later = sc.later }
         elseif sc and sc.known and sc.equip ~= false then
-          -- (5.0 INTEG) l'avis « en trop » du gardien de Sacs : seulement quand il est SÛR (stats lues, comparaison faite)
-          if sc.usable == false then
-            list[#list + 1] = { bag = bag, slot = slot, id = id, link = link,
-              drop = sc.later and ("pas portable avant le niveau " .. sc.later) or ("pas pour toi : " .. tostring(sc.why or "tu ne peux pas le porter")) }
-          elseif sc.kind == "bad" then
-            list[#list + 1] = { bag = bag, slot = slot, id = id, link = link, drop = "moins bien que ce que tu portes" }
-          elseif sc.kind == "same" then
-            list[#list + 1] = { bag = bag, slot = slot, id = id, link = link, same = true }
+          -- (5.0 INTEG) l'avis « en trop » du gardien de Sacs : seulement quand il est SÛR (stats lues, comparaison faite).
+          -- Une entrée par verdict (gardée avec lui : aucune table ni texte refaits à chaque butin).
+          local e = dropMemo[sc]
+          if e == nil then
+            if sc.usable == false then
+              e = { id = id, link = link,
+                drop = sc.later and ("pas portable avant le niveau " .. sc.later) or ("pas pour toi : " .. tostring(sc.why or "tu ne peux pas le porter")) }
+            elseif sc.kind == "bad" then e = { id = id, link = link, drop = "moins bien que ce que tu portes" }
+            elseif sc.kind == "same" then e = { id = id, link = link, same = true }
+            else e = false end
+            dropMemo[sc] = e
           end
+          if e then e.bag, e.slot = bag, slot list[#list + 1] = e end
         end
       end
     end
@@ -813,12 +818,50 @@ function M.HookPage()
   return true
 end
 
+--- (5.0 INTEG, contrat LOOK) le bouton « Équipement » de la bande : un clic = « Meilleur maintenant » (ce que tu peux
+--- équiper de mieux tout de suite) ; pastille = améliorations portables MAINTENANT dans tes sacs (relevé gardé, aucun calcul)
+function M.UpgradeCount()
+  if not M._active then return nil end
+  local n = 0
+  for _ in pairs(bagUp.bySlot or {}) do n = n + 1 end
+  return n
+end
+function M.RegisterStrip()
+  local Sc = T.Shortcuts
+  if not (type(Sc) == "table" and type(Sc.SetAction) == "function") then return false end
+  return pcall(Sc.SetAction, "equip", {
+    fn = function()
+      if not M._active then return false end
+      local w = W()
+      if not (w and w.Open) then return false end
+      M.view = "now"
+      if M.WantPlan then pcall(M.WantPlan) end
+      w.Open("gear")
+      return true
+    end,
+    count = function() local n = M.UpgradeCount() if n and n > 0 then return n end return nil end,
+    tip = function()
+      if not M._active then return nil end
+      local out = {}
+      for _, e in pairs(bagUp.bySlot or {}) do
+        if #out < 3 and e.sc then out[#out + 1] = ("Dans tes sacs : %s · %s"):format(e.sc.item and e.sc.item.name or "?", e.sc.text or "mieux") end
+      end
+      if #out > 0 then table.insert(out, 1, ("Pastille : %d amélioration%s à équiper maintenant"):format(#out, #out > 1 and "s" or "")) end
+      return out
+    end })
+end
 function M.RentEnable()
   M.HookPage()
   M.RegisterKeeper()
+  M.RegisterStrip()
   local function onBags()
     M._rent = nil
+    local n0 = M.UpgradeCount()
     local up = M.BagUpgrades()
+    if M.UpgradeCount() ~= n0 then
+      local Sc = T.Shortcuts
+      if type(Sc) == "table" and Sc._active and type(Sc.Refresh) == "function" then pcall(Sc.Refresh) end
+    end
     M.RegisterKeeper()
     if up.n > 0 or arrowN > 0 then arrowsSoon() end
     if M.PublishNow then M.PublishNow() end

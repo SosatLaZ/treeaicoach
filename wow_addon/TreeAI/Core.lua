@@ -2244,14 +2244,15 @@ TreeAI._ModuleEnable, TreeAI._ModuleDisable = moduleEnable, moduleDisable
   -- GetQuestObjectiveInfo : aucun déchet pour le ramasse-miettes, là où GetInfo + GetQuestObjectives allouent ~2 Ko par
   -- quête) ; une passe par image au plus (plusieurs événements de quête dans la même image partagent la lecture).
   -- Rend : signature de structure, état complet, vrai si l'API existe (sinon : anciens lecteurs, par tables).
-  local qr = { t = -1, buf = {}, sbuf = {} }
+  local qr = { t = -1, buf = {}, sbuf = {}, evSeq = 0, readSeq = -1 }
   TreeAI._QuestRead = function()
     local QL = rawget(_G, "C_QuestLog")
     local goi = rawget(_G, "GetQuestObjectiveInfo")
     if not (type(QL) == "table" and QL.GetNumQuestLogEntries and QL.GetQuestIDForLogIndex and QL.GetNumQuestObjectives
         and QL.IsComplete and type(goi) == "function") then return nil, nil, false end
     local t = now()
-    if qr.t == t then return qr.struct, qr.full, true end
+    if qr.t == t then qr.readSeq = qr.evSeq return qr.struct, qr.full, true end
+    qr.readSeq = qr.evSeq
     local buf, sbuf, k, ks = qr.buf, qr.sbuf, 0, 0
     local n, nq = try(QL.GetNumQuestLogEntries)
     n = tonumber((pub(n))) or 0
@@ -2297,7 +2298,12 @@ TreeAI._ModuleEnable, TreeAI._ModuleDisable = moduleEnable, moduleDisable
     return sig .. "#" .. c
   end
   quest.prepare = function(info)
-    local sig, counts, known = TreeAI._QuestRead()
+    -- (5.0 INTEG) la tournée part 0,3 s après le DERNIER événement de quête : si le journal a déjà été lu depuis cet
+    -- événement (filtre du bruit, dans son image) et qu'aucun autre n'est arrivé, cette lecture vaut encore — pas de
+    -- 2e passe sur tout le journal (c'était le 1er coût du cœur dans les rafales de quêtes dès qu'un module s'abonne)
+    local sig, counts, known
+    if qr.readSeq == qr.evSeq and qr.struct ~= nil and now() - qr.t < 2 then sig, counts, known = qr.struct, qr.full, true
+    else sig, counts, known = TreeAI._QuestRead() end
     if not known then sig, counts = TreeAI:QuestLogSig(true), countSig() end
     if sig ~= qLast.sig or info.accepted or info.removed or info.turnedIn or sig == nil then info.structure = true end
     if counts ~= qLast.counts or counts == nil then info.counts = true end
@@ -2308,6 +2314,7 @@ TreeAI._ModuleEnable, TreeAI._ModuleDisable = moduleEnable, moduleDisable
   listen({ "QUEST_LOG_UPDATE", "UNIT_QUEST_LOG_CHANGED", "QUEST_WATCH_UPDATE", "QUEST_ACCEPTED", "QUEST_REMOVED", "QUEST_TURNED_IN",
     "QUEST_WATCH_LIST_CHANGED" }, function(event, a, b)
     if TreeAI._questBurst and TreeAI._questBurst.flushing then return end   -- événements retenus puis rejoués : déjà comptés
+    qr.evSeq = qr.evSeq + 1
     local info = quest.info
     if event == "UNIT_QUEST_LOG_CHANGED" then
       if pub(a) ~= "player" then return end
