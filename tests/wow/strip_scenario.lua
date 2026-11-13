@@ -1,16 +1,24 @@
--- Harness scenario (4.1, agent STRIP): the « boutons rapides » strip that replaces the « Prochaine étape » card at the
--- top left. Run by tests/wow/test_strip.py on the real-client geometry (harness --geometry ready=1) for the forever and
--- modern flavours. Dumps what the player sees (labels, counts, keys, active mode) and proves:
---   * default screen: the strip is shown, the card, the text panel and the old « Raccourcis » bar are not;
+-- Harness scenario (5.0, agent LOOK): the « actions rapides » strip (Modules/Shortcuts.lua).
+--   Quêtes [● Guidage quêtes ON] : Rendre · Prendre · Suivant · Zone · Vite | Perso : Sacs · Équipement · Métiers | Groupe | TreeAI
+-- Run by tests/wow/test_strip.py on the real-client geometry (harness --geometry ready=1) for the forever and modern
+-- flavours. Dumps what the player sees (groups, labels, counts, keys, active mode, guide pill) and proves:
+--   * default screen: the strip is shown, big enough to be seen (≥ 36 px of button), the card, the text panel and the
+--     old « Raccourcis » bar are not;
 --   * a group of 4 (party frames 1-4 + pet frame + target frame with its auras): the strip overlaps none of the game's
 --     unit / party frames, the quest tracker, the minimap or the buffs, and stays in the upper-left part of the screen;
---   * without T.QuestBrain: each mode button opens the matching window page (Quêtes, Trajet, Groupe, Journal),
---     « Rendre » counts the finished quests of the log;
---   * with a fake T.QuestBrain: labels / counts / active mode come from Modes(), a click calls SetMode(id), the
---     « mode suivant » key cycles, QUEST_MODE_CHANGED repaints;
---   * « Raccourcis conseillés »: one click binds Alt-1… only on free keys (a taken key is never replaced, never
---     Ctrl-1… which is the game's pet bar), saved; refused in combat; the keys show on the buttons;
---   * movable (grip drag = player place kept across a roster change), narrow screen = no overlap either;
+--     it is STABLE (a roster change that puts nothing under it does not move it);
+--   * every button has an action and a tooltip (S.Audit), nothing overlaps inside the strip, nothing is clipped;
+--   * without T.QuestBrain: each mode button opens the matching window page, « Rendre » counts the finished quests;
+--   * the « Guidage quêtes » pill: without the core switch it greys the quest buttons (a click on them does nothing);
+--     with T:SetQuestGuide / T:QuestGuideOn it calls them; QUEST_GUIDE_CHANGED repaints;
+--   * with a fake T.QuestBrain: labels / counts / active mode come from Modes(), a click calls SetMode(id) (« Vite » =
+--     fastlvl), the « mode suivant » and « action suivante » keys work, QUEST_MODE_CHANGED repaints;
+--   * S.SetAction: a module plugs its direct action / count / tooltip lines into a button (Sacs, Équipement);
+--   * « Touches conseillées »: one click binds Alt-1… only on free keys (a taken key is never replaced, never Ctrl-1…
+--     which is the game's pet bar), saved; refused in combat; the keys show on the buttons;
+--   * combat: clicks still work, « cacher en combat » hides then brings it back; compact mode (icons only);
+--   * movable (grip drag = player place kept across a roster change), narrow screens = no overlap either;
+--     « /tai interface reset » brings everything back;
 --   * nothing in the chat, zero blocked action, zero violation.
 -- Fake names and quests only.
 return function(M, ctx)
@@ -19,7 +27,7 @@ return function(M, ctx)
   local geo = M.geo
   if not check(geo ~= nil, "strip_scenario needs --geometry") then return end
   local S, W = T.Shortcuts, T.Window
-  if not check(S and S.State and S.Strip and W, "Shortcuts (boutons rapides) + Window loaded") then return end
+  if not check(S and S.State and S.Strip and W, "Shortcuts (actions rapides) + Window loaded") then return end
   local UIP = UIParent
   local function out(s) io.write("STRIP ", s, "\n") end
   local function blocked() return #(M.blocked or {}) end
@@ -58,21 +66,21 @@ return function(M, ctx)
 
   -- ------------------------------------------------------------------ default screen
   local strip = S.Strip()
-  check(strip and strip:IsShown(), "boutons rapides affichés par défaut")
+  check(strip and strip:IsShown(), "bande d'actions rapides affichée par défaut")
   local card = W.GetCard and W.GetCard()
-  check(not (card and card:IsShown()), "carte « Prochaine étape » cachée par défaut (les boutons la remplacent)")
+  check(not (card and card:IsShown()), "carte « Prochaine étape » cachée par défaut (la bande la remplace)")
   check(W.db.card == false, "carte : coupée d'office")
   local panel = T.GetPanel and T:GetPanel()
-  check(not (panel and panel:IsShown()), "panneau texte caché (les boutons tiennent lieu d'affichage)")
+  check(not (panel and panel:IsShown()), "panneau texte caché (la bande tient lieu d'affichage)")
   local dock = rawget(_G, "TreeAIShortcuts")
   check(not (dock and dock:IsShown()), "ancienne barre « Raccourcis » cachée par défaut")
   local mv = T:GetMovables()
-  check(mv.strip and mv.strip.frame == strip, "boutons rapides : déplaçables (mode édition)")
+  check(mv.strip and mv.strip.frame == strip, "bande : déplaçable (mode édition)")
 
   -- ------------------------------------------------------------------ no overlap with the game's frames
   local AVOID = { "PlayerFrame", "TargetFrame", "PetFrame", "PartyMemberFrame1", "PartyMemberFrame2", "PartyMemberFrame3",
     "PartyMemberFrame4", "ObjectiveTrackerFrame", "MinimapCluster", "BuffFrame", "ChatFrame1", "MultiBarBottomLeft",
-    "MainMenuBar", "CastingBarFrame" }
+    "MainMenuBar", "CastingBarFrame", "TreeAICompassFrame" }
   local function overlap(a, b) return a.l < b.l + b.w and b.l < a.l + a.w and a.b < b.b + b.h and b.b < a.b + a.h end
   local function noOverlap(tag)
     local r = geo.Rect(strip)
@@ -83,7 +91,7 @@ return function(M, ctx)
     check(geo.OnScreen(strip), tag .. " : sur l'écran")
     for _, n in ipairs(AVOID) do
       local f = rawget(_G, n)
-      local fr = f and geo.Rect(f)
+      local fr = f and f:IsShown() and geo.Rect(f)
       if fr then
         check(not overlap(r, fr), ("%s : pas sur %s (%d,%d %dx%d)"):format(tag, n, r0(fr.l), r0(fr.b), r0(fr.w), r0(fr.h)))
       end
@@ -93,26 +101,68 @@ return function(M, ctx)
     if tf then check(not overlap(r, { l = tf.l, b = tf.b - 40, w = tf.w, h = 40 }), tag .. " : pas sur les auras de la cible") end
     return r
   end
+  -- inside the strip: every shown child inside it, buttons never over one another
+  local function inside(tag)
+    local r = geo.Rect(strip)
+    local list = {}
+    for id, b in pairs(S.Buttons()) do
+      if b:IsShown() then
+        local br = geo.Rect(b)
+        if check(br, tag .. " : bouton " .. id .. " mesurable") then
+          check(br.l >= r.l - 0.5 and br.b >= r.b - 0.5 and br.l + br.w <= r.l + r.w + 0.5 and br.b + br.h <= r.b + r.h + 0.5,
+            ("%s : « %s » dans la bande (%d,%d %dx%d dans %d,%d %dx%d)"):format(tag, id, r0(br.l), r0(br.b), r0(br.w), r0(br.h),
+              r0(r.l), r0(r.b), r0(r.w), r0(r.h)))
+          list[#list + 1] = { id = id, r = br }
+        end
+      end
+    end
+    for i = 1, #list do
+      for j = i + 1, #list do
+        local a, b = list[i].r, list[j].r
+        local shrink = { l = a.l + 0.5, b = a.b + 0.5, w = a.w - 1, h = a.h - 1 }
+        check(not overlap(shrink, b), ("%s : « %s » et « %s » ne se chevauchent pas"):format(tag, list[i].id, list[j].id))
+      end
+    end
+    return #list
+  end
   local r = noOverlap("groupe de 4")
   if r then
     local SW, SH = geo.Screen()
     check(r.l < SW * 0.45 and r.b + r.h > SH * 0.55, "en haut à gauche de l'écran")
+    check(r.h >= 60 and r.w >= 380, ("bande impossible à rater : %dx%d unités (≥ 380×60)"):format(r0(r.w), r0(r.h)))
   end
+  check(inside("groupe de 4") >= 9, "au moins 9 boutons + la pastille")
+  local bad, seen = S.Audit()
+  check(#bad == 0 and seen >= 9, "chaque bouton a une action et une infobulle (" .. table.concat(bad, " ; ") .. ")")
+  -- stable: a member leaves (nothing comes under the strip) → it does not move
+  local p1 = { strip:GetPoint(1) }
+  M.group[3] = nil
+  PartyMemberFrame3.__shown = false
+  ctx.fire("GROUP_ROSTER_UPDATE")
+  M.Advance(3, 0.1)
+  local p2 = { strip:GetPoint(1) }
+  check(p1[1] == p2[1] and r0(p1[4]) == r0(p2[4]) and r0(p1[5]) == r0(p2[5]), "place stable : un changement de groupe sans cadre dessous ne la bouge pas")
+  M.group[3] = { name = "Camarade", class = "MAGE", level = 28, online = true }
+  PartyMemberFrame3.__shown = true
+  ctx.fire("GROUP_ROSTER_UPDATE")
+  M.Advance(3, 0.1)
 
   -- ------------------------------------------------------------------ labels / dump (no QuestBrain)
   T.QuestBrain = nil
   S.Refresh(true)
   local dump = S.Dump()
   out("sans QuestBrain : " .. table.concat(dump, " · "))
-  local want = { "Rendre", "À prendre", "Suivant", "Zone", "Groupe", "Journal", "TreeAI" }
-  for i, l in ipairs(want) do check(dump[i] and dump[i]:sub(1, #l) == l, ("bouton %d = « %s » (%s)"):format(i, l, tostring(dump[i]))) end
-  check(dump[1]:find("(2)", 1, true), "Rendre : les 2 quêtes finies du journal (" .. dump[1] .. ")")
+  out("bande : " .. S.DumpLine())
+  local want = { "Guidage quêtes : ON", "Rendre", "Prendre", "Suivant", "Zone", "Vite", "Sacs", "Équipement" }
+  for i, l in ipairs(want) do check(dump[i] and dump[i]:sub(1, #l) == l, ("ligne %d = « %s » (%s)"):format(i, l, tostring(dump[i]))) end
+  check(dump[#dump] == "TreeAI" and dump[#dump - 1] == "Groupe", "… Groupe · TreeAI à la fin (" .. tostring(dump[#dump - 1]) .. ")")
+  check(dump[2]:find("(2)", 1, true), "Rendre : les 2 quêtes finies du journal (" .. dump[2] .. ")")
   local B = S.Buttons()
-  check(B.rendre and B.rendre.icon and B.rendre.text and B.rendre.text:GetText() == "Rendre", "icône + mot court")
-  check(B.rendre.badge and B.rendre.badge:GetText() == "2" and B.rendre.badge:IsShown(), "pastille de nombre")
+  check(B.rendre and B.rendre.icon and B.rendre.label and B.rendre.label:GetText() == "Rendre", "icône + mot court")
+  check(B.rendre.badge and B.rendre.badge.value == 2 and B.rendre.badge:IsShown(), "pastille de nombre")
+  check(B.guide and B.guide.on == true, "pastille « Guidage quêtes » : ON")
   -- fallback: the window page that does the same
-  -- (4.1 LAYOUT) « Trajet » est dans la page Quêtes (anciens ids redirigés : W.Resolve)
-  local pages = { rendre = "quests", prendre = "quests", zone = "quests", groupe = "group", journal = "journal" }
+  local pages = { rendre = "quests", prendre = "quests", vite = "quests", groupe = "group", equip = "gear", sacs = "bags" }
   for id, page in pairs(pages) do
     W.Close()
     M.Advance(0.3, 0.1)
@@ -122,27 +172,78 @@ return function(M, ctx)
       tostring(W.CurrentPage())))
   end
   W.Close()
+  M.Advance(0.3, 0.1)
+  T.StripAction("journal")
+  M.Advance(0.3, 0.1)
+  check(W.IsOpen() and W.CurrentPage() == "journal", "touche « journal » : la page Journal (hors bande, toujours là)")
+  W.Close()
   B.fenetre:Click("LeftButton")
   check(W.IsOpen(), "« TreeAI » ouvre la fenêtre")
   B.fenetre:Click("LeftButton")
   M.Advance(0.5, 0.1)
   -- tooltip: what it does + its key
-  B.rendre.__scripts.OnEnter(B.rendre)
-  local tt = GameTooltip
-  local lines = {}
-  for _, l in ipairs(tt.__lines or {}) do lines[#lines + 1] = type(l) == "table" and (l.text or l[1]) or tostring(l) end
-  out("infobulle Rendre : " .. table.concat(lines, " | "))
-  local joined = table.concat(lines, "\n")
-  check(joined:find("Rendre mes quêtes au plus vite", 1, true) and joined:find("Touche", 1, true), "infobulle : ce qu'il fait + sa touche")
-  B.rendre.__scripts.OnLeave(B.rendre)
+  local function tipOf(b)
+    b.__scripts.OnEnter(b)
+    local lines = {}
+    for _, l in ipairs(GameTooltip.__lines or {}) do lines[#lines + 1] = type(l) == "table" and (l.text or l[1]) or tostring(l) end
+    b.__scripts.OnLeave(b)
+    return table.concat(lines, " | ")
+  end
+  local tip = tipOf(B.rendre)
+  out("infobulle Rendre : " .. tip)
+  check(tip:find("Rendre mes quêtes au plus vite", 1, true) and tip:find("Touche", 1, true), "infobulle : ce qu'il fait + sa touche")
+  for id, b in pairs(B) do
+    local t = tipOf(b)
+    check(#t > 20, "infobulle de « " .. id .. " » : " .. t)
+  end
+
+  -- ------------------------------------------------------------------ « Guidage quêtes » : fallback (no core switch)
+  check(not S.GuideIsCore(), "sans T:SetQuestGuide : la pastille grise les boutons de quêtes")
+  B.guide:Click("LeftButton")
+  M.Advance(0.3, 0.1)
+  dump = S.Dump()
+  out("guidage coupé : " .. table.concat(dump, " · "))
+  check(dump[1] == "Guidage quêtes : OFF" and not S.GuideOn() and B.guide.on == false, "pastille : OFF")
+  check(dump[2]:find("(coupé)", 1, true) and dump[6]:find("(coupé)", 1, true), "boutons de quêtes grisés")
+  check(not dump[7]:find("(coupé)", 1, true), "Sacs reste actif")
+  W.Close()
+  M.Advance(0.3, 0.1)
+  B.rendre:Click("LeftButton")
+  M.Advance(0.3, 0.1)
+  check(not W.IsOpen(), "bouton de quête grisé : le clic ne fait rien")
+  check(tostring(S.lastMessage):find("Guidage", 1, true), "… et dit pourquoi (" .. tostring(S.lastMessage) .. ")")
+  SlashCmdList["TREEAI"]("guide on")
+  M.Advance(0.3, 0.1)
+  check(S.GuideOn(), "/tai guide on : rallumé")
+  -- with the core switch (STABLE): the pill calls it
+  local guide, gcalls = true, {}
+  T.QuestGuideOn = function() return guide end
+  T.SetQuestGuide = function(_, on) guide = on and true or false gcalls[#gcalls + 1] = guide T:Fire("QUEST_GUIDE_CHANGED", guide) end
+  B.guide:Click("LeftButton")
+  M.Advance(0.3, 0.1)
+  check(gcalls[#gcalls] == false and not S.GuideOn() and S.GuideIsCore(), "avec le cœur : la pastille appelle T:SetQuestGuide(false)")
+  out("infobulle pastille : " .. tipOf(B.guide))
+  T.StripAction("guide")
+  M.Advance(0.3, 0.1)
+  check(gcalls[#gcalls] == true and S.GuideOn(), "touche « guidage » : T:SetQuestGuide(true)")
+  guide = false
+  T:Fire("QUEST_GUIDE_CHANGED", false)
+  M.Advance(0.3, 0.1)
+  check(B.guide.on == false, "QUEST_GUIDE_CHANGED repeint la pastille")
+  guide = true
+  T:Fire("QUEST_GUIDE_CHANGED", true)
+  M.Advance(0.3, 0.1)
+  T.QuestGuideOn, T.SetQuestGuide = nil, nil
+  S.SetGuide(true)
 
   -- ------------------------------------------------------------------ fake QuestBrain (agent QUESTS' public API)
   local calls = {}
   local modes = {
-    { id = "turnin", label = "Rendre mes quêtes au plus vite", short = "Rendre", key = "", tip = "Le plus court chemin.", count = 4 },
-    { id = "pickup", label = "Quêtes à prendre", short = "À prendre", tip = "Les meilleures quêtes.", count = 3 },
-    { id = "zone", label = "Tout faire dans la zone", short = "Zone", count = 9 },
+    { id = "turnin", label = "Rendre mes quêtes", short = "Rendre", key = "", tip = "Le plus court chemin.", count = 4 },
+    { id = "pickup", label = "Quêtes à prendre", short = "Prendre", tip = "Les meilleures quêtes.", count = 3 },
+    { id = "zone", label = "Tout faire ici", short = "Zone", count = 9 },
     { id = "group", label = "Avec le groupe", short = "Groupe", count = 0 },
+    { id = "fastlvl", label = "Monter vite", short = "Vite", count = 0 },
   }
   local active = "zone"
   T.QuestBrain = {
@@ -165,23 +266,22 @@ return function(M, ctx)
   M.Advance(0.5, 0.1)
   dump = S.Dump()
   out("avec QuestBrain : " .. table.concat(dump, " · "))
-  check(dump[1] == "Rendre (4)", "Rendre (4) : " .. tostring(dump[1]))
-  check(dump[2] == "À prendre (3)", "À prendre (3) : " .. tostring(dump[2]))
-  check(dump[4] == "Zone (9) *", "mode actif surligné : " .. tostring(dump[4]))
-  check(B.zone.sel:IsShown() and not B.rendre.sel:IsShown(), "surbrillance du mode choisi")
+  out("bande : " .. S.DumpLine())
+  check(dump[2] == "Rendre (4) <", "Rendre (4), conseillé maintenant : " .. tostring(dump[2]))
+  check(dump[3] == "Prendre (3)", "Prendre (3) : " .. tostring(dump[3]))
+  check(dump[5] == "Zone (9) *", "mode actif surligné : " .. tostring(dump[5]))
+  check(B.zone.__st.active and not B.rendre.__st.active, "surbrillance du mode choisi")
   B.prendre:Click("LeftButton")
   M.Advance(0.5, 0.1)
-  check(calls[#calls] == "pickup", "clic « À prendre » = SetMode(pickup)")
+  check(calls[#calls] == "pickup", "clic « Prendre » = SetMode(pickup)")
   dump = S.Dump()
-  check(dump[2] == "À prendre (3) *" and dump[4] == "Zone (9)", "le mode choisi suit (" .. dump[2] .. " / " .. dump[4] .. ")")
+  check(dump[3] == "Prendre (3) *" and dump[5] == "Zone (9)", "le mode choisi suit (" .. dump[3] .. " / " .. dump[5] .. ")")
   B.rendre:Click("LeftButton")
   check(calls[#calls] == "turnin", "clic « Rendre » = SetMode(turnin)")
   B.groupe:Click("LeftButton")
   check(calls[#calls] == "group", "clic « Groupe » = SetMode(group)")
-  W.Close()
-  B.journal:Click("LeftButton")   -- no « journal » mode in this brain: its window page
-  M.Advance(0.3, 0.1)
-  check(W.IsOpen() and W.CurrentPage() == "journal", "mode absent : la page Journal")
+  B.vite:Click("LeftButton")
+  check(calls[#calls] == "fastlvl", "clic « Vite » = SetMode(fastlvl)")
   W.Close()
   M.Advance(0.3, 0.1)
   B.rendre:Click("RightButton")
@@ -190,32 +290,63 @@ return function(M, ctx)
   W.Close()
   local n0 = #calls
   T.StripAction("mode")
-  check(#calls == n0 + 1 and calls[#calls] == "turnin", "touche « mode suivant » : group → turnin (" .. tostring(calls[#calls]) .. ")")
+  check(#calls == n0 + 1 and calls[#calls] == "turnin", "touche « mode suivant » : fastlvl → turnin (" .. tostring(calls[#calls]) .. ")")
   T.StripAction("prendre")
-  check(calls[#calls] == "pickup", "touche « À prendre » (Bindings.xml) = SetMode(pickup)")
-  -- in combat: clicks still work (nothing protected), the layout does not move
-  M.EnterCombat()
-  local w0 = strip:GetWidth()
-  B.zone:Click("LeftButton")
-  check(calls[#calls] == "zone", "en combat : le clic change le mode (rien de protégé)")
-  M.bindings.TREEAI_QB_TURNIN = "ALT-SHIFT-9"
+  check(calls[#calls] == "pickup", "touche « Prendre » (Bindings.xml) = SetMode(pickup)")
+  -- « action suivante » : 4 finished quests, mode ≠ Rendre → it turns them in ; then nothing better
+  local nx = S.NextAction(S.State())
+  check(nx and nx.id == "rendre", "action suivante : rendre (" .. tostring(nx and nx.why) .. ")")
+  T.StripAction("next")
+  check(calls[#calls] == "turnin", "touche « action suivante » = SetMode(turnin)")
+  modes[1].count = 0
   S.Refresh(true)
-  check(strip:GetWidth() == w0, "en combat : la bande ne change pas de taille")
-  M.LeaveCombat()
-  if T.RunPendingOutOfCombat then T:RunPendingOutOfCombat() end
-  ctx.fire("PLAYER_REGEN_ENABLED")
-  M.Advance(0.5, 0.1)
-  check(strip:GetWidth() > w0, "après le combat : la bande suit")
-  M.bindings.TREEAI_QB_TURNIN = nil
+  nx = S.NextAction(S.State())
+  check(nx and nx.id == "zone", "plus rien à rendre en mode Rendre : retour à la zone (" .. tostring(nx and nx.id) .. ")")
+  modes[1].count = 4
+
+  -- ------------------------------------------------------------------ S.SetAction: a module plugs its direct action
+  local did = {}
+  check(S.SetAction("sacs", { fn = function(btn) did[#did + 1] = "sacs:" .. tostring(btn) return true end, count = function() return 7 end,
+    tip = function() return { "7 objets à vendre (12 pa)" } end }), "S.SetAction(« sacs ») accepté")
+  check(not S.SetAction("inconnu", {}), "S.SetAction : id inconnu refusé")
+  S.Refresh(true)
+  dump = S.Dump()
+  check(dump[7] == "Sacs (7)", "pastille du module : " .. tostring(dump[7]))
+  B.sacs:Click("LeftButton")
+  check(did[#did] == "sacs:LeftButton", "clic « Sacs » = l'action directe du module")
+  check(tipOf(B.sacs):find("7 objets à vendre", 1, true), "infobulle : les lignes du module")
+  S.SetAction("sacs", nil)
   S.Refresh(true)
 
-  -- ------------------------------------------------------------------ keys: « Raccourcis conseillés »
+  -- ------------------------------------------------------------------ combat: clicks work, « cacher en combat »
+  M.EnterCombat() ctx.fire("PLAYER_REGEN_DISABLED")
+  M.Advance(0.5, 0.1)
+  check(strip:IsShown(), "en combat : la bande reste (d'office)")
+  B.zone:Click("LeftButton")
+  check(calls[#calls] == "zone", "en combat : le clic change le mode (rien de protégé)")
+  M.LeaveCombat() ctx.fire("PLAYER_REGEN_ENABLED")
+  M.Advance(0.5, 0.1)
+  S.db.hideCombat = true
+  S:OnOptionChanged("hideCombat")
+  M.EnterCombat() ctx.fire("PLAYER_REGEN_DISABLED")
+  M.Advance(0.5, 0.1)
+  check(not strip:IsShown(), "option « cacher en combat » : cachée pendant le combat")
+  ctx.fire("QUEST_LOG_UPDATE")
+  M.Advance(1, 0.1)
+  check(not strip:IsShown(), "… et un événement de quête ne la rallume pas")
+  M.LeaveCombat() ctx.fire("PLAYER_REGEN_ENABLED")
+  M.Advance(0.5, 0.1)
+  check(strip:IsShown(), "… revenue à la fin du combat")
+  S.db.hideCombat = false
+  S:OnOptionChanged("hideCombat")
+
+  -- ------------------------------------------------------------------ keys: « Touches conseillées »
   for _, cmd in ipairs(S.KEY_ORDER) do M.bindings[cmd] = nil end
   M.bindings["MULTIACTIONBAR1BUTTON3"] = "ALT-3"          -- the player's own key: never replaced
   M.bindings["BONUSACTIONBUTTON1"] = "CTRL-1"             -- the game's pet bar
   S.Refresh(true)
   local kb = rawget(_G, "TreeAIStripKeys")
-  check(kb and kb:IsShown(), "bouton « Touches » tant qu'une touche manque")
+  check(kb and kb:IsShown(), "bouton « Touches… » tant qu'une touche manque")
   M.EnterCombat()
   S.SuggestKeys()
   check(M.bindings.TREEAI_QB_TURNIN == nil, "en combat : aucune touche posée")
@@ -234,13 +365,15 @@ return function(M, ctx)
   for _, cmd in ipairs(S.KEY_ORDER) do
     check(not tostring(M.bindings[cmd]):find("^CTRL%-%d"), cmd .. " : jamais Ctrl-chiffre")
   end
-  check(M.bindings.TREEAI_MAIN == "ALT-7" and M.bindings.TREEAI_MODE_NEXT == "ALT-8", "fenêtre Alt-7, mode suivant Alt-8")
+  check(M.bindings.TREEAI_MAIN == "ALT-7" and M.bindings.TREEAI_ACTION_NEXT == "ALT-8", "fenêtre Alt-7, action suivante Alt-8")
+  check(M.bindings.TREEAI_QB_FASTLVL == "ALT-6" and M.bindings.TREEAI_STRIP_SACS == "ALT-9" and M.bindings.TREEAI_STRIP_EQUIP == "ALT-0",
+    "Vite Alt-6, Sacs Alt-9, Équipement Alt-0")
+  check(M.bindings.TREEAI_GUIDE_TOGGLE ~= nil, "le guidage a sa touche (" .. tostring(M.bindings.TREEAI_GUIDE_TOGGLE) .. ")")
   check(M.savedBindings ~= nil, "touches enregistrées (SaveBindings)")
   dump = S.Dump()
   out("avec touches : " .. table.concat(dump, " · "))
-  check(dump[1]:find("[Alt-1]", 1, true) and dump[3]:find("[Ctrl-Maj-3]", 1, true), "touche affichée sur chaque bouton")
-  check(B.rendre.key:GetText() == "Alt-1" and B.rendre.key:IsShown(), "petite touche sur le bouton")
-  check(not kb:IsShown(), "bouton « Touches » retiré une fois tout lié")
+  check(dump[2]:find("[Alt-1]", 1, true) and dump[4]:find("[Ctrl-Maj-3]", 1, true), "touche affichée sur chaque bouton")
+  check(B.rendre.keyText:GetText() == "Alt-1", "petite touche sur le bouton")
   -- a 2nd click changes nothing (already bound)
   local before = M.bindings.TREEAI_QB_TURNIN
   S.SuggestKeys()
@@ -248,15 +381,18 @@ return function(M, ctx)
 
   -- ------------------------------------------------------------------ narrow screen, player place
   r = noOverlap("après les touches")
+  inside("après les touches")
   geo.SetScreen(1024, 768)
-  M.Advance(2, 0.1)
+  M.Advance(3, 0.1)
   noOverlap("écran 1024×768")
+  inside("écran 1024×768")
   geo.SetScreen(800, 600)
-  M.Advance(2, 0.1)
+  M.Advance(3, 0.1)
   noOverlap("écran 800×600")
   geo.SetScreen(1920, 1080)
-  M.Advance(2, 0.1)
+  M.Advance(3, 0.1)
   noOverlap("retour 1920×1080")
+  check(not S.compact, "retour 1920×1080 : les mots sont revenus")
   local g = rawget(_G, "TreeAIStripGrip")
   check(g and geo.Drag(g, 300, -200) == strip, "bande glissée par sa poignée")
   check(type(S.char.strip) == "table", "place du joueur gardée")
@@ -271,16 +407,36 @@ return function(M, ctx)
   check(S.char.strip == nil and S.placed == "auto", "réinitialiser : place automatique")
   noOverlap("réinitialisée")
 
-  -- ------------------------------------------------------------------ option: icons only
+  -- ------------------------------------------------------------------ compact mode (icons only), /tai interface
   S.db.text = false
   S:OnOptionChanged("text")
-  check(S.compact and not B.rendre.text:IsShown() and B.rendre.badge:IsShown(), "icônes seules : pastilles gardées")
-  S.db.text = true
-  S:OnOptionChanged("text")
-  check(not S.compact and B.rendre.text:IsShown(), "mots revenus")
+  B = S.Buttons()
+  local rc = geo.Rect(strip)
+  check(S.compact and B.rendre.compact and not B.rendre.label and B.rendre.badge:IsShown(), "mode compact : icônes seules, pastilles gardées")
+  check(rc.h < 45 and B.guide and B.guide.compact, ("mode compact : %dx%d, le guidage en icône"):format(r0(rc.w), r0(rc.h)))
+  inside("compact")
+  bad = S.Audit()
+  check(#bad == 0, "compact : chaque bouton a une action et une infobulle (" .. table.concat(bad, " ; ") .. ")")
+  B.guide:Click("LeftButton")
+  check(not S.GuideOn(), "compact : l'icône du guidage le coupe")
+  B.guide:Click("LeftButton")
+  check(S.GuideOn(), "compact : … et le rallume")
+  SlashCmdList["TREEAI"]("interface complet")
+  M.Advance(0.5, 0.1)
+  B = S.Buttons()
+  check(not S.compact and B.rendre.label and B.rendre.label:IsShown(), "/tai interface complet : mots revenus")
+  -- a broken state from a real client: saved off screen + scale + locked + hidden in combat → /tai interface reset
+  S.char.strip = { "TOPLEFT", "TOPLEFT", 5000, -3000 }
+  S.db.stripScale, S.db.hideCombat, S.db.text = 150, true, false
+  SlashCmdList["TREEAI"]("interface reset")
+  M.Advance(1.5, 0.1)
+  check(S.db.stripScale == 100 and S.db.hideCombat == false and S.db.text == true and S.char.strip == nil, "/tai interface reset : réglages d'origine")
+  check(strip:IsShown() and geo.OnScreen(strip, 4), "/tai interface reset : la bande est à l'écran")
+  noOverlap("/tai interface reset")
 
-  -- ------------------------------------------------------------------ (4.1 CITYRUN) « Suivant » en session (T.focus)
+  -- ------------------------------------------------------------------ « Suivant » en session (T.focus)
   do
+    B = S.Buttons()
     local oldF, oldFS, moves = T.focus, T.FocusStep, {}
     T.focus = { kind = "city", owner = "test", label = "Courses en ville" }
     T.FocusStep = function(d) moves[#moves + 1] = d return true end

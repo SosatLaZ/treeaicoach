@@ -26,7 +26,24 @@
 	<Binding name="TREEAI_MODE_NEXT" header="TREEAI" category="ADDONS">
 		if TreeAI and TreeAI.StripAction then TreeAI.StripAction("mode") end
 	</Binding>
-	<!-- (4.2) Métiers : la page Métiers (bouton « Métiers » de la bande). Sans touche par défaut. -->
+	<!-- (5.0) Actions rapides : une liaison par bouton de la bande + « action suivante » + la pastille « Guidage
+	     quêtes ». Sans touche par défaut ; « Touches conseillées » pose Alt-1… sur les seules touches libres. -->
+	<Binding name="TREEAI_QB_FASTLVL" header="TREEAI" category="ADDONS">
+		if TreeAI and TreeAI.StripAction then TreeAI.StripAction("vite") end
+	</Binding>
+	<Binding name="TREEAI_STRIP_SACS" header="TREEAI" category="ADDONS">
+		if TreeAI and TreeAI.StripAction then TreeAI.StripAction("sacs") end
+	</Binding>
+	<Binding name="TREEAI_STRIP_EQUIP" header="TREEAI" category="ADDONS">
+		if TreeAI and TreeAI.StripAction then TreeAI.StripAction("equip") end
+	</Binding>
+	<Binding name="TREEAI_GUIDE_TOGGLE" header="TREEAI" category="ADDONS">
+		if TreeAI and TreeAI.StripAction then TreeAI.StripAction("guide") end
+	</Binding>
+	<Binding name="TREEAI_ACTION_NEXT" header="TREEAI" category="ADDONS">
+		if TreeAI and TreeAI.StripAction then TreeAI.StripAction("next") end
+	</Binding>
+	<!-- (4.2) Métiers : la session métier (bouton « Métiers » de la bande). Sans touche par défaut. -->
 	<Binding name="TREEAI_STRIP_METIERS" header="TREEAI" category="ADDONS">
 		if TreeAI and TreeAI.StripAction then TreeAI.StripAction("metiers") end
 	</Binding>

@@ -873,102 +873,184 @@ local function finishWizard()
   if wiz then wiz:Hide() end   -- (4.0 QA) la fenêtre qui se ferme suffit : rien dans le chat
 end
 
-local function quickToggle(modName, fallbackSlash)
-  local M = TreeAI.GetModule and TreeAI:GetModule(modName)
-  if type(M) == "table" then
-    for _, fn in ipairs({ "TogglePanel", "Toggle", "ToggleShown", "ToggleFrame", "Show" }) do
-      if type(M[fn]) == "function" then TreeAI.safecall(M[fn], M); return true end
+-- (5.0 LOOK) RÉGLAGE EN 3 ÉTAPES du premier lancement (passable à tout moment) : 1. ton personnage (classe, niveau,
+-- spécialisation lue par le module Équipement — jamais devinée), 2. ce que TreeAI affiche (profil Simple / Complet,
+-- une phrase chacun ; guidage, bande, boussole, icônes de quêtes), 3. tes touches (« Poser les touches conseillées » :
+-- seulement des touches libres). Posé à droite de l'écran (jamais sur le personnage). Boutons au style du thème.
+local function wizButton(parent, text, width, fn, textFn)
+  local Th = TreeAI.Theme
+  local b = Th and Th.Button and Th:Button(parent, text, width or 160, 24) or nil
+  if not b then return newButton(parent, text, width, fn, textFn) end
+  -- même contrat que les boutons du jeu : SetText / GetText (les tests et l'orage de clics les lisent)
+  b.SetText = function(self, t) self.__text = t; if self.label then self.label:SetText(t) end end
+  b.GetText = function(self) return self.__text end
+  b:SetText(text)
+  b:SetScript("OnClick", function(self) TreeAI.safecall(fn, self); if self.refresh then self.refresh() end end)
+  if textFn then b.refresh = function() b:SetText(textFn()) end; b.refresh() end
+  return b
+end
+local WIZ_PROFILES = {
+  { "sur", "Simple", "Simple : seulement ce qui est fiable et utile tout le temps (quêtes, trajet, boussole, bande d'actions, métiers, groupe). Écran léger." },
+  { "tout", "Complet", "Complet : tout TreeAI, fonctions bêta comprises (HV, combat, radar, conseils avancés). Plus d'aides, plus de choses à l'écran." },
+}
+local function wizProfile() return TreeAI.ModuleProfile and TreeAI:ModuleProfile() or "tout" end
+--- classe, niveau, spécialisation du joueur — lus dans le jeu (T.Gear.Spec() s'il existe), « inconnue » sinon
+local function wizCharacter()
+  local okC, cname, class = pcall(_G.UnitClass or error, "player")
+  local okL, lvl = pcall(_G.UnitLevel or error, "player")
+  cname = okC and type(cname) == "string" and cname or (okC and class) or "?"
+  lvl = okL and tonumber(lvl) or nil
+  local spec, src
+  local Gm = TreeAI.Gear
+  if type(Gm) == "table" and type(Gm.Spec) == "function" then
+    local ok, r = pcall(Gm.Spec)
+    if ok and type(r) == "table" and type(r.name) == "string" and r.name ~= "" then
+      spec = r.name
+      src = (r.source == "api" and "lue dans le jeu") or (r.source == "spells" and "lue sur tes sorts") or (r.source == "manual" and "choisie par toi") or nil
     end
   end
-  if fallbackSlash then TreeAI:HandleSlash(fallbackSlash) end
-  return false
+  return cname, lvl, spec, src
 end
+TreeAI._WizardCharacter = wizCharacter
+--- étape 3 : les touches conseillées des actions rapides { { nom court, touche lisible, libre } }
+local function wizKeys()
+  local out = {}
+  local Sc = TreeAI.Shortcuts
+  if not (type(Sc) == "table" and type(Sc.KEY_ORDER) == "table") then return out end
+  local short = {}
+  for _, d in ipairs(Sc.DEFS or {}) do short[d.bind or ""] = d.label end
+  short.TREEAI_ACTION_NEXT, short.TREEAI_GUIDE_TOGGLE, short.TREEAI_MODE_NEXT = "Action suivante", "Guidage", "Mode suivant"
+  for i, cmd in ipairs(Sc.KEY_ORDER) do
+    if i > 10 then break end
+    local cur = Sc.KeyOf and Sc.KeyOf(cmd)
+    local want = Sc.KEYS and Sc.KEYS[cmd] and Sc.KEYS[cmd][1]
+    out[#out + 1] = { short[cmd] or cmd, cur or (want and Sc.KeyText and Sc.KeyText(want)) or "?", cur ~= nil }
+  end
+  return out
+end
+TreeAI._WizardKeys = wizKeys
 
 local function buildWizard()
-  wiz = dialog("TreeAIWizard", 400, 250)
+  wiz = dialog("TreeAIWizard", 460, 300)
   local W = wiz
-  W.body = label(W, "GameFontHighlight", 370)
+  W:ClearAllPoints()
+  W:SetPoint("RIGHT", _G.UIParent, "RIGHT", -60, 40)   -- à droite : jamais au milieu, sur le personnage
+  local Th = TreeAI.Theme
+  if Th and Th.Skin then pcall(Th.Skin, Th, W, "card") end
+  W.body = label(W, "GameFontHighlight", 428)
   W.body:SetPoint("TOPLEFT", W, "TOPLEFT", 16, -42)
-  W.note = label(W, "GameFontDisableSmall", 370)
-  W.note:SetPoint("BOTTOMLEFT", W, "BOTTOMLEFT", 16, 40)
+  W.note = label(W, "GameFontDisableSmall", 428)
+  W.note:SetPoint("BOTTOMLEFT", W, "BOTTOMLEFT", 16, 42)
   W.groups = { {}, {}, {} }
   local function add(step, b, x, y)
     if not b then return end
+    b:ClearAllPoints()
     b:SetPoint("TOPLEFT", W, "TOPLEFT", x, y)
     local g = W.groups[step]
     g[#g + 1] = b
     return b
   end
-  -- étape 2 : préréglage + position du panneau
-  for i, p in ipairs(TreeAI.PRESET_ORDER or {}) do
-    add(2, newButton(W, "", 88, function()
-      TreeAI:ApplyPreset(p)
+  local function openPage(id)
+    local Wn = TreeAI.Window
+    if Wn and Wn._active and Wn.Open then Wn.Open(id) return true end
+    return false
+  end
+  -- étape 1 : ton personnage
+  add(1, wizButton(W, "C'est bien ça", 150, function() TreeAI:ShowWizard(2) end), 16, -196)
+  add(1, wizButton(W, "Ce n'est pas ça…", 150, function()
+    if not (openPage("talents") or openPage("gear")) and TreeAI.ShowPanel then TreeAI:ShowPanel() end
+  end), 176, -196)
+  -- étape 2 : profil (une phrase chacun) + ce qui est à l'écran
+  for i, pr in ipairs(WIZ_PROFILES) do
+    add(2, wizButton(W, pr[2], 150, function()
+      if TreeAI:InCombat() then return end
+      if TreeAI.SetModuleProfile then TreeAI:SetModuleProfile(pr[1]) end
       W.refresh()
     end, function()
-      local on = (TreeAI.settings and TreeAI.settings.preset) == p
-      return (on and "|cff33ff66> " or "") .. L[TreeAI.PRESET_LABEL[p]] .. (on and " <|r" or "")
-    end), 16 + (i - 1) * 92, -82)
+      local on = wizProfile() == pr[1]
+      return (on and "|cff33ff66> " or "") .. pr[2] .. (on and " <|r" or "")
+    end), 16 + (i - 1) * 160, -84)
   end
-  W.presetHelp = label(W, "GameFontDisableSmall", 370)
-  W.presetHelp:SetPoint("TOPLEFT", W, "TOPLEFT", 16, -110)
-  local spots = { { "AUTO", "Auto (scan)" }, { "TOPRIGHT", "Haut droite" }, { "RIGHT", "Droite" },
-                  { "BOTTOMRIGHT", "Bas droite" }, { "BOTTOMLEFT", "Bas gauche" }, { "CENTER", "Centre" } }
-  for i, sp in ipairs(spots) do
-    add(2, newButton(W, L[sp[2]], 118, function()
-      if sp[1] == "AUTO" then
-        if TreeAI.AutoLayout then TreeAI:AutoLayout(true) end
-      else
-        TreeAI:SetPanelPosition(sp[1])
-      end
-      -- (4.0 QA) la carte « Prochaine étape » suit la place choisie (celle du panneau) ; le panneau texte, seulement
-      -- si la carte ne le remplace pas
-      local Wn = TreeAI.Window
-      if not (Wn and Wn.ShowHUD and Wn.ShowHUD(true)) then
-        TreeAI:ShowPanel()
-        if TreeAI.SetMini then TreeAI:SetMini(false) end
-      end
-    end), 16 + ((i - 1) % 3) * 124, -150 - math.floor((i - 1) / 3) * 26)
+  W.presetHelp = label(W, "GameFontDisableSmall", 428)
+  W.presetHelp:SetPoint("TOPLEFT", W, "TOPLEFT", 16, -114)
+  local function onOff(v) return v and "|cff4dd966ON|r" or "|cff949499OFF|r" end
+  local function display(id)
+    local Wn = TreeAI.Window
+    for _, d in ipairs(Wn and Wn.DISPLAY or {}) do if d.id == id then return d end end
   end
-  -- étape 3 : boutons rapides
-  local quick = {
-    { "Macros", function() if TreeAI:InCombat() then return end quickToggle("Macros", "macros") end },
-    { "Touches", function() quickToggle("Binds", "macros") end },
-    { "Boussole", function() quickToggle("Compass", "boussole") end },
-    { "Aide", function() if TreeAI.ShowHelp then TreeAI:ShowHelp() end end },
-  }
-  for i, q in ipairs(quick) do
-    add(3, newButton(W, L[q[1]], 88, q[2]), 16 + (i - 1) * 92, -128)
+  local SHOW = { { "guide", "Guidage quêtes" }, { "strip", "Bande d'actions" }, { "compass", "Boussole" }, { "pins", "Icônes de quêtes" } }
+  for i, it in ipairs(SHOW) do
+    add(2, wizButton(W, it[2], 208, function()
+      local d = display(it[1])
+      if not d then return end
+      if TreeAI:InCombat() and not d.combatOK then return end
+      local ok, on = pcall(d.on)
+      pcall(d.set, not (ok and on))
+    end, function()
+      local d = display(it[1])
+      local ok, on = false, false
+      if d then ok, on = pcall(d.on) end
+      return it[2] .. " : " .. onOff(ok and on)
+    end), 16 + ((i - 1) % 2) * 218, -168 - floor((i - 1) / 2) * 28)
   end
+  -- étape 3 : tes touches
+  add(3, wizButton(W, "Poser les touches conseillées", 230, function()
+    local Sc = TreeAI.Shortcuts
+    if Sc and Sc.SuggestKeys then Sc.SuggestKeys() end
+    W.refresh()
+  end), 16, -196)
+  add(3, wizButton(W, "Voir toutes les touches", 180, function() openPage("keys") end), 256, -196)
   -- pied : Passer · Retour · Suivant / Terminer
-  W.skip = newButton(W, L["Passer"], 80, finishWizard)
+  W.skip = wizButton(W, L["Passer"], 80, finishWizard)
+  W.skip:ClearAllPoints()
   W.skip:SetPoint("BOTTOMLEFT", W, "BOTTOMLEFT", 12, 10)
-  W.prev = newButton(W, L["Retour"], 80, function() TreeAI:ShowWizard(math.max(1, W.step - 1)) end)
-  W.prev:SetPoint("BOTTOMRIGHT", W, "BOTTOMRIGHT", -100, 10)
-  W.next = newButton(W, L["Suivant"], 84, function()
+  W.prev = wizButton(W, L["Retour"], 80, function() TreeAI:ShowWizard(math.max(1, W.step - 1)) end)
+  W.prev:ClearAllPoints()
+  W.prev:SetPoint("BOTTOMRIGHT", W, "BOTTOMRIGHT", -106, 10)
+  W.next = wizButton(W, L["Suivant"], 88, function()
     if W.step >= WIZ_STEPS then finishWizard() else TreeAI:ShowWizard(W.step + 1) end
   end)
+  W.next:ClearAllPoints()
   W.next:SetPoint("BOTTOMRIGHT", W, "BOTTOMRIGHT", -12, 10)
 
-  local TEXT = {
-    L["TreeAI te conseille pendant que tu joues : prochaine quête, familier, munitions, sacs, groupe, HV."]
-      .. "\n\n" .. L["Ta prochaine étape s'affiche sur une petite carte ; tout le reste est dans la fenêtre TreeAI (clic sur la pastille de la minimap)."]
-      .. "\n" .. L["Aucun automatisme sans ton accord : c'est toi qui joues."],
-    L["Combien de conseils veux-tu voir ?"] .. "\n\n\n\n\n" .. L["Où mettre la carte « Prochaine étape » ? (ou glisse-la)"],
-    L["Raccourcis utiles :"] .. "\n" .. L["Macros : les macros prêtes pour ta classe (glisse-les dans ta barre)."]
-      .. "\n" .. L["Touches : quoi lier où.  Boussole : flèche vers ton objectif."],
-  }
+  local HEAD = { "Ton personnage", "Ce que TreeAI affiche", "Tes touches" }
+  W.HEAD = HEAD
+  local function bodyText(st)
+    if st == 1 then
+      local cname, lvl, spec, src = wizCharacter()
+      local who = cname .. (lvl and (" niveau " .. lvl) or "")
+      local sp = spec and ("Spécialisation : " .. spec .. (src and (" (" .. src .. ")") or "") .. ".")
+        or "Spécialisation : inconnue pour l'instant (TreeAI la lira sur tes talents, jamais au hasard)."
+      return "Tu joues : |cffffd133" .. who .. "|r.\n" .. sp
+        .. "\n\nTreeAI règle là-dessus ses conseils d'équipement, de talents et de macros."
+        .. "\n\nTa prochaine étape : la boussole et la bande d'actions rapides ; tout le reste est dans la fenêtre TreeAI (clic sur la pastille de la minimap)."
+        .. "\nAucun automatisme sans ton accord : c'est toi qui joues."
+    elseif st == 2 then
+      return "Choisis un profil :\n\n\n\n\n\n\nEt ce que tu veux voir à l'écran (tout se change dans Réglages → Affichage) :"
+    end
+    local parts = {}
+    for _, k in ipairs(wizKeys()) do
+      parts[#parts + 1] = (k[3] and "|cff4dd966" or "|cffb3b3b3") .. k[2] .. "|r " .. k[1]
+    end
+    return "Une touche par action rapide (en vert : déjà posée).\n\n" .. table.concat(parts, "  ·  ")
+      .. "\n\n« Poser les touches conseillées » ne prend que des touches libres : rien n'est remplacé."
+  end
   function W.refresh()
     local st = W.step or 1
-    W.title:SetText(("%s  |cff999999%d/%d|r"):format(L["Bienvenue dans TreeAI"], st, WIZ_STEPS))
-    W.body:SetText(TEXT[st])
+    W.title:SetText(("%s  |cff999999%d/%d · %s|r"):format(L["Bienvenue dans TreeAI"], st, WIZ_STEPS, HEAD[st] or ""))
+    W.body:SetText(bodyText(st))
     for i, g in ipairs(W.groups) do
       for _, b in ipairs(g) do
         if i == st then b:Show(); if b.refresh then b.refresh() end else b:Hide() end
       end
     end
-    local p = TreeAI.settings and TreeAI.settings.preset or "normal"
-    W.presetHelp:SetText(st == 2 and L[(TreeAI.PRESET_HELP or {})[p] or ""] or "")
-    W.note:SetText(st == 3 and L["Toutes les commandes : /tai aide · revoir cet assistant : /tai bienvenue"] or "")
+    local cur = wizProfile()
+    local help = ""
+    for _, pr in ipairs(WIZ_PROFILES) do if pr[1] == cur then help = pr[3] end end
+    if cur == "essentiel" then help = "Profil léger en cours (réglage avancé). Simple ou Complet : un clic." end
+    W.presetHelp:SetText(st == 2 and help or "")
+    W.note:SetText(st == 3 and L["Toutes les commandes : /tai aide · revoir cet assistant : /tai bienvenue"]
+      or "« Passer » : tout garder tel quel. Revoir ce réglage : /tai bienvenue")
     if st > 1 then W.prev:Show() else W.prev:Hide() end
     W.next:SetText(st >= WIZ_STEPS and L["Terminer"] or L["Suivant"])
   end
