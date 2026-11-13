@@ -597,8 +597,12 @@ return function(M, ctx)
   B.UnregisterKeeper("test-plan")
 
   -- ------------------------------------------------------------------ 8. looting with the bags closed: nothing computed
+  local legend = B.GetLegend()
+  check(legend and legend:IsShown(), "legend shown above the open bags")
   cf:Hide()
+  M.FireEvent("BAG_CLOSED", 0)
   M.Advance(1, 0.1)
+  check(legend and not legend:IsShown(), "bags closed: the legend goes with them")
   for i = 9, 14 do M.SetBagItem(0, i, nil) end
   M.FireEvent("BAG_UPDATE_DELAYED")
   M.Advance(2, 0.1)

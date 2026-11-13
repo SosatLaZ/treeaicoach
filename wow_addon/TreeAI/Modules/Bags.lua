@@ -1918,6 +1918,7 @@ local function apply(btn, kind)
 end
 M.OverlayKind = function(btn) return OV.kind[btn] end
 M.OverlayCount = function() return OV.n end
+M.GetLegend = function() return OV.legend end
 local function clearOverlays()
   for btn in pairs(OV.kind) do apply(btn, nil) end
   OV.btn, OV.n = {}, 0
@@ -1986,7 +1987,11 @@ function M.RefreshOverlays(full)
     return 0
   end
   if inCombat() then OV.pending = true return 0 end
-  if not anyBagShown() then OV.stale = true return 0 end
+  if not anyBagShown() then
+    OV.stale = true
+    if OV.legend then meth(OV.legend, "Hide") end           -- sacs fermés : la légende part avec eux
+    return 0
+  end
   full = full or OV.stale or S.all
   M.Warm(function()
     if inCombat() then OV.pending = true return end
@@ -2006,8 +2011,14 @@ function M.RefreshOverlays(full)
     else
       for key in pairs(s.dirty) do
         local btn = OV.btn[key]
-        if btn and apply(btn, kindOf(floor(key / 1000), key % 1000)) then touched = touched + 1 end
+        if btn then
+          local bag, slot = floor(key / 1000), key % 1000
+          -- le jeu a redistribué ses boutons (nouveau sac, autre disposition) : tout sera refait au prochain passage
+          if (num(meth(btn, "GetBagID")) or bag) ~= bag or num(meth(btn, "GetID")) ~= slot then OV.stale = true
+          elseif apply(btn, kindOf(bag, slot)) then touched = touched + 1 end
+        end
       end
+      if OV.stale then M.QueueOverlays(true) end
     end
     s.dirty = {}
     M.lastTouched = touched
