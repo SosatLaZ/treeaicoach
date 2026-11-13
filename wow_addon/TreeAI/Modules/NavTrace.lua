@@ -99,8 +99,111 @@ function NT.ExportLines(n)
   local out = { ("== Trajet / boussole : %d évènement%s (les %d derniers ; tout dans « Trajet / boussole »)"):format(k,
     k > 1 and "s" or "", math.min(k, n or 20)) }
   for _, l in ipairs(NT.Lines(n or 20)) do out[#out + 1] = l end
+  -- (5.1 ROUTE6) d'où viennent les temps de trajet (Shortest Path / chemins appris / facteur de zone), les tables de Questie
+  -- qui répondent, et les « mauvais conseils » notés par le joueur (étape, position, alternatives, raisons)
+  local NTm = T.NavTime
+  for _, l in ipairs(NTm and NTm.CostLines and try(NTm.CostLines) or {}) do out[#out + 1] = cut(l, 280) end
+  for _, l in ipairs(NT.BadLines and NT.BadLines(6) or {}) do out[#out + 1] = l end
   return out
 end
+-- ------------------------------------------------------------------ (5.1 ROUTE6, audit D5) « Mauvais conseil »
+-- « des fois tu conseilles mal » : un clic sur l'arrêt en cours (clic droit → « Mauvais conseil », ou /tai mauvais) note CE
+-- QUE TreeAI disait et pourquoi — l'arrêt, ta position, les arrêts voisins qu'il n'a pas choisis, les raisons du calcul
+-- (ordre gardé par l'hystérésis ou neuf, solveur exact / heuristique, prises sur place, source des temps de trajet) — dans
+-- TreeAIDB.diag.bad (20 derniers) ; le rapport d'erreurs les emporte. Aucun nom de joueur, rien dans le chat.
+NT.BAD_MAX = 20
+local function badStore()
+  local db = T.db or G("TreeAIDB")
+  if type(db) ~= "table" then return nil end
+  db.diag = type(db.diag) == "table" and db.diag or {}
+  if type(db.diag.bad) ~= "table" then db.diag.bad = {} end
+  return db.diag.bad
+end
+--- note le conseil en cours (s = l'arrêt visé, nil = l'arrêt 1) → l'entrée notée, ou nil sans trajet
+function NT.BadAdvice(s, note)
+  local B0 = badStore()
+  local P, Z, R, QB, Geo, NTm = T.Planner, T.ZonePlan, T.Route, T.QuestBrain, T.Geo, T.NavTime
+  if not (B0 and P and P.steps) then return nil end
+  s = (type(s) == "table" and s) or P.steps[P.cursor or 0]
+  if not s then return nil end
+  local m, x, y
+  if Geo and Geo.Player then m, x, y = Geo.Player() end
+  local function yd(p)
+    local d = (m and x and p and p.x and Geo.Dist) and Geo.Dist(m, x, y, p.map, p.x, p.y) or nil
+    return d and math.floor(d + 0.5) or nil
+  end
+  local e = { t = stamp(), step = cut(P:StepLabel(s), 60), k = s.k, q = tonumber(s.q), note = note and cut(note, 120) or nil,
+    pos = (m and x) and ("%d:%.1f:%.1f"):format(m, x, y) or "?", at = s.x and ("%s:%.1f:%.1f"):format(tostring(s.map), s.x, s.y) or "sans lieu",
+    dist = yd(s), alts = {}, why = {} }
+  -- les autres arrêts du trajet, les plus proches d'abord : ce qu'il aurait pu dire à la place
+  local alts = {}
+  local n = 0
+  for i = P.cursor or 1, #P.steps do
+    local a = P.steps[i]
+    if not a._done and not a._other then
+      n = n + 1
+      if a ~= s and a.x then alts[#alts + 1] = { d = yd(a) or 1e9, txt = ("n°%d %s"):format(n, cut(P:StepLabel(a), 40)) } end
+      if a == s then e.rank = n end
+    end
+  end
+  table.sort(alts, function(a, b) return a.d < b.d end)
+  for i = 1, math.min(4, #alts) do e.alts[i] = ("%s à %s yd"):format(alts[i].txt, alts[i].d < 1e9 and alts[i].d or "?") end
+  -- codes de raison
+  local w = e.why
+  if Z then
+    w[#w + 1] = "zone=" .. cut(tostring(Z.label or "?"), 30) .. "/" .. tostring(Z.char and Z.char.mode or "auto")
+    w[#w + 1] = "ordre=" .. tostring(Z.kept or "?") .. "/" .. tostring(Z.solveHow or Z.solver or "?")
+    if Z.firstWhy then w[#w + 1] = "arrêt1=" .. Z.firstWhy end
+    if Z.hubPicks then w[#w + 1] = "prisesIci=" .. tostring(Z.hubPicks) end
+    if Z.onWayPicks then w[#w + 1] = "enChemin=" .. #Z.onWayPicks end
+    w[#w + 1] = "réordonné=" .. tostring(Z.reorders or 0)
+    if s.onWay then w[#w + 1] = "arrêt en chemin" end
+    if s.out then w[#w + 1] = "hors zone" end
+  end
+  if QB and QB.Mode then w[#w + 1] = "mode=" .. tostring(QB.Mode()) end
+  if P._why then w[#w + 1] = "refait=" .. table.concat(P._why, "+") end
+  if NTm and NTm.Detour and m then
+    local v, _, src = NTm.Detour(m)
+    w[#w + 1] = ("détour=%.2f(%s)"):format(v, tostring(src))
+  end
+  if R and R.Stops then
+    local okS, st = pcall(R.Stops, R, 64)
+    if okS and type(st) == "table" then
+      for _, en in ipairs(st) do
+        if en.step == s then e.eta = math.floor((en.at or 0) - (en.sec or 0) + 0.5) e.src = en.src or "modèle" break end
+      end
+    end
+  end
+  B0[#B0 + 1] = e
+  while #B0 > NT.BAD_MAX do table.remove(B0, 1) end
+  NT.Log("mauvais conseil", ("%s (n°%s, à %s yd) noté"):format(e.step, tostring(e.rank or "?"), tostring(e.dist or "?")))
+  if T.ClickNote then pcall(T.ClickNote, T, "Noté : ce conseil part dans le rapport (/tai erreurs). Merci.") end
+  return e
+end
+--- lignes du rapport : les n derniers conseils notés (les plus récents d'abord)
+function NT.BadLines(n)
+  local B0 = badStore() or {}
+  local out = { ("== Mauvais conseils notés : %d"):format(#B0) }
+  for i = #B0, math.max(1, #B0 - (n or 6) + 1), -1 do
+    local e = B0[i]
+    if type(e) == "table" then
+      out[#out + 1] = cut(("[%s] %s (%s q%s, arrêt n°%s) · toi %s → %s, %s yd, prévu %s s (%s)%s"):format(tostring(e.t), tostring(e.step),
+        tostring(e.k), tostring(e.q or "-"), tostring(e.rank or "?"), tostring(e.pos), tostring(e.at), tostring(e.dist or "?"),
+        tostring(e.eta or "?"), tostring(e.src or "?"), e.note and (" · note : " .. e.note) or ""), 280)
+      out[#out + 1] = cut("   raisons : " .. table.concat(type(e.why) == "table" and e.why or {}, " ; "), 280)
+      if type(e.alts) == "table" and #e.alts > 0 then out[#out + 1] = cut("   autres arrêts proches : " .. table.concat(e.alts, " | "), 280) end
+    end
+  end
+  return out
+end
+if T.RegisterSlash then
+  T:RegisterSlash("mauvais", function(rest)
+    rest = tostring(rest or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    local e = NT.BadAdvice(nil, rest ~= "" and rest or nil)
+    if not e and T.ClickNote then pcall(T.ClickNote, T, "Pas de trajet en cours : rien à noter.") end
+  end, "mauvais [note] : noter que le conseil en cours est mauvais (part dans /tai erreurs)")
+end
+
 function NT.Clear()
   local s = store()
   if s then s.lines, s.bytes = {}, 0 end

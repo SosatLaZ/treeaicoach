@@ -207,6 +207,7 @@ function R.BuildHubs(faction, known, o)
   end
   for k = 1, m do
     local Hk = H[k]
+    if o.yield then o.yield() end                     -- (5.1 ROUTE6) refait en tranches quand un graphe existe déjà
     for i = 1, m do
       local hik = H[i][k]
       if hik < huge and i ~= k then
@@ -236,11 +237,16 @@ end
 local function walkDirect(g, a, b)
   if a.c ~= b.c then return huge end
   local PL = T.PathLearn
+  local NT = T.NavTime
   if PL and PL.LegSec and g.learned ~= false then
     local s = PL.LegSec(a, b, g.speed)
-    if s then return s + ((g.mountUp and s * g.speed > 60) and g.mountUp or 0) end
+    if s then
+      if NT and NT.served then NT.served.appris = (NT.served.appris or 0) + 1 end   -- (5.1) sonde : source du temps
+      return s + ((g.mountUp and s * g.speed > 60) and g.mountUp or 0), "appris"
+    end
   end
-  return walkS(g, a, b)
+  if NT and NT.served then NT.served.modele = (NT.served.modele or 0) + 1 end
+  return walkS(g, a, b), "modele"
 end
 R.WalkDirect = walkDirect
 local function nearest(g, p, k)
@@ -748,8 +754,19 @@ function R.KnownTaxi()
       for _, nd in ipairs(try(f, m) or {}) do
         if type(nd) == "table" and nd.nodeID and nd.isUndiscovered == false then
           set[nd.nodeID] = true
-          if R.char then R.char.taxi[nd.nodeID] = true end
+          if R.char then
+            R.char.taxi[nd.nodeID] = true
+            if type(R.char.taxiNo) == "table" then R.char.taxiNo[nd.nodeID] = nil end
+          end
           if type(nd.name) == "string" and nd.name ~= "" then R.taxiNames[nd.nodeID] = nd.name end
+        elseif type(nd) == "table" and nd.nodeID and nd.isUndiscovered == true and R.char then
+          -- (5.1 ROUTE6, audit D4) le jeu dit lui-même que ce point n'est PAS découvert : retenu (conseil « à découvrir »)
+          if type(R.char.taxiNo) ~= "table" then R.char.taxiNo = {} end
+          R.char.taxiNo[nd.nodeID] = true
+          if type(nd.name) == "string" and nd.name ~= "" then
+            R.char.taxiName = type(R.char.taxiName) == "table" and R.char.taxiName or {}
+            R.char.taxiName[nd.nodeID] = nd.name
+          end
         end
       end
     end
@@ -759,6 +776,48 @@ function R.KnownTaxi()
   tsort(out)
   knownT, knownAt = out, now()
   return out
+end
+--- (5.1 ROUTE6, audit D4) un point de vol « non découvert » (dit par le jeu) à ≤ R.TAXI_NEAR_YD de toi ou d'un des 8
+--- premiers arrêts du trajet → { id, name, map, x, y, dist, distText, ofText } (le plus proche) ou nil
+R.TAXI_NEAR_YD = 330
+function R.UnknownTaxiNear()
+  local no = R.char and R.char.taxiNo
+  local D = data()
+  if type(no) ~= "table" or not next(no) or not (D and D.taxi and Geo.Dist and Geo.Player) then return nil end
+  local faction = R.Faction()
+  local pts = {}
+  local pm, px, py = Geo.Player()
+  if pm and px then pts[1] = { map = pm, x = px, y = py, of = "toi" } end
+  local P = T.Planner
+  local k = 0
+  for i = (P and P.cursor) or 1, #((P and P.steps) or {}) do
+    local s = P.steps[i]
+    if not s._done and not s._other and s.x then
+      k = k + 1
+      pts[#pts + 1] = { map = s.map, x = s.x, y = s.y, of = "l'arrêt " .. k }
+      if k >= 8 then break end
+    end
+  end
+  local best
+  for id in pairs(no) do
+    local r = D.taxi[tonumber(id) or -1]
+    if r and not (R.char.taxi and R.char.taxi[tonumber(id)]) and factionOK(r[8], faction) then
+      for _, p in ipairs(pts) do
+        local d = Geo.Dist(p.map, p.x, p.y, r[5], r[6], r[7])
+        if d and d <= R.TAXI_NEAR_YD and (not best or d < best.dist) then
+          best = { id = tonumber(id), name = R.PlaceName("taxi", tonumber(id), r), map = r[5], x = r[6], y = r[7], dist = d,
+            distText = km(d), ofText = "de " .. p.of }
+        end
+      end
+    end
+  end
+  return best
+end
+--- clic : la boussole vise ce maître de vol
+function R.GoTaxi(fp)
+  local Cm = T.Compass
+  if not (type(fp) == "table" and fp.map and Cm and Cm.SetTarget) then return false end
+  return try(Cm.SetTarget, Cm, { mapID = fp.map, x = fp.x / 100, y = fp.y / 100, label = "Maître de vol : " .. cut(tostring(fp.name), 30), source = "route" }) and true or false
 end
 local function learnedFlights()
   local db = G("TreeAIDB")
@@ -791,16 +850,73 @@ function R.Graph()
       and hubCache.speed == speed and hubCache.rev == rev and hubCache.mountUp == mountUp then
     return hubCache.g                                -- (ROUTEFIX) sans chaîne construite à chaque appel (boussole ≈ 1 Hz)
   end
+  local hj = R._hubJob
+  if hj and hubCache and hj.known == known and hj.faction == faction and hj.tr == opt("transports") and hj.speed == speed
+      and hj.rev == rev and hj.mountUp == mountUp then
+    return hubCache.g                                -- le nouveau graphe est en cours : l'ancien sert encore
+  end
   local key = tostring(faction) .. "|" .. tconcat(known, ",") .. "|" .. tostring(opt("transports")) .. "|"
     .. tostring(speed) .. "|" .. tostring(rev) .. "|" .. tostring(mountUp)
   if hubCache and hubCache.key == key then
     hubCache.known = known
     return hubCache.g
   end
-  local g = R.BuildHubs(faction, known, { flights = learnedFlights(), speed = speed, detourOf = detourOf, mountUp = mountUp })
-  hubCache = { key = key, g = g, known = known, faction = faction, tr = opt("transports"), speed = speed, rev = rev, mountUp = mountUp }
-  R.legCache = {}
-  return g
+  -- (5.1 ROUTE6) les 4 derniers graphes sont gardés avec leurs trajets : ta vitesse mesurée oscille autour d'un palier
+  -- (7 / 7,5 yd/s à pied, monté / démonté) et chaque retour refaisait tout le graphe d'un coup (≈ 200 kinstr, 4 ms)
+  R._hubs = R._hubs or {}
+  local old = R._hubs[key]
+  if old then
+    old.known, old.at = known, now()
+    hubCache = old
+    R.legCache = old.legs
+    return old.g
+  end
+  local function install(g)
+    hubCache = { key = key, g = g, known = known, faction = faction, tr = opt("transports"), speed = speed, rev = rev, mountUp = mountUp,
+      legs = {}, at = now() }
+    local n, oldestK, oldestAt = 0, nil, nil
+    for k, e in pairs(R._hubs) do
+      n = n + 1
+      if not oldestAt or (e.at or 0) < oldestAt then oldestK, oldestAt = k, e.at or 0 end
+    end
+    if n >= 4 and oldestK then R._hubs[oldestK] = nil end
+    R._hubs[key] = hubCache
+    R.legCache = hubCache.legs
+  end
+  local o = { flights = learnedFlights(), speed = speed, detourOf = detourOf, mountUp = mountUp }
+  -- (5.1 ROUTE6) seuls ta vitesse / un détour appris ont changé (mêmes vols connus, même faction) : le graphe d'avant sert
+  -- encore quelques images pendant que le nouveau est refait EN TRANCHES (une ligne du plus-court-chemin par image, hors
+  -- combat) — avant : tout le graphe d'un coup à chaque arrivée (détour appris), ≈ 4 ms et plus avec beaucoup de vols
+  local kHead = tostring(faction) .. "|" .. tconcat(known, ",") .. "|" .. tostring(opt("transports")) .. "|"
+  if hubCache and hubCache.g and hubCache.key:sub(1, #kHead) == kHead and T.NewTicker and not R.SYNC_GRAPH then
+    local job = R._hubJob
+    if not (job and job.key == key) then
+      if job and job.ticker then job.ticker:Cancel() end
+      job = { key = key, known = known, faction = faction, tr = opt("transports"), speed = speed, rev = rev, mountUp = mountUp }
+      R._hubJob = job
+      job.co = coroutine.create(function()
+        local n = 0
+        o.yield = function() n = n + 1 if n % 2 == 0 then coroutine.yield() end end
+        return R.BuildHubs(faction, known, o)
+      end)
+      job.ticker = T:NewTicker(0.01, function()
+        if inCombat() then return end
+        local ok, g = coroutine.resume(job.co)
+        if not ok or coroutine.status(job.co) == "dead" then
+          job.ticker:Cancel()
+          if R._hubJob == job then R._hubJob = nil end
+          if ok and g and R._hubJob == nil then
+            install(g)
+            local P = T.Planner
+            if P and P.StepsChanged then pcall(P.StepsChanged, P) end   -- les listes mémorisées relisent les temps
+          end
+        end
+      end, R)
+    end
+    return hubCache.g
+  end
+  install(R.BuildHubs(faction, known, o))
+  return hubCache.g
 end
 -- hearthstone: ready? bind point (learned on arrival, else matched by name in the travel data)
 function R.HearthReady()
@@ -852,11 +968,24 @@ function R.LegSeconds(a, b)
   if not g then return nil end
   local key = fmt("%s:%.0f:%.0f>%s:%.0f:%.0f", tostring(a.map), a.x, a.y, tostring(b.map), b.x, b.y)
   local PL = T.PathLearn
-  local plRev = PL and PL.rev or 0
+  local plRev = PL and ((PL.QueryRev and PL.QueryRev()) or PL.rev) or 0
   -- (ROUTEFIX) un chemin appris change les trajets : cache refait, au plus toutes les 30 s (pas à chaque case apprise)
-  if R.legRev ~= plRev and now() - (R.legRevAt or -1e9) > 30 then R.legCache, R.legRev, R.legRevAt = {}, plRev, now() end
+  if R.legRev ~= plRev and now() - (R.legRevAt or -1e9) > 30 then
+    R.legRev, R.legRevAt = plRev, now()
+    for _, e in pairs(R._hubs or {}) do e.legs = {} end
+    R.legCache = hubCache and hubCache.legs or {}
+  end
+  -- (5.1 ROUTE6, audit B3) une 2e mort dans une case : les trajets qui y passent sont recomptés
+  local NT = T.NavTime
+  local dRev = NT and NT.dangerRev or 0
+  if R.dangerRev ~= dRev then
+    R.dangerRev = dRev
+    for _, e in pairs(R._hubs or {}) do e.legs = {} end
+    R.legCache = hubCache and hubCache.legs or {}
+  end
   local cache = R.legCache or {}
   R.legCache = cache
+  if hubCache and hubCache.legs ~= cache then hubCache.legs = cache end
   if cache[key] then return cache[key] end
   local wa, wb = world(a), world(b)
   if not (wa and wb) then return nil end
@@ -864,6 +993,11 @@ function R.LegSeconds(a, b)
   local s = direct
   if direct > 90 then s = R.FastestWorld(g, wa, wb) end
   if s == huge then s = nil end
+  -- là où tu es mort deux fois : pénalité dans l'ORDRE des arrêts seulement (le temps affiché reste le vrai)
+  if s and NT and NT.DangerPenalty then
+    local pen = NT.DangerPenalty(wa, wb)
+    if pen > 0 then s = s + pen end
+  end
   cache[key] = s
   return s
 end
@@ -1342,9 +1476,22 @@ local function hearthChoice(g, items)
   local b = { c = bind.c, n = bind.n, w = bind.w, map = bind.map, x = bind.x, y = bind.y, name = bind.name or "auberge" }
   local Zp = T.ZonePlan                              -- même seuil que l'ordre (ZonePlan : 2 min en zone, 20 s en « Rendre »)
   local best, bi, bsec, blegs = ((Zp and tonumber(Zp.hsGain)) or g.hsGain or R.HS_GAIN) - 1e-6, nil, nil, nil
+  local hm = R._hsMemo
+  if not (hm and hm.map == b.map and hm.x == b.x and hm.y == b.y and hm.n < 400) then
+    hm = { map = b.map, x = b.x, y = b.y, n = 0, t = setmetatable({}, { __mode = "k" }) }
+    R._hsMemo = hm
+  end
+  local stale = 4                                    -- graphe refait : au plus 4 trajets auberge → arrêt refaits par appel
   for k, it in ipairs(items) do
     if it.sec and it.here then
-      local s2, l2 = R.FastestWorld(g, b, it.here)
+      local c = it.s and hm.t[it.s]
+      if c and c.g ~= g and stale > 0 then c, stale = nil, stale - 1 end
+      if not (c and c.x == it.here.x and c.y == it.here.y and c.map == it.here.map) then
+        local s0, l0 = R.FastestWorld(g, b, it.here)
+        c = { sec = s0, legs = l0, x = it.here.x, y = it.here.y, map = it.here.map, g = g }
+        if it.s then hm.t[it.s] = c; hm.n = hm.n + 1 end
+      end
+      local s2, l2 = c.sec, c.legs
       if s2 and s2 < huge then
         local alt = g.hs + s2
         if it.sec - alt > best then
@@ -1368,31 +1515,77 @@ function R:StopsRaw()
   if Gp then pm, px, py = Gp() end
   local prev = world((pm and px) and { map = pm, x = px, y = py } or nil)
   local Cm = T.Compass
-  -- 1. chaque trajet, sans foyer
+  -- 1. chaque trajet, sans foyer. (5.1 ROUTE6) les trajets d'ARRÊT À ARRÊT ne dépendent pas de ta position : gardés tant
+  -- que les étapes, le graphe (vols connus, vitesse) et les chemins appris ne changent pas — seul le trajet depuis toi est
+  -- recalculé quand tu marches (avant : ~2 trajets complets par arrêt à chaque rafraîchissement, ≈ 2 ms pour 17 arrêts)
+  local PLm = T.PathLearn
+  local plRev = PLm and ((PLm.QueryRev and PLm.QueryRev()) or PLm.rev) or 0
+  local lm = R._legMemo
+  if not (lm and lm.steps == steps and lm.n < 400) then
+    lm = { steps = steps, n = 0, leg = setmetatable({}, { __mode = "k" }), w = setmetatable({}, { __mode = "k" }) }
+    R._legMemo = lm
+  end
+  -- chemins appris plus récents, graphe refait (vitesse, détour appris) : au plus 4 trajets gardés refaits par appel, les
+  -- premiers arrêts d'abord — jamais toute la liste dans une seule image
+  local stale = 4
+  local function worldOf(s)
+    if not (s and s.x) then return nil end
+    local w = lm.w[s]
+    if not (w and w.x == s.x and w.y == s.y and w.map == s.map) then w = world(s) lm.w[s] = w or nil end
+    return w
+  end
   local items = {}
+  local prevS
   for i = cur, #steps do
     local s = steps[i]
     if not s._done and not s._other then
-      local here = world(s.x and s or nil)
+      local here = worldOf(s)
       local it = { s = s, i = i, here = here }
-      if prev and here then it.from = prev; it.sec, it.legs = legNoHs(g, prev, here) end
+      if prev and here then
+        it.from = prev
+        local row = prevS and lm.leg[prevS]
+        local c = row and row[s]
+        if c and (c.rev ~= plRev or c.g ~= g) and stale > 0 then c, stale = nil, stale - 1 end
+        if c then it.sec, it.legs = c.sec, c.legs
+        else
+          it.sec, it.legs = legNoHs(g, prev, here)
+          if prevS then
+            if not row then row = setmetatable({}, { __mode = "k" }) lm.leg[prevS] = row end
+            row[s] = { sec = it.sec, legs = it.legs, rev = plRev, g = g }
+            lm.n = lm.n + 1
+          end
+        end
+      end
       items[#items + 1] = it
-      prev = here or prev
+      if here then prev, prevS = here, s end
       if #items >= 64 then break end
     end
   end
   -- 2. la pierre de foyer, au meilleur trajet (une seule fois)
   local hi, hsec, hlegs = hearthChoice(g, items)
   if hi then items[hi].sec, items[hi].legs, items[hi].hs = hsec, hlegs, true end
-  -- 3. (NAV) les 3 premiers trajets à pied : la durée navmesh de Shortest Path quand le joueur l'a choisi (hors combat)
-  local spfN = 0
-  for _, it in ipairs(items) do
-    if spfN >= 3 then break end
-    local legs, a, b = it.legs, it.from, it.here
-    if legs and #legs == 1 and legs[1].mode == "walk" and Cm and Cm.Travel and a.map and b.map then
-      spfN = spfN + 1
-      local ss = Cm.Travel({ mapID = a.map, x = a.x / 100, y = a.y / 100 }, { mapID = b.map, x = b.x / 100, y = b.y / 100 })
-      if ss then it.sec = ss legs[1].sec = ss end
+  -- 3. (5.1 ROUTE6, audit B3) trajets à pied : l'estimation de Shortest Path Forever quand il est installé — sans que le
+  -- joueur ait choisi son guidage, en lecture seule. Ici on ne LIT que les réponses gardées (NavTime.SPFSec) ; celles qui
+  -- manquent pour les 8 premiers trajets sont demandées à part, une par image, hors combat (NavTime.SPFAsk). Avant :
+  -- seulement avec « Guidage : Suivi Forever », 3 appels directs à chaque rafraîchissement.
+  local NTm = T.NavTime
+  if NTm and NTm.SPFSec and NTm.SPFPresent and NTm.SPFPresent() then
+    local asked = 0
+    for _, it in ipairs(items) do
+      local legs, a, b = it.legs, it.from, it.here
+      if legs and #legs == 1 and legs[1].mode == "walk" and a and b and a.map and b.map then
+        local ss = NTm.SPFSec(a, b)
+        if ss then
+          local l1 = {}                                -- copie : le trajet gardé (ci-dessus) n'est jamais modifié
+          for k2, v2 in pairs(legs[1]) do l1[k2] = v2 end
+          l1.sec, l1.src = ss, "spf"
+          it.sec, it.legs, it.src = ss, { l1 }, "spf"
+          NTm.served.spf = (NTm.served.spf or 0) + 1
+        elseif asked < 8 then
+          asked = asked + 1
+          NTm.SPFAsk(a, b)
+        end
+      end
     end
   end
   -- 4. la liste affichée : les transports comme arrêts, puis l'arrêt
@@ -1436,7 +1629,8 @@ function R:StopsRaw()
     out.total = out.total + svc
     local kind = TRANSPORT[s.k] and (s.k == "zep" and "zeppelin" or s.k) or "quest"
     out[#out + 1] = { kind = kind, step = s, sec = svc, place = it.here, at = out.total, ydAt = out.yd, trAt = out.travel,
-      legs = it.legs, from0 = it.from, hs = it.hs }   -- (4.2 ROUTE42) étapes de transport jusqu'à cet arrêt (Suivi, repère)
+      legs = it.legs, from0 = it.from, hs = it.hs,    -- (4.2 ROUTE42) étapes de transport jusqu'à cet arrêt (Suivi, repère)
+      src = it.src }                                   -- (5.1) source du temps de trajet : "spf" ou nil (notre modèle)
     prevKind = TRANSPORT[s.k] and kind or nil
   end
   local left = 0                                   -- arrêts restants au total (au-delà de la liste aussi)
@@ -1929,7 +2123,8 @@ function R:PlanLines(P)
   lines[#lines + 1] = { text = head, prio = (E and E.PRIO and E.PRIO[verdict]) or 1, onClick = togg, id = "route:head",
     tooltip = fmt("%s%s · dont %s de déplacement%s\nClic : mettre en pause",
       (T.Plain and T.Plain.RouteName and T.Plain.RouteName(route.id, route.title)) or cut(route.title or route.id or "Plan", 30),
-      xph and (" · " .. ((T.Fmt and T.Fmt.Num) and T.Fmt.Num(xph) or xph) .. " XP/h") or "",
+      -- (5.1 ROUTE6, audit B7) un rythme calculé sur des nombres en partie supposés : dit « estimation », arrondi
+      xph and (" · ≈ " .. ((T.Fmt and T.Fmt.Num) and T.Fmt.Num(floor(xph / 500 + 0.5) * 500) or (floor(xph / 500 + 0.5) * 500)) .. " XP/h (estimation)") or "",
       minutes(travelH or min(all.travel or 0, total)),
       beyond > 0 and fmt("\nPuis %d arrêt%s de plus, recalculé%s en route", beyond, beyond > 1 and "s" or "", beyond > 1 and "s" or "") or "") }
   if P.planError then lines[#lines + 1] = { text = P.planError, prio = 1, id = "route:stale" } end

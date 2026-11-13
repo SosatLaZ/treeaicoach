@@ -451,16 +451,20 @@ M.Questie = questie
 -- zone Questie (AreaTable) → uiMapID : ZoneDB si dispo, sinon par le nom de la carte du joueur
 local areaCache = {}
 local function areaToMap(areaID, zdb, playerMap)
-  if areaCache[areaID] ~= nil then return areaCache[areaID] or nil end
+  if areaCache[areaID] then return areaCache[areaID] end
   local id
-  if type(zdb) == "table" and type(zdb.GetUiMapIdByAreaId) == "function" then
+  -- (5.1 ROUTE6, audit B8) le traducteur commun (Export.AreaToMap) : méthode de Questie, table de la bibliothèque QuestieDB,
+  -- table de l'addon — avec la bibliothèque seule, les PNJ (marchand d'un objet de quête, services) n'avaient aucun lieu
+  local Xm = T.Export
+  if Xm and Xm.AreaToMap then id = tonumber((try(Xm.AreaToMap, areaID))) end
+  if not id and type(zdb) == "table" and type(zdb.GetUiMapIdByAreaId) == "function" then
     id = tonumber((try(zdb.GetUiMapIdByAreaId, zdb, areaID)))
   end
   if not id and playerMap and _G.C_Map and _G.C_Map.GetAreaInfo then
     local an = try(_G.C_Map.GetAreaInfo, areaID)
     if an and low(an) == low(M.MapName(playerMap)) then id = playerMap end
   end
-  areaCache[areaID] = id or false
+  if id then areaCache[areaID] = id end              -- (5.1) une zone inconnue n'est pas retenue : Questie charge tard
   return id
 end
 M.AreaToMap = areaToMap

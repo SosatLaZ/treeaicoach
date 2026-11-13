@@ -728,8 +728,15 @@ local function mapOnUpdate()
   end
 end
 function QP.MapDirty()
-  ms.dirty = true
-  if view and view:IsVisible() and QP._active then mapOnUpdate() end
+  -- (5.1 ROUTE6) un changement signalé (journal, export, trajet refait) : la liste est relue (refaite seulement si son
+  -- contenu a changé) et la carte se redessine seulement si la liste a changé — un trajet refait à l'identique (données
+  -- neuves, même ordre) ne redessine plus la carte ouverte
+  if view and view:IsVisible() and QP._active then
+    QP.Pins()
+    mapOnUpdate()
+  else
+    ms.dirty = true
+  end
 end
 function QP.MapPanned() end
 function QP.MapShown()

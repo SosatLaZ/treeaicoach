@@ -206,6 +206,13 @@ return function(M, ctx)
   check(not B.Parked(7004), "a normal quest of the route stays")
   check(n >= 3, "park pass: changes counted (" .. tostring(n) .. ")")
   P:Evaluate()
+  -- (5.1 ROUTE6, audit B11) by default TreeAI leaves the game's watch list alone: the parked quests stay watched
+  check(not (Z.AutoWatchOn and Z:AutoWatchOn()), "default: « Suivi auto par zone » is off")
+  if hasWatch then
+    local w0 = watchedSet()
+    check(w0[7001] and w0[7002] and w0[7005], "default: parked quests stay in the game's watch list (nothing removed by TreeAI)")
+    T:UserAction(function() Z:SetAutoWatch(true) end)   -- the player's explicit opt-in: the rest of this part tests it
+  end
   local zw = Z.AutoWatchOn and Z:AutoWatchOn()
   if hasWatch then
     if zw then zonePass() end              -- auto watch by zone: it follows the route, the parked quests leave it

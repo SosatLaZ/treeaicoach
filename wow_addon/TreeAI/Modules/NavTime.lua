@@ -16,9 +16,11 @@ if not (T and T.RegisterModule) then return end
 
 local N = T:RegisterModule("NavTime", {
   title = "Temps de trajet",
-  defaults = { enabled = true },
-  charDefaults = { mount = false },
-  options = {},
+  defaults = { enabled = true, spfCost = true },
+  charDefaults = { mount = false, deaths = {} },
+  options = {
+    { key = "spfCost", type = "toggle", label = "Temps de trajet : lire l'estimation de Shortest Path Forever quand il est installé (lecture seule, jamais son guidage)" },
+  },
 })
 T.NavTime = N
 
@@ -177,11 +179,17 @@ function N.LearnSpeed(m, v)
 end
 
 -- ------------------------------------------------------------------ détour par zone
+-- (5.1 ROUTE6, audit B3) d'où vient le facteur, dit à qui le demande (3e retour) : "spf" (étalonné sur les estimations
+-- de Shortest Path Forever, ≥ 3 trajets de cette zone), "appris" (tes arrivées chronométrées, ≥ 2), "relief" (table a
+-- priori de la zone), "défaut". Un seul facteur par zone pour TOUS les trajets comparés : l'ordre reste cohérent.
 function N.Detour(mapID)
   local db = store()
+  local sp = N.spf and mapID and N.spf.zone[tonumber(mapID) or -1]
+  if sp and sp.n >= 3 and sp.s > 0 then return sp.s / sp.n, sp.n, "spf" end
   local e = db and mapID and db.detour[mapID]
-  if type(e) == "table" and (e.n or 0) >= 2 and (e.s or 0) > 0 then return e.s / e.n, e.n end
-  return (mapID and N.RELIEF[tonumber(mapID) or -1]) or PRIOR_DETOUR, 0
+  if type(e) == "table" and (e.n or 0) >= 2 and (e.s or 0) > 0 then return e.s / e.n, e.n, "appris" end
+  local r = mapID and N.RELIEF[tonumber(mapID) or -1]
+  return r or PRIOR_DETOUR, 0, r and "relief" or "défaut"
 end
 N.rev = 0                          -- (ROUTEFIX) change quand un détour est appris (le graphe du trajet est refait)
 function N.LearnDetour(mapID, ratio)
@@ -222,6 +230,232 @@ function N.Estimate(a, b)
   if not yd then return nil end
   local w, how = N.Walk(a, b, yd)
   return w, how or "modèle", yd
+end
+
+-- ------------------------------------------------------------------ (5.1 ROUTE6, audit B3) Shortest Path Forever : son estimation
+-- Le joueur a Shortest Path Forever. Son API publique donne un temps de trajet (ShortestPathForever.API.Estimate(carte, x, y,
+-- carte, x, y), coordonnées 0..1 → secondes, ou nil + raison « combat » / « invalid » / « unreachable » ; lu dans son code :
+-- appel « . », réponse gardée 5 s chez lui, « au plus un appel neuf par image »). TreeAI s'en sert SANS que le joueur ait
+-- choisi « Guidage : Suivi Forever » — lecture seule, jamais son guidage, jamais sa flèche :
+--  * au plus UN appel par image (T:Spread), hors combat, sous pcall ; une erreur Lua = plus aucun appel de la session ;
+--  * réponses gardées par paire de cases de 100 yd (N.SPF_TTL s, N.SPF_MAX entrées) ;
+--  * chaque réponse d'un trajet à pied étalonne le facteur de détour de SA zone (N.Detour → "spf") : tous les trajets de
+--    la zone en profitent, sans demander les n² trajets d'un ordre ;
+--  * le trajet affiché prend la réponse exacte quand elle est là (Route:StopsRaw).
+-- Sans Shortest Path : chemins appris (PathLearn), puis le facteur de la zone. N.CostLines() dit ce qui a servi.
+N.SPF_TTL, N.SPF_MAX, N.SPF_CELL = 900, 400, 100
+N.spf = { cache = {}, n = 0, queue = {}, qn = 0, asked = 0, ok = 0, zone = {}, last = nil, bad = nil }
+local function spfAPI()
+  if N.spf.bad then return nil end
+  if N.db and N.db.spfCost == false then return nil end
+  local S = G("ShortestPathForever")
+  local A = type(S) == "table" and S.API or nil
+  if type(A) ~= "table" or type(A.Estimate) ~= "function" then return nil end
+  return A
+end
+function N.SPFPresent() return spfAPI() ~= nil end
+local function cellKey(Geo, p)
+  local n, w, c = Geo.World(p.map, p.x, p.y)
+  if not n then return nil end
+  return c .. ":" .. floor(n / N.SPF_CELL) .. ":" .. floor(w / N.SPF_CELL), n, w, c
+end
+local function pairKey(a, b)
+  local Geo = T.Geo
+  if not (Geo and Geo.World and a and b and a.map and b.map and tonumber(a.x) and tonumber(b.x)) then return nil end
+  local ka, an, aw, ac = cellKey(Geo, a)
+  local kb, bn, bw, bc = cellKey(Geo, b)
+  if not (ka and kb) then return nil end
+  return ka .. ">" .. kb, (ac == bc) and sqrt((an - bn) ^ 2 + (aw - bw) ^ 2) or nil
+end
+local function spfRun()
+  local sp = N.spf
+  sp.running = false
+  local q = sp.queue[1]
+  if not q then return end
+  if inCombat() then return end                          -- repris au prochain trajet demandé (rien n'insiste en combat)
+  table.remove(sp.queue, 1)
+  sp.qn = #sp.queue
+  local A = spfAPI()
+  if not A then sp.queue, sp.qn = {}, 0 return end
+  sp.asked = sp.asked + 1
+  -- forme d'appel : « . » (documentée) ; si elle répond « invalid » ou échoue, « : » une fois, et la forme qui marche
+  -- est gardée pour la session (la forme du vrai client n'est pas vérifiée en jeu, audit C2)
+  local ax, ay, bx, by = q.a.x / 100, q.a.y / 100, q.b.x / 100, q.b.y / 100
+  local ok, sec, why
+  if sp.colon ~= true then ok, sec, why = pcall(A.Estimate, q.a.map, ax, ay, q.b.map, bx, by) end
+  if sp.colon == nil and not (ok and (sec ~= nil or why == "combat" or why == "unreachable")) then
+    local ok2, sec2, why2 = pcall(A.Estimate, A, q.a.map, ax, ay, q.b.map, bx, by)
+    if ok2 and (sec2 ~= nil or why2 == "combat" or why2 == "unreachable") then sp.colon, ok, sec, why = true, ok2, sec2, why2
+    elseif ok then sp.colon = false end
+  elseif sp.colon == nil and ok then sp.colon = false end
+  if sp.colon == true and ok == nil then ok, sec, why = pcall(A.Estimate, A, q.a.map, ax, ay, q.b.map, bx, by) end
+  if not ok then                                        -- l'API a changé : on n'insiste pas, et c'est dit dans le rapport
+    sp.bad, sp.last = (T.Cut and T.Cut(tostring(sec), 120) or tostring(sec)), "erreur"
+    sp.queue, sp.qn = {}, 0
+    return
+  end
+  sec = num(sec)
+  local e = { at = now(), s = (sec and sec >= 0) and sec or false, d = q.d, why = (not sec) and tostring(why or "?") or nil }
+  if not sp.cache[q.key] then sp.n = sp.n + 1 end
+  sp.cache[q.key] = e
+  sp.last = e.s and "ok" or (e.why or "?")
+  if e.s then
+    sp.ok = sp.ok + 1
+    -- étalonnage : un trajet À PIED dans une seule zone (≥ 150 yd, plus lent qu'un vol) → rapport temps × vitesse / distance
+    if q.d and q.d >= 150 and q.a.map == q.b.map then
+      local ratio = e.s * N.TravelSpeed() / q.d
+      if ratio >= 1 and ratio <= 3 then
+        local z = sp.zone[q.a.map]
+        if not z then z = { s = 0, n = 0 } sp.zone[q.a.map] = z end
+        local before = z.n >= 3 and z.s / z.n or nil
+        z.s, z.n = z.s + ratio, z.n + 1
+        if z.n > 12 then z.s, z.n = z.s * 12 / z.n, 12 end
+        local after = z.n >= 3 and z.s / z.n or nil
+        -- le facteur de la zone vient de changer pour de bon (≥ 5 %) : les trajets sont recomptés (graphe refait en tranches)
+        if after and (not before or abs(after - before) / before >= 0.05) then N.rev = (N.rev or 0) + 1 end
+      end
+    end
+  end
+  if sp.n > N.SPF_MAX then                               -- borne : les plus vieilles réponses partent
+    local t = now()
+    for k, v in pairs(sp.cache) do if t - v.at > N.SPF_TTL / 2 then sp.cache[k] = nil sp.n = sp.n - 1 end end
+    if sp.n > N.SPF_MAX then sp.cache, sp.n = {}, 0 end
+  end
+  if sp.queue[1] and T.Spread then sp.running = true T:Spread(N, spfRun, nil, nil, nil, nil, "NavTime:spf") end
+end
+--- demande (sans attendre) l'estimation a → b ({ map, x, y } en %) ; rien si elle est connue, en file, ou sans Shortest Path
+function N.SPFAsk(a, b)
+  local sp = N.spf
+  if not spfAPI() or sp.qn >= 40 then return false end
+  local key, d = pairKey(a, b)
+  if not key then return false end
+  local e = sp.cache[key]
+  if e and now() - e.at < N.SPF_TTL then return false end
+  for i = 1, sp.qn do if sp.queue[i].key == key then return false end end
+  sp.queue[sp.qn + 1] = { key = key, d = d, a = { map = a.map, x = a.x, y = a.y }, b = { map = b.map, x = b.x, y = b.y } }
+  sp.qn = sp.qn + 1
+  if not sp.running and T.Spread then sp.running = true T:Spread(N, spfRun, nil, nil, nil, nil, "NavTime:spf") end
+  return true
+end
+--- l'estimation gardée de Shortest Path pour a → b → secondes, ou nil (inconnue, inaccessible, pas de Shortest Path).
+--- Jamais d'appel ici (lecture du cache) ; corrigée de l'écart entre ces points et ceux demandés dans les mêmes cases.
+function N.SPFSec(a, b)
+  local sp = N.spf
+  if sp.n == 0 then return nil end
+  local key, d = pairKey(a, b)
+  local e = key and sp.cache[key]
+  if not (e and e.s and now() - e.at < N.SPF_TTL) then return nil end
+  if d and e.d then return max(0, e.s + (d - e.d) / N.TravelSpeed()) end
+  return e.s
+end
+
+-- ------------------------------------------------------------------ (5.1 ROUTE6, audit B3) là où tu es mort
+-- Aucune donnée inventée : seulement TES morts. Une case de 100 yd où tu es mort DEUX fois (ou plus) à un niveau encore
+-- proche du tien (≤ 2 niveaux de moins) est « dangereuse » : les trajets qui y arrivent ou la traversent coûtent
+-- N.DANGER_S secondes de plus dans l'ORDRE des arrêts (jamais dans le temps affiché), et le trajet le dit.
+N.DANGER_S, N.DANGER_MAX, N.DANGER_N = 120, 150, 2
+N.dangerRev = 0
+local function deaths()
+  local c = N.char
+  if type(c) ~= "table" then return nil end
+  if type(c.deaths) ~= "table" then c.deaths = {} end
+  return c.deaths
+end
+local function dkey(c, n, w) return c .. ":" .. floor(n / 100) .. ":" .. floor(w / 100) end
+--- mort ici (PLAYER_DEAD) : la case est notée ; à la 2e, les trajets sont recomptés
+function N.NoteDeath()
+  local D = deaths()
+  local c, n, w = N.WorldPos()
+  if not (D and c and n and w) then return nil end
+  if try(G("IsInInstance")) then return nil end           -- un donjon n'est pas un trajet
+  local k = dkey(c, n, w)
+  local lv = num(try(G("UnitLevel"), "player")) or 1
+  local e = D[k]
+  if type(e) ~= "table" then e = { n = 0 } D[k] = e end
+  e.n, e.lv, e.at = (tonumber(e.n) or 0) + 1, lv, num(try(G("time"))) or 0
+  local cnt, oldK, oldAt = 0, nil, nil
+  for kk, v in pairs(D) do
+    cnt = cnt + 1
+    if not oldAt or (tonumber(v.at) or 0) < oldAt then oldK, oldAt = kk, tonumber(v.at) or 0 end
+  end
+  if cnt > N.DANGER_MAX and oldK and oldK ~= k then D[oldK] = nil end
+  if e.n >= N.DANGER_N then
+    N.dangerRev = N.dangerRev + 1
+    local NTr = T.NavTrace
+    if NTr and NTr.Log then pcall(NTr.Log, "danger", ("%d morts dans la même case (niveau %d) : zone dangereuse, trajets recomptés"):format(e.n, lv)) end
+    local Zp = T.ZonePlan
+    if Zp and Zp.Bump and Zp.IsEnabled and Zp:IsEnabled() then pcall(Zp.Bump, Zp, "zone dangereuse") end
+  end
+  return e.n
+end
+--- nombre de morts retenues pour la case d'un point monde (c, n, w) : ≥ N.DANGER_N et encore de ton niveau, sinon nil
+function N.DangerAt(c, n, w)
+  local D = N.char and N.char.deaths
+  if type(D) ~= "table" or not (c and n and w) then return nil end
+  local e = D[dkey(c, n, w)]
+  if type(e) ~= "table" or (tonumber(e.n) or 0) < N.DANGER_N then return nil end
+  local lv = num(try(G("UnitLevel"), "player")) or 1
+  if lv - (tonumber(e.lv) or lv) > 2 then return nil end   -- 3 niveaux de plus : ce n'est plus un danger
+  return e.n
+end
+--- secondes de pénalité d'un trajet a → b (points monde { c, n, w }) : il arrive dans une case dangereuse ou en traverse
+function N.DangerPenalty(a, b)
+  local D = N.char and N.char.deaths
+  if type(D) ~= "table" or not next(D) or not (a and b and a.c and a.c == b.c) then return 0 end
+  local d = sqrt((a.n - b.n) ^ 2 + (a.w - b.w) ^ 2)
+  local steps = min(40, max(1, floor(d / 70)))
+  local seen, pen = nil, 0
+  for i = 1, steps do
+    local t = i / steps
+    local n, w = a.n + (b.n - a.n) * t, a.w + (b.w - a.w) * t
+    local k = dkey(a.c, n, w)
+    if k ~= seen then
+      seen = k
+      if N.DangerAt(a.c, n, w) then pen = pen + N.DANGER_S if pen >= 2 * N.DANGER_S then break end end
+    end
+  end
+  return pen
+end
+--- point de carte { map, x, y } (%) dans une case dangereuse → nombre de morts ou nil
+function N.DangerAtMap(p)
+  local Geo = T.Geo
+  if not (N.char and type(N.char.deaths) == "table" and next(N.char.deaths) and Geo and Geo.World and p and p.map and p.x) then return nil end
+  local n, w, c = Geo.World(p.map, p.x, p.y)
+  if not n then return nil end
+  return N.DangerAt(c, n, w)
+end
+
+-- ------------------------------------------------------------------ (5.1 ROUTE6) sonde : d'où viennent les temps de trajet
+N.served = { spf = 0, appris = 0, modele = 0 }
+function N.Count(src) N.served[src] = (N.served[src] or 0) + 1 end
+--- lignes pour le rapport d'erreurs (/tai erreurs, via le journal du trajet)
+function N.CostLines()
+  local sp = N.spf
+  local S = G("ShortestPathForever")
+  local out = {}
+  local present = type(S) == "table" and type(S.API) == "table" and type(S.API.Estimate) == "function"
+  out[#out + 1] = ("== Coût des trajets : Shortest Path %s%s"):format(present and "présent" or "absent",
+    present and (" · Estimate : %d demande%s, %d réponse%s, %d en cache, %d en file · dernier : %s%s"):format(sp.asked, sp.asked > 1 and "s" or "",
+      sp.ok, sp.ok > 1 and "s" or "", sp.n, sp.qn, tostring(sp.last or "jamais appelé"), sp.bad and (" · COUPÉ (erreur : " .. sp.bad .. ")") or "") or "")
+  local PL = T.PathLearn
+  local plOn = PL and PL.IsEnabled and PL:IsEnabled() or false
+  local cells = 0
+  if plOn and PL.Count then for c = 0, 1 do cells = cells + (tonumber((try(PL.Count, c))) or 0) end end
+  out[#out + 1] = ("  chemins appris : %s%s · trajets comptés : %d par Shortest Path, %d par un chemin appris, %d par le facteur de zone"):format(
+    plOn and "allumés" or "coupés", plOn and (" (" .. cells .. " cases)") or "", N.served.spf or 0, N.served.appris or 0, N.served.modele or 0)
+  local map = num(try(G("C_Map") and G("C_Map").GetBestMapForUnit, "player"))
+  if map then
+    local v, n, src = N.Detour(map)
+    out[#out + 1] = ("  facteur de détour de ta zone (%s) : %.2f — source %s%s · vitesse %.1f yd/s (%s)"):format(tostring(map), v, tostring(src),
+      (n or 0) > 0 and (" (" .. n .. " mesures)") or "", (N.Speed("w")), select(2, N.Speed("w")))
+  end
+  local dn = 0
+  for _, e in pairs(N.char and type(N.char.deaths) == "table" and N.char.deaths or {}) do if (tonumber(e.n) or 0) >= N.DANGER_N then dn = dn + 1 end end
+  out[#out + 1] = ("  cases dangereuses (≥ %d morts) : %d · ascenseurs / tram : %d ligne(s) mesurée(s) (aucune position inventée)"):format(N.DANGER_N, dn,
+    #((T.Data and T.Data.Travel and T.Data.Travel.lifts) or {}))
+  local Xm = T.Export
+  if Xm and Xm.AreaSources then out[#out + 1] = "  " .. tostring((try(Xm.AreaSources))) end
+  return out
 end
 
 -- ------------------------------------------------------------------ chronométrage d'un trajet
@@ -342,10 +576,12 @@ function N.Sample()
   return v
 end
 
-function N.Wake()
-  if sampler then sampler:Show() return end
-  if type(G("CreateFrame")) ~= "function" then return end
+-- (5.1 ROUTE6) le cadre de l'échantillonneur est créé une fois à l'allumage, CACHÉ (un cadre caché ne reçoit pas
+-- d'OnUpdate : rien au repos) — avant, il naissait au premier trajet, n'importe quand dans la session
+local function makeSampler()
+  if sampler or type(G("CreateFrame")) ~= "function" then return sampler end
   sampler = G("CreateFrame")("Frame", nil, G("UIParent"))
+  sampler:Hide()
   local acc = 0
   sampler:SetScript("OnUpdate", function(f, dt)
     acc = acc + (dt or 0)
@@ -354,14 +590,20 @@ function N.Wake()
     N.Sample()
     if not (N.trip or N.moving) then forget() f:Hide() end
   end)
+  return sampler
+end
+function N.Wake()
+  local f = makeSampler()
+  if f then f:Show() end
 end
 
 function N:OnEnable()
   store()
+  makeSampler()
   self:RegisterEvent("PLAYER_STARTED_MOVING", function() N.moving = true N.Wake() end)
   self:RegisterEvent("PLAYER_STOPPED_MOVING", function() N.moving = nil end)
   self:RegisterEvent("PLAYER_REGEN_DISABLED", function() if N.trip then N.trip.combat = true end end)
-  self:RegisterEvent("PLAYER_DEAD", function() N.trip = nil end)
+  self:RegisterEvent("PLAYER_DEAD", function() N.trip = nil pcall(N.NoteDeath) end)
   self:On("SUMMARY", function()
     local s = T.Summary and T:Summary()
     if type(s) ~= "table" then return end

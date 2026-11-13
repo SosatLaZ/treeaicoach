@@ -367,7 +367,7 @@ local function storm()
     local R, Z, W, C = mods.Route, mods.ZonePlan, mods.Window, mods.Compass
     if R and R.char then R.char.paused = false end
     if Z and Z.char then Z.char.mode, Z.char.zones, Z.char.style, Z.char.ignore, Z.char.extra = "auto", {}, 1, {}, {} end
-    if Z and Z.db then Z.db.autoWatch = true end
+    if Z and Z.db then Z.db.autoWatch = false end   -- (5.1 ROUTE6, audit B11) the default: TreeAI leaves the game's watch list alone
     -- (4.1 INTEG) the card is off by default since STRIP: scenarios that read it turn it on as the player would
     -- (Réglages → Affichage → card toggle = W:OnOptionChanged), so it is really built and shown
     if W and W.db then W.db.card = true if W._active and W.OnOptionChanged then pcall(W.OnOptionChanged, W, "card") end end

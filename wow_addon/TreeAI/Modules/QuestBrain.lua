@@ -279,6 +279,53 @@ function QB.PickupNote()
   return "Sans Questie : seulement les quêtes des PNJ à qui tu as parlé (XP estimée)"
 end
 
+-- ===================================================================== (5.1 ROUTE6, audit B7) nombres RÉELS des objectifs
+-- QuestieDB ne donne pas « 8 » dans « Tue 8 pillards » : le nombre n'est connu que par le journal. Chaque quête vue dans TON
+-- journal laisse ses nombres ici (par quête, pour tous tes personnages) : une quête pas encore prise dont le nombre est connu
+-- se chiffre pour de vrai ; sinon rien n'est affiché à l'unité près (plus de « 545 XP/min » sur 8 monstres supposés).
+QB.COUNT_MAX = 2000
+local function countDB()
+  local db = QB.db
+  if type(db) ~= "table" then return nil end
+  if type(db.counts) ~= "table" then db.counts = { n = 0 } end
+  return db.counts
+end
+--- retient les nombres demandés des quêtes du journal (léger : appelé quand le journal change)
+function QB.LearnCounts(log)
+  local C0 = countDB()
+  if not C0 then return end
+  for q, lq in pairs(log or logSnap()) do
+    if type(lq) == "table" and type(lq.obj) == "table" and #lq.obj > 0 and not C0[q] and (C0.n or 0) < QB.COUNT_MAX then
+      local t, ok = {}, true
+      for j, o in ipairs(lq.obj) do
+        local n = tonumber(o.n)
+        if not n or n < 1 then ok = false break end
+        t[j] = n
+      end
+      if ok then C0[q] = t C0.n = (C0.n or 0) + 1 end
+    end
+  end
+end
+--- nombre demandé de l'objectif j de la quête q, lu un jour dans un journal → n ou nil (jamais vu)
+function QB.LearnedCount(q, j)
+  local C0 = countDB()
+  local t = C0 and C0[tonumber(q) or -1]
+  return type(t) == "table" and tonumber(t[tonumber(j) or 0]) or nil
+end
+--- temps de combat MESURÉ pour ce personnage (Stats, sinon l'export) ? sinon le modèle part d'une valeur de classe
+function QB.KillMeasured()
+  local St, Xm = T.Stats, X()
+  if St and St.KillTime and St.IsEnabled and St:IsEnabled() and tonumber((try(St.KillTime, St, 0))) then return true end
+  return (Xm and Xm.TTK and tonumber((try(Xm.TTK, Xm, 0)))) and true or false
+end
+local function round2(v)                              -- 2 chiffres significatifs : 545 → 550, 2 934 → 2 900
+  v = tonumber(v) or 0
+  if v <= 0 then return 0 end
+  local p = 10 ^ max(0, floor(math.log(v) / math.log(10)) - 1)
+  return floor(v / p + 0.5) * p
+end
+QB.Round2 = round2
+
 -- ===================================================================== « Quêtes à prendre »
 -- règles : pas dans le journal, pas faite, niveau requis atteint, prérequis faits (l'export ne garde que ceux-là),
 -- race / classe (Export), exclusivité, jamais grise, au plus « écart » niveaux au-dessus (réglage du trajet), jamais
@@ -319,9 +366,17 @@ function QB.Value(q, rec, ctx, kind)
   local pos = rec.s
   local walk = 0
   local first = true
-  for _, o in ipairs(rec.o or {}) do
+  local known = true                                 -- tous les nombres demandés sont RÉELS (base, ou vus dans un journal)
+  for j, o in ipairs(rec.o or {}) do
     local need = tonumber(o.n) or 1
-    if need <= 1 and E and E.DEFAULT_N then need = E.DEFAULT_N[o.k or ""] or need end
+    if need <= 1 then
+      local lc = QB.LearnedCount(q, j)
+      if lc then need = lc
+      elseif o.k == "kill" or o.k == "item" then
+        known = false                                 -- inconnu : un ordre de grandeur pour CLASSER, jamais affiché
+        if E and E.DEFAULT_N then need = E.DEFAULT_N[o.k or ""] or need end
+      end
+    end
     local oo = { k = o.k, n = need, have = 0, p = o.p, plf = o.plf, ml = o.ml, mx = o.mx, rank = o.rank }
     local m = E and E.ObjMinutes(oo, cost) or 5
     if o.map and o.x and not instance(o.map) then
@@ -362,7 +417,19 @@ function QB.Value(q, rec, ctx, kind)
   local minutes = max(1, floor(sec / 60 + 0.5))
   -- (4.3.5 PICKFIX) XP et XP / min affichées côte à côte ; verte (≥ 3 niveaux sous toi) : XP de quête réduite au-delà de
   -- 5 niveaux (règle Classic : 80 / 60 / 40 / 20 / 10 %), monstres presque rien → dit
-  why[#why + 1] = fmt("%s%s XP en ~%d min (%s XP/min)", rec.learned and "≈ " or "", thousands(gain), minutes, thousands(score))
+  -- (5.1 ROUTE6, audit B7) un chiffre à l'écran vient de données réelles, ou n'y est pas :
+  --  * XP / min seulement quand TOUT est réel — récompense (jeu / QuestieDB), nombres demandés (base ou journal déjà vu),
+  --    temps de combat mesuré sur ce personnage — et alors arrondi à 2 chiffres (« ≈ 550 XP/min ») ;
+  --  * sinon la récompense de la quête (réelle) et la distance, sans durée ni rythme inventés.
+  local rewardReal = (tonumber(_ns((try(G("GetQuestLogRewardXP"), q)))) or 0) > 0 or (tonumber(rec.xp) or 0) > 0
+  local real = rewardReal and known and not rec.learned and #(rec.o or {}) > 0 and QB.KillMeasured()
+  if real then
+    why[#why + 1] = fmt("%s XP en ~%d min (≈ %s XP/min)", thousands(round2(gain)), minutes, thousands(round2(score)))
+  elseif rewardReal then
+    why[#why + 1] = fmt("+%s XP à la remise", thousands(xp))
+  else
+    why[#why + 1] = "récompense inconnue"
+  end
   local green = lv > 0 and ctx.level - lv >= 3
   if green then why[#why + 1] = fmt("verte (niveau %d) : XP réduite", lv) end
   if rec.learned then why[#why + 1] = "PNJ déjà rencontré" end
@@ -377,8 +444,10 @@ function QB.Value(q, rec, ctx, kind)
   if kind and kind.dungeon then why[#why + 1] = fmt("donjon (vous êtes %d)", ctx.group)
   elseif kind and kind.elite then why[#why + 1] = fmt("élite : à faire à %d", ctx.group) end
   if (lv - ctx.level) >= 2 then why[#why + 1] = fmt("niveau %d : un peu haute", lv) end
-  return { xp = floor(gain + 0.5), sec = sec, travel = travel, score = score, why = why, minutes = minutes, green = green,
-    xpm = floor(score + 0.5) }
+  -- xp = la récompense de la quête (réelle) ; est = vrai tant qu'un nombre ou un temps est supposé (minutes / xpm : pour
+  -- classer seulement, jamais à afficher tels quels)
+  return { xp = xp, gain = floor(gain + 0.5), sec = sec, travel = travel, score = score, why = why, minutes = minutes, green = green,
+    xpm = real and round2(score) or nil, est = not real, rewardReal = rewardReal }
 end
 -- (4.3.5 PICKFIX) « il me donne des quêtes vertes pas rentables » : une verte qui rapporte moins de la moitié de l'XP / min
 -- de la meilleure quête est écartée, sauf en chemin (≤ 1 min de trajet) ou pour une suite de chaîne. Pure.
@@ -399,7 +468,9 @@ local pickMemo
 local function ctxNow()
   local P = T.Planner
   local cost = (P and P.CostCtx and try(P.CostCtx)) or { level = myLevel(), group = groupSize() }
-  return { level = myLevel(), group = groupSize(), log = logSnap(), here = here(), cost = cost }
+  local log = logSnap()
+  if QB._countGen ~= QB.gen then QB._countGen = QB.gen pcall(QB.LearnCounts, log) end   -- nombres réels du journal
+  return { level = myLevel(), group = groupSize(), log = log, here = here(), cost = cost }
 end
 QB.Ctx = ctxNow
 -- 2 chiffres significatifs : de petites variations de trajet ne changent pas l'ordre (pas de « valse » des quêtes)
@@ -444,6 +515,7 @@ function QB.PickupList(n)
       list[#list + 1] = { questID = q, title = rec.t or questName(q) or ("quête " .. q), level = tonumber(rec.lv) or 0,
         npc = npc, map = rec.s.map, x = rec.s.x, y = rec.s.y, dist = distYd(hpos, rec.s), eta = v.travel, xp = v.xp,
         why = tconcat(v.why, " · "), score = v.score, minutes = v.minutes, _b = bucket(v.score), xpm = v.xpm, green = v.green,
+        est = v.est,
         chain = rec.nx and true or nil,
         elite = kind and kind.elite or nil, dungeon = kind and kind.dungeon or nil }
     end
@@ -598,7 +670,7 @@ function QB.SetMode(id, by)
       Z.lastKeys = nil                               -- nouvel ordre tout de suite (pas d'hystérésis sur l'ancien mode)
       if Z.Bump then pcall(Z.Bump, Z, "mode : " .. tostring(QB.Label(id))) end
     end
-    if T.Export and T.Export.Dirty and id == "pickup" then pcall(T.Export.Dirty, T.Export) end
+    if T.Export and T.Export.Dirty and id == "pickup" then pcall(T.Export.Dirty, T.Export, true) end
     if T.Fire then pcall(T.Fire, T, "QUEST_MODE_CHANGED", id, prev) end
   end
   return true
@@ -686,27 +758,28 @@ function QB.Skipped(q) return QB.skipped[tonumber(q) or -1] and true or false en
 -- QUEST_GREETING, QUEST_DETAIL seul) et qu'une prise prévue chez CE PNJ n'y est pas, elle est retenue « pas proposée »
 -- pour ce personnage (raison + date + niveau), sortie de « Quêtes à prendre » et du trajet ; idem pour un donneur
 -- atteint (≤ 10 m, PNJ ciblé / vu) puis quitté 2 fois sans la quête. Retentée au niveau suivant.
-QB.VISIT_YD, QB.LEAVE_YD, QB.GIVER_YD, QB.SAME_NAME_YD = 11, 40, 15, 80
+QB.LEAVE_YD, QB.GIVER_YD, QB.SAME_NAME_YD = 40, 15, 80
 local function phantoms()
   local c = QB.char
   if type(c) ~= "table" then return nil end
   if type(c.phantom) ~= "table" then c.phantom = {} end
   return c.phantom
 end
---- quête vue absente chez son donneur → { why, at, day, lv, t } ; nil sinon (ou après un passage de niveau)
+--- quête écartée → { why, at, day, lv, t, by } ; nil sinon. by = "npc" (son PNJ ne la proposait pas : retentée au niveau
+--- suivant) ou "player" (5.1 ROUTE6 : TU as dit « Pas là » — gardée pour ce personnage jusqu'à ce que tu la remettes)
 function QB.Phantom(q)
   local ph = phantoms()
   q = tonumber(q)
   local e = ph and q and ph[q]
   if not e then return nil end
-  if (tonumber(e.lv) or 0) < myLevel() then ph[q] = nil return nil end   -- niveau suivant : on retente
+  if e.by ~= "player" and (tonumber(e.lv) or 0) < myLevel() then ph[q] = nil return nil end   -- niveau suivant : on retente
   return e
 end
-function QB.MarkPhantom(q, why, title)
+function QB.MarkPhantom(q, why, title, by)
   local ph = phantoms()
   q = tonumber(q)
   if not (ph and q) or QB.Phantom(q) then return false end
-  ph[q] = { why = why, at = epoch(), day = _ns((try(G("date"), "%Y-%m-%d"))), lv = myLevel(), t = title }
+  ph[q] = { why = why, at = epoch(), day = _ns((try(G("date"), "%Y-%m-%d"))), lv = myLevel(), t = title, by = by or "npc" }
   QB.Bump()
   return true
 end
@@ -743,9 +816,15 @@ function QB.PlannedPicks()
       local rec = recs[tonumber(s.q)]
       local g = rec and rec.s or {}
       add(s.q, s.map or g.map, s.x or g.x, s.y or g.y, g.name or s.npc, (rec and rec.t) or QB.LearnedTitle(s.q))
+      if out[#out] and out[#out].q == tonumber(s.q) then out[#out].npcId = (g.k == "npc") and tonumber(g.id) or nil end
     end
   end
-  for _, e in ipairs(QB.PickupList(12)) do add(e.questID, e.map, e.x, e.y, e.npc, e.title) end
+  for _, e in ipairs(QB.PickupList(12)) do
+    add(e.questID, e.map, e.x, e.y, e.npc, e.title)
+    local rec = recs[tonumber(e.questID) or -1]
+    local g = rec and rec.s
+    if g and out[#out] and out[#out].q == tonumber(e.questID) then out[#out].npcId = (g.k == "npc") and tonumber(g.id) or nil end
+  end
   return out
 end
 local function fromNpc(c, npc, me)
@@ -756,8 +835,10 @@ end
 local function phantomSaid(n, npc)
   if n <= 0 then return end
   replanNow("quête non proposée")
-  pcall(QB.Suggest, QB, "phantom", fmt("%d quête%s pas proposée%s par %s : retirée%s du trajet (retentée au niveau suivant)",
-    n, n > 1 and "s" or "", n > 1 and "s" or "", npc or "ce PNJ", n > 1 and "s" or ""), 1, { ttl = 8, sound = false })
+  pcall(QB.Suggest, QB, "phantom", fmt("%d quête%s pas proposée%s par %s : écartée%s du trajet (à remettre : « Quêtes écartées »)",
+    n, n > 1 and "s" or "", n > 1 and "s" or "", npc or "ce PNJ", n > 1 and "s" or ""), 1,
+    { ttl = 10, sound = false, onClick = function() QB.ShowDismissed() end })
+  if T.Fire then pcall(T.Fire, T, "QUEST_DISMISSED") end
 end
 --- la fenêtre d'un PNJ montre ce qu'il propose (offered = { ids = {}, titles = {} } ; nil = on ne sait pas) → nombre retiré
 function QB.CheckOffered(offered)
@@ -826,6 +907,7 @@ function QB.Offered(kind)
 end
 QB.LIST_HOLD_S = 120
 function QB.OnQuestWindow(kind)
+  pcall(QB.NoteNpcWindow)                              -- (5.1 ROUTE6) ce PNJ existe : jamais « pas là » pour lui
   local npc = _ns((try(G("UnitName"), "npc")))
   if kind == "detail" then
     -- une quête ouverte depuis la liste d'un PNJ (gossip / accueil) : sa liste a déjà été jugée
@@ -836,40 +918,250 @@ function QB.OnQuestWindow(kind)
   end
   return QB.CheckOffered(QB.Offered(kind))
 end
---- (toutes les 3 s, hors combat, par le Planner) donneur atteint (≤ 10 m, ciblé / vu) puis quitté (> 40 yd) sans sa
---- quête : 1re fois, l'arrêt reste (dit une fois) ; 2e fois, la quête est retenue « pas proposée »
+-- ===================================================================== (5.1 ROUTE6, audit B4) le donneur n'est pas là
+-- « des quêtes qu'affiche Questie n'existent pas » — fait comme il faut :
+--  * JAMAIS une quête retirée parce que tu es passé devant son PNJ (l'ancienne règle « atteint 2 fois puis quitté » retirait
+--    toutes les quêtes d'un PNJ croisé deux fois avec la souris dessus) ;
+--  * le cas réel : tu es SUR le point du donneur (≤ QB.ABSENT_YD) depuis QB.ABSENT_S secondes, hors combat, et PERSONNE de
+--    ce nom / cet identifiant n'a été vu pendant ce temps — ni ciblé, ni survolé, ni barre de nom, ni fenêtre de PNJ ouverte
+--    → UNE petite question « Ce PNJ n'est pas là ? » avec deux réponses : « Pas là » (ses quêtes sont écartées, gardé pour ce
+--    personnage) et « Je reviens plus tard » (rien n'est écarté ; l'arrêt est passé pour cette session) ;
+--  * tout ce qui est écarté est LISIBLE et se remet d'un clic : QB.DismissedList() (ligne « Quêtes écartées (n) » du
+--    trajet, page « Pilote auto »), QB.Restore(q).
+-- Coût : rien tant que tu n'es pas à ≤ 15 yd d'une prise prévue ; sur place, une lecture toutes les 3 s (cible, survol,
+-- ≤ 40 barres de nom), jamais en combat.
+QB.ABSENT_YD, QB.ABSENT_S, QB.ABSENT_AGAIN_S = 15, 20, 600
+local function npcIdOf(unit)
+  local g = _ns((try(G("UnitGUID"), unit)))
+  if type(g) ~= "string" then return nil end
+  local kind, id = g:match("^(%a+)%-%d+%-%d+%-%d+%-%d+%-(%d+)")
+  if kind ~= "Creature" and kind ~= "Vehicle" and kind ~= "GameObject" then return nil end
+  return tonumber(id)
+end
+local function unitIs(unit, name, npcId)
+  if not try(G("UnitExists"), unit) then return false end
+  if npcId and npcIdOf(unit) == npcId then return true end
+  return sameName(name, _ns((try(G("UnitName"), unit))))
+end
+--- preuve que le PNJ est là : ciblé, survolé, en discussion, ou une barre de nom à son nom → vrai / faux
+function QB.GiverSeen(name, npcId)
+  if not (name or npcId) then return false end
+  if unitIs("target", name, npcId) or unitIs("mouseover", name, npcId) or unitIs("npc", name, npcId) then return true end
+  -- barres de nom : par jeton d'unité (« nameplate1 »…), jamais par leurs cadres (interdits aux addons sur Forever)
+  local exists = G("UnitExists")
+  if type(exists) ~= "function" then return false end
+  for i = 1, 40 do
+    if unitIs("nameplate" .. i, name, npcId) then return true end
+  end
+  return false
+end
+--- une fenêtre de PNJ s'ouvre (gossip / accueil / détail) : ce PNJ existe — plus jamais « pas là » pour lui cette visite
+function QB.NoteNpcWindow()
+  local name, id = _ns((try(G("UnitName"), "npc"))), npcIdOf("npc")
+  local me = playerPt()
+  for q, v in pairs(QB._visit) do
+    if (v.npcId and v.npcId == id) or sameName(v.name, name) or (me and v.pt and (distYd(me, v.pt) or huge) <= QB.GIVER_YD) then
+      v.seen = true
+      if QB._absent and QB._absent.qs[q] then QB._absent = nil pcall(QB.Clear, QB, "absent") end
+    end
+  end
+end
+--- réponse « Pas là » : les quêtes de ce donneur sont écartées (gardé pour ce personnage, remis d'un clic)
+function QB.AbsentYes()
+  local a = QB._absent
+  QB._absent = nil
+  pcall(QB.Clear, QB, "absent")
+  if not a then return 0 end
+  local n = 0
+  for q, title in pairs(a.qs) do
+    if QB.MarkPhantom(q, "PNJ absent : " .. tostring(a.name or "donneur"), type(title) == "string" and title or nil, "player") then n = n + 1 end
+  end
+  if n > 0 then
+    replanNow("PNJ absent (choix du joueur)")
+    pcall(QB.Suggest, QB, "phantom", fmt("%d quête%s écartée%s (PNJ absent) · à remettre : « Quêtes écartées » dans le trajet",
+      n, n > 1 and "s" or "", n > 1 and "s" or ""), 1, { ttl = 10, sound = false, onClick = function() QB.ShowDismissed() end })
+    if T.Fire then pcall(T.Fire, T, "QUEST_DISMISSED") end
+  end
+  return n
+end
+--- réponse « Je reviens plus tard » : rien n'est écarté ; ses quêtes sortent du trajet pour cette session seulement
+function QB.AbsentLater()
+  local a = QB._absent
+  QB._absent = nil
+  pcall(QB.Clear, QB, "absent")
+  if not a then return 0 end
+  local qs = {}
+  for q in pairs(a.qs) do QB.skipped[q] = true qs[#qs + 1] = q end
+  if #qs == 0 then return 0 end
+  tsort(qs)
+  QB.skipOrder[#QB.skipOrder + 1] = qs
+  replanNow("PNJ absent : plus tard")
+  if T.Fire then pcall(T.Fire, T, "QUEST_SKIPPED", qs) end
+  return #qs
+end
+--- le menu à deux réponses (cadre à nous : celui du trajet) ; sans le menu, la ligne elle-même : clic = « Pas là »
+function QB.AbsentMenu()
+  local a = QB._absent
+  if not a then return false end
+  local Z = T.ZonePlan
+  if Z and Z.ShowMenu then
+    return Z:ShowMenu({ { text = cut(tostring(a.name or "Ce PNJ"), 30) .. " n'est pas là ?", head = true },
+      { text = "Pas là", fn = function() QB.AbsentYes() end },
+      { text = "Je reviens plus tard", fn = function() QB.AbsentLater() end } }, "absent")
+  end
+  return QB.AbsentYes() > 0
+end
+local function askAbsent(c, group)
+  local qs, n = {}, 0
+  for _, g in ipairs(group) do qs[g.q] = g.title or true n = n + 1 end
+  QB._absent = { name = c.name, npcId = c.npcId, qs = qs, at = now(), n = n }
+  QB._askedAt = QB._askedAt or {}
+  QB._askedAt[c.name or c.q] = now()
+  local NTr = T.NavTrace
+  if NTr and NTr.Log then pcall(NTr.Log, "quête", fmt("donneur introuvable sur place depuis %d s : %s (%d quête%s) → question posée",
+    QB.ABSENT_S, tostring(c.name or "?"), n, n > 1 and "s" or "")) end
+  pcall(QB.Suggest, QB, "absent", fmt("Ce PNJ n'est pas là ? %s%s", cut(tostring(c.name or "le donneur"), 28),
+      n > 1 and fmt(" (%d quêtes)", n) or (type(c.title) == "string" and (" (« " .. cut(c.title, 26) .. " »)") or "")), 3,
+    { ttl = 90, sound = false, cooldown = 0, tab = "now", topic = "quest", onClick = function() QB.AbsentMenu() end,
+      tooltip = { "Tu es sur son point depuis " .. QB.ABSENT_S .. " s et personne de ce nom n'a été vu (cible, survol, barres de nom).",
+        "Clic : [Pas là] (ses quêtes sont écartées, à remettre d'un clic) ou [Je reviens plus tard]" } })
+end
+--- (toutes les 3 s en marchant, par le Planner ; puis à l'échéance, sur place) → nombre de questions posées
 function QB.VisitTick()
   local me, g = playerPt(), Geo()
   if not (me and g.Dist and type(QB.char) == "table") then return 0 end
-  QB.char.visits = type(QB.char.visits) == "table" and QB.char.visits or {}
-  local V = QB.char.visits
-  local tname, mo = _ns((try(G("UnitName"), "target"))), _ns((try(G("UnitName"), "mouseover")))
-  local n, npcN = 0, nil
-  for _, c in ipairs(QB.PlannedPicks()) do
+  if T.InCombat and T:InCombat() then return 0 end
+  local t = now()
+  local asked = 0
+  local picks = QB.PlannedPicks()
+  local live = {}
+  for _, c in ipairs(picks) do
     local d = c.x and c.map and g.Dist(me.map, me.x, me.y, c.map, c.x, c.y)
     local v = QB._visit[c.q]
-    if d and d <= QB.VISIT_YD then
-      v = v or {}
-      QB._visit[c.q] = v
-      v.inside = true
-      if not c.name or sameName(c.name, tname) or sameName(c.name, mo) then v.seen = true end
-    elseif v and v.inside and d and d > QB.LEAVE_YD then
-      v.inside = false
-      if v.seen then
-        v.seen = nil
-        V[c.q] = (tonumber(V[c.q]) or 0) + 1
-        if V[c.q] >= 2 then
-          V[c.q] = nil
-          if QB.MarkPhantom(c.q, "PNJ atteint 2 fois sans la proposer", c.title) then n, npcN = n + 1, c.name end
-        else
-          pcall(QB.Suggest, QB, "leftgiver", fmt("Tu pars sans « %s » : l'arrêt reste dans le trajet", cut(c.title or ("quête " .. c.q), 32)),
-            1, { ttl = 8, sound = false })
+    live[c.q] = true
+    if d and d <= QB.ABSENT_YD then
+      if not v then
+        v = { since = t, name = c.name, npcId = c.npcId, pt = { map = c.map, x = c.x, y = c.y } }
+        QB._visit[c.q] = v
+        if T.After and not QB._visitTimer then           -- immobile sur place : le ticker du trajet ne passe plus
+          QB._visitTimer = true
+          T:After(QB.ABSENT_S + 1, function() QB._visitTimer = nil pcall(QB.VisitTick) end)
         end
+      end
+      if not v.seen and QB.GiverSeen(c.name, c.npcId) then v.seen = true end
+    elseif v and d and d > QB.LEAVE_YD then
+      QB._visit[c.q] = nil                              -- reparti : rien n'est compté, rien n'est retiré
+      if QB._absent and QB._absent.qs[c.q] then QB._absent = nil pcall(QB.Clear, QB, "absent") end
+    end
+  end
+  for q in pairs(QB._visit) do if not live[q] then QB._visit[q] = nil end end   -- prise entre-temps / plus prévue
+  -- la question : un donneur NOMMÉ, jamais vu depuis ABSENT_S secondes sur son point, et tu es venu POUR lui (sa prise est
+  -- l'arrêt en cours du trajet : passer 20 s près d'un PNJ qu'on ne regarde pas n'est pas une question) ; une à la fois
+  local cur = {}
+  do
+    local P = T.Planner
+    local s0 = P and P.steps and P.steps[P.cursor or 0]
+    if s0 and s0.x then
+      for i = P.cursor, math.min(#P.steps, P.cursor + 8) do
+        local s2 = P.steps[i]
+        if s2.k == "pick" and s2.q and not s2._done and not s2._other and s2.map == s0.map and (distYd(s0, s2) or huge) <= QB.GIVER_YD then cur[tonumber(s2.q)] = true end
       end
     end
   end
-  phantomSaid(n, npcN)
+  if not QB._absent then
+    for _, c in ipairs(picks) do
+      local v = QB._visit[c.q]
+      if v and cur[c.q] and not v.seen and not v.asked and (c.name or c.npcId) and t - v.since >= QB.ABSENT_S
+          and t - ((QB._askedAt or {})[c.name or c.q] or -1e9) >= QB.ABSENT_AGAIN_S then
+        local group = {}
+        for _, c2 in ipairs(picks) do
+          local v2 = QB._visit[c2.q]
+          if v2 and not v2.seen and ((c.npcId and c2.npcId == c.npcId) or sameName(c.name, c2.name)) then
+            v2.asked = true
+            group[#group + 1] = c2
+          end
+        end
+        if #group > 0 then askAbsent(c, group) asked = asked + 1 end
+        break
+      end
+    end
+  end
+  return asked
+end
+
+-- ===================================================================== (5.1 ROUTE6) « Quêtes écartées » : la liste, remettre
+--- tout ce que TreeAI tient hors du trajet pour ce personnage, avec la raison → { { q, title, why, kind, at } }
+--- kind = "absent" (tu as dit « Pas là ») | "npc" (son PNJ ne la proposait pas) | "ignore" (clic droit : ignorer) |
+--- "later" (passée pour cette session : « Suivant », « Je reviens plus tard »)
+function QB.DismissedList()
+  local out = {}
+  local recs = recsOf(exportData())
+  local function title(q, t) return (type(t) == "string" and t ~= "" and t) or (recs[q] and recs[q].t) or questName(q) or ("quête " .. q) end
+  for q in pairs(phantoms() or {}) do
+    local e = QB.Phantom(q)
+    if e then
+      out[#out + 1] = { q = q, title = title(q, e.t), why = e.why or "pas proposée", kind = (e.by == "player") and "absent" or "npc", at = e.at }
+    end
+  end
+  local Z = T.ZonePlan
+  for q, t in pairs(Z and Z.char and Z.char.ignore or {}) do
+    q = tonumber(q)
+    if q then out[#out + 1] = { q = q, title = title(q, t), why = "ignorée par toi", kind = "ignore" } end
+  end
+  for q in pairs(QB.skipped) do
+    out[#out + 1] = { q = q, title = title(q), why = "passée pour cette session", kind = "later" }
+  end
+  tsort(out, function(a, b) if a.kind ~= b.kind then return a.kind < b.kind end return a.q < b.q end)
+  return out
+end
+--- remet une quête écartée (nil = toutes) dans le trajet → nombre remis
+function QB.Restore(q)
+  local n = 0
+  local Z = T.ZonePlan
+  for _, e in ipairs(QB.DismissedList()) do
+    if q == nil or e.q == tonumber(q) then
+      if e.kind == "absent" or e.kind == "npc" then QB.ClearPhantom(e.q)
+      elseif e.kind == "ignore" then if Z and Z.char and Z.char.ignore then Z.char.ignore[e.q] = nil end
+      else QB.skipped[e.q] = nil end
+      n = n + 1
+    end
+  end
+  if n > 0 then
+    if q == nil then QB.skipOrder = {} end
+    QB.Bump()
+    replanNow("quête remise")
+    if T.Fire then pcall(T.Fire, T, "QUEST_DISMISSED") end
+  end
   return n
+end
+local KIND_TXT = { absent = "PNJ absent", npc = "pas proposée", ignore = "ignorée", later = "plus tard" }
+--- le menu « Quêtes écartées » (cadre à nous) : une ligne par quête, clic = la remettre
+function QB.ShowDismissed()
+  local Z = T.ZonePlan
+  if not (Z and Z.ShowMenu) then return false end
+  local list = QB.DismissedList()
+  local ent = { { text = fmt("Quêtes écartées (%d) — clic : remettre", #list), head = true } }
+  for i, e in ipairs(list) do
+    if i > 14 then ent[#ent + 1] = { text = fmt("… et %d autres", #list - 14), dim = true } break end
+    local q = e.q
+    ent[#ent + 1] = { text = fmt("« %s » · %s", cut(e.title, 30), KIND_TXT[e.kind] or e.kind), fn = function() QB.Restore(q) end }
+  end
+  if #list > 1 then ent[#ent + 1] = { text = "Tout remettre", fn = function() QB.Restore(nil) end } end
+  if #list == 0 then ent[#ent + 1] = { text = "Aucune quête écartée", dim = true } end
+  return Z:ShowMenu(ent, "dismissed")
+end
+--- la ligne du trajet (ZonePlan:HeadLines) ; nil quand rien n'est écarté
+function QB.DismissedLine()
+  local list = QB.DismissedList()
+  if #list == 0 then return nil end
+  local tip = { "Hors du trajet pour ce personnage, avec la raison :" }
+  for i, e in ipairs(list) do
+    if i > 10 then tip[#tip + 1] = "…" break end
+    tip[#tip + 1] = fmt("« %s » : %s", cut(e.title, 34), e.why)
+  end
+  tip[#tip + 1] = "Clic : la liste, un clic pour remettre"
+  return { text = fmt("Quêtes écartées (%d) ▾", #list), prio = 1, id = "qb:dismissed", tooltip = tconcat(tip, "\n"),
+    onClick = function() QB.ShowDismissed() end, onRightClick = function() QB.ShowDismissed() end }
 end
 
 -- ===================================================================== (4.3.5 PICKFIX) mode « Monter vite » (fastlvl)
@@ -919,100 +1211,92 @@ function QB.BestGrind()
   return best
 end
 local function restedXP() return tonumber(_ns((try(G("GetXPExhaustion"))))) or 0 end
-local function mins(sec) return max(1, floor((sec or 0) / 60 + 0.5)) end
---- → { now = étape, nexts = { 3 étapes } } ; étape = { kind, text, xp, sec, why, q }
-function QB.FastPlan()
-  local level, group = myLevel(), groupSize()
-  local me = playerPt()
-  local rested = restedXP()
-  local near, rest = {}, {}
-  local used = {}
-  local function add(list, c)
-    if c.q and used[c.q] then return end
-    if c.q then used[c.q] = true end
-    c.sec = max(15, c.sec or 60)
-    c.rate = (c.xp or 0) / c.sec
-    list[#list + 1] = c
-  end
-  for _, e in ipairs(QB.TurnInList()) do
-    local eta = e.eta or (me and e.x and legSec(me, e))
-    if eta then
-      local c = { kind = "turn", q = e.questID, xp = e.xp or 0, sec = eta + 15, text = fmt("Rends « %s »%s", cut(e.title, 30), e.npc and (" à " .. e.npc) or "") }
-      if eta <= QB.FAST_NEAR_S then c.why = "finie, tout près : XP tout de suite" add(near, c)
-      else c.why = "finie" add(rest, c) end
-    end
-  end
-  -- objectifs du trajet (quêtes du journal) : XP de la quête / (arrivée + temps sur place)
+local function meters(yd)
+  local m = (tonumber(yd) or 0) * 0.9144
+  if m < 1000 then return fmt("%d m", floor(m / 10 + 0.5) * 10) end
+  return (fmt("%.1f km", m / 1000):gsub("%.", ","))
+end
+-- (5.1 ROUTE6, audit B6) UNE SEULE RÉPONSE à « que faire maintenant ». La boussole, la bande, la ligne « Arrêt 1/N » de
+-- « Maintenant » lisent l'arrêt 1 du trajet (Route:Stops) ; « Vite » aussi, désormais : en mode « Monter vite » le trajet
+-- EST le plan (ZonePlan le calcule au plus d'XP par heure), et « Fais ça maintenant » + les 3 suivantes sont ses 4 premiers
+-- arrêts, mêmes libellés. (5.0.0 : une 2e liste classée à part disait « Rends X à Mangeclous · finie, tout près » — une
+-- autre zone, à un vol de là — pendant que la boussole et le trajet disaient « Tue « Pillard des collines » » ici.)
+-- Chiffres : la distance réelle, l'XP RÉELLE des remises de l'arrêt ; « tout près » seulement à ≤ 100 m (110 yd).
+--- les n premiers arrêts du trajet → { { text, kind, q, qs, dist (yd), sec (arrivée), xp (remises prêtes), transport } }
+function QB.RouteSteps(n)
+  n = n or 4
   local R, P = T.Route, T.Planner
+  local out = {}
+  if not (R and R.Stops and R.Groups and R.StopLabel and P and P.steps and R.IsEnabled and R:IsEnabled()) then return out end
+  local ok, st = pcall(R.Stops, R, 64)
+  if not (ok and type(st) == "table") then return out end
+  local grp = R.Groups(st)
   local recs = recsOf(exportData())
   local log = logSnap()
-  if R and R.Stops and P and P.steps then
-    local ok, st = pcall(R.Stops, R, 12)
-    for _, e in ipairs(ok and type(st) == "table" and st or {}) do
+  local me = playerPt()
+  local level = myLevel()
+  local i = 1
+  while i <= #st and #out < n do
+    local e = st[i]
+    if e.step then
+      local label, last = R.StopLabel(P, st, i, grp)
       local s = e.step
-      local q = s and tonumber(s.q)
-      if q and s.k == "obj" and log[q] and log[q].done ~= 1 then
-        local lq = log[q]
-        local o = lq.obj[tonumber(s.o) or 0]
-        local kill = o and (o.type == "monster")
-        local c = { kind = "obj", q = q, xp = rewardXP(q, recs[q], lq.lv, level), sec = (e.at or 0) + (tonumber(s.svc) or 180),
-          text = P.StepLabel and P:StepLabel(s) or ("Avance « " .. cut(lq.t, 30) .. " »"), why = "meilleur paquet du trajet (trajet compris)" }
-        if kill and rested > 0 then c.xp, c.why = c.xp * 1.3, c.why .. " · XP reposée sur les monstres" end
-        add(rest, c)
+      local c = { text = label or (P.StepLabel and P:StepLabel(s)) or "?", kind = s.k, q = tonumber(s.q), qs = {}, sec = e.at,
+        dist = (me and s.x) and distYd(me, s) or nil, xp = 0 }
+      for j = i, last or i do
+        local sj = st[j].step
+        local q = sj and tonumber(sj.q)
+        if q then
+          c.qs[#c.qs + 1] = q
+          if sj.k == "turn" and log[q] and log[q].done == 1 then c.xp = c.xp + rewardXP(q, recs[q], log[q].lv, level) end
+        end
+        c.sec = st[j].at or c.sec
       end
+      out[#out + 1] = c
+      i = (last or i) + 1
+    else
+      -- vol / bateau / zeppelin / pierre de foyer : un arrêt du trajet comme les autres
+      out[#out + 1] = { text = tostring(e.text or "?"), kind = e.kind, transport = true, sec = e.at, xp = 0, qs = {} }
+      i = i + 1
     end
   end
-  for _, e in ipairs(QB.PickupList(6)) do
-    add(rest, { kind = "pick", q = e.questID, xp = e.xp or 0, sec = (tonumber(e.minutes) or 6) * 60,
-      text = fmt("Prends « %s »%s", cut(e.title, 30), e.npc and (" (" .. e.npc .. ")") or ""), why = "quête à prendre : " .. (e.why or "") })
+  return out
+end
+--- l'étape à faire MAINTENANT (la même partout) ; nil sans trajet
+function QB.NextStep() return QB.RouteSteps(1)[1] end
+--- → { now = étape, nexts = { 3 étapes }, rested } ; étape = { kind, text, xp, dist, sec, why, q }
+function QB.FastPlan()
+  local rested = restedXP()
+  local steps = QB.RouteSteps(4)
+  for _, c in ipairs(steps) do
+    local w = {}
+    if c.dist and c.dist <= 110 then w[#w + 1] = "tout près" elseif c.dist then w[#w + 1] = "à " .. meters(c.dist) end
+    if c.xp and c.xp > 0 then w[#w + 1] = fmt("+%s XP à la remise", thousands(c.xp)) end
+    if c.kind == "obj" and rested > 0 then w[#w + 1] = "repos : XP des monstres × 2" end
+    if c.kind == "hs" then w[#w + 1] = "la pierre de foyer est le plus court vers la suite"
+    elseif c.transport then w[#w + 1] = "le plus court vers la suite" end
+    c.why = tconcat(w, " · ")
   end
-  -- donjon en groupe
-  local Dg, E = T.Dungeon, engine()
-  if group >= 4 and Dg and Dg.ForLevel and E then
-    for _, d in ipairs((try(Dg.ForLevel, level)) or {}) do
-      if level >= (d.min or 1) and level <= (d.max or 60) then
-        local xp = E.KillXP(level, floor(((d.min or level) + (d.max or level)) / 2), true) * E.GroupShare(group) * 120
-        add(rest, { kind = "dungeon", xp = floor(xp), sec = 45 * 60, text = "Donjon en groupe : " .. tostring(d.n or d.key),
-          why = fmt("groupe de %d, niveau %d-%d", group, d.min or 0, d.max or 0) })
-        break
-      end
-    end
-  end
-  -- coin à monstres appris : quand les quêtes manquent (ou rapportent moins)
-  local gr = QB.BestGrind()
-  if gr then
-    local bestQ = 0
-    for _, c in ipairs(rest) do if c.kind ~= "dungeon" then bestQ = max(bestQ, c.rate) end end
-    local rate = gr.rate * (rested > 0 and 2 or 1)
-    if #near + #rest == 0 or rate > bestQ then
-      local travel = (me and legSec(me, gr)) or 0
-      add(rest, { kind = "grind", xp = floor(rate * 600), sec = travel + 600,
+  -- le trajet s'arrête avant 4 arrêts (plus de quête après) : le coin à monstres APPRIS (XP et temps mesurés entre deux
+  -- morts) vient APRÈS ses arrêts, dit comme une mesure — jamais à la place de l'arrêt 1
+  if #steps < 4 then
+    local gr = QB.BestGrind()
+    if gr then
+      local me = playerPt()
+      local rate = gr.rate * (rested > 0 and 2 or 1)
+      steps[#steps + 1] = { kind = "grind", xp = 0, dist = me and distYd(me, gr) or nil, qs = {},
         text = fmt("Tue des monstres%s (%.0f, %.0f)", gr.name and (" « " .. cut(gr.name, 24) .. " »") or "", gr.x, gr.y),
-        why = fmt("plus de bonne quête : %s XP/h appris ici%s", thousands(rate * 3600), rested > 0 and " · XP reposée × 2" or "") })
+        why = fmt("plus de quête dans le trajet · %s XP/h mesurés ici%s", thousands(round2(rate * 3600)), rested > 0 and " · XP reposée × 2" or "") }
     end
   end
-  tsort(near, function(a, b) if a.sec ~= b.sec then return a.sec < b.sec end return (a.q or 0) < (b.q or 0) end)
-  tsort(rest, function(a, b) if a.rate ~= b.rate then return a.rate > b.rate end return (a.q or 0) < (b.q or 0) end)
-  local all = {}
-  for _, c in ipairs(near) do all[#all + 1] = c end
-  for _, c in ipairs(rest) do all[#all + 1] = c end
-  -- vol / pierre de foyer : quand le trajet les prend avant l'étape 1 (Route compte le temps gagné)
-  if R and R.Stops and all[1] and all[1].kind ~= "turn" then
-    local ok, st = pcall(R.Stops, R, 1)
-    local e = ok and type(st) == "table" and st[1]
-    if e and (e.kind == "hs" or e.kind == "fly" or e.kind == "boat" or e.kind == "zeppelin") then
-      tinsert(all, 1, { kind = e.kind, xp = 0, sec = tonumber(e.sec) or 60, rate = 0,
-        text = tostring(e.text or (e.kind == "hs" and "Pierre de foyer" or "Vol")),
-        why = e.kind == "hs" and "la pierre de foyer est le plus court vers la suite" or "le vol est le plus court vers la suite" })
-    end
-  end
-  return { now = all[1], nexts = { all[2], all[3], all[4] }, rested = rested > 0 }
+  return { now = steps[1], nexts = { steps[2], steps[3], steps[4] }, rested = rested > 0 }
 end
 local function stepText(c)
-  return fmt("%s — +%s XP, ≈ %d min · %s", c.text, thousands(c.xp or 0), mins(c.sec), c.why or "")
+  if c.why and c.why ~= "" then return fmt("%s — %s", c.text, c.why) end
+  return tostring(c.text)
 end
 QB.FastStepText = stepText
---- lignes du mode « Monter vite » : « Fais ça maintenant : … » puis « Ensuite : … » (3 au plus)
+--- lignes du mode « Monter vite » : « Fais ça maintenant : … » puis les 3 arrêts suivants du trajet
 function QB.FastLines()
   local p = QB.FastPlan()
   local out = {}
@@ -1020,7 +1304,8 @@ function QB.FastLines()
     out[1] = { text = "Fais ça maintenant : rien de rentable connu ici — choisis une zone (/tai zone)", prio = 1 }
     return out
   end
-  out[1] = { text = "Fais ça maintenant : " .. stepText(p.now), prio = 2 }
+  out[1] = { text = "Fais ça maintenant : " .. stepText(p.now), prio = 2, id = "qb:now",
+    tooltip = "La même étape que la boussole, la bande et la carte : l'arrêt 1 du trajet" }
   for i = 1, 3 do
     local c = p.nexts[i]
     if c then out[#out + 1] = { text = fmt("%d. %s", i, stepText(c)), prio = 1 } end
@@ -1752,6 +2037,19 @@ function QB:OnEnable()
     local xp, name = QB.ParseXP(msg)
     if xp then pcall(QB.LearnKill, xp, name) end
   end)
+  -- (5.1 ROUTE6, audit B4) preuve que le donneur est là : tu l'as ciblé ou survolé pendant que tu es sur son point (rien
+  -- n'est lu tant qu'aucune visite n'est ouverte : une comparaison et c'est tout)
+  local function sawUnit(unit)
+    if next(QB._visit) == nil then return end
+    for _, v in pairs(QB._visit) do
+      if not v.seen and unitIs(unit, v.name, v.npcId) then
+        v.seen = true
+        if QB._absent then QB._absent = nil pcall(QB.Clear, QB, "absent") end
+      end
+    end
+  end
+  self:RegisterEvent("UPDATE_MOUSEOVER_UNIT", function() sawUnit("mouseover") end)
+  self:RegisterEvent("PLAYER_TARGET_CHANGED", function() sawUnit("target") end)
   self:RegisterEvent("QUEST_PROGRESS", function() pcall(QB.LearnFinisher) end)
   self:RegisterEvent("QUEST_COMPLETE", function() pcall(QB.LearnFinisher) end)
   self:On("PLAN_BUILT", function() if QB.Mode() == "pickup" then QB:CheckEmpty() end end)

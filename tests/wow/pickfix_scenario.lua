@@ -92,18 +92,18 @@ return function(M, ctx)
   M.player.level = 25
   check(not QB.Phantom(9102), "B: next level → tried again")
   M.player.level = 24
-  -- reached twice (≤ 10 m, NPC targeted) and left without it → phantom
+  -- (5.1 ROUTE6, audit B4) reached (NPC targeted) and left without it, as often as he likes: NEVER a phantom from a
+  -- walk-past (5.0.0 removed the quest at the 2nd one) ; the absent-giver question is tests/wow/route6_phantom_scenario.lua
   QB.char.phantom, QB.char.visits, QB._visit = {}, {}, {}
   route({ { k = "pick", q = 9201, map = 1440, x = 40, y = 40 }, { k = "obj", q = 9201, o = 1, map = 1440, x = 60, y = 60 } })
-  for visit = 1, 2 do
+  for _ = 1, 3 do
     goTo(40, 40) QB.VisitTick()
     goTo(46, 46) QB.VisitTick()
-    if visit == 1 then
-      P:Evaluate()
-      check(not QB.Phantom(9201) and not find("pick", 9201)._done and not find("pick", 9201)._other, "B: left once without it → the stop stays")
-    end
+    P:Evaluate()
+    check(not QB.Phantom(9201) and not find("pick", 9201)._done and not find("pick", 9201)._other, "B: left without it → the stop stays")
   end
-  check(QB.Phantom(9201) and QB.Phantom(9201).why:find("2 fois", 1, true), "B: giver reached twice without offering → « pas proposée »")
+  check(not QB.Phantom(9201), "B: giver reached three times and left → nothing is removed by a walk-past")
+  check(QB.MarkPhantom(9201, "PNJ absent : test", "t", "player") and QB.Phantom(9201), "B: dismissed by the player (« Pas là »)")
   M.FireEvent("QUEST_ACCEPTED", 1, 9201)
   check(not QB.Phantom(9201), "B: QUEST_ACCEPTED clears it")
   M.units.npc = nil
@@ -139,8 +139,9 @@ return function(M, ctx)
   for _, c in ipairs(plan.nexts) do if c and c.kind == "grind" then hasGrind = true end end
   check(hasGrind, "C: quests run dry → the learned grinding spot is next")
   local lines = QB.FastLines()
-  check(#lines >= 2 and #lines <= 4 and lines[1].text:find("^Fais ça maintenant : ") and lines[1].text:find("XP", 1, true)
-    and lines[1].text:find("min", 1, true), "C: one line « Fais ça maintenant » (XP, time, why) + up to 3 next (" .. tostring(lines[1] and lines[1].text) .. ")")
+  -- (5.1 ROUTE6, audit B7) the real reward and the distance; no duration that no measure gives
+  check(#lines >= 2 and #lines <= 4 and lines[1].text:find("^Fais ça maintenant : ") and lines[1].text:find("XP à la remise", 1, true)
+    and lines[1].text:find("tout près", 1, true), "C: one line « Fais ça maintenant » (XP, distance, why) + up to 3 next (" .. tostring(lines[1] and lines[1].text) .. ")")
   local pl = P:Lines()
   check(pl[1] and pl[1].text == lines[1].text, "C: the route view starts with « Fais ça maintenant »")
   -- rested XP doubles the grinding rate
@@ -173,7 +174,9 @@ return function(M, ctx)
     { level = 24, group = 1, here = { map = 1440, x = 50, y = 50 }, cost = {}, log = {} })
   check(v.green and v.xp == math.floor(900 * Eg.QuestXPFactor(24, 18) + 0.5), "E: green quest XP scaled by the level gap (" .. tostring(v.xp) .. ")")
   local wj = table.concat(v.why, " · ")
-  check(wj:find("XP/min", 1, true) and wj:find("verte", 1, true), "E: why shows XP, XP/min and « verte » (" .. wj .. ")")
+  -- (5.1 ROUTE6, audit B7) objective counts unknown, kill time never measured: the reward, no invented XP/min
+  check(wj:find("XP à la remise", 1, true) and wj:find("verte", 1, true) and not wj:find("XP/min", 1, true) and v.est == true,
+    "E: why shows the real XP and « verte », no XP/min built on supposed counts (" .. wj .. ")")
   local kept = QB.DropLowGreens({ { questID = 1, score = 100 }, { questID = 2, score = 30, green = true, eta = 400 },
     { questID = 3, score = 30, green = true, eta = 40 }, { questID = 4, score = 30, green = true, eta = 400, chain = true },
     { questID = 5, score = 30, eta = 400 }, { questID = 6, score = 70, green = true, eta = 400 } })
