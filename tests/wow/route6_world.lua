@@ -271,12 +271,19 @@ return function(M, ctx, opts)
   local perf = { on = false, worst = 0, total = 0, frames = 0 }
   local count = 0
   -- perf.where = {} : which file the instructions of the current image ran in (one sample per 1000 instructions)
+  -- as tests/wow/session_sim.lua counts a frame: the forever layer of the mock (functions defined after
+  -- WowMock.FOREVER_LAYER_LINE: secret values, documented flags, wrappers) is C code in the game, not addon CPU — it moves
+  -- the clock (count) but not the addon's own cost (own); the mock's API bodies stay counted, as in the session sim
+  local FL = M.FOREVER_LAYER_LINE or math.huge
+  local own = 0
   local function hook()
     count = count + 1
+    local i = debug.getinfo(2, "S")
+    local c = i and i.linedefined >= FL and i.source:find("wowmock.lua", 1, true)
+    if not c then own = own + 1 end
     local wh = perf.where
     if wh then
-      local i = debug.getinfo(2, "S")
-      local src = i and i.short_src and i.short_src:match("([^/]+)$") or "?"
+      local src = c and "C" or (i and i.short_src and i.short_src:match("([^/]+)$") or "?")
       wh[src] = (wh[src] or 0) + 1
     end
   end
@@ -299,13 +306,13 @@ return function(M, ctx, opts)
       rawset(_G, "debugprofilestop", function() return M.now * 1000 + count / 50 end)
     end
     for _ = 1, math.floor(sec / 0.04 + 0.5) do
-      count = 0
+      count, own = 0, 0
       debug.sethook(hook, "", 1000)
       M.Advance(0.04, 0.04)
       debug.sethook()
-      perf.frames, perf.total = perf.frames + 1, perf.total + count
-      if count > perf.worst then perf.worst = count end
-      if perf.onFrame then perf.onFrame(count) end
+      perf.frames, perf.total = perf.frames + 1, perf.total + own
+      if own > perf.worst then perf.worst = own end
+      if perf.onFrame then perf.onFrame(own) end
       if perf.where then for k in pairs(perf.where) do perf.where[k] = nil end end
     end
   end

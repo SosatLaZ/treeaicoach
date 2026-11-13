@@ -62,3 +62,17 @@ def test_phantom_quests_absent_giver(profile):
 def test_buy_item_in_each_questie_flavour(profile, questie):
     """B8: e3_buy / e4_buy of the audit — real item / vendor rows, the real Route.VendorFor."""
     run("route6_buy_scenario.lua", profile, env={"R6_QUESTIE": questie})
+
+
+@pytest.mark.skipif(not LUA, reason="lua5.1 not installed")
+@pytest.mark.parametrize("profile", PROFILES)
+def test_one_answer_true_numbers(profile):
+    """B6 B7 B11 B12 + D4 D5: g_group / b_pick / a_zone (A7) of the audit."""
+    run("route6_now_scenario.lua", profile)
+
+
+@pytest.mark.skipif(not LUA, reason="lua5.1 not installed")
+@pytest.mark.parametrize("profile", PROFILES)
+def test_travel_cost_sources_and_deaths(profile):
+    """B3: Shortest Path estimate (read-only, one call per frame), learned paths, zone factor, death-aware legs."""
+    run("route6_cost_scenario.lua", profile)

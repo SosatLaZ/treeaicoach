@@ -278,9 +278,19 @@ local function spfRun()
   local A = spfAPI()
   if not A then sp.queue, sp.qn = {}, 0 return end
   sp.asked = sp.asked + 1
-  local ok, sec, why = pcall(A.Estimate, q.a.map, q.a.x / 100, q.a.y / 100, q.b.map, q.b.x / 100, q.b.y / 100)
-  if not ok then                                         -- l'API a changé : on n'insiste pas, et c'est dit dans le rapport
-    sp.bad, sp.last = tostring(sec):sub(1, 120), "erreur"
+  -- forme d'appel : « . » (documentée) ; si elle répond « invalid » ou échoue, « : » une fois, et la forme qui marche
+  -- est gardée pour la session (la forme du vrai client n'est pas vérifiée en jeu, audit C2)
+  local ax, ay, bx, by = q.a.x / 100, q.a.y / 100, q.b.x / 100, q.b.y / 100
+  local ok, sec, why
+  if sp.colon ~= true then ok, sec, why = pcall(A.Estimate, q.a.map, ax, ay, q.b.map, bx, by) end
+  if sp.colon == nil and not (ok and (sec ~= nil or why == "combat" or why == "unreachable")) then
+    local ok2, sec2, why2 = pcall(A.Estimate, A, q.a.map, ax, ay, q.b.map, bx, by)
+    if ok2 and (sec2 ~= nil or why2 == "combat" or why2 == "unreachable") then sp.colon, ok, sec, why = true, ok2, sec2, why2
+    elseif ok then sp.colon = false end
+  elseif sp.colon == nil and ok then sp.colon = false end
+  if sp.colon == true and ok == nil then ok, sec, why = pcall(A.Estimate, A, q.a.map, ax, ay, q.b.map, bx, by) end
+  if not ok then                                        -- l'API a changé : on n'insiste pas, et c'est dit dans le rapport
+    sp.bad, sp.last = (T.Cut and T.Cut(tostring(sec), 120) or tostring(sec)), "erreur"
     sp.queue, sp.qn = {}, 0
     return
   end

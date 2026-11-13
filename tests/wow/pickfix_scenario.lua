@@ -139,8 +139,9 @@ return function(M, ctx)
   for _, c in ipairs(plan.nexts) do if c and c.kind == "grind" then hasGrind = true end end
   check(hasGrind, "C: quests run dry → the learned grinding spot is next")
   local lines = QB.FastLines()
-  check(#lines >= 2 and #lines <= 4 and lines[1].text:find("^Fais ça maintenant : ") and lines[1].text:find("XP", 1, true)
-    and lines[1].text:find("min", 1, true), "C: one line « Fais ça maintenant » (XP, time, why) + up to 3 next (" .. tostring(lines[1] and lines[1].text) .. ")")
+  -- (5.1 ROUTE6, audit B7) the real reward and the distance; no duration that no measure gives
+  check(#lines >= 2 and #lines <= 4 and lines[1].text:find("^Fais ça maintenant : ") and lines[1].text:find("XP à la remise", 1, true)
+    and lines[1].text:find("tout près", 1, true), "C: one line « Fais ça maintenant » (XP, distance, why) + up to 3 next (" .. tostring(lines[1] and lines[1].text) .. ")")
   local pl = P:Lines()
   check(pl[1] and pl[1].text == lines[1].text, "C: the route view starts with « Fais ça maintenant »")
   -- rested XP doubles the grinding rate
@@ -173,7 +174,9 @@ return function(M, ctx)
     { level = 24, group = 1, here = { map = 1440, x = 50, y = 50 }, cost = {}, log = {} })
   check(v.green and v.xp == math.floor(900 * Eg.QuestXPFactor(24, 18) + 0.5), "E: green quest XP scaled by the level gap (" .. tostring(v.xp) .. ")")
   local wj = table.concat(v.why, " · ")
-  check(wj:find("XP/min", 1, true) and wj:find("verte", 1, true), "E: why shows XP, XP/min and « verte » (" .. wj .. ")")
+  -- (5.1 ROUTE6, audit B7) objective counts unknown, kill time never measured: the reward, no invented XP/min
+  check(wj:find("XP à la remise", 1, true) and wj:find("verte", 1, true) and not wj:find("XP/min", 1, true) and v.est == true,
+    "E: why shows the real XP and « verte », no XP/min built on supposed counts (" .. wj .. ")")
   local kept = QB.DropLowGreens({ { questID = 1, score = 100 }, { questID = 2, score = 30, green = true, eta = 400 },
     { questID = 3, score = 30, green = true, eta = 40 }, { questID = 4, score = 30, green = true, eta = 400, chain = true },
     { questID = 5, score = 30, eta = 400 }, { questID = 6, score = 70, green = true, eta = 400 } })

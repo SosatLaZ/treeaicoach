@@ -426,7 +426,9 @@ function N.NearFirst(nodes, ord, start, dist, yd, cap, logCount, only)
   for _, i in ipairs(ord) do
     local nd = nodes[i]
     local k = nd.steps[1].k
-    if (k == "turn" or k == "pick") and (not only or k == only) and nd.x then
+    -- (5.1 ROUTE6) only = "obj" : the objective he stands on (before: the filter let only turn / pick through — dead call)
+    local want = only and (k == only) or (not only and (k == "turn" or k == "pick"))
+    if want and nd.x then
       local d = dist(start, nd)
       if d and d <= (yd or N.NEAR) then
         local trial = {}

@@ -1272,18 +1272,19 @@ function QB.FastPlan()
     local w = {}
     if c.dist and c.dist <= 110 then w[#w + 1] = "tout près" elseif c.dist then w[#w + 1] = "à " .. meters(c.dist) end
     if c.xp and c.xp > 0 then w[#w + 1] = fmt("+%s XP à la remise", thousands(c.xp)) end
-    if c.kind == "obj" and rested > 0 then w[#w + 1] = "XP reposée sur les monstres" end
+    if c.kind == "obj" and rested > 0 then w[#w + 1] = "repos : XP des monstres × 2" end
     if c.kind == "hs" then w[#w + 1] = "la pierre de foyer est le plus court vers la suite"
     elseif c.transport then w[#w + 1] = "le plus court vers la suite" end
     c.why = tconcat(w, " · ")
   end
-  -- plus aucun arrêt : le coin à monstres APPRIS (XP et temps mesurés entre deux morts), dit comme une mesure
-  if #steps == 0 then
+  -- le trajet s'arrête avant 4 arrêts (plus de quête après) : le coin à monstres APPRIS (XP et temps mesurés entre deux
+  -- morts) vient APRÈS ses arrêts, dit comme une mesure — jamais à la place de l'arrêt 1
+  if #steps < 4 then
     local gr = QB.BestGrind()
     if gr then
       local me = playerPt()
       local rate = gr.rate * (rested > 0 and 2 or 1)
-      steps[1] = { kind = "grind", xp = 0, dist = me and distYd(me, gr) or nil, qs = {},
+      steps[#steps + 1] = { kind = "grind", xp = 0, dist = me and distYd(me, gr) or nil, qs = {},
         text = fmt("Tue des monstres%s (%.0f, %.0f)", gr.name and (" « " .. cut(gr.name, 24) .. " »") or "", gr.x, gr.y),
         why = fmt("plus de quête dans le trajet · %s XP/h mesurés ici%s", thousands(round2(rate * 3600)), rested > 0 and " · XP reposée × 2" or "") }
     end

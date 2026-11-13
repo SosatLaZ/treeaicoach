@@ -290,6 +290,31 @@ end
 -- deterministic hash of a step list (k, q, o) → 6 hex digits, no bit ops
 -- (LITE) mémorisé par liste (même table, même longueur, même 1re/dernière étape) : recalculé seulement si elle change
 local hashMemo = setmetatable({}, { __mode = "k" })
+--- (5.1 ROUTE6) mêmes étapes aux mêmes lieux dans le même ordre (sorte, quête, objectif, carte, x, y, achat) ? Au même
+--- lieu (un PNJ), l'ordre des étapes entre elles ne compte pas (deux remises chez lui : l'une ou l'autre d'abord).
+local function stepId(s) return tostring(s.k) .. ":" .. tostring(s.q) .. ":" .. tostring(s.o) .. ":" .. tostring(s.buy) .. ":" .. tostring(s.vendorName) end
+local function samePlace(s, t) return s.map == t.map and s.x == t.x and s.y == t.y end
+function E.SameSteps(a, b)
+  if #a ~= #b then return false end
+  local i = 1
+  while i <= #a do
+    local j = i
+    while a[j + 1] and a[j + 1].x and samePlace(a[j + 1], a[i]) do j = j + 1 end
+    local seen = {}
+    for k = i, j do
+      if not samePlace(a[k], b[k]) then return false end
+      local id = stepId(a[k])
+      seen[id] = (seen[id] or 0) + 1
+    end
+    for k = i, j do
+      local id = stepId(b[k])
+      if not seen[id] or seen[id] == 0 then return false end
+      seen[id] = seen[id] - 1
+    end
+    i = j + 1
+  end
+  return true
+end
 function E.Hash(steps)
   local m = type(steps) == "table" and hashMemo[steps]
   if m and m.n == #steps and m.a == steps[1] and m.z == steps[#steps] then return m.h end
@@ -1148,10 +1173,17 @@ function P:Reorder(why, force)
     coroutine.yield()
     local before = P.steps and P.cursor and P.steps[P.cursor] and stepKeyOf(P.steps[P.cursor]) or nil
     local order0 = P.steps and E.Hash(P.steps) or nil
+    local old, oldCur = P.steps, P.cursor
     P.auto = route
     P.steps, P.key = nil, nil
-    P:EnsureSteps(); P:Evaluate()
-    if order0 and P.steps and E.Hash(P.steps) == order0 then return end   -- même ordre : rien à redessiner
+    P:EnsureSteps()
+    if order0 and old and P.steps and E.SameSteps(old, P.steps) then
+      -- même ordre : la MÊME table d'étapes reste (carte, mini-carte, liste ne se redessinent pas pour rien)
+      P.steps, P.cursor = old, oldCur
+      P:Evaluate()
+      return
+    end
+    P:Evaluate()
     P:StepsChanged()
     coroutine.yield()
     P._sig, P._lastRender = nil, nil
@@ -1264,8 +1296,11 @@ function P:Repair(force)
       budgetYield()
     end
     -- Or-opt on a copy; keep it only if it saves ≥ 10 % and ≥ 2 min (hysteresis)
+    -- (5.1 ROUTE6, audit B1) not on the zone route: ZonePlan solves it by stops (all objectives of one site together) and
+    -- re-solves it from the player's position; a step-by-step Or-opt here split Gann's site (one item sent 3 stops later)
     local trial = copySteps(steps)
-    local gain, before = E.OrOpt(trial, cursor, 20, start, leg, budgetYield, 2)
+    local gain, before = 0, 0
+    if not zAuto then gain, before = E.OrOpt(trial, cursor, 20, start, leg, budgetYield, 2) end
     if gain >= 120 and gain >= 0.10 * before then
       for i = 1, #trial do steps[i] = trial[i] end
       P:Toast(fmt("Itinéraire mis à jour (−%d min)", floor(gain / 60 + 0.5)))
@@ -1737,8 +1772,13 @@ function P:Refresh(force)
       if force then self:NoteWhy("recalcul demandé") end
       self.buildCount = (self.buildCount or 0) + 1      -- (5.1 ROUTE6) recalculs complets (tests, sonde)
       self:StartJob(function()
+        local old, oldCur = P.steps, P.cursor
         P:BuildAuto(budgetYield)   -- no pcall here: Lua 5.1 cannot yield across pcall (resume catches errors)
-        P:EnsureSteps(); P:Evaluate(); P:Render()
+        P:EnsureSteps()
+        -- (5.1 ROUTE6) données neuves, mêmes arrêts au même endroit dans le même ordre : la MÊME table d'étapes reste
+        -- (carte, mini-carte, liste ne se redessinent pas pour rien)
+        if old and P.steps and P.steps ~= old and P.src == "auto" and E.SameSteps(old, P.steps) then P.steps, P.cursor = old, oldCur end
+        P:Evaluate(); P:Render()
         -- (QUESTS 4.1) nouvel ordre : Suivi Forever (s'il guide) le reçoit aussi, même quand le n° d'étape n'a pas bougé
         local Rt = T.Route
         if Rt and Rt.OnPlanStep then pcall(Rt.OnPlanStep, Rt) end
@@ -1889,7 +1929,12 @@ function P:OnEnable()
         if d and d < 40 and P.char then P.char.skip[skipKey(P.key, s)] = true; P:Evaluate() end
       end
       local QBm = T.QuestBrain                       -- (4.3.5 PICKFIX) donneur atteint puis quitté sans la quête
-      if QBm and QBm.VisitTick then pcall(QBm.VisitTick) end
+      -- (5.1 ROUTE6) dans sa propre image (file « un par image ») : relevé du journal + quêtes à prendre ≈ 1 ms, qui
+      -- tombait dans la même image que la boussole et le re-tri (pire image > 4 ms en marchant)
+      if QBm and QBm.VisitTick and not P._visitQ then
+        P._visitQ = true
+        T:Spread(P, function() P._visitQ = nil if not inCombat() then pcall(QBm.VisitTick) end end, nil, nil, nil, nil, "Planner:visite")
+      end
       if not P:QuickWin() then P:MoveCheck() end     -- (5.1 ROUTE6) le trajet part de là où tu es
       P:Render()
     end

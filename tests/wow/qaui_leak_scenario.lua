@@ -13,7 +13,9 @@ return function(M, ctx)
   local Lb = dofile("tests/wow/qaui_lib.lua")
   Lb.world(M, T)
   Lb.goTo(1441, 46, 50)
-  M.Advance(5, 0.5)
+  -- (5.1 ROUTE6) the login settles first: new quest data now reaches the route without « Recalculer » (audit B2), so the
+  -- pilot's « En pause (n) » row of the quest list (module Watch, « tout ») appears ~20 s after login — content, not a leak
+  M.Advance(40, 0.5)
   W.char.dgAll, W.char.dungeon, W.char.collapsed = nil, nil, {}
   W.Open("dungeon")
   local win = W.GetWindow()
