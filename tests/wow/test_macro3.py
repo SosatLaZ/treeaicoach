@@ -135,7 +135,7 @@ def test_pro_macros():
     assert burst.startswith("#showtooltip Tir rapide\n/cast Tir rapide") and burst.endswith("/cast Tir des arcanes")
     assert "/cast Fureur sanguinaire" in burst and "/use 13" in burst
     pan = _body("TAI Pro Panique", level=30)
-    assert "/stopattack" in pan and "/petfollow" in pan and pan.endswith("[mod:shift][nocombat] Piège givrant; Feindre la mort")
+    assert "/stopattack" in pan and "/petfollow" in pan and pan.endswith("/cast [nocombat] Piège givrant; Feindre la mort")
     assert _body("TAI Pro Panique", level=28) is None                   # Feign Death at 30
     mel = _body("TAI Pro Melee")
     assert "/castsequence reset=target Coupure d'ailes, null" in mel and "/cast Attaque du raptor" in mel

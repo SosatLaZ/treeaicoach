@@ -674,18 +674,18 @@ D.classes.WARRIOR = {
    o="Barre principale, près de tes sorts (raccourci conseillé : R).", v={
     {b="#showtooltip {2687}\n/cast {2687}\n?/cast [stance:3] {18499}", r={2687}, it={}},
   }},
-  {n="TAI Burst", d="Témérité (+ Souhait mortel) + racial + bijoux", k="Maj+R", i="INV_Misc_QuestionMark", def=true, c="spell", s={"armes", "fureur"}, x="", l=1,
+  {n="TAI Burst", d="Témérité (+ Souhait mortel) + racial + bijoux", k="Ctrl+R", i="INV_Misc_QuestionMark", def=true, c="spell", s={"armes", "fureur"}, x="", l=1,
    w="Tous tes gros cooldowns sur une touche : un seul est sur le temps de recharge global, les raciaux et bijoux « Utiliser » partent avec (lignes ajoutées seulement si tu les as).",
    sp=true, pr=true, f="m",
-   o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+R).", v={
+   o="Barre secondaire, sous la barre principale (raccourci conseillé : Ctrl+R).", v={
     {b="#showtooltip\n/cast ?[mod:shift] {12328}; [nostance:3] {2458}; {1719}\n?/cast {20572}\n?/cast {20554}\n?/use {slot:13}\n?/use {slot:14}", r={2458, 1719}, it={}},
     {b="#showtooltip\n/cast {12328}\n?/cast {20572}\n?/cast {20554}\n?/use {slot:13}\n?/use {slot:14}", r={12328}, it={}},
     {b="#showtooltip\n?/cast {20572}\n?/cast {20554}\n?/use {slot:13}\n?/use {slot:14}", r={}, it={}},
   }},
-  {n="TAI Mur", d="Mur protecteur (Maj : Dernier rempart)", k="Maj+V", i="INV_Misc_QuestionMark", def=true, c="spell", s={"protection"}, x="", l=20,
+  {n="TAI Mur", d="Mur protecteur (Maj : Dernier rempart)", k="Ctrl+V", i="INV_Misc_QuestionMark", def=true, c="spell", s={"protection"}, x="", l=20,
    w="Bouton panique du tank : -75 % de dégâts (Posture défensive requise), Maj = Dernier rempart.",
    sp=true, pr=true, f="m",
-   o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+V).", v={
+   o="Barre secondaire, sous la barre principale (raccourci conseillé : Ctrl+V).", v={
     {b="#showtooltip\n/cast ?[mod:shift] {12975}; [nostance:2] {71}; {871}", r={71, 871}, it={}},
     {b="#showtooltip\n/cast {12975}", r={12975}, it={}},
   }},
@@ -695,10 +695,10 @@ D.classes.WARRIOR = {
    o="Barre principale, près de tes sorts (raccourci conseillé : Q).", v={
     {b="#showtooltip\n/cast [nostance:2] {71}; {2565}", r={71, 2565}, it={}},
   }},
-  {n="TAI Tonnerre", d="Coup de tonnerre (Combat), Maj : Brise-genou", k="Maj+Q", i="INV_Misc_QuestionMark", def=false, c="spell", s={}, x="groupe", l=6,
+  {n="TAI Tonnerre", d="Coup de tonnerre (Combat), Maj : Brise-genou", k="Ctrl+Q", i="INV_Misc_QuestionMark", def=false, c="spell", s={}, x="groupe", l=6,
    w="Ralentit les attaques de tous les monstres autour : menace de zone et moins de dégâts.",
    sp=false, pr=false, f="m",
-   o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+Q).", v={
+   o="Barre secondaire, sous la barre principale (raccourci conseillé : Ctrl+Q).", v={
     {b="#showtooltip\n/startattack\n/cast ?[mod:shift] {1715}; [nostance:1] {2457}; {6343}", r={2457, 6343}, it={}},
   }},
   {n="TAI Victoire", d="Ivresse de la victoire après un kill", k="Maj+2", i="INV_Misc_QuestionMark", def=true, c="spell", s={}, x="solo", l=20,
@@ -727,18 +727,17 @@ D.classes.WARRIOR = {
     {b="#showtooltip\n/use {item:hs}", r={}, it={"hs"}},
     {b="#showtooltip\n/use {item:hpot}", r={}, it={"hpot"}},
   }},
-  {n="TAI Bandage", d="Bandage : survol > cible amicale > toi (Alt : toi)", k="Maj+N", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
+  {n="TAI Bandage", d="Bandage : allié survolé, sinon cible amie, sinon toi", k="Maj+N", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
    w="Bandage le plus fort permis par ton Secourisme, posé sur l'allié survolé sans changer de cible.",
-   sp=true, pr=true, f="mo",
+   sp=true, pr=true, f="o",
    o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+N).", v={
-    {b="#showtooltip\n/use [mod:alt,@player][@mouseover,help,nodead][@target,help,nodead][@player] {item:bandage}", r={}, it={"bandage"}},
+    {b="#showtooltip\n/use [@mouseover,help,nodead][@target,help,nodead][@player] {item:bandage}", r={}, it={"bandage"}},
   }},
-  {n="TAI Monture", d="Monture (Maj : Pierre de foyer) ; descend si tu es monté", k="Maj+Z", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
-   w="La monture du sac (choisie automatiquement, hors combat) ; recliquer te fait descendre. Avant ta première monture, la macro ne lance que la Pierre de foyer.",
-   sp=true, pr=true, f="m",
-   o="Barre secondaire : entre deux quêtes (et Maj+clic pour rentrer).", v={
-    {b="#showtooltip\n/use [mod:shift] {item:hearth}\n/stopmacro [mod:shift]\n/dismount [mounted]\n/use [nomounted] {item:mount}", r={}, it={"hearth", "mount"}},
-    {b="#showtooltip\n/use {item:hearth}", r={}, it={"hearth"}},
+  {n="TAI Monture", d="Monte sur ta monture ; descend si tu es déjà monté", k="Maj+Z", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
+   w="La monture du sac (choisie automatiquement, hors combat) ; rappuyer te fait descendre. Elle ne lance jamais la Pierre de foyer. Sans monture dans tes sacs, la macro n'est pas créée (elle ne ferait rien).",
+   sp=true, pr=true, f="",
+   o="Barre secondaire : entre deux quêtes.", v={
+    {b="#showtooltip\n/use [nomounted] {item:mount}\n/dismount [mounted]", r={}, it={"mount"}},
   }},
   {n="TAI Marqueur", d="Crâne sur la cible (Maj : croix) pour le groupe", k="Ctrl+1", i="Ability_Hunter_SniperShot", def=false, c="spell", s={}, x="groupe", l=1,
    w="Marque la cible à tuer en premier (crâne) ou à contrôler (croix).",
@@ -805,10 +804,10 @@ D.classes.PALADIN = {
    o="Case 5 de la barre principale (touche 5).", v={
     {b="#showtooltip\n/cast ?[mod:shift] {2812}; ?[mod:ctrl,@mouseover,harm,nodead][mod:ctrl] {24275}; [@mouseover,harm,nodead][] {879}", r={879}, it={}},
   }},
-  {n="TAI Marteau", d="Marteau de la justice (Maj : Repentir) — interrompt", k="Maj+4", i="INV_Misc_QuestionMark", def=true, c="spell", s={}, x="", l=8,
+  {n="TAI Marteau", d="Marteau de la justice (Maj : Repentir) — interrompt", k="Ctrl+4", i="INV_Misc_QuestionMark", def=true, c="spell", s={}, x="", l=8,
    w="/stopcasting coupe ton soin en cours pour étourdir tout de suite un lanceur de sorts.",
    sp=true, pr=true, f="mo",
-   o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+4).", v={
+   o="Barre secondaire, sous la barre principale (raccourci conseillé : Ctrl+4).", v={
     {b="#showtooltip\n/stopcasting\n/cast ?[mod:shift,@mouseover,harm,nodead][mod:shift] {20066}; [@mouseover,harm,nodead][] {853}", r={853}, it={}},
   }},
   {n="TAI Bulle", d="Bouclier divin (Ctrl : Imposition des mains)", k="Maj+V", i="INV_Misc_QuestionMark", def=true, c="spell", s={}, x="", l=6,
@@ -825,10 +824,10 @@ D.classes.PALADIN = {
     {b="#showtooltip\n/cast [mod:alt,@player][@mouseover,help,nodead][@target,help,nodead][@player] {4987}", r={4987}, it={}},
     {b="#showtooltip\n/cast [mod:alt,@player][@mouseover,help,nodead][@target,help,nodead][@player] {1152}", r={1152}, it={}},
   }},
-  {n="TAI BoP", d="Bénédiction de protection (Maj : liberté)", k="Maj+6", i="INV_Misc_QuestionMark", def=true, c="spell", s={}, x="groupe", l=10,
+  {n="TAI BoP", d="Bénédiction de protection (Maj : liberté)", k="Ctrl+6", i="INV_Misc_QuestionMark", def=true, c="spell", s={}, x="groupe", l=10,
    w="Sauve un allié frappé au corps à corps (le monstre change de cible) ; Maj = Liberté contre ralentissements.",
    sp=true, pr=true, f="mo",
-   o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+6).", v={
+   o="Barre secondaire, sous la barre principale (raccourci conseillé : Ctrl+6).", v={
     {b="#showtooltip\n/cast ?[mod:shift,@mouseover,help,nodead][mod:shift,help,nodead][mod:shift,@player] {1044}; [mod:alt,@player][@mouseover,help,nodead][@target,help,nodead][@player] {1022}", r={1022}, it={}},
   }},
   {n="TAI Benediction", d="Puissance (Maj : Sagesse, Ctrl : Rois)", k="7", i="INV_Misc_QuestionMark", def=true, c="spell", s={}, x="", l=4,
@@ -867,11 +866,11 @@ D.classes.PALADIN = {
    o="Barre de côté : un clic quand tu en as besoin.", v={
     {b="#showtooltip\n/cast [@mouseover,help,dead][help,dead] {7328}", r={7328}, it={}},
   }},
-  {n="TAI Repas", d="Mange + boit (Maj : boire seul, Ctrl : manger seul)", k="Maj+B", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
-   w="Nourriture et boisson du sac les plus fortes pour ton niveau, mises à jour quand ton sac change (les invoquées passent d'abord, elles sont gratuites). Manger et boire ne déclenchent pas de temps de recharge global : un seul appui lance les deux.",
-   sp=true, pr=true, f="m",
+  {n="TAI Repas", d="Mange et boit (la meilleure nourriture et la meilleure boisson du sac)", k="Maj+B", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
+   w="Nourriture et boisson du sac les plus fortes pour ton niveau, mises à jour quand ton sac change (les invoquées passent d'abord, elles sont gratuites). Manger et boire ne déclenchent pas de temps de recharge global : un seul appui lance les deux. Sans variante Maj / Ctrl : la touche conseillée contient déjà Maj.",
+   sp=true, pr=true, f="",
    o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+B).", v={
-    {b="#showtooltip\n?/use [nomod:shift] {item:food}\n?/use [nomod:ctrl] {item:water}", r={}, it={}},
+    {b="#showtooltip\n?/use {item:food}\n?/use {item:water}", r={}, it={}},
   }},
   {n="TAI Survie", d="Pierre de soins, puis potion de soins au 2e appui", k="Maj+H", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
    w="Les deux ont des temps de recharge séparés : pierre d'abord (gratuite), potion ensuite. La séquence revient au début à la fin du combat.",
@@ -887,18 +886,17 @@ D.classes.PALADIN = {
    o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+J).", v={
     {b="#showtooltip\n/use {item:mpot}", r={}, it={"mpot"}},
   }},
-  {n="TAI Bandage", d="Bandage : survol > cible amicale > toi (Alt : toi)", k="Maj+N", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
+  {n="TAI Bandage", d="Bandage : allié survolé, sinon cible amie, sinon toi", k="Maj+N", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
    w="Bandage le plus fort permis par ton Secourisme, posé sur l'allié survolé sans changer de cible.",
-   sp=true, pr=true, f="mo",
+   sp=true, pr=true, f="o",
    o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+N).", v={
-    {b="#showtooltip\n/use [mod:alt,@player][@mouseover,help,nodead][@target,help,nodead][@player] {item:bandage}", r={}, it={"bandage"}},
+    {b="#showtooltip\n/use [@mouseover,help,nodead][@target,help,nodead][@player] {item:bandage}", r={}, it={"bandage"}},
   }},
-  {n="TAI Monture", d="Monture (Maj : Pierre de foyer) ; descend si tu es monté", k="Maj+Z", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
-   w="La monture du sac (choisie automatiquement, hors combat) ; recliquer te fait descendre. Avant ta première monture, la macro ne lance que la Pierre de foyer.",
-   sp=true, pr=true, f="m",
-   o="Barre secondaire : entre deux quêtes (et Maj+clic pour rentrer).", v={
-    {b="#showtooltip\n/use [mod:shift] {item:hearth}\n/stopmacro [mod:shift]\n/dismount [mounted]\n/use [nomounted] {item:mount}", r={}, it={"hearth", "mount"}},
-    {b="#showtooltip\n/use {item:hearth}", r={}, it={"hearth"}},
+  {n="TAI Monture", d="Monte sur ta monture ; descend si tu es déjà monté", k="Maj+Z", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
+   w="La monture du sac (choisie automatiquement, hors combat) ; rappuyer te fait descendre. Elle ne lance jamais la Pierre de foyer. Sans monture dans tes sacs, la macro n'est pas créée (elle ne ferait rien).",
+   sp=true, pr=true, f="",
+   o="Barre secondaire : entre deux quêtes.", v={
+    {b="#showtooltip\n/use [nomounted] {item:mount}\n/dismount [mounted]", r={}, it={"mount"}},
   }},
   {n="TAI Marqueur", d="Crâne sur la cible (Maj : croix) pour le groupe", k="Ctrl+1", i="Ability_Hunter_SniperShot", def=false, c="spell", s={}, x="groupe", l=1,
    w="Marque la cible à tuer en premier (crâne) ou à contrôler (croix).",
@@ -921,7 +919,7 @@ D.classes.PALADIN = {
 }
 D.classes.HUNTER = {
   {n="TAI Tir", d="Tir auto + familier + Invocation de faucon (Maj : Flèches multiples)", k="1", i="INV_Weapon_Bow_02", def=true, c="spell", s={"bete"}, x="", l=1,
-   w="Un seul bouton à marteler : « !Tir automatique » relance le tir auto sans jamais le couper, le familier attaque ta cible (Alt = il reste), puis ton tir instantané. Invocation de faucon (talent Bêtes) partage la recharge du Tir des arcanes : elle le remplace, Ctrl garde l'Arcane. Sans Aspect du faucon, il revient dès que le tir est en recharge.",
+   w="Un seul bouton à marteler : « !Tir automatique » relance le tir auto sans jamais le couper, le familier attaque ta cible (Alt = il reste), puis ton tir instantané. Invocation de faucon (talent Bêtes) partage la recharge du Tir des arcanes : elle le remplace, Ctrl garde l'Arcane. Réglage « Remettre l'Aspect du faucon s'il manque » (coupé d'office : un appui = une action) : la macro tente aussi l'Aspect du faucon.",
    sp=true, pr=false, f="mpg", vl={"Invocation de faucon (Ctrl : Arcanes)", "Tir des arcanes", "Tir auto seul"},
    o="Case 1 de la barre principale : le bouton que tu cliques le plus, en boucle.", v={
     {b="#showtooltip\n/cast ?[mod:shift] {2643}; ?[mod:ctrl] {3044}; {1293241}\n?/cast !{13165}\n/cast !{75}\n/petattack [harm,nodead,nomod:alt]", r={1293241, 75}, it={}},
@@ -929,14 +927,14 @@ D.classes.HUNTER = {
     {b="#showtooltip\n/cast !{75}\n/petattack [harm,nodead,nomod:alt]", r={75}, it={}},
   }},
   {n="TAI Tir", d="Tir auto + familier + Tir des arcanes (Maj : multiples, Ctrl : Visée)", k="1", i="INV_Weapon_Bow_02", def=true, c="spell", s={"precision", "survie"}, x="", l=1,
-   w="« !Tir automatique » relance le tir auto sans jamais le couper, le familier part sur ta cible (Alt = il reste). Visée (Ctrl) se lance juste après un tir auto pour ne pas le décaler. Sans Aspect du faucon, il revient dès que le tir est en recharge.",
+   w="« !Tir automatique » relance le tir auto sans jamais le couper, le familier part sur ta cible (Alt = il reste). Visée (Ctrl) se lance juste après un tir auto pour ne pas le décaler. Réglage « Remettre l'Aspect du faucon s'il manque » (coupé d'office : un appui = une action) : la macro tente aussi l'Aspect du faucon.",
    sp=true, pr=false, f="mpg", vl={"Tir des arcanes (Ctrl : Visée)", "Tir auto seul"},
    o="Case 1 de la barre principale : le bouton que tu cliques le plus, en boucle.", v={
     {b="#showtooltip\n/cast ?[mod:shift] {2643}; ?[mod:ctrl] {19434}; {3044}\n?/cast !{13165}\n/cast !{75}\n/petattack [harm,nodead,nomod:alt]", r={3044, 75}, it={}},
     {b="#showtooltip\n/cast !{75}\n/petattack [harm,nodead,nomod:alt]", r={75}, it={}},
   }},
-  {n="TAI Marque", d="Faucon si besoin, puis Marque du chasseur (survol) + familier", k="2", i="INV_Misc_QuestionMark", def=true, c="spell", s={}, x="", l=6,
-   w="Ouvre le combat : si l'Aspect du faucon n'est pas actif, le 1er appui le met (avant le pull, sans risque) ; l'appui suivant pose la marque (monstre survolé en priorité) et envoie le familier sur ce même monstre (Alt = il reste).",
+  {n="TAI Marque", d="Marque du chasseur (survol) + familier", k="2", i="INV_Misc_QuestionMark", def=true, c="spell", s={}, x="", l=6,
+   w="Ouvre le combat : pose la marque (monstre survolé en priorité) et envoie le familier sur ce même monstre (Alt = il reste). Réglage « Remettre l'Aspect du faucon s'il manque » (coupé d'office : un appui = une action) : le 1er appui met le Faucon, le suivant pose la marque.",
    sp=true, pr=false, f="mopg",
    o="Case 2 : premier clic de chaque combat, avant le Tir.", v={
     {b="#showtooltip {1130}\n?/cast !{13165}\n/cast [@mouseover,harm,nodead][] {1130}\n/petattack [@mouseover,harm,nodead,nomod:alt][harm,nodead,nomod:alt]", r={1130}, it={}},
@@ -1017,10 +1015,10 @@ D.classes.HUNTER = {
    o="Barre secondaire : sur un groupe de monstres (raccourci conseillé : Maj+1).", v={
     {b="#showtooltip\n/cast {2643}\n/cast !{75}\n/petattack [harm,nodead]", r={2643, 75}, it={}},
   }},
-  {n="TAI Defense", d="Désengagement (Maj : Dissuasion, Alt/Ctrl : racial)", k="Maj+Q", i="INV_Misc_QuestionMark", def=true, c="spell", s={}, x="", l=20,
+  {n="TAI Defense", d="Désengagement (Maj : Dissuasion, Alt/Ctrl : racial)", k="-", i="INV_Misc_QuestionMark", def=false, c="spell", s={}, x="", l=20,
    w="Désengagement retire de la menace au corps à corps (pratique en groupe) ; Dissuasion (talent Survie) pare tout pendant 10 s. Alt = Choc martial (Tauren), Ctrl = Forme de pierre (Nain) : ajoutés seulement si ta race les a.",
-   sp=false, pr=true, f="m",
-   o="Barre principale, à côté de TAI Melee.", v={
+   sp=false, pr=false, f="m",
+   o="Barre principale, à côté de TAI Melee (au clic : Maj / Alt / Ctrl).", v={
     {b="#showtooltip\n/cast ?[mod:shift] {19263}; ?[mod:alt] {20549}; ?[mod:ctrl] {20594}; {781}", r={781}, it={}},
   }},
   {n="TAI Provoc", d="Trait provocateur sur survol ou cible (groupe)", k="-", i="INV_Misc_QuestionMark", def=false, c="spell", s={}, x="groupe", l=12,
@@ -1060,7 +1058,7 @@ D.classes.HUNTER = {
     {b="#showtooltip\n/cast ?[mod:shift] {19883}; {1494}", r={1494}, it={}},
   }},
   {n="TAI Pro Tir", d="Pull en un bouton : cible, marque, familier, tir auto, morsure, arcanes", k="1", i="INV_Misc_QuestionMark", def=false, c="spell", s={}, x="", l=1,
-   w="Sans cible (ou cible morte) : l'ennemi le plus proche devant toi (attention en donjon). Marque puis Morsure de serpent une seule fois par cible, ensuite Tir des arcanes à chaque appui ; tir auto jamais coupé, familier envoyé (Alt = il reste). Sans Aspect du faucon, le 1er appui le met.",
+   w="Sans cible (ou cible morte) : l'ennemi le plus proche devant toi (attention en donjon). Marque puis Morsure de serpent une seule fois par cible, ensuite Tir des arcanes à chaque appui ; tir auto jamais coupé, familier envoyé (Alt = il reste). Les deux premiers appuis sur une cible tentent aussi le Tir des arcanes : le jeu répond « pas encore prêt », c'est normal. Réglage « Remettre l'Aspect du faucon s'il manque » (coupé d'office : un appui = une action).",
    sp=false, pr=true, f="mpg", pro=true, t="« /castsequence reset=target …, null » : marque (et morsure) une seule fois par cible, ensuite chaque appui = Tir des arcanes.", vl={"Marque + Morsure, puis Arcanes", "Marque, puis Arcanes", "Tir auto seul"},
    o="Case 1 : remplace TAI Tir et TAI Marque, un seul bouton pour tout le combat.", v={
     {b="#showtooltip {3044}\n/targetenemy [noharm][dead]\n?/cast !{13165}\n/castsequence reset=target {1130}, {1978}, null\n/cast {3044}\n/cast !{75}\n/petattack [harm,nodead,nomod:alt]", r={3044, 1130, 1978, 75}, it={}},
@@ -1073,11 +1071,11 @@ D.classes.HUNTER = {
    o="Barre principale : élites, rares, combats difficiles.", v={
     {b="#showtooltip {3045}\n/cast {3045}\n?/cast {19574}\n?/cast {20572}\n?/cast {20554}\n?/use {slot:13}\n?/use {slot:14}\n/cast {3044}", r={3045, 3044}, it={}},
   }},
-  {n="TAI Pro Panique", d="Panique : Feindre la mort + familier au pied (Maj : Piège givrant)", k="Maj+E", i="INV_Misc_QuestionMark", def=false, c="spell", s={}, x="", l=30,
-   w="Coupe ton incantation et tes attaques, rappelle le familier et fait le mort dans le même appui. Ensuite (hors combat) ou avec Maj : Piège givrant à tes pieds. Alt = Choc martial (Tauren).",
-   sp=false, pr=true, f="mp", pro=true, t="Feindre la mort ne prend pas le temps de recharge global dans Forever : il part même juste après un tir, avec l'arrêt des attaques et le rappel du familier.",
+  {n="TAI Pro Panique", d="Panique : Feindre la mort + familier au pied ; hors combat : Piège givrant", k="Maj+E", i="INV_Misc_QuestionMark", def=false, c="spell", s={}, x="", l=30,
+   w="Coupe ton incantation et tes attaques, rappelle le familier et fait le mort dans le même appui. Ensuite (hors combat) : Piège givrant à tes pieds. Sans variante Maj / Alt : la touche conseillée contient déjà Maj.",
+   sp=false, pr=true, f="p", pro=true, t="Feindre la mort ne prend pas le temps de recharge global dans Forever : il part même juste après un tir, avec l'arrêt des attaques et le rappel du familier.",
    o="À portée de pouce : quand ça tourne mal.", v={
-    {b="#showtooltip\n/stopcasting\n/stopattack\n/petfollow\n/cast ?[mod:alt] {20549}; [mod:shift][nocombat] {1499}; {5384}", r={1499, 5384}, it={}},
+    {b="#showtooltip\n/stopcasting\n/stopattack\n/petfollow\n/cast [nocombat] {1499}; {5384}", r={1499, 5384}, it={}},
   }},
   {n="TAI Pro Melee", d="Mêlée : Coupure d'ailes 1 fois, puis Mangouste ; Raptor à chaque coup", k="Q", i="INV_Misc_QuestionMark", def=false, c="spell", s={}, x="", l=1,
    w="Le 1er appui sur une cible la ralentit (Coupure d'ailes), les suivants lancent Mangouste dès qu'elle est possible ; le Raptor part à chaque coup. Maj = Coupure d'ailes à nouveau, Alt = Contre-attaque.",
@@ -1095,10 +1093,10 @@ D.classes.HUNTER = {
     {b="/petattack [nomod,@mouseover,harm,nodead][nomod,harm,nodead]\n/petfollow [mod:shift]\n/petpassive [mod:ctrl]", r={}, it={}},
   }},
   {n="TAI Pro Kite", d="Kite : Trait de choc (survol) + tir auto + familier", k="Maj+4", i="INV_Misc_QuestionMark", def=false, c="spell", s={}, x="", l=8,
-   w="Trait de choc sur le survol (sinon ta cible), puis tir auto et familier. Maj = Coupure d'ailes s'il est collé, Alt = Désengagement.",
-   sp=false, pr=true, f="mop", pro=true, t="Ralentit, relance le tir auto et garde le familier dessus en un appui : recule, tire, rappuie dès que le Trait de choc revient.",
+   w="Trait de choc sur le survol (sinon ta cible), puis tir auto et familier. S'il est collé à toi : TAI Melee (Coupure d'ailes).",
+   sp=false, pr=true, f="op", pro=true, t="Ralentit, relance le tir auto et garde le familier dessus en un appui : recule, tire, rappuie dès que le Trait de choc revient.",
    o="Barre secondaire : un monstre qui fonce sur toi.", v={
-    {b="#showtooltip\n/cast ?[mod:shift] {2974}; ?[mod:alt] {781}; [@mouseover,harm,nodead][] {5116}\n/cast !{75}\n/petattack [harm,nodead]", r={5116, 75}, it={}},
+    {b="#showtooltip\n/cast [@mouseover,harm,nodead][] {5116}\n/cast !{75}\n/petattack [harm,nodead]", r={5116, 75}, it={}},
   }},
   {n="TAI Pro Assist", d="Groupe : prends la cible du tank, tir auto, familier, Arcanes", k="Maj+1", i="INV_Misc_QuestionMark", def=false, c="spell", s={}, x="groupe", l=6,
    w="Tu tapes toujours ce que tape le tank : tir auto, familier et Tir des arcanes sur sa cible, sans la chercher. Choisis le tank (groupe 1 à 4) dans les réglages de la macro.",
@@ -1112,11 +1110,11 @@ D.classes.HUNTER = {
    o="Barre de côté : la bête à contrôler en donjon.", v={
     {b="#showtooltip {1513}\n/focus [mod:shift,@target,harm,nodead]\n/stopmacro [mod:shift]\n/cast [@focus,harm,nodead][@mouseover,harm,nodead][] {1513}", r={1513}, it={}},
   }},
-  {n="TAI Repas", d="Mange + boit (Maj : boire seul, Ctrl : manger seul)", k="Maj+B", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
-   w="Nourriture et boisson du sac les plus fortes pour ton niveau, mises à jour quand ton sac change (les invoquées passent d'abord, elles sont gratuites). Manger et boire ne déclenchent pas de temps de recharge global : un seul appui lance les deux.",
-   sp=true, pr=true, f="m",
+  {n="TAI Repas", d="Mange et boit (la meilleure nourriture et la meilleure boisson du sac)", k="Maj+B", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
+   w="Nourriture et boisson du sac les plus fortes pour ton niveau, mises à jour quand ton sac change (les invoquées passent d'abord, elles sont gratuites). Manger et boire ne déclenchent pas de temps de recharge global : un seul appui lance les deux. Sans variante Maj / Ctrl : la touche conseillée contient déjà Maj.",
+   sp=true, pr=true, f="",
    o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+B).", v={
-    {b="#showtooltip\n?/use [nomod:shift] {item:food}\n?/use [nomod:ctrl] {item:water}", r={}, it={}},
+    {b="#showtooltip\n?/use {item:food}\n?/use {item:water}", r={}, it={}},
   }},
   {n="TAI Survie", d="Pierre de soins, puis potion de soins au 2e appui", k="Maj+H", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
    w="Les deux ont des temps de recharge séparés : pierre d'abord (gratuite), potion ensuite. La séquence revient au début à la fin du combat.",
@@ -1126,17 +1124,17 @@ D.classes.HUNTER = {
     {b="#showtooltip\n/use {item:hs}", r={}, it={"hs"}},
     {b="#showtooltip\n/use {item:hpot}", r={}, it={"hpot"}},
   }},
-  {n="TAI Mana", d="Meilleure potion de mana du sac", k="Maj+J", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
-   w="La potion de mana la plus forte utilisable à ton niveau.",
-   sp=true, pr=true, f="",
+  {n="TAI Mana", d="Meilleure potion de mana du sac", k="Maj+J", i="INV_Misc_QuestionMark", def=false, c="consumable", s={}, x="", l=1,
+   w="La potion de mana la plus forte utilisable à ton niveau. Coupée d'office pour un chasseur (tu bois entre deux combats) : active-la si tu en utilises.",
+   sp=false, pr=false, f="",
    o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+J).", v={
     {b="#showtooltip\n/use {item:mpot}", r={}, it={"mpot"}},
   }},
-  {n="TAI Bandage", d="Bandage : survol > cible amicale > toi (Alt : toi)", k="Maj+N", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
+  {n="TAI Bandage", d="Bandage : allié survolé, sinon cible amie, sinon toi", k="Maj+N", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
    w="Bandage le plus fort permis par ton Secourisme, posé sur l'allié survolé sans changer de cible.",
-   sp=true, pr=true, f="mo",
+   sp=true, pr=true, f="o",
    o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+N).", v={
-    {b="#showtooltip\n/use [mod:alt,@player][@mouseover,help,nodead][@target,help,nodead][@player] {item:bandage}", r={}, it={"bandage"}},
+    {b="#showtooltip\n/use [@mouseover,help,nodead][@target,help,nodead][@player] {item:bandage}", r={}, it={"bandage"}},
   }},
   {n="TAI Munitions", d="Équipe les meilleures munitions (arc/arbalète = flèches, fusil = balles)", k="-", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
    w="Choisit flèches ou balles selon ton arme, au meilleur niveau dans le sac.",
@@ -1144,12 +1142,11 @@ D.classes.HUNTER = {
    o="Barre de côté : un clic quand tu en as besoin.", v={
     {b="#showtooltip\n/equip {item:ammo}", r={}, it={"ammo"}},
   }},
-  {n="TAI Monture", d="Monture (Maj : Pierre de foyer) ; descend si tu es monté", k="Maj+Z", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
-   w="La monture du sac (choisie automatiquement, hors combat) ; recliquer te fait descendre. Avant ta première monture, la macro ne lance que la Pierre de foyer.",
-   sp=true, pr=true, f="m",
-   o="Barre secondaire : entre deux quêtes (et Maj+clic pour rentrer).", v={
-    {b="#showtooltip\n/use [mod:shift] {item:hearth}\n/stopmacro [mod:shift]\n/dismount [mounted]\n/use [nomounted] {item:mount}", r={}, it={"hearth", "mount"}},
-    {b="#showtooltip\n/use {item:hearth}", r={}, it={"hearth"}},
+  {n="TAI Monture", d="Monte sur ta monture ; descend si tu es déjà monté", k="Maj+Z", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
+   w="La monture du sac (choisie automatiquement, hors combat) ; rappuyer te fait descendre. Elle ne lance jamais la Pierre de foyer. Sans monture dans tes sacs, la macro n'est pas créée (elle ne ferait rien).",
+   sp=true, pr=true, f="",
+   o="Barre secondaire : entre deux quêtes.", v={
+    {b="#showtooltip\n/use [nomounted] {item:mount}\n/dismount [mounted]", r={}, it={"mount"}},
   }},
   {n="TAI Marqueur", d="Crâne sur la cible (Maj : croix) pour le groupe", k="Ctrl+1", i="Ability_Hunter_SniperShot", def=false, c="spell", s={}, x="groupe", l=1,
    w="Marque la cible à tuer en premier (crâne) ou à contrôler (croix).",
@@ -1234,17 +1231,17 @@ D.classes.ROGUE = {
    o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+5).", v={
     {b="#showtooltip\n/cast [@mouseover,harm,nodead][] {2094}", r={2094}, it={}},
   }},
-  {n="TAI Burst", d="Poussée d'adrénaline / Déluge de lames + racial + bijoux", k="Maj+R", i="INV_Misc_QuestionMark", def=true, c="spell", s={"combat"}, x="", l=30,
+  {n="TAI Burst", d="Poussée d'adrénaline / Déluge de lames + racial + bijoux", k="Ctrl+R", i="INV_Misc_QuestionMark", def=true, c="spell", s={"combat"}, x="", l=30,
    w="Cooldowns du Combat ; racial et bijoux « Utiliser » partent dans le même appui.",
    sp=true, pr=true, f="m",
-   o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+R).", v={
+   o="Barre secondaire, sous la barre principale (raccourci conseillé : Ctrl+R).", v={
     {b="#showtooltip\n/cast ?[mod:shift] {13877}; {13750}\n?/cast {20572}\n?/cast {20554}\n?/use {slot:13}\n?/use {slot:14}", r={13750}, it={}},
     {b="#showtooltip\n/cast {13877}\n?/cast {20572}\n?/cast {20554}\n?/use {slot:13}\n?/use {slot:14}", r={13877}, it={}},
   }},
-  {n="TAI Burst", d="Sang froid + Éviscération", k="Maj+R", i="INV_Misc_QuestionMark", def=true, c="spell", s={"assassinat"}, x="", l=30,
+  {n="TAI Burst", d="Sang froid + Éviscération", k="Ctrl+R", i="INV_Misc_QuestionMark", def=true, c="spell", s={"assassinat"}, x="", l=30,
    w="Sang froid est hors temps de recharge global : critique garanti sur l'Éviscération lancée dans le même appui.",
    sp=true, pr=true, f="",
-   o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+R).", v={
+   o="Barre secondaire, sous la barre principale (raccourci conseillé : Ctrl+R).", v={
     {b="#showtooltip {2098}\n/cast {14177}\n/cast {2098}", r={2098, 14177}, it={}},
   }},
   {n="TAI Marque", d="Marque de mort (coup de grâce différé)", k="-", i="INV_Misc_QuestionMark", def=false, c="spell", s={}, x="", l=40,
@@ -1273,11 +1270,11 @@ D.classes.ROGUE = {
     {b="#showtooltip\n/use {item:hs}", r={}, it={"hs"}},
     {b="#showtooltip\n/use {item:hpot}", r={}, it={"hpot"}},
   }},
-  {n="TAI Bandage", d="Bandage : survol > cible amicale > toi (Alt : toi)", k="Maj+N", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
+  {n="TAI Bandage", d="Bandage : allié survolé, sinon cible amie, sinon toi", k="Maj+N", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
    w="Bandage le plus fort permis par ton Secourisme, posé sur l'allié survolé sans changer de cible.",
-   sp=true, pr=true, f="mo",
+   sp=true, pr=true, f="o",
    o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+N).", v={
-    {b="#showtooltip\n/use [mod:alt,@player][@mouseover,help,nodead][@target,help,nodead][@player] {item:bandage}", r={}, it={"bandage"}},
+    {b="#showtooltip\n/use [@mouseover,help,nodead][@target,help,nodead][@player] {item:bandage}", r={}, it={"bandage"}},
   }},
   {n="TAI Poisons", d="Poison main droite (Maj : main gauche)", k="-", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
    w="Applique le poison du sac sur l'arme (16 = main droite, 17 = main gauche).",
@@ -1285,12 +1282,11 @@ D.classes.ROGUE = {
    o="Barre de côté : un clic quand tu en as besoin.", v={
     {b="#showtooltip\n?/use [nomod] {item:poison_mh}\n?/use [mod:shift] {item:poison_oh}\n/use [mod:shift] 17; 16", r={}, it={}},
   }},
-  {n="TAI Monture", d="Monture (Maj : Pierre de foyer) ; descend si tu es monté", k="Maj+Z", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
-   w="La monture du sac (choisie automatiquement, hors combat) ; recliquer te fait descendre. Avant ta première monture, la macro ne lance que la Pierre de foyer.",
-   sp=true, pr=true, f="m",
-   o="Barre secondaire : entre deux quêtes (et Maj+clic pour rentrer).", v={
-    {b="#showtooltip\n/use [mod:shift] {item:hearth}\n/stopmacro [mod:shift]\n/dismount [mounted]\n/use [nomounted] {item:mount}", r={}, it={"hearth", "mount"}},
-    {b="#showtooltip\n/use {item:hearth}", r={}, it={"hearth"}},
+  {n="TAI Monture", d="Monte sur ta monture ; descend si tu es déjà monté", k="Maj+Z", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
+   w="La monture du sac (choisie automatiquement, hors combat) ; rappuyer te fait descendre. Elle ne lance jamais la Pierre de foyer. Sans monture dans tes sacs, la macro n'est pas créée (elle ne ferait rien).",
+   sp=true, pr=true, f="",
+   o="Barre secondaire : entre deux quêtes.", v={
+    {b="#showtooltip\n/use [nomounted] {item:mount}\n/dismount [mounted]", r={}, it={"mount"}},
   }},
   {n="TAI Marqueur", d="Crâne sur la cible (Maj : croix) pour le groupe", k="Ctrl+1", i="Ability_Hunter_SniperShot", def=false, c="spell", s={}, x="groupe", l=1,
    w="Marque la cible à tuer en premier (crâne) ou à contrôler (croix).",
@@ -1375,10 +1371,10 @@ D.classes.PRIEST = {
    o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+5).", v={
     {b="#showtooltip\n/stopcasting\n/cast {8122}", r={8122}, it={}},
   }},
-  {n="TAI Urgence", d="Prière du désespoir (Maj : Oubli)", k="Maj+V", i="INV_Misc_QuestionMark", def=true, c="spell", s={}, x="", l=8,
+  {n="TAI Urgence", d="Prière du désespoir (Maj : Oubli)", k="Ctrl+V", i="INV_Misc_QuestionMark", def=true, c="spell", s={}, x="", l=8,
    w="Soin instantané gratuit sur toi ; Oubli (Maj) baisse ta menace quand un monstre te vise.",
    sp=true, pr=true, f="m",
-   o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+V).", v={
+   o="Barre secondaire, sous la barre principale (raccourci conseillé : Ctrl+V).", v={
     {b="#showtooltip\n/stopcasting\n/cast ?[mod:shift] {586}; {13908}", r={13908}, it={}},
     {b="#showtooltip\n/cast {586}", r={586}, it={}},
   }},
@@ -1418,11 +1414,11 @@ D.classes.PRIEST = {
    o="Barre de côté : un clic quand tu en as besoin.", v={
     {b="#showtooltip\n/cast [@mouseover,help,dead][help,dead] {2006}", r={2006}, it={}},
   }},
-  {n="TAI Repas", d="Mange + boit (Maj : boire seul, Ctrl : manger seul)", k="Maj+B", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
-   w="Nourriture et boisson du sac les plus fortes pour ton niveau, mises à jour quand ton sac change (les invoquées passent d'abord, elles sont gratuites). Manger et boire ne déclenchent pas de temps de recharge global : un seul appui lance les deux.",
-   sp=true, pr=true, f="m",
+  {n="TAI Repas", d="Mange et boit (la meilleure nourriture et la meilleure boisson du sac)", k="Maj+B", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
+   w="Nourriture et boisson du sac les plus fortes pour ton niveau, mises à jour quand ton sac change (les invoquées passent d'abord, elles sont gratuites). Manger et boire ne déclenchent pas de temps de recharge global : un seul appui lance les deux. Sans variante Maj / Ctrl : la touche conseillée contient déjà Maj.",
+   sp=true, pr=true, f="",
    o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+B).", v={
-    {b="#showtooltip\n?/use [nomod:shift] {item:food}\n?/use [nomod:ctrl] {item:water}", r={}, it={}},
+    {b="#showtooltip\n?/use {item:food}\n?/use {item:water}", r={}, it={}},
   }},
   {n="TAI Survie", d="Pierre de soins, puis potion de soins au 2e appui", k="Maj+H", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
    w="Les deux ont des temps de recharge séparés : pierre d'abord (gratuite), potion ensuite. La séquence revient au début à la fin du combat.",
@@ -1438,11 +1434,11 @@ D.classes.PRIEST = {
    o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+J).", v={
     {b="#showtooltip\n/use {item:mpot}", r={}, it={"mpot"}},
   }},
-  {n="TAI Bandage", d="Bandage : survol > cible amicale > toi (Alt : toi)", k="Maj+N", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
+  {n="TAI Bandage", d="Bandage : allié survolé, sinon cible amie, sinon toi", k="Maj+N", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
    w="Bandage le plus fort permis par ton Secourisme, posé sur l'allié survolé sans changer de cible.",
-   sp=true, pr=true, f="mo",
+   sp=true, pr=true, f="o",
    o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+N).", v={
-    {b="#showtooltip\n/use [mod:alt,@player][@mouseover,help,nodead][@target,help,nodead][@player] {item:bandage}", r={}, it={"bandage"}},
+    {b="#showtooltip\n/use [@mouseover,help,nodead][@target,help,nodead][@player] {item:bandage}", r={}, it={"bandage"}},
   }},
   {n="TAI Baguette", d="Baguette sur survol ou cible (ne s'arrête pas si on rappuie)", k="-", i="INV_Misc_QuestionMark", def=true, c="spell", s={}, x="solo", l=1,
    w="Le « ! » empêche de couper la baguette en rappuyant : économise ton mana entre deux sorts.",
@@ -1450,12 +1446,11 @@ D.classes.PRIEST = {
    o="Barre de côté : un clic quand tu en as besoin.", v={
     {b="#showtooltip\n/cast [@mouseover,harm,nodead][] !{5019}", r={5019}, it={}},
   }},
-  {n="TAI Monture", d="Monture (Maj : Pierre de foyer) ; descend si tu es monté", k="Maj+Z", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
-   w="La monture du sac (choisie automatiquement, hors combat) ; recliquer te fait descendre. Avant ta première monture, la macro ne lance que la Pierre de foyer.",
-   sp=true, pr=true, f="m",
-   o="Barre secondaire : entre deux quêtes (et Maj+clic pour rentrer).", v={
-    {b="#showtooltip\n/use [mod:shift] {item:hearth}\n/stopmacro [mod:shift]\n/dismount [mounted]\n/use [nomounted] {item:mount}", r={}, it={"hearth", "mount"}},
-    {b="#showtooltip\n/use {item:hearth}", r={}, it={"hearth"}},
+  {n="TAI Monture", d="Monte sur ta monture ; descend si tu es déjà monté", k="Maj+Z", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
+   w="La monture du sac (choisie automatiquement, hors combat) ; rappuyer te fait descendre. Elle ne lance jamais la Pierre de foyer. Sans monture dans tes sacs, la macro n'est pas créée (elle ne ferait rien).",
+   sp=true, pr=true, f="",
+   o="Barre secondaire : entre deux quêtes.", v={
+    {b="#showtooltip\n/use [nomounted] {item:mount}\n/dismount [mounted]", r={}, it={"mount"}},
   }},
   {n="TAI Marqueur", d="Crâne sur la cible (Maj : croix) pour le groupe", k="Ctrl+1", i="Ability_Hunter_SniperShot", def=false, c="spell", s={}, x="groupe", l=1,
    w="Marque la cible à tuer en premier (crâne) ou à contrôler (croix).",
@@ -1527,10 +1522,10 @@ D.classes.SHAMAN = {
    o="Case 5 de la barre principale (touche 5).", v={
     {b="#showtooltip\n/cast ?[mod:shift,@mouseover,help,nodead][mod:shift,help,nodead][mod:shift,@player] {8004}; [mod:alt,@player][@mouseover,help,nodead][@target,help,nodead][@player] {331}", r={331}, it={}},
   }},
-  {n="TAI Chaine", d="Salve de guérison (Maj : Remous)", k="Maj+5", i="INV_Misc_QuestionMark", def=true, c="spell", s={"restauration"}, x="groupe", l=40,
+  {n="TAI Chaine", d="Salve de guérison (Maj : Remous)", k="Ctrl+5", i="INV_Misc_QuestionMark", def=true, c="spell", s={"restauration"}, x="groupe", l=40,
    w="Salve rebondit sur 3 alliés ; Remous (talent) d'abord sur la cible renforce la Salve.",
    sp=true, pr=true, f="mo",
-   o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+5).", v={
+   o="Barre secondaire, sous la barre principale (raccourci conseillé : Ctrl+5).", v={
     {b="#showtooltip\n/cast ?[mod:shift,@mouseover,help,nodead][mod:shift,help,nodead][mod:shift,@player] {1239242}; [mod:alt,@player][@mouseover,help,nodead][@target,help,nodead][@player] {1064}", r={1064}, it={}},
   }},
   {n="TAI NS Soin", d="Rapidité de la nature + Vague de soins instantanée", k="Maj+V", i="INV_Misc_QuestionMark", def=true, c="spell", s={"restauration"}, x="", l=30,
@@ -1601,11 +1596,11 @@ D.classes.SHAMAN = {
    o="Barre de côté : un clic quand tu en as besoin.", v={
     {b="#showtooltip\n/cast [@mouseover,help,dead][help,dead] {2008}", r={2008}, it={}},
   }},
-  {n="TAI Repas", d="Mange + boit (Maj : boire seul, Ctrl : manger seul)", k="Maj+B", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
-   w="Nourriture et boisson du sac les plus fortes pour ton niveau, mises à jour quand ton sac change (les invoquées passent d'abord, elles sont gratuites). Manger et boire ne déclenchent pas de temps de recharge global : un seul appui lance les deux.",
-   sp=true, pr=true, f="m",
+  {n="TAI Repas", d="Mange et boit (la meilleure nourriture et la meilleure boisson du sac)", k="Maj+B", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
+   w="Nourriture et boisson du sac les plus fortes pour ton niveau, mises à jour quand ton sac change (les invoquées passent d'abord, elles sont gratuites). Manger et boire ne déclenchent pas de temps de recharge global : un seul appui lance les deux. Sans variante Maj / Ctrl : la touche conseillée contient déjà Maj.",
+   sp=true, pr=true, f="",
    o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+B).", v={
-    {b="#showtooltip\n?/use [nomod:shift] {item:food}\n?/use [nomod:ctrl] {item:water}", r={}, it={}},
+    {b="#showtooltip\n?/use {item:food}\n?/use {item:water}", r={}, it={}},
   }},
   {n="TAI Survie", d="Pierre de soins, puis potion de soins au 2e appui", k="Maj+H", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
    w="Les deux ont des temps de recharge séparés : pierre d'abord (gratuite), potion ensuite. La séquence revient au début à la fin du combat.",
@@ -1621,18 +1616,17 @@ D.classes.SHAMAN = {
    o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+J).", v={
     {b="#showtooltip\n/use {item:mpot}", r={}, it={"mpot"}},
   }},
-  {n="TAI Bandage", d="Bandage : survol > cible amicale > toi (Alt : toi)", k="Maj+N", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
+  {n="TAI Bandage", d="Bandage : allié survolé, sinon cible amie, sinon toi", k="Maj+N", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
    w="Bandage le plus fort permis par ton Secourisme, posé sur l'allié survolé sans changer de cible.",
-   sp=true, pr=true, f="mo",
+   sp=true, pr=true, f="o",
    o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+N).", v={
-    {b="#showtooltip\n/use [mod:alt,@player][@mouseover,help,nodead][@target,help,nodead][@player] {item:bandage}", r={}, it={"bandage"}},
+    {b="#showtooltip\n/use [@mouseover,help,nodead][@target,help,nodead][@player] {item:bandage}", r={}, it={"bandage"}},
   }},
-  {n="TAI Monture", d="Monture (Maj : Pierre de foyer) ; descend si tu es monté", k="Maj+Z", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
-   w="La monture du sac (choisie automatiquement, hors combat) ; recliquer te fait descendre. Avant ta première monture, la macro ne lance que la Pierre de foyer.",
-   sp=true, pr=true, f="m",
-   o="Barre secondaire : entre deux quêtes (et Maj+clic pour rentrer).", v={
-    {b="#showtooltip\n/use [mod:shift] {item:hearth}\n/stopmacro [mod:shift]\n/dismount [mounted]\n/use [nomounted] {item:mount}", r={}, it={"hearth", "mount"}},
-    {b="#showtooltip\n/use {item:hearth}", r={}, it={"hearth"}},
+  {n="TAI Monture", d="Monte sur ta monture ; descend si tu es déjà monté", k="Maj+Z", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
+   w="La monture du sac (choisie automatiquement, hors combat) ; rappuyer te fait descendre. Elle ne lance jamais la Pierre de foyer. Sans monture dans tes sacs, la macro n'est pas créée (elle ne ferait rien).",
+   sp=true, pr=true, f="",
+   o="Barre secondaire : entre deux quêtes.", v={
+    {b="#showtooltip\n/use [nomounted] {item:mount}\n/dismount [mounted]", r={}, it={"mount"}},
   }},
   {n="TAI Marqueur", d="Crâne sur la cible (Maj : croix) pour le groupe", k="Ctrl+1", i="Ability_Hunter_SniperShot", def=false, c="spell", s={}, x="groupe", l=1,
    w="Marque la cible à tuer en premier (crâne) ou à contrôler (croix).",
@@ -1704,10 +1698,10 @@ D.classes.MAGE = {
    o="Case 6 de la barre principale (touche 6).", v={
     {b="#showtooltip\n/cast ?[mod:shift,@cursor] {10}; ?[mod:ctrl,@cursor] {2120}; {1449}", r={1449}, it={}},
   }},
-  {n="TAI Defense", d="Bloc de glace (Maj : Morsure du froid, Ctrl : Barrière)", k="Maj+V", i="INV_Misc_QuestionMark", def=true, c="spell", s={}, x="", l=20,
+  {n="TAI Defense", d="Bloc de glace (Maj : Morsure du froid, Ctrl : Barrière)", k="Alt+V", i="INV_Misc_QuestionMark", def=true, c="spell", s={}, x="", l=20,
    w="Immunité d'urgence (coupe ton sort) ; Morsure du froid réinitialise Bloc et Nova.",
    sp=true, pr=true, f="m",
-   o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+V).", v={
+   o="Barre secondaire, sous la barre principale (raccourci conseillé : Alt+V).", v={
     {b="#showtooltip\n/stopcasting\n/cast ?[mod:shift] {12472}; ?[mod:ctrl] {11426}; {11958}", r={11958}, it={}},
     {b="#showtooltip\n/cast {1463}", r={1463}, it={}},
   }},
@@ -1758,11 +1752,11 @@ D.classes.MAGE = {
    o="Barre principale, près de tes sorts (raccourci conseillé : R).", v={
     {b="#showtooltip\n?/cast {12043}\n?/cast {12042}\n?/cast {11129}\n?/cast {20572}\n?/cast {20554}\n?/use {slot:13}\n?/use {slot:14}", r={}, it={}},
   }},
-  {n="TAI Repas", d="Mange + boit (Maj : boire seul, Ctrl : manger seul)", k="Maj+B", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
-   w="Nourriture et boisson du sac les plus fortes pour ton niveau, mises à jour quand ton sac change (les invoquées passent d'abord, elles sont gratuites). Manger et boire ne déclenchent pas de temps de recharge global : un seul appui lance les deux.",
-   sp=true, pr=true, f="m",
+  {n="TAI Repas", d="Mange et boit (la meilleure nourriture et la meilleure boisson du sac)", k="Maj+B", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
+   w="Nourriture et boisson du sac les plus fortes pour ton niveau, mises à jour quand ton sac change (les invoquées passent d'abord, elles sont gratuites). Manger et boire ne déclenchent pas de temps de recharge global : un seul appui lance les deux. Sans variante Maj / Ctrl : la touche conseillée contient déjà Maj.",
+   sp=true, pr=true, f="",
    o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+B).", v={
-    {b="#showtooltip\n?/use [nomod:shift] {item:food}\n?/use [nomod:ctrl] {item:water}", r={}, it={}},
+    {b="#showtooltip\n?/use {item:food}\n?/use {item:water}", r={}, it={}},
   }},
   {n="TAI Survie", d="Pierre de soins, puis potion de soins au 2e appui", k="Maj+H", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
    w="Les deux ont des temps de recharge séparés : pierre d'abord (gratuite), potion ensuite. La séquence revient au début à la fin du combat.",
@@ -1780,11 +1774,11 @@ D.classes.MAGE = {
     {b="#showtooltip\n/use {item:managem}", r={}, it={"managem"}},
     {b="#showtooltip\n/use {item:mpot}", r={}, it={"mpot"}},
   }},
-  {n="TAI Bandage", d="Bandage : survol > cible amicale > toi (Alt : toi)", k="Maj+N", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
+  {n="TAI Bandage", d="Bandage : allié survolé, sinon cible amie, sinon toi", k="Maj+N", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
    w="Bandage le plus fort permis par ton Secourisme, posé sur l'allié survolé sans changer de cible.",
-   sp=true, pr=true, f="mo",
+   sp=true, pr=true, f="o",
    o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+N).", v={
-    {b="#showtooltip\n/use [mod:alt,@player][@mouseover,help,nodead][@target,help,nodead][@player] {item:bandage}", r={}, it={"bandage"}},
+    {b="#showtooltip\n/use [@mouseover,help,nodead][@target,help,nodead][@player] {item:bandage}", r={}, it={"bandage"}},
   }},
   {n="TAI Baguette", d="Baguette sur survol ou cible (ne s'arrête pas si on rappuie)", k="-", i="INV_Misc_QuestionMark", def=true, c="spell", s={}, x="solo", l=1,
    w="Le « ! » empêche de couper la baguette en rappuyant : économise ton mana entre deux sorts.",
@@ -1792,12 +1786,11 @@ D.classes.MAGE = {
    o="Barre de côté : un clic quand tu en as besoin.", v={
     {b="#showtooltip\n/cast [@mouseover,harm,nodead][] !{5019}", r={5019}, it={}},
   }},
-  {n="TAI Monture", d="Monture (Maj : Pierre de foyer) ; descend si tu es monté", k="Maj+Z", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
-   w="La monture du sac (choisie automatiquement, hors combat) ; recliquer te fait descendre. Avant ta première monture, la macro ne lance que la Pierre de foyer.",
-   sp=true, pr=true, f="m",
-   o="Barre secondaire : entre deux quêtes (et Maj+clic pour rentrer).", v={
-    {b="#showtooltip\n/use [mod:shift] {item:hearth}\n/stopmacro [mod:shift]\n/dismount [mounted]\n/use [nomounted] {item:mount}", r={}, it={"hearth", "mount"}},
-    {b="#showtooltip\n/use {item:hearth}", r={}, it={"hearth"}},
+  {n="TAI Monture", d="Monte sur ta monture ; descend si tu es déjà monté", k="Maj+Z", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
+   w="La monture du sac (choisie automatiquement, hors combat) ; rappuyer te fait descendre. Elle ne lance jamais la Pierre de foyer. Sans monture dans tes sacs, la macro n'est pas créée (elle ne ferait rien).",
+   sp=true, pr=true, f="",
+   o="Barre secondaire : entre deux quêtes.", v={
+    {b="#showtooltip\n/use [nomounted] {item:mount}\n/dismount [mounted]", r={}, it={"mount"}},
   }},
   {n="TAI Marqueur", d="Crâne sur la cible (Maj : croix) pour le groupe", k="Ctrl+1", i="Ability_Hunter_SniperShot", def=false, c="spell", s={}, x="groupe", l=1,
    w="Marque la cible à tuer en premier (crâne) ou à contrôler (croix).",
@@ -1865,10 +1858,10 @@ D.classes.WARLOCK = {
     {b="#showtooltip\n/cast ?[mod:shift,@mouseover,harm,nodead][mod:shift] {1120}; ?[mod:ctrl,@mouseover,harm,nodead][mod:ctrl] {5138}; [@mouseover,harm,nodead][] {689}", r={689}, it={}},
     {b="#showtooltip\n/cast [@mouseover,harm,nodead][] {1120}", r={1120}, it={}},
   }},
-  {n="TAI Peur", d="Peur (Maj : Hurlement, Ctrl : Voile mortel) survol", k="Maj+5", i="INV_Misc_QuestionMark", def=true, c="spell", s={}, x="", l=8,
+  {n="TAI Peur", d="Peur (Maj : Hurlement, Ctrl : Voile mortel) survol", k="Alt+5", i="INV_Misc_QuestionMark", def=true, c="spell", s={}, x="", l=8,
    w="Peur au survol sur l'add sans lâcher ta cible ; Voile mortel : peur instantanée + soin.",
    sp=true, pr=true, f="mo",
-   o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+5).", v={
+   o="Barre secondaire, sous la barre principale (raccourci conseillé : Alt+5).", v={
     {b="#showtooltip\n/cast ?[mod:shift] {5484}; ?[mod:ctrl,@mouseover,harm,nodead][mod:ctrl] {6789}; [@mouseover,harm,nodead][] {5782}", r={5782}, it={}},
   }},
   {n="TAI Bannir", d="Bannir sur survol ou cible", k="-", i="INV_Misc_QuestionMark", def=false, c="spell", s={}, x="groupe", l=28,
@@ -1890,10 +1883,10 @@ D.classes.WARLOCK = {
    o="Barre principale, près de tes sorts (raccourci conseillé : F).", v={
     {b="/petattack [nomod,@mouseover,harm,nodead][nomod]\n/petfollow [mod:shift]\n/petpassive [mod:ctrl]\n/petdefensive [mod:alt]", r={}, it={}},
   }},
-  {n="TAI Demon sort", d="Sort du démon : Verrou / Séduction / Tourment (Maj : Sacrifice)", k="Maj+F", i="Spell_Shadow_MindSteal", def=true, c="spell", s={}, x="", l=1,
+  {n="TAI Demon sort", d="Sort du démon : Verrou / Séduction / Tourment (Maj : Sacrifice)", k="Ctrl+F", i="Spell_Shadow_MindSteal", def=true, c="spell", s={}, x="", l=1,
    w="Une touche pour le sort utile de chaque démon : seul celui du démon présent part (Tourment du marcheur, Verrou magique du chasseur corrompu, Séduction de la succube).",
    sp=true, pr=true, f="mo",
-   o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+F).", v={
+   o="Barre secondaire, sous la barre principale (raccourci conseillé : Ctrl+F).", v={
     {b="#showtooltip\n/stopmacro [nopet]\n/cast [mod:shift] {7812}; [@mouseover,harm,nodead][] {3716}\n/cast [@mouseover,harm,nodead][] {19244}\n/cast [@mouseover,harm,nodead][] {6358}", r={}, it={}},
   }},
   {n="TAI Invoc", d="Marcheur du Vide (Maj : diablotin, Ctrl : succube, Alt : chasseur)", k="-", i="INV_Misc_QuestionMark", def=true, c="spell", s={}, x="", l=1,
@@ -1922,11 +1915,11 @@ D.classes.WARLOCK = {
    o="Barre de côté : un clic quand tu en as besoin.", v={
     {b="#showtooltip\n/cast ?[mod:shift] {1949}; [@cursor] {5740}", r={5740}, it={}},
   }},
-  {n="TAI Repas", d="Mange + boit (Maj : boire seul, Ctrl : manger seul)", k="Maj+B", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
-   w="Nourriture et boisson du sac les plus fortes pour ton niveau, mises à jour quand ton sac change (les invoquées passent d'abord, elles sont gratuites). Manger et boire ne déclenchent pas de temps de recharge global : un seul appui lance les deux.",
-   sp=true, pr=true, f="m",
+  {n="TAI Repas", d="Mange et boit (la meilleure nourriture et la meilleure boisson du sac)", k="Maj+B", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
+   w="Nourriture et boisson du sac les plus fortes pour ton niveau, mises à jour quand ton sac change (les invoquées passent d'abord, elles sont gratuites). Manger et boire ne déclenchent pas de temps de recharge global : un seul appui lance les deux. Sans variante Maj / Ctrl : la touche conseillée contient déjà Maj.",
+   sp=true, pr=true, f="",
    o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+B).", v={
-    {b="#showtooltip\n?/use [nomod:shift] {item:food}\n?/use [nomod:ctrl] {item:water}", r={}, it={}},
+    {b="#showtooltip\n?/use {item:food}\n?/use {item:water}", r={}, it={}},
   }},
   {n="TAI Survie", d="Pierre de soins, puis potion de soins au 2e appui", k="Maj+H", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
    w="Les deux ont des temps de recharge séparés : pierre d'abord (gratuite), potion ensuite. La séquence revient au début à la fin du combat.",
@@ -1942,11 +1935,11 @@ D.classes.WARLOCK = {
    o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+J).", v={
     {b="#showtooltip\n/use {item:mpot}", r={}, it={"mpot"}},
   }},
-  {n="TAI Bandage", d="Bandage : survol > cible amicale > toi (Alt : toi)", k="Maj+N", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
+  {n="TAI Bandage", d="Bandage : allié survolé, sinon cible amie, sinon toi", k="Maj+N", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
    w="Bandage le plus fort permis par ton Secourisme, posé sur l'allié survolé sans changer de cible.",
-   sp=true, pr=true, f="mo",
+   sp=true, pr=true, f="o",
    o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+N).", v={
-    {b="#showtooltip\n/use [mod:alt,@player][@mouseover,help,nodead][@target,help,nodead][@player] {item:bandage}", r={}, it={"bandage"}},
+    {b="#showtooltip\n/use [@mouseover,help,nodead][@target,help,nodead][@player] {item:bandage}", r={}, it={"bandage"}},
   }},
   {n="TAI Baguette", d="Baguette sur survol ou cible (ne s'arrête pas si on rappuie)", k="-", i="INV_Misc_QuestionMark", def=true, c="spell", s={}, x="solo", l=1,
    w="Le « ! » empêche de couper la baguette en rappuyant : économise ton mana entre deux sorts.",
@@ -1954,12 +1947,11 @@ D.classes.WARLOCK = {
    o="Barre de côté : un clic quand tu en as besoin.", v={
     {b="#showtooltip\n/cast [@mouseover,harm,nodead][] !{5019}", r={5019}, it={}},
   }},
-  {n="TAI Monture", d="Monture (Maj : Pierre de foyer) ; descend si tu es monté", k="Maj+Z", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
-   w="La monture du sac (choisie automatiquement, hors combat) ; recliquer te fait descendre. Avant ta première monture, la macro ne lance que la Pierre de foyer.",
-   sp=true, pr=true, f="m",
-   o="Barre secondaire : entre deux quêtes (et Maj+clic pour rentrer).", v={
-    {b="#showtooltip\n/use [mod:shift] {item:hearth}\n/stopmacro [mod:shift]\n/dismount [mounted]\n/use [nomounted] {item:mount}", r={}, it={"hearth", "mount"}},
-    {b="#showtooltip\n/use {item:hearth}", r={}, it={"hearth"}},
+  {n="TAI Monture", d="Monte sur ta monture ; descend si tu es déjà monté", k="Maj+Z", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
+   w="La monture du sac (choisie automatiquement, hors combat) ; rappuyer te fait descendre. Elle ne lance jamais la Pierre de foyer. Sans monture dans tes sacs, la macro n'est pas créée (elle ne ferait rien).",
+   sp=true, pr=true, f="",
+   o="Barre secondaire : entre deux quêtes.", v={
+    {b="#showtooltip\n/use [nomounted] {item:mount}\n/dismount [mounted]", r={}, it={"mount"}},
   }},
   {n="TAI Marqueur", d="Crâne sur la cible (Maj : croix) pour le groupe", k="Ctrl+1", i="Ability_Hunter_SniperShot", def=false, c="spell", s={}, x="groupe", l=1,
    w="Marque la cible à tuer en premier (crâne) ou à contrôler (croix).",
@@ -2008,10 +2000,10 @@ D.classes.DRUID = {
     {b="#showtooltip\n/cast [noform:3] !{768}; [nocombat,nostealth] {5215}", r={768, 5215}, it={}},
     {b="#showtooltip\n/cast !{768}", r={768}, it={}},
   }},
-  {n="TAI Rodeur", d="Ouverture félin : Traquenard (Maj : Ravage)", k="Maj+4", i="INV_Misc_QuestionMark", def=true, c="spell", s={"farouche"}, x="solo", l=24,
+  {n="TAI Rodeur", d="Ouverture félin : Traquenard (Maj : Ravage)", k="Ctrl+4", i="INV_Misc_QuestionMark", def=true, c="spell", s={"farouche"}, x="solo", l=24,
    w="Depuis Rôder : Traquenard (étourdit) ou Ravage dans le dos ; en combat : Griffure.",
    sp=true, pr=true, f="m",
-   o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+4).", v={
+   o="Barre secondaire, sous la barre principale (raccourci conseillé : Ctrl+4).", v={
     {b="#showtooltip\n/cast [noform:3] !{768}; ?[stealth,mod:shift] {6785}; ?[stealth] {9005}; {1822}", r={768, 1822}, it={}},
   }},
   {n="TAI Provoc", d="Grondement (survol) en ours (Maj : Rugissement provocateur)", k="T", i="INV_Misc_QuestionMark", def=true, c="spell", s={"farouche"}, x="groupe", l=10,
@@ -2109,11 +2101,11 @@ D.classes.DRUID = {
    o="Barre de côté : un clic quand tu en as besoin.", v={
     {b="#showtooltip\n/cast ?[combat,@mouseover,help,dead][combat,help,dead] {20484}; [@mouseover,help,dead][help,dead] {1237948}", r={1237948}, it={}},
   }},
-  {n="TAI Repas", d="Mange + boit (Maj : boire seul, Ctrl : manger seul)", k="Maj+B", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
-   w="Nourriture et boisson du sac les plus fortes pour ton niveau, mises à jour quand ton sac change (les invoquées passent d'abord, elles sont gratuites). Manger et boire ne déclenchent pas de temps de recharge global : un seul appui lance les deux.",
-   sp=true, pr=true, f="m",
+  {n="TAI Repas", d="Mange et boit (la meilleure nourriture et la meilleure boisson du sac)", k="Maj+B", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
+   w="Nourriture et boisson du sac les plus fortes pour ton niveau, mises à jour quand ton sac change (les invoquées passent d'abord, elles sont gratuites). Manger et boire ne déclenchent pas de temps de recharge global : un seul appui lance les deux. Sans variante Maj / Ctrl : la touche conseillée contient déjà Maj.",
+   sp=true, pr=true, f="",
    o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+B).", v={
-    {b="#showtooltip\n?/use [nomod:shift] {item:food}\n?/use [nomod:ctrl] {item:water}", r={}, it={}},
+    {b="#showtooltip\n?/use {item:food}\n?/use {item:water}", r={}, it={}},
   }},
   {n="TAI Survie", d="Pierre de soins, puis potion de soins au 2e appui", k="Maj+H", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
    w="Les deux ont des temps de recharge séparés : pierre d'abord (gratuite), potion ensuite. La séquence revient au début à la fin du combat.",
@@ -2129,18 +2121,17 @@ D.classes.DRUID = {
    o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+J).", v={
     {b="#showtooltip\n/use {item:mpot}", r={}, it={"mpot"}},
   }},
-  {n="TAI Bandage", d="Bandage : survol > cible amicale > toi (Alt : toi)", k="Maj+N", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
+  {n="TAI Bandage", d="Bandage : allié survolé, sinon cible amie, sinon toi", k="Maj+N", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
    w="Bandage le plus fort permis par ton Secourisme, posé sur l'allié survolé sans changer de cible.",
-   sp=true, pr=true, f="mo",
+   sp=true, pr=true, f="o",
    o="Barre secondaire, sous la barre principale (raccourci conseillé : Maj+N).", v={
-    {b="#showtooltip\n/use [mod:alt,@player][@mouseover,help,nodead][@target,help,nodead][@player] {item:bandage}", r={}, it={"bandage"}},
+    {b="#showtooltip\n/use [@mouseover,help,nodead][@target,help,nodead][@player] {item:bandage}", r={}, it={"bandage"}},
   }},
-  {n="TAI Monture", d="Monture (Maj : Pierre de foyer) ; descend si tu es monté", k="Maj+Z", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
-   w="La monture du sac (choisie automatiquement, hors combat) ; recliquer te fait descendre. Avant ta première monture, la macro ne lance que la Pierre de foyer.",
-   sp=true, pr=true, f="m",
-   o="Barre secondaire : entre deux quêtes (et Maj+clic pour rentrer).", v={
-    {b="#showtooltip\n/use [mod:shift] {item:hearth}\n/stopmacro [mod:shift]\n/dismount [mounted]\n/use [nomounted] {item:mount}", r={}, it={"hearth", "mount"}},
-    {b="#showtooltip\n/use {item:hearth}", r={}, it={"hearth"}},
+  {n="TAI Monture", d="Monte sur ta monture ; descend si tu es déjà monté", k="Maj+Z", i="INV_Misc_QuestionMark", def=true, c="consumable", s={}, x="", l=1,
+   w="La monture du sac (choisie automatiquement, hors combat) ; rappuyer te fait descendre. Elle ne lance jamais la Pierre de foyer. Sans monture dans tes sacs, la macro n'est pas créée (elle ne ferait rien).",
+   sp=true, pr=true, f="",
+   o="Barre secondaire : entre deux quêtes.", v={
+    {b="#showtooltip\n/use [nomounted] {item:mount}\n/dismount [mounted]", r={}, it={"mount"}},
   }},
   {n="TAI Marqueur", d="Crâne sur la cible (Maj : croix) pour le groupe", k="Ctrl+1", i="Ability_Hunter_SniperShot", def=false, c="spell", s={}, x="groupe", l=1,
    w="Marque la cible à tuer en premier (crâne) ou à contrôler (croix).",

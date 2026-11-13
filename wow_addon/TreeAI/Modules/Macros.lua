@@ -12,7 +12,11 @@ local tconcat, tsort, select = table.concat, table.sort, select
 
 local PREFIX = "TAI "
 local MAX_BODY = 255
-local EMPTY_TEXT = "TreeAI : rien dans les sacs pour cette macro"
+-- (5.1 CLEAN) plus jamais de « /run print(…) » (une ligne dans le chat) ni de Pierre de foyer « en attendant » :
+-- une macro de consommables sans objet dans le sac n'est PAS créée. Une ancienne macro TreeAI encore installée avec
+-- un de ces textes est réécrite (au clic « Tout mettre à jour ») par ce texte neutre, qui ne fait rien.
+local NEUTRAL_BODY = "/stopmacro"
+local HEARTH_ITEM = "item:6948"
 
 ---------------------------------------------------------------------------
 -- API défensive (TreeAI.API de Core.lua si présent, sinon repli local)
@@ -159,6 +163,12 @@ local function char()
         c.opts[n].iconDirty = true
       end
     end
+  end
+  -- (5.1 CLEAN) le préréglage par défaut change (5 essentielles pour un chasseur neuf) : qui a déjà des macros
+  -- installées garde celui qu'il avait (« Complet »), une fois
+  if not c.v51 then
+    c.v51 = true
+    if c.preset == nil and (c.setup or next(c.installed) ~= nil) then c.preset = "complet" end
   end
   charOK = c
   return c
@@ -849,11 +859,50 @@ function M:Render(def, ctx)
       if body then return body, i end
     end
   end
-  if def.c == "consumable" then
-    return "/run print(\"" .. EMPTY_TEXT .. "\")"
+  -- (5.1 CLEAN) consommable : ses sorts sont connus mais rien dans le sac : « empty » (jamais de texte « à vide »)
+  if cons then
+    for i = 1, #list do
+      local ok = true
+      for _, sid in ipairs(list[i].r or {}) do
+        local _, known = resolveSpell(sid)
+        if not known then ok = false break end
+      end
+      if ok then return nil, nil, "empty" end
+    end
   end
   return nil
 end
+
+--- ce qu'il manque dans les sacs pour une macro de consommables (texte court, pour la ligne d'état)
+local CAT_FR = { food = "nourriture", water = "boisson", hpot = "potion de soins", mpot = "potion de mana",
+  hs = "pierre de soins", managem = "gemme de mana", poison_mh = "poison", poison_oh = "poison", bandage = "bandage",
+  ammo = "munitions pour ton arme", mount = "monture", petfood = "nourriture pour ton familier" }
+function M.EmptyWhat(def)
+  local seen, out = {}, {}
+  for _, v in ipairs(def.v or {}) do
+    for cat in (v.b or ""):gmatch("{item:([%a_]+)}") do
+      local fr = CAT_FR[cat] or cat
+      if not seen[fr] then seen[fr] = true; out[#out + 1] = fr end
+    end
+  end
+  if #out == 0 then return "rien dans tes sacs" end
+  return "pas de " .. tconcat(out, " ni de ") .. " dans tes sacs"
+end
+
+--- (5.1 CLEAN) ancien texte écrit par TreeAI qu'il ne faut pas laisser dans le jeu : la ligne « /run print » (chat) ou
+--- la Pierre de foyer lancée par une macro qui n'en parle plus (« TAI Monture » avant la 5.1).
+function M.IsLegacyHarmful(def, cur)
+  if type(cur) ~= "string" then return false end
+  if cur:find("^%s*/run print%(") then return true end
+  if cur:find(HEARTH_ITEM, 1, true) then
+    for _, v in ipairs(def.v or {}) do
+      if (v.b or ""):find("{item:hearth}", 1, true) then return false end
+    end
+    return true
+  end
+  return false
+end
+M.NEUTRAL_BODY = NEUTRAL_BODY
 
 -- Sorts manquants de la 1re variante (pour l'aperçu « pas encore »).
 function M:Missing(def)
@@ -967,9 +1016,13 @@ local PRESETS = {
   -- (4.3.1 MACROFIX) chasseur débutant : 5 macros seulement, une touche = une chose (sans Maj/Ctrl/Alt ni survol)
   -- (4.3.6 V5H) « macros horribles » : 5 macros fortes, icônes fixes et noms clairs (Tir, Familier, Pièges, Aspects,
   -- Feindre)
+  -- (5.1 CLEAN) TAI Familier garde Maj (ressusciter) et Ctrl (nourrir) : un familier mort dont le corps a disparu ne
+  -- se relève qu'avec Ressusciter, qu'aucune condition de macro ne sait choisir seule
   essentiel = { label = "Mes 5 macros essentielles", mods = false, mo = false, class = "HUNTER",
     only = { ["TAI Tir"] = 1, ["TAI Familier"] = 2, ["TAI Pièges"] = 3, ["TAI Aspects"] = 4, ["TAI Feindre"] = 5 },
-    tip = "Seulement Tir (touche 1), Familier (V), Pièges (E), Aspects (X) et Feindre (Maj+E) : le minimum pour bien jouer." },
+    keep = { ["TAI Familier"] = true },
+    tip = "Seulement Tir (touche 1), Familier (V), Pièges (E), Aspects (X) et Feindre (Maj+E) : une touche = une chose "
+      .. "(sauf Familier : Maj = ressusciter, Ctrl = nourrir)." },
 }
 M.PRESETS = PRESETS
 M.PRESET_ORDER = { "simple", "complet", "pro", "essentiel" }
@@ -980,9 +1033,14 @@ local function presetOK(p)
 end
 M.PresetOK = presetOK
 
+--- (5.1 CLEAN) « moins de macros, plus fortes » : un chasseur qui n'a encore rien installé part sur « Mes 5 macros
+--- essentielles » ; celui qui avait déjà ses macros garde « Complet » (posé une fois dans char(), jamais défait)
+function M.DefaultPreset()
+  return presetOK("essentiel") and "essentiel" or "complet"
+end
 function M:Preset()
   local p = char().preset
-  return presetOK(p) and p or "complet"
+  return presetOK(p) and p or M.DefaultPreset()
 end
 
 -- la macro fait-elle partie du préréglage en cours ? (def = Complet, sp = Simple, pr = Pro, only = liste fermée)
@@ -999,8 +1057,13 @@ function M:Opt(def, key)
   local o = char().opts[def.n]
   if o ~= nil and o[key] ~= nil then return o[key] end
   if key == "on" then return self:InPreset(def) end
-  if key == "mods" or key == "mo" then return PRESETS[self:Preset()][key] end
-  if key == "pet" or key == "guard" or key == "auto" then return true end
+  if key == "mods" or key == "mo" then
+    local P = PRESETS[self:Preset()]
+    if P.keep and P.keep[def.n] then return true end
+    return P[key]
+  end
+  if key == "pet" or key == "auto" then return true end
+  if key == "guard" then return false end   -- (5.1 CLEAN) une action sur le temps de recharge global par appui
   if key == "tank" then return 1 end
   return nil
 end
@@ -1040,6 +1103,9 @@ local function optOn(f, o, P, letter, key)
   local v = o and o[key]
   if v == nil then
     if key == "mods" or key == "mo" then return P[key] ~= false end
+    -- (5.1 CLEAN) garde d'aspect (« /cast !Aspect du faucon » en plus de l'action) : coupée d'office — l'appui où
+    -- elle remet le Faucon, l'action principale échoue (« pas encore prêt ») ; un clic dans les réglages la remet
+    if key == "guard" then return false end
     return true
   end
   return v ~= false
@@ -1053,6 +1119,7 @@ function M:Opts(def)
   if e and e.gen == optGen and e.opts == opts and e.preset == preset then return e.o, e.sig end
   local o = opts[def.n]
   local P = PRESETS[self:Preset()]
+  if P.keep and P.keep[def.n] then P = ALL_ON end   -- cette macro garde ses variantes dans ce préréglage
   local r = { mods = optOn(f, o, P, "m", "mods"), mo = optOn(f, o, P, "o", "mo"), pet = optOn(f, o, P, "p", "pet"),
     guard = optOn(f, o, P, "g", "guard"), tank = (f:find("t", 1, true) and o and tonumber(o.tank)) or 1 }
   local sig = optSig(r)
@@ -1394,7 +1461,8 @@ end
 function M:InstallOne(def, force)
   if inCombat() then say("Impossible en combat."); return "fail" end
   self:ClearSpellCache()
-  local body = self:Render(def)
+  local body, _, empty = self:Render(def)
+  if not body and empty then say(def.n .. " : " .. M.EmptyWhat(def) .. " — elle n'est pas créée."); return "later" end
   if not body then
     local miss = self:Missing(def)
     say(def.n .. " : sort pas encore appris" .. (#miss > 0 and (" (" .. tconcat(miss, ", ") .. ")") or "") .. ".")
@@ -1604,7 +1672,7 @@ function M:FillCopy()
   local ic = p.def.i or "INV_Misc_QuestionMark"
   f.icon:SetText("Icône : " .. ((ic:lower() == "inv_misc_questionmark") and "« ? » (l'icône suit le sort)" or ic))
   f.body._orig = p.body; f.body:SetText(p.body)
-  f.count:SetText(("Macro %d / %d — %s — %d / 255 caractères%s"):format(i, #list, p.def.d or "", #p.body,
+  f.count:SetText(("Macro %d / %d — %s — %d / 255 caractères%s"):format(i, #list, M.Describe(p.def, p.body) or p.def.d or "", #p.body,
     p.def.k and p.def.k ~= "-" and (" — touche conseillée : " .. p.def.k) or ""))
 end
 
@@ -1651,12 +1719,20 @@ function M:Refresh(onlyConsumables, ctx0, sliced)
         local def = defs[i]
         i = i + 1
         -- (MACRO3) seulement les macros activées dont la mise à jour auto n'est pas coupée
-        local idx = installed[def.n] and (not onlyConsumables or usesItems(def)) and self:IsOn(def)
+        local on = self:IsOn(def)
+        local idx = installed[def.n] and (not onlyConsumables or usesItems(def))
           and self:Opt(def, "auto") ~= false and macroIndex(gname(def))
-        local body = idx and self:Render(def, ctx)
+        local body, cur
+        if idx then
+          local _, _, b = try(_G.GetMacroInfo, idx)
+          cur = b
+          if on then body = self:Render(def, ctx) end
+        end
+        local stored = bodies[def.n]
+        if idx and not body and stored and same(cur, stored) and M.IsLegacyHarmful(def, cur) then
+          body = NEUTRAL_BODY   -- (5.1 CLEAN) ancienne macro dangereuse (désactivée ou sans objet) : texte neutre
+        end
         if body then
-          local _, _, cur = try(_G.GetMacroInfo, idx)
-          local stored = bodies[def.n]
           -- rien à changer : pas d'écriture (donc pas de « clique pour mettre à jour » à chaque sac) ; une macro
           -- modifiée à la main n'est jamais proposée (elle n'est jamais réécrite)
           if not same(cur, body) and not self:IsBlocked() and stored and same(cur, stored) then
@@ -2129,10 +2205,10 @@ function M:FillPanel()
     local def = self:SelectedDef()
     if not def then return end
     local st, cur = self:Status(def, ctx)
-    local body = self:Render(def, ctx)
+    local body, _, empty = self:Render(def, ctx)
     f.icon:SetTexture(iconOf(def, ctx))
     f.name:SetText(gname(def))
-    f.desc:SetText(def.d or "")
+    f.desc:SetText((body and M.Describe(def, body)) or ("Plus tard : " .. (def.d or "")))
     f.where:SetText("|cffffd100Où la mettre :|r " .. (def.o or ""))
     local ctxTxt = (def.x == "groupe" and "groupe") or (def.x == "solo" and "solo") or "solo + groupe"
     local idx = (st == "installed" or st == "user") and macroIndex(gname(def))
@@ -2143,6 +2219,8 @@ function M:FillPanel()
       f.body:SetText("|cffffa040Ta version (gardée) :|r\n" .. cur .. (body and ("\n|cff40ff40TreeAI propose :|r\n" .. body) or ""))
     elseif body then
       f.body:SetText(body .. ("\n|cff808080%d / 255 caractères|r"):format(#body))
+    elseif empty then
+      f.body:SetText("|cff808080Pas encore créée : " .. M.EmptyWhat(def) .. ".|r")
     else
       local miss = self:Missing(def)
       f.body:SetText("|cff808080Pas encore disponible" .. (#miss > 0 and (" : il te manque " .. tconcat(miss, ", ")) or "") .. ".|r")
@@ -2307,9 +2385,16 @@ function M:MacroState(def, ctx, place)
   local cur
   if idx then local _, _, b = try(_G.GetMacroInfo, idx) cur = b end
   st.idx, st.installed, st.current, st.stamp = idx, idx ~= nil, cur, c.stamps[def.n]
-  local body, vi = self:Render(def, ctx)
-  st.expected, st.variant = body, vi
+  local body, vi, empty = self:Render(def, ctx)
   local stored = c.bodies[def.n]
+  -- (5.1 CLEAN) rien dans le sac pour elle : une ancienne macro TreeAI dangereuse (Pierre de foyer, ligne dans le
+  -- chat) encore installée et non modifiée par le joueur est remplacée par le texte neutre
+  -- (désactivée aussi : « TAI Mana » d'un chasseur, coupée d'office en 5.1, écrivait dans le chat)
+  local neutral = false
+  if idx and stored and (not body or not st.on) and same(cur, stored) and M.IsLegacyHarmful(def, cur) then
+    body, neutral, empty = NEUTRAL_BODY, true, "empty"
+  end
+  st.expected, st.variant, st.empty = body, vi, (empty and not body) or neutral or nil
   st.user = (idx ~= nil) and (not stored or (cur ~= nil and not same(cur, stored))) and not same(cur, body) or false
   local pe = (place or placement())[st.name]
   st.slots = pe and pe.slots or {}
@@ -2318,15 +2403,21 @@ function M:MacroState(def, ctx, place)
   local code, text
   if not self:Supported(def) then
     code, text = "unsupported", "pas sur ce client (pas de focalisation)"
+  elseif neutral then
+    code, text = "update", "à mettre à jour (l'ancien texte lançait la Pierre de foyer ou écrivait dans le chat) : clic"
   elseif not st.on then
     code, text = "off", st.installed and "désactivée (toujours dans tes macros)" or "désactivée"
+  elseif not body and empty then
+    -- (5.1 CLEAN) consommable absent du sac : jamais créée « à vide » ; déjà installée, elle garde son dernier texte
+    -- (un « /use » sur un objet que tu n'as plus ne fait rien)
+    code = "empty"
+    text = st.installed and ("rien pour elle dans tes sacs : elle ne fait rien pour l'instant (" .. M.EmptyWhat(def) .. ")")
+      or ("pas encore : " .. M.EmptyWhat(def) .. " — elle n'est pas créée")
   elseif not body then
     local miss = self:Missing(def)
     code = "later"
     if def.l and def.l <= 60 and def.l > playerLevel() then text = "au niveau " .. def.l
     else text = "pas encore" .. (#miss > 0 and (" : il te manque " .. tconcat(miss, ", ")) or "") end
-  elseif def.c == "consumable" and body:find("^/run print") then
-    code, text = "empty", "en attente : rien pour elle dans tes sacs (elle se remplira toute seule)"
   elseif st.installed and same(cur, body) and not self:Opt(def, "iconDirty") then
     code, text = "ok", "active"
   elseif st.user then
@@ -2421,8 +2512,16 @@ end
 -- une macro (clic sur sa ligne) : installe / met à jour ; force = écrase ta version modifiée (Maj+clic)
 function M:UpdateOne(def, force)
   if inCombat() then say("Impossible en combat."); return "fail" end
-  local body = self:Render(def)
-  if not body then say(gname(def) .. " : pas encore disponible."); return "later" end
+  local body, _, empty = self:Render(def)
+  if not body and empty then
+    -- (5.1 CLEAN) ancienne macro dangereuse encore installée : le clic la remplace par le texte neutre
+    local st = self:MacroState(def)
+    if st.code == "update" and st.expected then body = st.expected end
+  end
+  if not body then
+    say(gname(def) .. (empty and (" : " .. M.EmptyWhat(def) .. " — elle n'est pas créée.") or " : pas encore disponible."))
+    return "later"
+  end
   if self:IsBlocked() and not force then self:ShowCopy({ { def = def, body = body } }); return "blocked" end
   local r = self:Write(def, body, force)
   if r == "created" or r == "updated" or r == "same" then
@@ -2627,6 +2726,303 @@ function M:AskRename(def)
 end
 
 ---------------------------------------------------------------------------
+-- (5.1 CLEAN) « Sert à » = ce que fait le TEXTE rendu de la macro, ligne par ligne. Avant : un texte fixe par macro
+-- (« Maj : dispersion, Alt : Intimidation ») affiché même quand ces clauses n'étaient pas dans la macro (sort pas
+-- appris, variantes coupées). M.Describe(def, body) lit le corps final : sorts, objets, touches Maj / Ctrl / Alt,
+-- conditions. Testé par tests/wow/macro51_scenario.lua (le test relit le corps de son côté).
+---------------------------------------------------------------------------
+local MOD_FR = { shift = "Maj", ctrl = "Ctrl", alt = "Alt" }
+local MOD_ORDER = { "shift", "ctrl", "alt" }
+local STATE_FR = { combat = "en combat", nocombat = "hors combat", mounted = "monté", nomounted = "pas monté",
+  stealth = "camouflé", nostealth = "pas camouflé", pet = "familier sorti", nopet = "sans familier",
+  group = "en groupe", nogroup = "hors groupe", swimming = "dans l'eau", outdoors = "dehors",
+  noharm = "sans cible ennemie", noform = "sans forme", exists = false, nodead = false }
+local UNIT_FR = { ["@mouseover"] = "survol", ["@player"] = "toi", ["@target"] = "cible", ["@pet"] = "familier",
+  ["@cursor"] = "sous la souris", ["@focus"] = "focalisation" }
+local CMD_FR = { ["/startattack"] = "attaque auto", ["/stopattack"] = "arrête l'attaque",
+  ["/stopcasting"] = "coupe le sort en cours", ["/petattack"] = "familier à l'attaque",
+  ["/petfollow"] = "familier au pied", ["/petpassive"] = "familier passif", ["/petdefensive"] = "familier défensif",
+  ["/petaggressive"] = "familier agressif", ["/petstay"] = "familier immobile", ["/dismount"] = "descend de monture",
+  ["/cancelform"] = "quitte ta forme", ["/targetenemy"] = "cible l'ennemi le plus proche",
+  ["/assist"] = "prend la cible de ton allié", ["/focus"] = "retient ta cible (focalisation)",
+  ["/clearfocus"] = "oublie la focalisation" }
+local CMD_PREFIX = { ["/equip"] = "équipe ", ["/cancelaura"] = "retire ", ["/petautocaston"] = "active (automatique) ",
+  ["/petautocastoff"] = "coupe (automatique) " }
+local CLICK_FR = { rare = "cible le rare repéré par TreeAI",
+  quest = "cible le monstre de l'objectif et utilise l'objet de quête" }
+local SLOT_FR = { ["13"] = "bijou 1", ["14"] = "bijou 2", ["16"] = "arme (main droite)", ["17"] = "arme (main gauche)" }
+
+local function itemLabel(id)
+  local name = itemInfo(tonumber(id))
+  if type(name) == "string" and name ~= "" then return name end
+  return "objet " .. tostring(id)
+end
+
+--- une action : « !Nom » = Nom, « item:123 » = nom de l'objet, « 13 » = bijou 1
+local function actionText(a)
+  a = trim((a or ""):gsub("^!", ""))
+  local id = a:match("^item:(%d+)$")
+  if id then return itemLabel(id) end
+  if SLOT_FR[a] then return SLOT_FR[a] end
+  return a
+end
+
+--- un groupe « [a,b,c] » = étiquette (touches + états), unité visée
+local sawMod = false   -- une variante Maj / Ctrl / Alt a été écrite (lu par M.Describe)
+local function describeGroup(g, stripMods, quietHarm)
+  local mods, nomods, states, unit, dead, harm, help = {}, {}, {}, nil, false, false, false
+  for x in (g .. ","):gmatch("([^,]*),") do
+    x = trim(x)
+    local l = x:lower()
+    if l ~= "" then
+      local m = l:match("^mod:(.+)$") or l:match("^modifier:(.+)$")
+      local nm = l:match("^nomod:(.+)$") or l:match("^nomodifier:(.+)$")
+      if m then for k in m:gmatch("[^/]+") do mods[k] = true end
+      elseif l == "mod" or l == "modifier" then mods.any = true
+      elseif nm then for k in nm:gmatch("[^/]+") do nomods[k] = true end
+      elseif l == "nomod" or l == "nomodifier" then nomods.any = true
+      elseif l:sub(1, 1) == "@" then unit = l
+      elseif l:sub(1, 7) == "target=" then unit = "@" .. l:sub(8)
+      elseif l == "dead" then dead = true
+      elseif l == "harm" then harm = true
+      elseif l == "help" then help = true
+      elseif STATE_FR[l] ~= nil then if STATE_FR[l] then states[#states + 1] = STATE_FR[l] end
+      else
+        local kind, n = l:match("^(%a+):([%d/]+)$")
+        if kind and (kind == "form" or kind == "noform" or kind == "stance" or kind == "nostance") then
+          local neg = kind:sub(1, 2) == "no"
+          local what = (kind:find("stance", 1, true) and "posture " or "forme ") .. n
+          states[#states + 1] = (neg and "hors " or "en ") .. what
+        else
+          states[#states + 1] = x   -- condition inconnue : montrée telle quelle
+        end
+      end
+    end
+  end
+  local parts = {}
+  local mt = {}
+  for _, k in ipairs(MOD_ORDER) do if mods[k] and not (stripMods and stripMods[k]) then mt[#mt + 1] = MOD_FR[k] end end
+  if mods.any then mt[#mt + 1] = "Maj, Ctrl ou Alt" end
+  if #mt > 0 then parts[#parts + 1] = tconcat(mt, "+"); sawMod = true end
+  if unit == "@pet" then
+    for i = #states, 1, -1 do if states[i] == STATE_FR.pet then table.remove(states, i) end end
+  end
+  if unit == "@pet" and dead then states[#states + 1] = "familier mort"
+  elseif dead and help then states[#states + 1] = (unit == "@mouseover") and "allié mort survolé" or "cible amie morte"
+  elseif dead then states[#states + 1] = "cible morte"
+  elseif not unit and harm and not quietHarm then states[#states + 1] = "cible ennemie"
+  elseif not unit and help and not quietHarm then states[#states + 1] = "cible amie" end
+  for _, st in ipairs(states) do parts[#parts + 1] = st end
+  local nt = {}
+  for _, k in ipairs(MOD_ORDER) do if nomods[k] then nt[#nt + 1] = MOD_FR[k] end end
+  if #nt > 0 then parts[#parts + 1] = "sans " .. tconcat(nt, " ni "); sawMod = true end
+  -- « [nomod] » seul : la variante sans touche ; elle ne s'écrit pas (les autres lignes portent leur touche)
+  local u
+  if unit then
+    u = UNIT_FR[unit] or (unit:match("^@party(%d)$") and ("groupe " .. unit:match("%d"))) or unit
+    if unit == "@pet" and dead then u = nil end
+  end
+  return tconcat(parts, ", "), u, (not unit) and true or false
+end
+
+local function unitPhrase(units)
+  if #units == 0 then return "" end
+  if #units == 1 and units[1] == "cible" then return "" end
+  return " [" .. tconcat(units, ", sinon ") .. "]"
+end
+
+--- une clause « [..][..] action » = liste de { label, text } (une entrée par étiquette différente)
+local function describeClause(clause, fixedAction, stripMods)
+  local groups, tail = leadGroups(trim(clause))
+  local action = fixedAction or actionText(tail)
+  if #groups == 0 then return { { label = "", text = action, up = "" } } end
+  local order, by = {}, {}
+  local anyUnit = false   -- un groupe vise une unité (@mouseover…) : « harm » / « help » des autres = filtre de cible
+  for _, g in ipairs(groups) do if g:find("@", 1, true) or g:lower():find("target=", 1, true) then anyUnit = true end end
+  for _, g in ipairs(groups) do
+    local label, unit, isTarget = describeGroup(g, stripMods, anyUnit)
+    local b = by[label]
+    if not b then b = { label = label, units = {} }; by[label] = b; order[#order + 1] = b end
+    local u = unit or (isTarget and "cible") or nil
+    if u then
+      local seen = false
+      for _, x in ipairs(b.units) do if x == u then seen = true end end
+      if not seen then b.units[#b.units + 1] = u end
+    end
+  end
+  local out, labelled = {}, {}
+  for _, b in ipairs(order) do
+    if b.label == "" then out[#out + 1] = { label = "", text = action, up = unitPhrase(b.units) }
+    else labelled[#labelled + 1] = b end
+  end
+  if #labelled > 0 then
+    -- étiquettes différentes pour la même action : « Maj ou familier mort »
+    local labels, units, seenU = {}, {}, {}
+    for _, b in ipairs(labelled) do
+      labels[#labels + 1] = b.label
+      for _, u in ipairs(b.units) do if not seenU[u] then seenU[u] = true; units[#units + 1] = u end end
+    end
+    table.insert(out, 1, { label = tconcat(labels, " ou "), text = action, up = unitPhrase(units) })
+  end
+  return out
+end
+
+local function modOnly(label)
+  local l = label:gsub(" ou ", ""):gsub("Maj", ""):gsub("Ctrl", ""):gsub("Alt", ""):gsub("[%+%s,]", "")
+  return l == ""
+end
+
+--- une ligne de commande = { text = …, gated = étiquette commune ou nil }
+local function describeLine(line, stripMods)
+  local cmd, rest = line:match("^(/%S+)%s*(.*)$")
+  if not cmd then return nil end
+  local lc = cmd:lower()
+  if lc == "/run" or lc == "/script" then return { text = "script du jeu", script = true } end
+  if lc == "/click" then
+    local key = rest:match("TreeAIMacro_(%w+)")
+    return { text = (key and CLICK_FR[key]) or ("clique le bouton " .. trim(rest)) }
+  end
+  local items = {}
+  if lc == "/castsequence" then
+    local groups, tail = leadGroups(rest)
+    local reset = tail:match("reset=(%S+)")
+    tail = trim((tail:gsub("reset=%S+", "")))
+    local names, once = {}, false
+    for a in (tail .. ","):gmatch("([^,]*),") do
+      a = trim(a)
+      if a:lower() == "null" then once = true elseif a ~= "" then names[#names + 1] = actionText(a) end
+    end
+    local txt = tconcat(names, ", puis ")
+    if once and reset and reset:find("target", 1, true) then txt = txt .. " (une seule fois par cible, un par appui)"
+    elseif reset and reset:find("combat", 1, true) then txt = txt .. " (un par appui ; repart du début après le combat)"
+    else txt = txt .. " (un par appui)" end
+    local pre = ""
+    for _, g in ipairs(groups) do pre = pre .. "[" .. g .. "]" end
+    items = describeClause(pre .. " x", txt, stripMods)
+  elseif CMD_FR[lc] then
+    items = describeClause(rest .. " x", CMD_FR[lc], stripMods)
+  elseif lc == "/stopmacro" then
+    items = describeClause(rest .. " x", "rien d'autre", stripMods)
+  else
+    local prefix = CMD_PREFIX[lc] or ""
+    for clause in (rest .. ";"):gmatch("([^;]*);") do
+      if trim(clause) ~= "" then
+        for _, it in ipairs(describeClause(clause, nil, stripMods)) do
+          it.text = prefix .. it.text
+          items[#items + 1] = it
+        end
+      end
+    end
+  end
+  if #items == 0 then return nil end
+  -- la cible (« survol, sinon cible ») : écrite une fois en fin de ligne quand toutes les clauses la partagent
+  local common = items[1].up or ""
+  for _, it in ipairs(items) do if (it.up or "") ~= common then common = nil break end end
+  for _, it in ipairs(items) do
+    if not common then it.text = it.text .. (it.up or "") end
+  end
+  local default, labelled, anyState = nil, {}, false
+  for _, it in ipairs(items) do
+    if it.label == "" then default = default or it
+    else
+      labelled[#labelled + 1] = it
+      if not modOnly(it.label) then anyState = true end
+    end
+  end
+  local text
+  if #labelled == 0 then
+    text = default.text
+  elseif default and not anyState then
+    local t = {}
+    for _, it in ipairs(labelled) do t[#t + 1] = it.label .. " : " .. it.text end
+    text = default.text .. " (" .. tconcat(t, ", ") .. ")"
+  elseif #labelled == 1 and not default then
+    local lb = labelled[1].label
+    local sauf = lb:match("^sans ([%a ]+)$")
+    if modOnly(lb) then text = lb .. " : " .. labelled[1].text
+    elseif sauf then text = labelled[1].text .. " (sauf avec " .. sauf:gsub(" ni ", " ou ") .. ")"
+    else text = labelled[1].text .. " (si " .. lb .. ")" end
+  else
+    local t = {}
+    for _, it in ipairs(labelled) do t[#t + 1] = it.label .. " : " .. it.text end
+    if default then t[#t + 1] = "sinon " .. default.text end
+    text = tconcat(t, " ; ")
+  end
+  if common and common ~= "" then text = text .. common end
+  return { text = text }
+end
+
+--- Ce que fait ce corps de macro, en une phrase. def sert au repli (macro « script ») et à la touche conseillée.
+function M.Describe(def, body)
+  if type(body) ~= "string" or body == "" then return nil end
+  if trim(body) == NEUTRAL_BODY then return "ne fait rien (rien pour elle dans tes sacs)" end
+  sawMod = false
+  local lines = {}
+  for line in (body .. "\n"):gmatch("(.-)\n") do
+    line = trim(line)
+    if line:sub(1, 1) == "/" then lines[#lines + 1] = line end
+  end
+  -- « /stopmacro [mod:x] » : les lignes d'avant qui demandent toutes ce modificateur forment la variante « x : … »
+  local segs, gated = {}, {}
+  local i = 1
+  while i <= #lines do
+    local line = lines[i]
+    local lc = (line:match("^(/%S+)") or ""):lower()
+    if lc == "/stopmacro" then
+      local groups = leadGroups(trim(line:sub(#"/stopmacro" + 1)))
+      local mod
+      if #groups == 1 then mod = groups[1]:lower():match("^mod:(%a+)$") end
+      if mod and MOD_FR[mod] then
+        local strip, moved = { [mod] = true }, {}
+        for k = #segs, 1, -1 do
+          local sl = segs[k].line
+          local all = true
+          for clause in ((sl:match("^/%S+%s*(.*)$") or "") .. ";"):gmatch("([^;]*);") do
+            if trim(clause) ~= "" then
+              local gs = leadGroups(trim(clause))
+              if #gs == 0 then all = false end
+              for _, g in ipairs(gs) do
+                if not ("," .. g:lower():gsub("%s", "") .. ","):find(",mod:" .. mod .. ",", 1, true) then all = false end
+              end
+            end
+          end
+          if all then
+            local d = describeLine(sl, strip)
+            if d then table.insert(moved, 1, d.text) end
+            table.remove(segs, k)
+          end
+        end
+        if #moved > 0 then gated[#gated + 1] = MOD_FR[mod] .. " : " .. tconcat(moved, " + ") .. ", rien d'autre"
+        else gated[#gated + 1] = MOD_FR[mod] .. " : rien" end
+      else
+        local d = describeLine(line)
+        if d then segs[#segs + 1] = { line = line, text = (#groups == 0) and "s'arrête là" or ("s'arrête " .. (d.text:match("%((si .-)%)$") or d.text)) } end
+      end
+    else
+      local d = describeLine(line)
+      if d then segs[#segs + 1] = { line = line, text = d.text, script = d.script } end
+    end
+    i = i + 1
+  end
+  local parts, onlyScript = {}, #segs > 0
+  for _, sg in ipairs(segs) do
+    parts[#parts + 1] = sg.text
+    if not sg.script then onlyScript = false end
+  end
+  local text
+  if onlyScript and def and def.d then text = def.d .. " (script du jeu)"
+  else text = tconcat(parts, " + ") end
+  for _, gt in ipairs(gated) do text = text .. ((text ~= "") and " · " or "") .. gt end
+  if text == "" then return nil end
+  -- touche conseillée avec modificateur : les variantes Maj / Ctrl / Alt ne partent qu'au clic sur le bouton
+  local k = def and def.k
+  if type(k) == "string" and k:find("+", 1, true) and sawMod then
+    text = text .. " — variantes au clic sur le bouton seulement (la touche conseillée contient déjà un modificateur)"
+  end
+  return text
+end
+
+---------------------------------------------------------------------------
 -- (MACRO3) Page « Macros » de la fenêtre TreeAI : pastilles, réglages, préréglages, « Tout mettre à jour »
 ---------------------------------------------------------------------------
 local ICONS = "Interface\\Icons\\"
@@ -2654,13 +3050,42 @@ end
 function M.WhereShort(def)
   local k = def.k or "-"
   local n = k:match("^(%d)$")
-  if n then return ("barre 1, touche %s"):format(n) end
-  if k == "-" or k == "" then return "où tu veux (pas de touche conseillée)" end
+  if n then return ("barre 1, case %s (touche %s)"):format(n, n) end
+  if k == "-" or k == "" then return "une case libre, au clic (pas de touche conseillée)" end
   return ("une case libre, touche %s (bouton « Lier la touche »)"):format(k)
 end
-function M.Purpose(def)
-  return "Sert à : " .. (def.d or "?") .. " · Où : " .. M.WhereShort(def)
+--- (5.1 CLEAN) « Sert à » : ce que fait le texte rendu (body) ; sans texte possible, ce qu'elle fera (« plus tard »)
+function M.Purpose(def, body)
+  local what = body and M.Describe(def, body)
+  if not what then what = "plus tard : " .. (def.d or "?") end
+  return "Sert à : " .. what .. " · Où : " .. M.WhereShort(def)
 end
+--- ce que TreeAI tient à jour dans cette macro (le sort, lui, ne part que quand le joueur appuie)
+function M.AutoText(def)
+  if def.c == "click" then return "sa cible suit toute seule, rien à réécrire" end
+  local items, trinkets = false, false
+  local grows = (def.c ~= "consumable" and def.v and #def.v > 1) or false
+  for _, v in ipairs(def.v or {}) do
+    local b = v.b or ""
+    if b:find("{item:", 1, true) then items = true end
+    if b:find("{slot:", 1, true) then trinkets = true end
+    for line in (b .. "\n"):gmatch("(.-)\n") do
+      if line:sub(1, 1) == "?" and line:find("{%d+}") then grows = true end
+      for clause in (line .. ";"):gmatch("([^;]*);") do
+        if clause:find("%?[^;]*{%d+}") then grows = true end
+      end
+    end
+  end
+  local parts = {}
+  if items then parts[#parts + 1] = "le meilleur objet de ton sac" end
+  if trinkets then parts[#parts + 1] = "tes bijoux à utiliser" end
+  if grows then parts[#parts + 1] = "tes nouveaux sorts" end
+  if #parts == 0 then return "rien, son texte ne change jamais" end
+  local last = table.remove(parts)
+  local what = (#parts > 0) and (tconcat(parts, ", ") .. " et " .. last) or last
+  return "TreeAI suit " .. what .. " et te propose le nouveau texte (ton clic l'écrit)"
+end
+
 --- touche à lier pour « Lier la touche » (« Maj+E » -> « SHIFT-E ») ; nil pour 1 à 6 (déjà la barre 1) et « - »
 function M.BindKeyOf(def)
   local k = def.k
@@ -2699,29 +3124,76 @@ function M:BindKey(def)
   return ok and true or false
 end
 
---- le bloc « Comment ça marche » en 4 étapes (repliable, ouvert la 1re fois)
-function M:RenderHowTo(Ly)
-  if not Ly.header("Comment ça marche", "macros:howto", nil, ICONS .. "INV_Misc_Book_09") then return end
-  Ly.text("1. Installer : un clic sur « Tout mettre à jour » (ou sur une ligne orange) crée les macros dans la "
-    .. "liste du jeu (Échap > Macros, onglet de ton personnage). Rien n'est écrit sans ton clic, jamais en combat.", "S", "text")
-  Ly.text("2. |cff4fc3f7[Auto]|r : TreeAI la réécrit tout seul quand ton sac, tes sorts ou tes rangs changent "
-    .. "(nouvelle nourriture, sort appris). |cffc8c8c8[Fixe]|r : son texte ne change jamais. Chaque ligne dit à quoi "
-    .. "elle sert et où la mettre (ex. « barre 1, touche 1 : ton tir principal »).", "S", "text")
-  Ly.text("3. Glisser sur ta barre : clique une ligne verte, la macro est sur ton curseur ; clique une case de ta "
-    .. "barre pour la poser (clic droit : annuler). Hors combat seulement.", "S", "text")
-  Ly.text("4. Les touches : la touche conseillée est à droite de « Où : ». Pour 1 à 6, pose-la sur la barre 1 à "
-    .. "cette case. Pour les autres (Maj+E, V…), ouvre la macro (clic) puis « Lier la touche ».", "S", "text")
+--- (5.1 CLEAN) le tutoriel : un clic depuis la page Macros (bouton « Tutoriel »), court et concret. Pour chaque macro
+--- activée : ce qu'elle fait (lu dans son texte), ce qui est automatique, où la poser, la touche conseillée.
+local function pageDirtyNow()
+  local W = T.Window
+  if W and W.Dirty then W.Dirty() end
+end
+function M:ToggleTuto(on)
+  if on == nil then on = not M._tuto end
+  M._tuto = on and true or nil
+  pageDirtyNow()
+  return M._tuto == true
+end
+local function keyRank(def)
+  local k = def.k or "-"
+  if k:match("^%d$") then return tonumber(k) end
+  if k == "-" or k == "" then return 99 end
+  return k:find("+", 1, true) and 60 or 30
+end
+--- les lignes du tutoriel pour une macro (aussi lues par les tests et TUTO_FR.md)
+function M.TutoLines(st)
+  local def = st.def
+  local k = def.k or "-"
+  local body = st.expected
+  local lines = {
+    "Fait : " .. ((body and M.Describe(def, body)) or ("rien pour l'instant — " .. tostring(st.text or "?"))),
+    "Automatique : " .. M.AutoText(def) .. ". Le sort ne part que si tu appuies.",
+    "Barre : " .. ((def.o and def.o ~= "") and def.o or M.WhereShort(def)),
+  }
+  if k:match("^%d$") then lines[#lines + 1] = ("Touche : %s (la case %s de la barre 1 l'a déjà)"):format(k, k)
+  elseif k == "-" or k == "" then lines[#lines + 1] = "Touche : aucune conseillée (au clic)"
+  else lines[#lines + 1] = ("Touche conseillée : %s — clique la macro dans la liste, puis « Lier la touche »"):format(k) end
+  return lines
+end
+function M:RenderTuto(Ly, list, bagCtx)
+  Ly.buttons({ { "Retour à mes macros", function() M:ToggleTuto(false) end, "Clic : la liste de tes macros" } }, 1)
+  Ly.text("En 3 gestes", "M", "gold")
+  Ly.text("1. Installer : clique « Tout mettre à jour ». TreeAI crée tes macros dans la liste du jeu (Échap > Macros). "
+    .. "Rien n'est écrit sans ton clic, jamais en combat.", "S", "text")
+  Ly.text("2. Poser : clique une macro verte, elle vient sur ton curseur ; clique une case de ta barre. "
+    .. "Clic droit : annuler.", "S", "text")
+  Ly.text("3. La touche : les cases 1 à 6 de la barre 1 ont déjà leur touche. Pour les autres, clique la macro "
+    .. "puis « Lier la touche ».", "S", "text")
+  Ly.text("Ce qui est automatique, ce qui ne l'est pas", "M", "gold")
+  Ly.text("TreeAI choisit le texte de la macro (meilleur objet du sac, sorts que tu connais) et te le propose : ton "
+    .. "clic l'écrit. En jeu, une macro ne joue jamais à ta place : un appui = une action. Rien ne part tout seul.",
+    "S", "text")
+  local on = {}
+  for _, st in ipairs(list) do if st.on then on[#on + 1] = st end end
+  table.sort(on, function(a, b)
+    local ra, rb = keyRank(a.def), keyRank(b.def)
+    if ra ~= rb then return ra < rb end
+    return a.name < b.name
+  end)
+  Ly.text(("Tes %d %s, une par une"):format(#on, pl(#on, "macro", "macros")), "M", "gold")
+  for _, st in ipairs(on) do
+    local def = st.def
+    Ly.row({ text = M.Dot(st.badge) .. " " .. st.name .. "\n|cffd8d8d8" .. tconcat(M.TutoLines(st), "\n") .. "|r",
+      icon = M.IconOf and M.IconOf(def, bagCtx) or nil, kind = "info",
+      onClick = function() M._pageSel = def.n; M:ToggleTuto(false) end,
+      clickHint = "Clic : ouvrir cette macro dans la liste (installer, poser sur la barre, lier la touche)" })
+  end
   if presetOK("essentiel") and self:Preset() ~= "essentiel" then
-    local asking = M._presetAsk and (now() - M._presetAsk.t) < 8 and M._presetAsk.p == "essentiel"
-    Ly.buttons({ { asking and "Confirmer « Mes 5 macros essentielles »" or "Mes 5 macros essentielles",
-      function() M:ApplyPreset("essentiel") end,
-      PRESETS.essentiel.tip .. " Clic, puis clic encore : les installer." } }, 1)
+    Ly.text("Trop de macros ? « Mes 5 macros essentielles » (boutons en haut de la liste) n'en garde que 5 : Tir, "
+      .. "Familier, Pièges, Aspects, Feindre.", "S", "muted")
   end
 end
 
 local function tipFor(st)
   local def = st.def
-  local t = { def.d or "" }
+  local t = { (st.expected and M.Describe(def, st.expected)) or ("Plus tard : " .. (def.d or "")) }
   t[#t + 1] = "État : " .. st.text
   if st.autoText then t[#t + 1] = st.autoText end
   t[#t + 1] = st.onBar and ("Sur ta barre" .. (st.key and (" · touche " .. keyText(st.key)) or " · sans touche"))
@@ -2805,8 +3277,11 @@ function M:RenderPage(Ly)
         P.tip .. (id == p and " (préréglage en cours)" or " Clic, puis clic encore : l'appliquer (écrit tout de suite).") }
     end
   end
+  -- (5.1 CLEAN) le tutoriel à un clic (à la place du bloc « Comment ça marche »)
+  if M._tuto then return self:RenderTuto(Ly, list, bagCtx) end
+  Ly.buttons({ { "Tutoriel : quoi poser, sur quelle touche", function() M:ToggleTuto(true) end,
+    "Clic : pour chaque macro, ce qu'elle fait, ce qui est automatique, où la poser et sa touche" } }, 1)
   Ly.buttons(presetBtns, 3)
-  self:RenderHowTo(Ly)
   table.sort(list, function(a, b)
     if a.on ~= b.on then return a.on end
     local oa, ob = ORDER[a.badge] or 9, ORDER[b.badge] or 9
@@ -2828,7 +3303,7 @@ function M:RenderPage(Ly)
     local def = st.def
     local right = st.onBar and (st.key and ("touche " .. keyText(st.key)) or "sans touche") or (st.code == "ok" and "clic : sur le curseur" or "")
     Ly.row({ text = M.Dot(st.badge) .. " " .. st.name .. " " .. M.KindBadge(st) .. "  |cffb0b0b0" .. st.text
-        .. (st.autoText and (" · " .. st.autoText) or "") .. "|r\n|cffd8d8d8" .. M.Purpose(def) .. "|r",
+        .. (st.autoText and (" · " .. st.autoText) or "") .. "|r\n|cffd8d8d8" .. M.Purpose(def, st.expected) .. "|r",
       right = right, icon = iconOf(def, bagCtx), tooltip = tipFor(st), onClick = fn, clickHint = hint,
       onRightClick = function() toggleOn(def) end, kind = "info" })
     shown = shown + 1
@@ -2885,9 +3360,9 @@ function M:RenderSettings(Ly, st)
   end
   if f:find("g", 1, true) then
     local v = M:Opt(def, "guard") ~= false
-    optRow(Ly, "Aspect du faucon automatique", yesNo(v), set("guard", not v),
-      "Oui : sans Aspect du faucon, l'appui le remet d'abord (« ! » : jamais coupé). Les aspects prennent le temps de "
-      .. "recharge global : l'action suit à l'appui d'après. Un addon ne peut pas le faire sans ton appui.")
+    optRow(Ly, "Remettre l'Aspect du faucon s'il manque", yesNo(v), set("guard", not v),
+      "Non (conseillé) : un appui = une action. Oui : la macro tente aussi « !Aspect du faucon » ; l'appui où il part, "
+      .. "l'autre action échoue (« pas encore prêt ») et suit à l'appui d'après. Sinon : la macro TAI Aspects.")
   end
   if f:find("t", 1, true) then
     local t = tonumber(M:Opt(def, "tank")) or 1

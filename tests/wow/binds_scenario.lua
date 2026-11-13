@@ -9,7 +9,7 @@ return function(M, ctx)
   M.LeaveCombat()
   M.bindings = {}
   -- (MACRO3) the storm clicked every button (presets, per-macro settings of the « Macros » page): default set again
-  if Mac.char then Mac.char.opts, Mac.char.preset = {}, nil end
+  if Mac.char then Mac.char.opts, Mac.char.preset = {}, "complet" end
   T:UserAction(Mac.Install, Mac, false)
   ctx.check(GetMacroIndexByName("TAI Tir") > 0 and GetMacroIndexByName("TAI Marque") > 0, "TAI macros created")
 

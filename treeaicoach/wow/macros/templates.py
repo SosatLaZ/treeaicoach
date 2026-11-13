@@ -107,14 +107,15 @@ CASTERS = ("PRIEST", "MAGE", "WARLOCK")
 
 # ================================================================ shared (consumables)
 SHARED = [
-    M("TAI Repas", "Mange + boit (Maj : boire seul, Ctrl : manger seul)", "Maj+B", """
+    M("TAI Repas", "Mange et boit (la meilleure nourriture et la meilleure boisson du sac)", "Maj+B", """
 #showtooltip
-?/use [nomod:shift] {item:food}
-?/use [nomod:ctrl] {item:water}
+?/use {item:food}
+?/use {item:water}
 """, classes=MANA, kind="consumable",
       why="Nourriture et boisson du sac les plus fortes pour ton niveau, mises à jour quand ton sac "
           "change (les invoquées passent d'abord, elles sont gratuites). Manger et boire ne déclenchent "
-          "pas de temps de recharge global : un seul appui lance les deux."),
+          "pas de temps de recharge global : un seul appui lance les deux. Sans variante Maj / Ctrl : la touche "
+          "conseillée contient déjà Maj."),
     M("TAI Repas", "Mange la meilleure nourriture du sac", "Maj+B", """
 #showtooltip
 ?/use {item:food}
@@ -146,11 +147,17 @@ SHARED = [
     M("TAI Mana", "Meilleure potion de mana du sac", "Maj+J", """
 #showtooltip
 /use {item:mpot}
-""", classes=tuple(c for c in MANA if c != "MAGE"), kind="consumable",
+""", classes=tuple(c for c in MANA if c not in ("MAGE", "HUNTER")), kind="consumable",
       why="La potion de mana la plus forte utilisable à ton niveau."),
-    M("TAI Bandage", "Bandage : survol > cible amicale > toi (Alt : toi)", "Maj+N", f"""
+    M("TAI Mana", "Meilleure potion de mana du sac", "Maj+J", """
 #showtooltip
-/use {HELP} {{item:bandage}}
+/use {item:mpot}
+""", classes="HUNTER", kind="consumable", default=False, simple=False,
+      why="La potion de mana la plus forte utilisable à ton niveau. Coupée d'office pour un chasseur (tu bois "
+          "entre deux combats) : active-la si tu en utilises."),
+    M("TAI Bandage", "Bandage : allié survolé, sinon cible amie, sinon toi", "Maj+N", """
+#showtooltip
+/use [@mouseover,help,nodead][@target,help,nodead][@player] {item:bandage}
 """, kind="consumable",
       why="Bandage le plus fort permis par ton Secourisme, posé sur l'allié survolé sans changer de cible."),
     M("TAI Munitions", "Équipe les meilleures munitions (arc/arbalète = flèches, fusil = balles)",
@@ -171,18 +178,13 @@ SHARED = [
 /cast {MO} !{{wand}}
 """, classes=CASTERS, ctx="solo",
       why="Le « ! » empêche de couper la baguette en rappuyant : économise ton mana entre deux sorts."),
-    M("TAI Monture", "Monture (Maj : Pierre de foyer) ; descend si tu es monté", "Maj+Z", """
+    M("TAI Monture", "Monte sur ta monture ; descend si tu es déjà monté", "Maj+Z", """
 #showtooltip
-/use [mod:shift] {item:hearth}
-/stopmacro [mod:shift]
-/dismount [mounted]
 /use [nomounted] {item:mount}
-""", """
-#showtooltip
-/use {item:hearth}
-""", kind="consumable", where="Barre secondaire : entre deux quêtes (et Maj+clic pour rentrer).",
-      why="La monture du sac (choisie automatiquement, hors combat) ; recliquer te fait descendre. Avant "
-          "ta première monture, la macro ne lance que la Pierre de foyer."),
+/dismount [mounted]
+""", kind="consumable", where="Barre secondaire : entre deux quêtes.",
+      why="La monture du sac (choisie automatiquement, hors combat) ; rappuyer te fait descendre. Elle ne lance "
+          "jamais la Pierre de foyer. Sans monture dans tes sacs, la macro n'est pas créée (elle ne ferait rien)."),
     M("TAI Marqueur", "Crâne sur la cible (Maj : croix) pour le groupe", "Ctrl+1", """
 /run SetRaidTarget("target",IsShiftKeyDown() and 7 or 8)
 """, icon="Ability_Hunter_SniperShot", default=False, ctx="groupe",
@@ -318,7 +320,7 @@ WARRIOR = [
 """,
       why="Rage sanguinaire est hors temps de recharge global : rage gratuite au début du combat. En "
           "Berserker, le même appui lance Rage berserker (immunité peur)."),
-    M("TAI Burst", "Témérité (+ Souhait mortel) + racial + bijoux", "Maj+R", f"""
+    M("TAI Burst", "Témérité (+ Souhait mortel) + racial + bijoux", "Ctrl+R", f"""
 #showtooltip
 /cast ?[mod:shift] {{death_wish}}; [nostance:3] {{berserker_stance}}; {{recklessness}}
 {RACIALS}
@@ -335,7 +337,7 @@ WARRIOR = [
 """, specs=("armes", "fureur"),
       why="Tous tes gros cooldowns sur une touche : un seul est sur le temps de recharge global, les "
           "raciaux et bijoux « Utiliser » partent avec (lignes ajoutées seulement si tu les as)."),
-    M("TAI Mur", "Mur protecteur (Maj : Dernier rempart)", "Maj+V", """
+    M("TAI Mur", "Mur protecteur (Maj : Dernier rempart)", "Ctrl+V", """
 #showtooltip
 /cast ?[mod:shift] {last_stand}; [nostance:2] {defensive_stance}; {shield_wall}
 """, """
@@ -348,7 +350,7 @@ WARRIOR = [
 /cast [nostance:2] {defensive_stance}; {shield_block}
 """, specs="protection",
       why="Blocage garanti = déclenche Vengeance ; le geste n°1 du tank sur les élites."),
-    M("TAI Tonnerre", "Coup de tonnerre (Combat), Maj : Brise-genou", "Maj+Q", """
+    M("TAI Tonnerre", "Coup de tonnerre (Combat), Maj : Brise-genou", "Ctrl+Q", """
 #showtooltip
 /startattack
 /cast ?[mod:shift] {hamstring}; [nostance:1] {battle_stance}; {thunder_clap}
@@ -421,7 +423,7 @@ PALADIN = [
 /cast ?[mod:shift] {{holy_wrath}}; ?{mo("ctrl")} {{hammer_wrath}}; {MO} {{exorcism}}
 """,
       why="Exorcisme : gros dégâts sur morts-vivants et démons ; Marteau de courroux achève sous 20 %."),
-    M("TAI Marteau", "Marteau de la justice (Maj : Repentir) — interrompt", "Maj+4", f"""
+    M("TAI Marteau", "Marteau de la justice (Maj : Repentir) — interrompt", "Ctrl+4", f"""
 #showtooltip
 /stopcasting
 /cast ?{mo("shift")} {{repentance}}; {MO} {{hoj}}
@@ -445,7 +447,7 @@ PALADIN = [
 /cast {HELP} {{purify}}
 """,
       why="Retire poison / maladie (et magie avec Épuration) sans changer de cible."),
-    M("TAI BoP", "Bénédiction de protection (Maj : liberté)", "Maj+6", f"""
+    M("TAI BoP", "Bénédiction de protection (Maj : liberté)", "Ctrl+6", f"""
 #showtooltip
 /cast ?{hm("shift")} {{freedom}}; {HELP} {{bop}}
 """, ctx="groupe",
@@ -496,7 +498,10 @@ PALADIN = [
 # Aspects are ON the global cooldown in Forever (SpellCategories 133, 1.5 s). The aspect « garde »
 # « /cast !Aspect du faucon » does nothing while the Hawk is on (« ! »); otherwise that press puts it on and the
 # main action fires on the next press — before the pull (TAI Marque, TAI Pro Tir: first line) or as a fallback
-# after the main shot (TAI Tir: when the shot is on cooldown). The player can turn the garde off per macro.
+# after the main shot (TAI Tir: when the shot is on cooldown).
+# (5.1 CLEAN) The garde is OPT-IN in game (Modules/Macros.lua: « guard » defaults to off): one GCD action per press.
+# The press that puts the Hawk on makes the main action fail (« pas encore prêt ») — an error line and sound the
+# player called « horribles ». The switch stays in each macro's settings; TAI Aspects is the aspect key.
 _SHOT = """
 #showtooltip
 /cast ?[mod:shift] {{multi_shot}}; {main}
@@ -519,24 +524,23 @@ HUNTER = [
       why="Un seul bouton à marteler : « !Tir automatique » relance le tir auto sans jamais le couper, "
           "le familier attaque ta cible (Alt = il reste), puis ton tir instantané. Invocation de faucon "
           "(talent Bêtes) partage la recharge du Tir des arcanes : elle le remplace, Ctrl garde l'Arcane. "
-          "Sans Aspect du faucon, il revient dès que le tir est en recharge."),
+          "Réglage « Remettre l'Aspect du faucon s'il manque » (coupé d'office : un appui = une action) : la macro tente aussi l'Aspect du faucon."),
     M("TAI Tir", "Tir auto + familier + Tir des arcanes (Maj : multiples, Ctrl : Visée)", "1",
       _SHOT.format(main="?[mod:ctrl] {aimed_shot}; {arcane_shot}"), _SHOT_LOW,
       specs=("precision", "survie"), simple=True, pro_off=True, icon="INV_Weapon_Bow_02",
       labels=("Tir des arcanes (Ctrl : Visée)", "Tir auto seul"),
       where="Case 1 de la barre principale : le bouton que tu cliques le plus, en boucle.",
       why="« !Tir automatique » relance le tir auto sans jamais le couper, le familier part sur ta cible "
-          "(Alt = il reste). Visée (Ctrl) se lance juste après un tir auto pour ne pas le décaler. Sans Aspect "
-          "du faucon, il revient dès que le tir est en recharge."),
-    M("TAI Marque", "Faucon si besoin, puis Marque du chasseur (survol) + familier", "2", f"""
+          "(Alt = il reste). Visée (Ctrl) se lance juste après un tir auto pour ne pas le décaler. "
+          "Réglage « Remettre l'Aspect du faucon s'il manque » (coupé d'office : un appui = une action) : la macro tente aussi l'Aspect du faucon."),
+    M("TAI Marque", "Marque du chasseur (survol) + familier", "2", f"""
 #showtooltip {{hunters_mark}}
 ?/cast !{{aspect_hawk}}
 /cast {MO} {{hunters_mark}}
 {_PET_MO}
 """, simple=True, pro_off=True, where="Case 2 : premier clic de chaque combat, avant le Tir.",
-      why="Ouvre le combat : si l'Aspect du faucon n'est pas actif, le 1er appui le met (avant le pull, sans "
-          "risque) ; l'appui suivant pose la marque (monstre survolé en priorité) et envoie le familier sur ce "
-          "même monstre (Alt = il reste)."),
+      why="Ouvre le combat : pose la marque (monstre survolé en priorité) et envoie le familier sur ce même "
+          "monstre (Alt = il reste). Réglage « Remettre l'Aspect du faucon s'il manque » (coupé d'office : un appui = une action) : le 1er appui met le Faucon, le suivant pose la marque."),
     M("TAI Morsure", "Morsure de serpent + tir auto (Maj : vipère, Ctrl : scorpide)", "3", f"""
 #showtooltip
 /cast ?{mo("shift")} {{viper_sting}}; ?{mo("ctrl")} {{scorpid_sting}}; {MO} {{serpent_sting}}
@@ -648,10 +652,10 @@ HUNTER = [
 """, default=False, simple=True, where="Barre secondaire : sur un groupe de monstres (raccourci conseillé : Maj+1).",
       why="Flèches multiples sans modificateur (préréglage Simple) : le tir auto et le familier suivent dans le "
           "même appui."),
-    M("TAI Defense", "Désengagement (Maj : Dissuasion, Alt/Ctrl : racial)", "Maj+Q", """
+    M("TAI Defense", "Désengagement (Maj : Dissuasion, Alt/Ctrl : racial)", "-", """
 #showtooltip
 /cast ?[mod:shift] {deterrence}; ?[mod:alt] {war_stomp}; ?[mod:ctrl] {stoneform}; {disengage}
-""", simple=False, where="Barre principale, à côté de TAI Melee.",
+""", default=False, simple=False, where="Barre principale, à côté de TAI Melee (au clic : Maj / Alt / Ctrl).",
       why="Désengagement retire de la menace au corps à corps (pratique en groupe) ; Dissuasion (talent "
           "Survie) pare tout pendant 10 s. Alt = Choc martial (Tauren), Ctrl = Forme de pierre (Nain) : "
           "ajoutés seulement si ta race les a."),
@@ -717,7 +721,8 @@ HUNTER = [
             "appui = Tir des arcanes.",
       why="Sans cible (ou cible morte) : l'ennemi le plus proche devant toi (attention en donjon). Marque puis "
           "Morsure de serpent une seule fois par cible, ensuite Tir des arcanes à chaque appui ; tir auto jamais "
-          "coupé, familier envoyé (Alt = il reste). Sans Aspect du faucon, le 1er appui le met."),
+          "coupé, familier envoyé (Alt = il reste). Les deux premiers appuis sur une cible tentent aussi le Tir des "
+          "arcanes : le jeu répond « pas encore prêt », c'est normal. Réglage « Remettre l'Aspect du faucon s'il manque » (coupé d'office : un appui = une action)."),
     M("TAI Pro Burst", "Burst : Tir rapide + Courroux bestial + racial + bijoux + Arcanes", "R", f"""
 #showtooltip {{rapid_fire}}
 /cast {{rapid_fire}}
@@ -729,17 +734,18 @@ HUNTER = [
       trick="Tout ce qui ne prend pas le temps de recharge global part avant le Tir des arcanes : un seul appui.",
       why="Tir rapide, Courroux bestial, Fureur sanguinaire (Orc) ou Berserker (Troll) et les bijoux « Utiliser » "
           "ne déclenchent pas le temps de recharge global : ils partent tous, puis le Tir des arcanes."),
-    M("TAI Pro Panique", "Panique : Feindre la mort + familier au pied (Maj : Piège givrant)", "Maj+E", """
+    M("TAI Pro Panique", "Panique : Feindre la mort + familier au pied ; hors combat : Piège givrant", "Maj+E", """
 #showtooltip
 /stopcasting
 /stopattack
 /petfollow
-/cast ?[mod:alt] {war_stomp}; [mod:shift][nocombat] {freezing_trap}; {feign_death}
+/cast [nocombat] {freezing_trap}; {feign_death}
 """, default=False, pro=True, where="À portée de pouce : quand ça tourne mal.",
       trick="Feindre la mort ne prend pas le temps de recharge global dans Forever : il part même juste après "
             "un tir, avec l'arrêt des attaques et le rappel du familier.",
       why="Coupe ton incantation et tes attaques, rappelle le familier et fait le mort dans le même appui. "
-          "Ensuite (hors combat) ou avec Maj : Piège givrant à tes pieds. Alt = Choc martial (Tauren)."),
+          "Ensuite (hors combat) : Piège givrant à tes pieds. Sans variante Maj / Alt : la touche conseillée "
+          "contient déjà Maj."),
     M("TAI Pro Melee", "Mêlée : Coupure d'ailes 1 fois, puis Mangouste ; Raptor à chaque coup", "Q", """
 #showtooltip {raptor_strike}
 /startattack
@@ -778,14 +784,14 @@ HUNTER = [
           "sans changer de cible."),
     M("TAI Pro Kite", "Kite : Trait de choc (survol) + tir auto + familier", "Maj+4", f"""
 #showtooltip
-/cast ?[mod:shift] {{wing_clip}}; ?[mod:alt] {{disengage}}; {MO} {{concussive_shot}}
+/cast {MO} {{concussive_shot}}
 /cast !{{auto_shot}}
 /petattack [harm,nodead]
 """, default=False, pro=True, where="Barre secondaire : un monstre qui fonce sur toi.",
       trick="Ralentit, relance le tir auto et garde le familier dessus en un appui : recule, tire, rappuie dès "
             "que le Trait de choc revient.",
-      why="Trait de choc sur le survol (sinon ta cible), puis tir auto et familier. Maj = Coupure d'ailes s'il "
-          "est collé, Alt = Désengagement."),
+      why="Trait de choc sur le survol (sinon ta cible), puis tir auto et familier. S'il est collé à toi : "
+          "TAI Melee (Coupure d'ailes)."),
     M("TAI Pro Assist", "Groupe : prends la cible du tank, tir auto, familier, Arcanes", "Maj+1", f"""
 #showtooltip {{arcane_shot}}
 /assist [@mouseover,help,nodead][help,nodead][@party1,exists,nodead]
@@ -881,7 +887,7 @@ ROGUE = [
 /cast {MO} {{blind}}
 """,
       why="Contrôle d'un add au survol sans lâcher ta cible."),
-    M("TAI Burst", "Poussée d'adrénaline / Déluge de lames + racial + bijoux", "Maj+R", f"""
+    M("TAI Burst", "Poussée d'adrénaline / Déluge de lames + racial + bijoux", "Ctrl+R", f"""
 #showtooltip
 /cast ?[mod:shift] {{blade_flurry}}; {{adrenaline_rush}}
 {RACIALS}
@@ -893,7 +899,7 @@ ROGUE = [
 {TRINKETS}
 """, specs="combat",
       why="Cooldowns du Combat ; racial et bijoux « Utiliser » partent dans le même appui."),
-    M("TAI Burst", "Sang froid + Éviscération", "Maj+R", """
+    M("TAI Burst", "Sang froid + Éviscération", "Ctrl+R", """
 #showtooltip {eviscerate}
 /cast {cold_blood}
 /cast {eviscerate}
@@ -979,7 +985,7 @@ PRIEST = [
 /cast {psychic_scream}
 """, ctx="solo",
       why="/stopcasting puis peur instantanée quand deux monstres te tapent. À éviter en donjon."),
-    M("TAI Urgence", "Prière du désespoir (Maj : Oubli)", "Maj+V", """
+    M("TAI Urgence", "Prière du désespoir (Maj : Oubli)", "Ctrl+V", """
 #showtooltip
 /stopcasting
 /cast ?[mod:shift] {fade}; {desperate_prayer}
@@ -1074,7 +1080,7 @@ SHAMAN = [
 /cast ?{hm("shift")} {{lesser_hw}}; {HELP} {{healing_wave}}
 """,
       why="Soin sans changer de cible (Alt = toi). Vague inférieure, plus rapide, sur Maj."),
-    M("TAI Chaine", "Salve de guérison (Maj : Remous)", "Maj+5", f"""
+    M("TAI Chaine", "Salve de guérison (Maj : Remous)", "Ctrl+5", f"""
 #showtooltip
 /cast ?{hm("shift")} {{riptide}}; {HELP} {{chain_heal}}
 """, specs="restauration", ctx="groupe",
@@ -1207,7 +1213,7 @@ MAGE = [
 /cast ?[mod:shift,@cursor] {blizzard}; ?[mod:ctrl,@cursor] {flamestrike}; {arcane_explosion}
 """, ctx="groupe",
       why="Blizzard et Choc de flammes tombent directement sous la souris : pas de cercle à poser."),
-    M("TAI Defense", "Bloc de glace (Maj : Morsure du froid, Ctrl : Barrière)", "Maj+V", """
+    M("TAI Defense", "Bloc de glace (Maj : Morsure du froid, Ctrl : Barrière)", "Alt+V", """
 #showtooltip
 /stopcasting
 /cast ?[mod:shift] {cold_snap}; ?[mod:ctrl] {ice_barrier}; {ice_block}
@@ -1309,7 +1315,7 @@ WARLOCK = [
 /cast {MO} {{drain_soul}}
 """,
       why="Drain de vie pour tenir sans manger ; Siphon d'âme sur un monstre presque mort = fragment."),
-    M("TAI Peur", "Peur (Maj : Hurlement, Ctrl : Voile mortel) survol", "Maj+5", f"""
+    M("TAI Peur", "Peur (Maj : Hurlement, Ctrl : Voile mortel) survol", "Alt+5", f"""
 #showtooltip
 /cast ?[mod:shift] {{howl_terror}}; ?{mo("ctrl")} {{death_coil}}; {MO} {{fear}}
 """,
@@ -1335,7 +1341,7 @@ WARLOCK = [
 """, icon="Spell_Shadow_SummonImp",
       why="Contrôle du démon sans barre de familier : envoie-le sur le survol, rappelle-le, "
           "empêche-le de puller."),
-    M("TAI Demon sort", "Sort du démon : Verrou / Séduction / Tourment (Maj : Sacrifice)", "Maj+F",
+    M("TAI Demon sort", "Sort du démon : Verrou / Séduction / Tourment (Maj : Sacrifice)", "Ctrl+F",
       f"""
 #showtooltip
 /stopmacro [nopet]
@@ -1413,7 +1419,7 @@ DRUID = [
 /cast !{cat}
 """,
       why="1er appui : félin ; 2e appui hors combat : Rôder. Pas de risque de casser la forme."),
-    M("TAI Rodeur", "Ouverture félin : Traquenard (Maj : Ravage)", "Maj+4", """
+    M("TAI Rodeur", "Ouverture félin : Traquenard (Maj : Ravage)", "Ctrl+4", """
 #showtooltip
 /cast [noform:3] !{cat}; ?[stealth,mod:shift] {ravage}; ?[stealth] {pounce}; {rake}
 """, specs="farouche", ctx="solo",

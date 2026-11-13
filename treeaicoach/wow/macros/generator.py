@@ -559,10 +559,39 @@ def _spec_overlap(a: Macro, b: Macro, cls: str) -> bool:
     return bool(sa & sb)
 
 
+_KEY_MODS = {"Maj": "shift", "Ctrl": "ctrl", "Alt": "alt"}
+_MOD_COND = re.compile(r"\b(?:no)?mod(?:ifier)?(?::([\w/]+))?\b")
+_MOD_FN = {"IsShiftKeyDown": "shift", "IsControlKeyDown": "ctrl", "IsAltKeyDown": "alt", "IsModifierKeyDown": "any"}
+
+
+def lint_key(m: Macro) -> list[str]:
+    """(5.1) The suggested key must not hold a modifier that the macro itself tests: bound on « Maj+Z », a
+    « [mod:shift] » clause is true on EVERY press (the old « TAI Monture » fired the Hearthstone that way) and a
+    « [nomod:shift] » clause never runs."""
+    held = {_KEY_MODS[x] for x in re.findall(r"(Maj|Ctrl|Alt)\+", m.key or "")}
+    if not held:
+        return []
+    errs = []
+    for v in m.variants:
+        tested: set[str] = set()
+        for mm in _MOD_COND.finditer(v):
+            tested |= set((mm.group(1) or "any").lower().split("/"))
+        for fn, mod in _MOD_FN.items():
+            if fn in v:
+                tested.add(mod)
+        bad = sorted(tested & (held | {"any"}))
+        if bad:
+            errs.append(f"{m.name} : la touche conseillée {m.key} contient un modificateur que la macro teste "
+                        f"({', '.join(bad)}) : cette variante partirait à chaque appui")
+            break
+    return errs
+
+
 def lint_class(cls: str) -> list[str]:
     errs: list[str] = []
     ms = macros_for(cls)
     for i, m in enumerate(ms):
+        errs.extend(f"{cls}: {e}" for e in lint_key(m))
         for other in ms[:i]:
             if other.name == m.name and _spec_overlap(m, other, cls):
                 errs.append(f"{cls}: nom en double {m.name} pour une même spécialisation")
