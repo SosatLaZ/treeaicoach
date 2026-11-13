@@ -416,8 +416,10 @@ return function(M, ctx)
   M.Advance(1, 0.2)
   local glow = rawget(_G, "TreeAIRewardGlow")
   check(not called("GetQuestReward"), "choix de récompense : jamais pris à ta place")
-  check(glow and glow:IsShown() and Qo.lastBest and Qo.lastBest.i == 2, "choix : la meilleure (la plus chère ici) entourée ("
-    .. tostring(Qo.lastBest and Qo.lastBest.i) .. ")")
+  -- (5.0 GEAR) Équipement est allumé en mode sûr : c'est lui qui entoure (QoL ne le fait que s'il est coupé) — une seule fois
+  local Gm = T.modules.Gear
+  local bestI = (Gm and Gm._active and Gm.lastReward and Gm.lastReward.i) or (Qo.lastBest and Qo.lastBest.i)
+  check(glow and glow:IsShown() and bestI == 2, "choix : la meilleure (la plus chère ici) entourée (" .. tostring(bestI) .. ")")
   if glow then
     local gR, bR = geo.Rect(glow), geo.Rect(btn2)
     check(gR and bR and overlap(gR, bR), "le cadre entoure le bon bouton")

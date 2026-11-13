@@ -490,7 +490,7 @@ function M.AskSpecOnce()
   if SP.enabledAt and t - SP.enabledAt < M.SPEC_ASK_AFTER then return false end
   c.specAsked = true
   local names = M.TreeNames(s.class)
-  M:Suggest("spec", ("Quelle est ta spé ? %s, %s ou %s — clic pour choisir"):format(names[1], names[2], names[3]), 2,
+  M:Suggest("spec", ("Quelle est ta spé ? (clic : %s, %s ou %s)"):format(names[1], names[2], names[3]), 2,
     { ttl = 900, cooldown = 0, sound = false,
       tooltip = { "TreeAI n'a pas pu lire tes talents : dis-lui ta spé une fois,",
         "il adapte les poids d'équipement. Tu peux la changer quand tu veux (page Équipement)." },

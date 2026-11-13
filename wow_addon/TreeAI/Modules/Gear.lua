@@ -793,25 +793,7 @@ local function pickBest(cands, c, n)
   return cands
 end
 
--- (5.0 GEAR) index des objets du client par niveau requis, construit UNE fois (par tranches) : un plan ne relit que les
--- niveaux utiles au lieu des 5 000 lignes
-local byReq, byReqFor
-local function reqIndex(yieldEvery)
-  local D = data()
-  if byReq and byReqFor == (D and D.items) then return byReq end
-  local idx, n = {}, 0
-  for id, r in pairs(D and D.items or {}) do
-    n = n + 1
-    if yieldEvery and n % 600 == 0 and coroutine.running() then coroutine.yield() end
-    local req = r[2] or 0
-    local l = idx[req]
-    if not l then l = {} idx[req] = l end
-    l[#l + 1] = id
-  end
-  byReq, byReqFor = idx, D and D.items   -- (l'ordre dans un niveau n'importe pas : classés par gain puis par n°)
-  return idx
-end
-M._resetIndex = function() byReq = nil end
+M._resetIndex = function() end   -- (tests : plus d'index gardé en mémoire)
 local EMPTY = {}
 --- un objet des tables (ligne brute r) est-il un candidat pour un emplacement ? Sans aucune table temporaire :
 --- classe (masque), armure / arme, niveau, puis le score ; la table du candidat n'est créée que s'il gagne.
@@ -904,20 +886,20 @@ function M.Plan(yieldEvery, only, prev)
   for id, e in pairs(logRewards) do linked(id, e.link) end
   pause()
   -- 2. objets du client de niveau requis utile (index par niveau), par tranches courtes
+  -- (une passe sur les ~5 000 lignes, sans index gardé en mémoire : le filtre de niveau coûte ~8 instructions par
+  -- ligne ; la tranche se compte en « poids » : 1 par ligne écartée, 12 par objet examiné)
   local D = data()
-  local items = D and D.items or EMPTY
-  local idx = reqIndex(yieldEvery)
-  local n, slice = 0, yieldEvery and max(20, floor(yieldEvery / 10)) or nil
-  for req = c.level - 12, c.level + c.horizon do
-    local l = idx[req] or EMPTY
-    for i = 1, #l do
-      local id = l[i]
-      if not seen[id] then
-        n = n + 1
-        if slice and n % slice == 0 then pause() end
-        fastCandidate(id, items[id], c, cur, per, only)
-      end
+  local lo, hi = c.level - 12, c.level + c.horizon
+  local budget, load = yieldEvery and yieldEvery * 2 or nil, 0
+  for id, r in pairs(D and D.items or EMPTY) do
+    local req = r[2] or 0
+    if req >= lo and req <= hi and not seen[id] then
+      load = load + 12
+      fastCandidate(id, r, c, cur, per, only)
+    else
+      load = load + 1
     end
+    if budget and load >= budget then load = 0 pause() end
   end
   pause()
   -- ne garder que les 10 plus gros gains par emplacement avant de chercher les sources (coût Questie borné)
@@ -998,6 +980,7 @@ function M.Plan(yieldEvery, only, prev)
   end
   plan.shopping = M.Shopping(plan)
   plan.hunter = M.HunterNotes(plan)
+  statCache = {}   -- les stats lues pour ce plan ne restent pas en mémoire (les pistes retenues gardent les leurs)
   return plan
 end
 
@@ -1567,6 +1550,7 @@ function M.OnQuestComplete()
     local link = try(G.GetQuestItemLink, "choice", i)
     local name = (link and itemInfo(link)) or ("choix " .. i)
     showGlow(rewardButton(i))
+    M.lastReward = { i = i, why = why }
     local txt
     if why == "upgrade" then
       local num = sc and sc.text and sc.text ~= "emplacement vide" and (" (" .. sc.text .. ")") or ""

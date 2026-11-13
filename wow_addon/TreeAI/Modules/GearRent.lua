@@ -78,7 +78,7 @@ function M.AskMountOnce()
   local lv = level()
   if not c or c.mountAsked or lv < 30 or lv >= M.MOUNT_LEVEL then return false end
   c.mountAsked = true
-  M:Suggest("mount", "Garder de côté pour la monture du niveau 40 ? Clic : choisir (0, 50 ou 100 po)", 1,
+  M:Suggest("mount", "Garder de l'or pour la monture du niveau 40 ? (clic : 0, 50 ou 100 po)", 1,
     { ttl = 900, cooldown = 0, sound = false,
       tooltip = { "TreeAI ne conseillera un achat d'équipement qu'avec l'or qui reste après cette réserve.",
         "Tu changes le montant quand tu veux (page Équipement, « Stuff rentable »)." },
@@ -241,6 +241,21 @@ M.ArrowsSoon = arrowsSoon
 ---------------------------------------------------------------------------------------------------
 -- Verdicts par emplacement
 ---------------------------------------------------------------------------------------------------
+local cut = T.Cut or function(x) return tostring(x or "") end   -- (Core) n caractères UTF-8, jamais un accent coupé
+--- nom d'objet pour une ligne (≤ 30 caractères) ; jamais « ? » (un nom pas encore reçu = « objet »)
+local function nm(x) x = tostring(x or "") if x == "" or x == "?" then return "objet" end return cut(x, 30) end
+local function tlen(x) if T.TextLen then return T.TextLen(x) end local _, n = tostring(x):gsub("[^\128-\191]", "") return n end
+--- une ligne tient en 96 caractères (règle du panneau) : sinon la dernière parenthèse part (elle est dans l'infobulle),
+--- puis le texte est coupé proprement
+local function fit(text)
+  local max96 = T.LINE_MAX or 96
+  if tlen(text) <= max96 then return text end
+  text = text:gsub(" %(emplacement vide%)", "", 1)   -- « Taille : (vide) » le dit déjà dans l'infobulle
+  if tlen(text) <= max96 then return text end
+  local t2 = text:gsub(" %b()$", "")
+  if tlen(t2) <= max96 then return t2 end
+  return cut(t2, max96 - 1)
+end
 local VERB = { vendor = "Achète", ah = "Achète à l'HV", quest = "Fais la quête", boss = "Donjon", craft = "Fais fabriquer", drop = "Butin",
   world = "Surveille" }
 local FREE = { quest = true, boss = true, drop = true, bag = true }
@@ -255,9 +270,12 @@ local function lifeText(cd, c)
   return fmt("rien de nettement mieux avant le niveau %d", c.level + c.horizon + 1)
 end
 local function srcShort(src)
-  local t = tostring(src.text or "?")
+  local t = tostring(src.text or "source")
   if src.kind == "craft" then return t:match("%(([^()]-~%d+)[^()]*%)") or (t:gsub(" — .*$", "")) end
-  return (t:gsub("^récompense de ", ""):gsub(" %(dans ton journal%)", ""):gsub(" — .*$", ""))
+  t = t:gsub("^récompense de ", ""):gsub(" %(dans ton journal%)", ""):gsub(" — .*$", "")
+  local q, rest = t:match("^« (.-) »(.*)$")   -- titre de quête long : coupé, le reste (niveau) gardé
+  if q then return "« " .. cut(q, 28) .. " »" .. rest end
+  return cut(t, 40)
 end
 --- le verdict d'un emplacement → ligne { slot, action, text, right, tooltip, onClick, ratio, … }
 local function verdictFor(slot, plan, bud, bags)
@@ -266,20 +284,20 @@ local function verdictFor(slot, plan, bud, bags)
   local head = SLOT_FR[slot] or tostring(slot)
   local row = { slot = slot, worn = cur.name, icon = ICON .. (SLOT_ICON[slot] or "INV_Misc_QuestionMark"), kind = "gear" }
   local function done(action, text, right, tip, onClick, hint, gain, cost, mins, prio)
-    row.action, row.text, row.right, row.tooltip, row.onClick, row.clickHint = action, text, right, tip, onClick, hint
+    row.action, row.text, row.right, row.tooltip, row.onClick, row.clickHint = action, fit(text), right, tip, onClick, hint
     row.gain, row.cost, row.min, row.prio = gain or 0, cost or 0, mins or 0, prio or 1
     row.ratio = (gain or 0) / (1 + (mins or 0) + (cost or 0) / max(1, c.copperPerMin))
     return row
   end
   if cur.unknown then
-    return done("unknown", fmt("%s : %s — inconnu (stats pas encore lues)", head, cur.name or "?"), nil,
+    return done("unknown", fmt("%s : %s — inconnu (stats pas encore lues)", head, nm(cur.name)), nil,
       { "Le jeu n'a pas encore envoyé les stats de cet objet : survole-le une fois, TreeAI recalcule." }, nil, nil, 0, 0, 0, 1)
   end
   -- 1. dans les sacs : équiper (un clic, hors combat)
   local b = bags.bySlot[slot]
   if b then
     local sc = b.sc
-    local name = sc.item and sc.item.name or "?"
+    local name = nm(sc.item and sc.item.name)
     local tip = { fmt("%s : %s → %s", head, cur.name or "(vide)", name) }
     for _, l in ipairs(sc.lines or {}) do tip[#tip + 1] = l end
     tip[#tip + 1] = V.ModelText()
@@ -297,7 +315,7 @@ local function verdictFor(slot, plan, bud, bags)
     local src = nowC.nowSrc
     local gain, cmp = gainOf(nowC, slot)
     local cost = tonumber(src.cost) or 0
-    local tip = { fmt("%s : %s → %s", head, cur.name or "(vide)", nowC.name or "?"), "Gain : " .. gain, "Où : " .. tostring(src.text or "?") }
+    local tip = { fmt("%s : %s → %s", head, cur.name or "(vide)", nm(nowC.name)), "Gain : " .. gain, "Où : " .. tostring(src.text or "?") }
     for _, l in ipairs(cmp and cmp.lines or {}) do tip[#tip + 1] = "  " .. l end
     tip[#tip + 1] = lifeText(nowC, c):gsub("^%l", string.upper) .. "."
     local wait = soon and soon.score >= nowC.score * 1.15 and (soon.need - c.level) <= 2
@@ -305,23 +323,23 @@ local function verdictFor(slot, plan, bud, bags)
     if cost > 0 and wait then
       local s2 = soon or nowC
       local g2 = soon and (gainOf(soon, slot)) or nil
-      return done("wait", fmt("%s : attends le niveau %d — %s%s (%s)", head, (soon and soon.need) or nowC.life, s2.name or "mieux",
+      return done("wait", fmt("%s : attends le niveau %d — %s%s (%s)", head, (soon and soon.need) or nowC.life, nm(s2.name),
         g2 and (" · " .. g2) or "", soon and srcShort(soon.src) or "meilleur à venir"), nil,
-        { fmt("%s coûte %s et serait remplacé presque tout de suite.", nowC.name or "?", money(cost)),
-          soon and fmt("Au niveau %d : %s (%s).", soon.need, soon.name or "?", tostring(soon.src.text)) or "Un objet nettement meilleur arrive au niveau suivant." },
+        { fmt("%s coûte %s et serait remplacé presque tout de suite.", nm(nowC.name), money(cost)),
+          soon and fmt("Au niveau %d : %s (%s).", soon.need, nm(soon.name), tostring(soon.src.text)) or "Un objet nettement meilleur arrive au niveau suivant." },
         soon and function() M.GoSource(soon.src, soon) end or nil, soon and "Clic : voir où l'obtenir" or nil, 0, 0, 0, 1)
     end
     if cost > 0 and cost > bud.free then
       local why = bud.reserve > 0 and fmt("il te reste %s après la réserve monture", money(bud.free)) or fmt("tu as %s", money(bud.money))
       tip[#tip + 1] = "Trop cher pour l'instant : " .. why .. "."
-      return done("save", fmt("%s : %s · %s — trop cher (%s)", head, nowC.name or "?", gain, money(cost)), money(cost), tip,
+      return done("save", fmt("%s : %s · %s — trop cher (%s)", head, nm(nowC.name), gain, money(cost)), money(cost), tip,
         function() M.GoSource(src, nowC) end, "Clic : voir où l'obtenir", 0, cost, src.min, 1)
     end
     local verb = VERB[src.kind] or "Vise"
     local text
-    if src.kind == "quest" then text = fmt("%s %s → %s · %s", verb, srcShort(src), nowC.name or "?", gain)
-    elseif src.kind == "boss" then text = fmt("%s : %s → %s · %s", verb, tostring(src.text):gsub(" — .*$", ""), nowC.name or "?", gain)
-    else text = fmt("%s %s · %s", verb, nowC.name or "?", gain) end
+    if src.kind == "quest" then text = fmt("%s %s → %s · %s", verb, srcShort(src), nm(nowC.name), gain)
+    elseif src.kind == "boss" then text = fmt("%s : %s → %s · %s", verb, tostring(src.text):gsub(" — .*$", ""), nm(nowC.name), gain)
+    else text = fmt("%s %s · %s", verb, nm(nowC.name), gain) end
     local right = cost > 0 and money(cost) or nil
     if FREE[src.kind] then tip[#tip + 1] = "Gratuit : il ne coûte que du temps." end
     return done(src.kind == "vendor" and "buy" or src.kind == "ah" and "buy" or src.kind, text, right, tip,
@@ -336,37 +354,37 @@ local function verdictFor(slot, plan, bud, bags)
   -- « attends le niveau N » seulement si l'objet à venir est nettement meilleur que ce qu'on peut viser dès maintenant
   if soon and not (later and (not (cur.id or cur.link) or soon.score < later.score * 1.15)) then
     local gain = gainOf(soon, slot)
-    return done("wait", fmt("%s : attends le niveau %d — %s · %s (%s)", head, soon.need, soon.name or "?", gain, srcShort(soon.src)), nil,
-      { fmt("%s : %s → %s (niveau %d requis).", head, cur.name or "(vide)", soon.name or "?", soon.need), "Où : " .. tostring(soon.src.text) },
+    return done("wait", fmt("%s : attends le niveau %d — %s · %s (%s)", head, soon.need, nm(soon.name), gain, srcShort(soon.src)), nil,
+      { fmt("%s : %s → %s (niveau %d requis).", head, cur.name or "(vide)", nm(soon.name), soon.need), "Où : " .. tostring(soon.src.text) },
       function() M.GoSource(soon.src, soon) end, "Clic : voir où l'obtenir", 0, 0, 0, 1)
   end
   if later then
     local src = later.src
     local gain, cmp = gainOf(later, slot)
     local cost = tonumber(src.cost) or 0
-    local tip = { fmt("%s : %s → %s", head, cur.name or "(vide)", later.name or "?"), "Gain : " .. gain, "Où : " .. tostring(src.text or "?") }
+    local tip = { fmt("%s : %s → %s", head, cur.name or "(vide)", nm(later.name)), "Gain : " .. gain, "Où : " .. tostring(src.text or "?") }
     for _, l in ipairs(cmp and cmp.lines or {}) do tip[#tip + 1] = "  " .. l end
     if (src.kind == "vendor" or src.kind == "ah") and cost > 0 then
       local why = bud.reserve > 0 and fmt("il te reste %s après la réserve monture", money(bud.free)) or fmt("tu as %s", money(bud.money))
       tip[#tip + 1] = "Trop cher pour l'instant : " .. why .. "."
-      return done("save", fmt("%s : %s · %s — trop cher (%s)", head, later.name or "?", gain, money(cost)), money(cost), tip,
+      return done("save", fmt("%s : %s · %s — trop cher (%s)", head, nm(later.name), gain, money(cost)), money(cost), tip,
         function() M.GoSource(src, later) end, "Clic : voir où l'obtenir", 0, cost, src.min, 1)
     end
-    local when = (src.kind == "boss" and tonumber(src.dmin)) and fmt("donjon conseillé dès le niveau %d", max(1, tonumber(src.dmin) - 2))
+    local when = (src.kind == "boss" and tonumber(src.dmin)) and fmt("donjon dès le niveau %d", max(1, tonumber(src.dmin) - 2))
       or (src.kind == "quest" and "quête pas encore faisable") or (src.kind == "craft" and "artisan à trouver") or "pas encore faisable"
     tip[#tip + 1] = when:gsub("^%l", string.upper) .. "."
     if src.kind == "craft" then
-      return done("later", fmt("%s : à faire fabriquer — %s · %s (%s)", head, later.name or "?", gain, srcShort(src)), nil, tip,
+      return done("later", fmt("%s : à faire fabriquer — %s · %s (%s)", head, nm(later.name), gain, srcShort(src)), nil, tip,
         function() M.GoSource(src, later) end, "Clic : la page Métiers", 0, 0, 0, 1)
     end
-    return done("later", fmt("%s : plus tard — %s · %s (%s)", head, later.name or "?", gain, when), nil, tip,
+    return done("later", fmt("%s : plus tard — %s · %s (%s)", head, nm(later.name), gain, when), nil, tip,
       function() M.GoSource(src, later) end, "Clic : voir où l'obtenir", 0, 0, 0, 1)
   end
   local weak = list[1]
   if weak and weak.src and weak.src.kind == "world" then
     local tradable = weak.bind ~= 1   -- lié quand ramassé : pas à l'hôtel des ventes
-    return done("watch", (cur.id or cur.link) and fmt("%s : garde %s — mieux existe (%s), source inconnue de TreeAI", head, cur.name or "?", weak.name or "?")
-        or fmt("%s : vide — %s existe, source inconnue de TreeAI", head, weak.name or "?"), nil,
+    return done("watch", (cur.id or cur.link) and fmt("%s : garde %s — mieux existe (%s), source inconnue de TreeAI", head, nm(cur.name), nm(weak.name))
+        or fmt("%s : vide — %s existe, source inconnue de TreeAI", head, nm(weak.name)), nil,
       { "TreeAI ne sait pas où il s'obtient (butin, réputation, JcJ…).", tradable and "Il s'échange : regarde à l'hôtel des ventes." or "Il est lié quand ramassé : pas à l'hôtel des ventes." },
       tradable and function() M.GoSource({ kind = "ah" }, weak) end or nil, tradable and "Clic : le chercher à l'HV (ouverte), sinon la page HV" or nil, 0, 0, 0, 1)
   end
@@ -375,7 +393,7 @@ local function verdictFor(slot, plan, bud, bags)
       { fmt("Aucun objet avec une source connue jusqu'au niveau %d dans les objets du jeu.", c.level + c.horizon),
         "Garde un œil sur le butin, les récompenses de quête et l'hôtel des ventes." }, nil, nil, 0, 0, 0, 1)
   end
-  return done("keep", fmt("%s : garde %s", head, cur.name or "?"), nil,
+  return done("keep", fmt("%s : garde %s", head, nm(cur.name)), nil,
     { fmt("Rien de mieux et d'atteignable jusqu'au niveau %d d'après les objets du jeu.", c.level + c.horizon) }, nil, nil, 0, 0, 0, 1)
 end
 
@@ -622,7 +640,7 @@ function M.RenderPage(Ly)
     if Ly.header("Mon équipement — les plus faibles d'abord", nil, nil, ICON .. "INV_Chest_Chain") then
       for _, e in ipairs(M.Doll(plan)) do
         local r = e.verdict
-        local title = fmt("%s : %s", SLOT_FR[e.slot] or e.slot, e.unknown and ((e.name or "?") .. " (inconnu)") or e.name or "(vide)")
+        local title = fmt("%s : %s", SLOT_FR[e.slot] or e.slot, e.unknown and ((e.name or "objet") .. " (inconnu)") or e.name or "(vide)")
         local right = e.unknown and "inconnu" or e.empty and "vide" or fmt("%d %%", floor(e.ratio * 100 + 0.5))
         if e.wear and e.wear < 50 then right = right .. fmt(" · usé %d %%", e.wear) end
         local tip = { e.unknown and "Stats pas encore lues par le jeu : survole l'objet une fois."
