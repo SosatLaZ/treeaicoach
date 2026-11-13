@@ -32,6 +32,7 @@ return function(M, ctx)
   check(#B.Keepers() >= 2, "the real keepers « Gear » and « Prof » are registered at login: " .. table.concat(B.Keepers(), ", "))
   B.UnregisterKeeper("Gear")
   B.UnregisterKeeper("Prof")
+  B.UnregisterKeeper("ahdesk")   -- (5.1 AH) the buy-and-resell desk's keeper (« acheté pour revendre »): its own scenario
   check(#B.Keepers() == 0, "real keepers set aside for the bridge sections")
   local Q = T.modules.QoL
   if Q and Q.db then Q.db.sellRepair = false end          -- the card first; the automatic grey sale has its own step

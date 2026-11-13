@@ -2144,20 +2144,6 @@ function M.InstallAH(G, modern)
       end
       return out
     end
-    AH.PostItem = function(loc, duration, qty, bid, buyout)
-      if not ahProtected("PostItem") then return end
-      local it = bagLoc(loc)
-      if not it then M.Violation("api", "PostItem: empty bag slot") return end
-      M.ah.posts[#M.ah.posts + 1] = { id = it.id, count = qty, buyout = buyout, duration = duration }
-      M.SetBagItem(loc.bag, loc.slot, nil)
-    end
-    AH.PostCommodity = function(loc, duration, qty, unitPrice)
-      if not ahProtected("PostCommodity") then return end
-      local it = bagLoc(loc)
-      if not it then M.Violation("api", "PostCommodity: empty bag slot") return end
-      M.ah.posts[#M.ah.posts + 1] = { id = it.id, count = qty, unit = unitPrice, buyout = unitPrice * qty, duration = duration, commodity = true }
-      M.SetBagItem(loc.bag, loc.slot, nil)
-    end
     AH.MakeItemKey = function(id) return { itemID = id, itemLevel = 0, itemSuffix = 0, battlePetSpeciesID = 0 } end
     AH.GetItemCommodityStatus = function(x)
       local id = x
@@ -2169,6 +2155,9 @@ function M.InstallAH(G, modern)
       if throttled("SendSearchQuery") then return end
       M.ah.queries[#M.ah.queries + 1] = { search = key and key.itemID, hw = M.hardware }
       local id = key and key.itemID
+      -- (5.1 AH) the client holds the answer of the LAST search of this item (a snapshot, not the live market)
+      M.ah.results = M.ah.results or {}
+      if id then M.ah.results[id] = M.ah.searchResults(id) end
       respond(function()
         if AH.GetItemCommodityStatus(id) == 2 then M.FireEvent("COMMODITY_SEARCH_RESULTS_UPDATED", id)
         else M.FireEvent("ITEM_SEARCH_RESULTS_UPDATED", key) end
@@ -2180,40 +2169,154 @@ function M.InstallAH(G, modern)
       table.sort(r, function(x, y) return x.buyout / x.count < y.buyout / y.count end)
       return r
     end
-    AH.GetNumItemSearchResults = function(key) return #results(key.itemID) end
+    M.ah.searchResults = results
+    local function seen(id) return (M.ah.results and M.ah.results[id]) or results(id) end   -- no search yet: the live list (old tests)
+    AH.GetNumItemSearchResults = function(key) return #seen(key.itemID) end
     AH.GetItemSearchResultInfo = function(key, i)
-      local a = results(key.itemID)[i]
-      if a then return { auctionID = a.auctionID, quantity = a.count, buyoutAmount = a.buyout, owners = { a.owner }, itemKey = key } end
+      local a = seen(key.itemID)[i]
+      if a then return { auctionID = a.auctionID, quantity = a.count, buyoutAmount = a.buyout, owners = { a.owner }, itemKey = key,
+        containsOwnerItem = a.owner == M.player.name } end
     end
-    AH.GetNumCommoditySearchResults = function(id) return #results(id) end
+    AH.GetNumCommoditySearchResults = function(id) return #seen(id) end
     AH.GetCommoditySearchResultInfo = function(id, i)
-      local a = results(id)[i]
-      if a then return { auctionID = a.auctionID, quantity = a.count, unitPrice = math.floor(a.buyout / a.count), owners = { a.owner }, itemID = id } end
+      local a = seen(id)[i]
+      if a then return { auctionID = a.auctionID, quantity = a.count, unitPrice = math.floor(a.buyout / a.count), owners = { a.owner }, itemID = id,
+        containsOwnerItem = a.owner == M.player.name, numOwnerItems = a.owner == M.player.name and a.count or 0 } end
+    end
+    -- (5.1 AH) M.ah.real = true : the server side of an action, as documented for C_AuctionHouse — the message
+    -- system is busy after every action (calling while busy = violation « throttle »), gold leaves the purse
+    -- (PLAYER_MONEY), the answer comes back as an event a moment later (AUCTION_HOUSE_PURCHASE_COMPLETED /
+    -- COMMODITY_PURCHASE_SUCCEEDED / AUCTION_HOUSE_AUCTION_CREATED, or AUCTION_HOUSE_SHOW_ERROR when the auction
+    -- is gone / the gold is missing). M.ah.silent = true : no answer event at all (a client that lacks them).
+    local function actionBusy(fn)
+      if not M.ah.real then return false end
+      if M.now < M.ah.throttleUntil then
+        M.Violation("throttle", fn .. " while the AH message system is not ready")
+        return true
+      end
+      M.ah.throttleUntil = M.now + ahDelay()
+      newTimer(ahDelay(), function() M.FireEvent("AUCTION_HOUSE_THROTTLED_SYSTEM_READY") end)
+      return false
+    end
+    local function pay(amount)
+      if not M.ah.real then return true end
+      if M.player.money < amount then return false end
+      M.player.money = M.player.money - amount
+      M.FireEvent("PLAYER_MONEY")
+      return true
+    end
+    local function answer(ev, ...)
+      if not M.ah.real or M.ah.silent then return end
+      local args = { n = select("#", ...), ... }
+      respond(function() M.FireEvent(ev, unpack(args, 1, args.n)) end)
     end
     AH.PlaceBid = function(auctionID, amount)
       if not ahProtected("PlaceBid") then return end
+      if actionBusy("PlaceBid") then return end
       local a = byID(auctionID)
-      if not a then return end
-      M.ah.bids[#M.ah.bids + 1] = { id = a.id, count = a.count, amount = amount, buyout = a.buyout }
+      if not a or (M.ah.real and (amount ~= a.buyout or a.owner == M.player.name)) or not pay(amount) then answer("AUCTION_HOUSE_SHOW_ERROR", 2) return end
+      M.ah.bids[#M.ah.bids + 1] = { id = a.id, count = a.count, amount = amount, buyout = a.buyout, auctionID = auctionID, owner = a.owner }
       for i, x in ipairs(M.ah.list) do if x == a then table.remove(M.ah.list, i) break end end
+      answer("AUCTION_HOUSE_PURCHASE_COMPLETED", auctionID)
+    end
+    -- deposit as the client computes it (documented: CalculateCommodityDeposit(itemID, duration, quantity),
+    -- CalculateItemDeposit(item, duration, quantity)); here 15 % of the vendor value per 12 h (M.ah.depositPct)
+    local function depositOf(id, duration, qty)
+      local it = M.items[id]
+      return math.floor((it and it.sellPrice or 0) * (qty or 1) * (M.ah.depositPct or 15) * ({ 1, 2, 4 })[duration or 2] / 100)
+    end
+    AH.CalculateCommodityDeposit = function(id, duration, qty) return depositOf(id, duration, qty) end
+    AH.CalculateItemDeposit = function(loc, duration, qty)
+      local it = bagLoc(loc)
+      return it and depositOf(it.id, duration, qty) or 0
+    end
+    local aidSeq = 900000
+    local function posted(it, loc, duration, qty, unit, commodity)
+      if actionBusy(commodity and "PostCommodity" or "PostItem") then return false end
+      if M.ah.real then
+        if M.ah.postError or qty > (it.count or 1) or not pay(depositOf(it.id, duration, qty)) then
+          answer("AUCTION_HOUSE_POST_ERROR", 1)
+          return false
+        end
+      end
+      aidSeq = aidSeq + 1
+      M.ah.posts[#M.ah.posts + 1] = { id = it.id, count = qty, unit = unit, buyout = unit * qty, duration = duration, commodity = commodity or nil, auctionID = aidSeq }
+      if M.ah.real then
+        M.ah.owned[#M.ah.owned + 1] = { id = it.id, count = qty, buyout = unit * qty, auctionID = aidSeq, owner = M.player.name }
+        local left = (it.count or 1) - qty
+        M.SetBagItem(loc.bag, loc.slot, left > 0 and it.id or nil, left > 0 and left or nil)
+        answer("AUCTION_HOUSE_AUCTION_CREATED", aidSeq)
+        newTimer(0, function() M.FireEvent("BAG_UPDATE", loc.bag) M.FireEvent("BAG_UPDATE_DELAYED") end)
+      else
+        M.SetBagItem(loc.bag, loc.slot, nil)
+      end
+      return true
+    end
+    AH.PostItem = function(loc, duration, qty, bid, buyout)
+      if not ahProtected("PostItem") then return end
+      local it = bagLoc(loc)
+      if not it then M.Violation("api", "PostItem: empty bag slot") return end
+      if M.ah.real then posted(it, loc, duration, qty, buyout, false) return end
+      M.ah.posts[#M.ah.posts + 1] = { id = it.id, count = qty, buyout = buyout, duration = duration }
+      M.SetBagItem(loc.bag, loc.slot, nil)
+    end
+    AH.PostCommodity = function(loc, duration, qty, unitPrice)
+      if not ahProtected("PostCommodity") then return end
+      local it = bagLoc(loc)
+      if not it then M.Violation("api", "PostCommodity: empty bag slot") return end
+      posted(it, loc, duration, qty, unitPrice, true)
     end
     AH.StartCommoditiesPurchase = function(id, qty)
       if not ahProtected("StartCommoditiesPurchase") then return end
+      if actionBusy("StartCommoditiesPurchase") then return end
       M.ah.pendingCommodity = { id = id, qty = qty }
       local r, left, total = results(id), qty, 0
       for _, a in ipairs(r) do
-        local take = math.min(left, a.count)
-        total = total + math.floor(a.buyout / a.count) * take
-        left = left - take
-        if left <= 0 then break end
+        if not (M.ah.real and a.owner == M.player.name) then   -- the game never sells you your own auction
+          local take = math.min(left, a.count)
+          total = total + math.floor(a.buyout / a.count) * take
+          left = left - take
+          if left <= 0 then break end
+        end
       end
-      M.FireEvent("COMMODITY_PRICE_UPDATED", math.floor(total / qty), total)
+      if M.ah.real and left > 0 then
+        M.ah.pendingCommodity = nil
+        respond(function() M.FireEvent("COMMODITY_PRICE_UNAVAILABLE") end)
+        return
+      end
+      M.ah.pendingCommodity.total = total
+      if M.ah.real then respond(function() M.FireEvent("COMMODITY_PRICE_UPDATED", math.floor(total / qty), total) end)
+      else M.FireEvent("COMMODITY_PRICE_UPDATED", math.floor(total / qty), total) end
     end
     AH.ConfirmCommoditiesPurchase = function(id, qty)
       if not ahProtected("ConfirmCommoditiesPurchase") then return end
       if not (M.ah.pendingCommodity and M.ah.pendingCommodity.id == id) then M.Violation("api", "Confirm without Start") return end
-      M.ah.bids[#M.ah.bids + 1] = { id = id, count = qty, commodity = true }
+      if actionBusy("ConfirmCommoditiesPurchase") then return end
+      local pc = M.ah.pendingCommodity
       M.ah.pendingCommodity = nil
+      if M.ah.real then
+        -- the server sells the cheapest units first, at TODAY's prices (they may have moved since the quote)
+        local r, left, total, takes = results(id), qty, 0, {}
+        for _, a in ipairs(r) do
+          if a.owner ~= M.player.name then
+            local take = math.min(left, a.count)
+            total, left = total + math.floor(a.buyout / a.count) * take, left - take
+            takes[#takes + 1] = { a, take }
+            if left <= 0 then break end
+          end
+        end
+        if left > 0 or total ~= pc.total or not pay(total) then answer("COMMODITY_PURCHASE_FAILED") return end
+        for _, t in ipairs(takes) do
+          local a, take = t[1], t[2]
+          local unit = math.floor(a.buyout / a.count)
+          a.count, a.buyout = a.count - take, unit * (a.count - take)
+          if a.count <= 0 then for i, x in ipairs(M.ah.list) do if x == a then table.remove(M.ah.list, i) break end end end
+        end
+        M.ah.bids[#M.ah.bids + 1] = { id = id, count = qty, commodity = true, amount = total }
+        answer("COMMODITY_PURCHASE_SUCCEEDED")
+        return
+      end
+      M.ah.bids[#M.ah.bids + 1] = { id = id, count = qty, commodity = true }
     end
     AH.CancelCommoditiesPurchase = function() M.ah.pendingCommodity = nil end
     AH.GetNumOwnedAuctions = function() return #M.ah.owned end

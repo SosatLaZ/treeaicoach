@@ -61,6 +61,8 @@ Modules\Fight.lua
 Modules\Pro.lua
 Modules\Abandon.lua
 Modules\Auction.lua
+Modules\AHMath.lua
+Modules\AHDesk.lua
 Modules\Prof.lua
 Modules\Glow.lua
 Modules\Highlight.lua

@@ -788,6 +788,101 @@ return function(X)
   -- relire » cycle of the core — every 30 s — falls inside the measure)
   phase("repos", 80, function() M.speed = 0 ev("PLAYER_STOPPED_MOVING") end, nil, nil, 40)
 
+  -- (5.1 AH) « rends le truc bcp plus réactif … achat-revente en masse » : only with `--phases hv` (not part of the
+  -- default crowd run). A session at the auction house: open, full scan of ~2 600 listings (sliced), 30 purchases
+  -- (one key press each, live re-check in between), 30 stacks posted, AH closed, then rest. Gate: no image over 4 ms,
+  -- nothing once the AH is closed; the scripted presses are the player's hardware events.
+  if only and only.hv then
+    local hv = {}
+    function hv.work()                                   -- kinstr spent so far by the two AH modules in this phase
+      local n = 0
+      for k, v in pairs(phases[#phases] and phases[#phases].byCtx or {}) do if k:find("^AHDesk:") or k:find("^Auction:") then n = n + v end end
+      return n
+    end
+    -- the world before the session (not measured: the player arrives with his bags full and the HV switched on)
+    local Tm = main.T
+    local A, D = Tm:GetModule("Auction"), Tm.AHDesk
+    X.setCur(main.name)
+    if not (A._active and D._active) then   -- profile « sur »: the HV is a beta function the player switched on
+      Tm:SetModuleEnabled("Auction", true)
+      Tm:SetModuleEnabled("AHDesk", true)
+    end
+    hv.D = D
+    A.db.autoReserve, A.db.keepGold, A.db.mountGold = false, 0, 0
+    M.player.money = 5000000
+    M.ah.real = true
+    do
+      local list, aid = {}, 400000
+      local function L(id, count, unit) aid = aid + 1 list[#list + 1] = { id = id, count = count, buyout = unit * count, owner = "Vendeur" .. (aid % 9), auctionID = aid } end
+      for i = 1, 800 do                                  -- the server's market: 800 items, 3 listings each
+        local id = 300000 + i
+        M.AddItem(id, { name = "Marchandise-" .. i, stack = 20, sellPrice = 10 + i % 40, type = "Artisanat", classID = 7 })
+        for k = 1, 3 do L(id, 5 + (i + k) % 16, 200 + (i * 7) % 300 + k * 3) end
+      end
+      for i = 1, 30 do                                   -- 30 single items listed under their vendor price
+        local id = 301000 + i
+        M.AddItem(id, { name = "Babiole-" .. i, stack = 1, sellPrice = 900 + i, type = "Divers", classID = 15 })
+        L(id, 1, 300 + i * 5) L(id, 1, 2000 + i)
+      end
+      for i = 1, 6 do                                    -- what the player farmed: 6 trade goods, 5 stacks each
+        local id = 302000 + i
+        M.AddItem(id, { name = "Butin-" .. i, stack = 20, sellPrice = 20, type = "Artisanat", classID = 7 })
+        for k = 1, 4 do L(id, 20, 800 + i * 10 + k) end
+      end
+      M.ah.list = list
+      for b = 1, 3 do for sl = 1, 10 do M.SetBagItem(b, sl, 302000 + 1 + ((b * 10 + sl) % 6), 20) end ev("BAG_UPDATE", b) end
+      ev("BAG_UPDATE_DELAYED")
+    end
+    tick(20)
+    phase("hv", 170, function()
+      M.speed = 0 ev("PLAYER_STOPPED_MOVING")            -- standing at the auctioneer
+      wait(25)
+      M.SetAuctionHouse(true)
+      wait(25)
+      M.Hw(D.frame.scan.Click, D.frame.scan)
+      for _ = 1, 600 do wait(1) if A.lastScan and A.lastScan.full and not A.job and not D.build and #D.all > 0 then break end end
+      hv.queue = #D.buyQ
+      if opts.verbose then io.write(("  hv dbg: list %d, cur %d, all %d, lastScan %s, msg %s, status %s\n"):format(#M.ah.list, (function() local n = 0 for _ in pairs(A.cur) do n = n + 1 end return n end)(), #D.all, tostring(A.lastScan and A.lastScan.rows), tostring(A.msg), tostring(D.status))) end
+      for _ = 1, 400 do                                  -- hammer the key: 4 presses / second
+        if not D.BuyHead() then break end
+        M.Hw(Tm.AuctionNext)
+        wait(6)
+      end
+      hv.buys = D.sess.buys
+      wait(25)
+      for _ = 1, 400 do
+        if D.sess.posts >= 30 or not (D.PostHead() or D.pb or A.mini) then break end
+        if D.PostHead() then M.Hw(Tm.AuctionNext) end
+        wait(6)
+      end
+      hv.posts = D.sess.posts
+      hv.wait = D.waitQ
+      if opts.verbose then
+        local nb = 0
+        for b = 1, 3 do for sl = 1, 10 do if M.bags[b] and M.bags[b].slots[sl] then nb = nb + 1 io.write(("  hv left in bags: %d/%d id %s x%s\n"):format(b, sl, tostring(M.bags[b].slots[sl].id), tostring(M.bags[b].slots[sl].count))) end end end
+        io.write(("  hv end: postQ %d pb %s mini %s head %s\n"):format(#D.postQ, tostring(D.pb ~= nil), tostring(A.mini ~= nil), tostring(D.PostHead() ~= nil)))
+      end
+      wait(25)
+      M.SetAuctionHouse(false)
+      wait(50)                                           -- 2 s for the last debounced handlers
+      hv.closedAt, hv.atClose = X.simSeconds(), hv.work()
+    end)
+    hv.atEnd = hv.work()
+    if hv.D then
+      X.note = X.note or function() end
+      io.write(("hv session: queue %s, buys %s, posts %s, skipped %s\n"):format(tostring(hv.queue), tostring(hv.buys), tostring(hv.posts), tostring(hv.D.sess.skipped)))
+      if opts.verbose then for _, l in ipairs(hv.D.log) do io.write("  hv log: ", l, "\n") end end
+      if opts.verbose then for _, w in ipairs(hv.wait or {}) do io.write("  hv wait: ", tostring(w.name), " ", tostring(w.why), "\n") end end
+      if not hv.closedAt then X.fail("hv: the session did not finish")
+      else
+        io.write(("hv closed at %d s: AH modules' work in the %d s that follow: %d kinstr\n"):format(hv.closedAt, X.simSeconds() - hv.closedAt, hv.atEnd - hv.atClose))
+        if hv.atEnd - hv.atClose > 0 then X.fail(("hv: %d kinstr of AH work with the auction house closed"):format(hv.atEnd - hv.atClose)) end
+      end
+      if (hv.buys or 0) < 30 then X.fail(("hv: only %s purchases out of 30"):format(tostring(hv.buys))) end
+      if (hv.posts or 0) < 30 then X.fail(("hv: only %s posts out of 30"):format(tostring(hv.posts))) end
+    end
+  end
+
   FR.driver, FR.onFrame, FR.inbox = nil, nil, nil
 
   -- ------------------------------------------------------------------ report + gates

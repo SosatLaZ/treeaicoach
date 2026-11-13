@@ -5,6 +5,9 @@
 return function(M, ctx)
   local T = TreeAI
   local A = T and T:GetModule("Auction")
+  -- (5.1 AH) this scenario covers the market-data layer and the 4.1 panel; the buy-and-resell desk that replaces that
+  -- panel at the AH has its own scenario (ah5_scenario.lua) and is switched off here.
+  if T and T.AHDesk and T.SetModuleEnabled then T:SetModuleEnabled("AHDesk", false) end
   ctx.check(A and T.AuctionNext, "Auction module + TreeAI.AuctionNext (key binding entry)")
   if not A then return end
   if T.SetSoundKind then T:SetSoundKind("ah", true) end   -- (4.0.1) sons coupés par défaut sauf le danger

@@ -938,6 +938,7 @@ function M.FinishScan(j)
   M.BuildQueue()
   M.Refresh()
   if T.Bags and T.Bags.Invalidate then pcall(T.Bags.Invalidate) end   -- (5.0 BAGS) nouveaux prix : avis des sacs refaits
+  if T.AHDesk and T.AHDesk.OnScan then pcall(T.AHDesk.OnScan) end     -- (5.1 AH) le bureau d'achat-revente refait ses files
 end
 
 local function processScan(src, full, total, by)
@@ -1028,7 +1029,13 @@ function M.DealsCount(n)
   n = tonumber(n) or 0
   return n == 1 and "1 achat-revente sûr" or (n .. " achats-reventes sûrs")
 end
+-- (5.1 AH) le bureau d'achat-revente (AHDesk) a ses propres files, étalées sur plusieurs images : quand il est là,
+-- l'ancien calcul (tout le marché d'un coup à la fin de chaque relecture ciblée : une image de 21 ms mesurée dans
+-- `session_sim --crowd --phases hv`) ne tourne plus.
+local function deskOn() local D = T.AHDesk return D ~= nil and type(D.Docked) == "function" and D.Docked() == true end
+M.DeskOn = deskOn
 function M.FindDeals(items, j)
+  if deskOn() then M.deals, M.thinList, M.plan, M.none = {}, {}, {}, nil return M.deals end
   local neutral, hrs = M.IsNeutral(), hours()
   local minMargin, minProfit = n0(cfg("minMargin", 15)) / 100, max(1, n0(cfg("minProfit", 1))) * 100
   local all, thin, rejects, cand = {}, {}, {}, 0
@@ -1318,6 +1325,7 @@ function M.OnSearchResults(_, event, arg)
     M.mini.waiting, M.mini.done = nil, M.mini.done + 1
     T:After(0, M.MiniNext)
   end
+  if T.AHDesk and T.AHDesk.OnSearchRows then pcall(T.AHDesk.OnSearchRows, id, rows, commodity) end   -- (5.1 AH) une seule lecture pour les deux
   M.Refresh()
 end
 
@@ -1501,6 +1509,7 @@ function M.MiniNext()
     M.BuildQueue()
     say(("Scan ciblé fini : %d objet(s) en %s s."):format(m.done, tostring(M.lastMini.secs)))
     M.Refresh()
+    if T.AHDesk and T.AHDesk.OnScan then pcall(T.AHDesk.OnScan) end   -- (5.1 AH)
     return
   end
   m.waiting, m.sentAt = id, clock()
@@ -1620,12 +1629,15 @@ function M.CheckOwned()
   end
   local neutral, hrs = M.IsNeutral(), hours()
   local scanning = M.Scanning()
+  local desk = M.DeskOn()
   for _, a in ipairs(mine) do
     a.unit = floor(a.buy / a.count)
     local it = a.id and M.cur[a.id]
-    a.depositLost = F.deposit(vendorPrice(a.id), a.count, hrs, neutral)
+    a.depositLost = (not desk) and F.deposit(vendorPrice(a.id), a.count, hrs, neutral) or nil
     local odd = a.id and M.Odd(a.id)
-    if scanning then
+    if desk then
+      a.state2 = "-"   -- (5.1 AH) le bureau d'achat-revente n'a besoin que de la liste (prix, quantité) : pas de conseil par enchère ici
+    elseif scanning then
       a.state2, a.advice = "scan…", ("scan en cours (%s) : conseil après la lecture"):format(scanning)
     elseif odd or not a.id then
       a.state2, a.advice = "-", "objet spécial (" .. (odd or "inconnu") .. ") : pas de conseil de prix"
@@ -1639,7 +1651,7 @@ function M.CheckOwned()
       a.worth = adv.action == "cancel"
       a.repost, a.gain = adv.repost, adv.gain
     end
-    local fl = a.id and M.char and M.char.flips and M.char.flips[a.id]
+    local fl = (not desk) and a.id and M.char and M.char.flips and M.char.flips[a.id]
     local mk = a.id and M.liqCache[a.id] and M.liqCache[a.id].market
     if fl and mk and mk > 0 and mk < n0(fl.stop) then
       a.stopHit = true
@@ -1849,6 +1861,7 @@ end
 
 -- ------------------------------------------------------------------ file « Suivant » (1 clic = 1 action)
 function M.BuildQueue()
+  if deskOn() then M.queue, M.qi = {}, 1 return M.queue end   -- (5.1 AH) files du bureau d'achat-revente
   local q = {}
   for _, d in ipairs(M.plan or {}) do
     if d.state ~= "bought" and d.state ~= "gone" then q[#q + 1] = { kind = "buy", d = d } end
@@ -2592,6 +2605,18 @@ M.ScanSmart = scanHere
 function M.RenderPage(Ly, W)
   local m = M.PageModel()
   local week = n0(m.realized.week)
+  -- (5.1 AH) le bureau d'achat-revente : objectif du jour et capital en tête ; la tuile « Acheter-revendre » lit SES files
+  local D = deskOn() and T.AHDesk or nil
+  local flipGain, flipN = m.planGain, #m.groups
+  if D then
+    if D.PageHead then pcall(D.PageHead, Ly, W) end
+    local okS, sm = pcall(D.Summary)
+    if okS and type(sm) == "table" then
+      flipGain, flipN = n0(sm.planNet), n0(sm.buy)
+      week = n0(sm.week)                       -- un seul bilan sur la page : celui du journal du bureau (coût d'achat déduit)
+      m.realized = { week = week, today = n0(sm.today), total = n0(sm.total) }
+    end
+  end
   -- (4.2 FIX42) deux gains JAMAIS additionnés : vendre ce que tu as déjà (sacs) ≠ acheter pour revendre (de l'or engagé)
   local nBags = #m.bags
   local view = M.view or "flips"
@@ -2603,7 +2628,7 @@ function M.RenderPage(Ly, W)
         "Net : commission 5 % (15 % en HV neutre) et dépôt perdu si invendu déjà déduits.",
         "Jamais ce que tu dois garder (potions, munitions, quêtes, compos de tes métiers) : l'avis de la page « Sacs »." },
       view == "bags", "Clic : la liste" },
-    { "Acheter-revendre : +" .. money(m.planGain), #m.groups > 0 and (#m.groups .. " achat" .. (#m.groups > 1 and "s" or "") .. " sûr" .. (#m.groups > 1 and "s" or ""))
+    { "Acheter-revendre : +" .. money(flipGain), flipN > 0 and (flipN .. " achat" .. (flipN > 1 and "s" or "") .. " sûr" .. (flipN > 1 and "s" or "") .. (D and " ou prouvé" .. (flipN > 1 and "s" or "") or ""))
         or "rien de sûr pour l'instant", function() M.view = "flips" end,
       { "De l'or engagé : acheté à l'HV, revendu plus cher (ventes mesurées entre tes scans).",
         "Net : commission et dépôt déjà déduits. Jamais additionné à la vente de tes sacs." },
@@ -2611,7 +2636,7 @@ function M.RenderPage(Ly, W)
     { ("%d vente%s · %s"):format(m.ownedN, m.ownedN > 1 and "s" or "", money(m.ownedV)), "en vente à l'HV", nil,
       { m.ahOpen and "Lu à l'instant" or ("Vu à l'HV " .. ago(m.ownedT)) } },
     { (week >= 0 and "+" or "") .. money(week), "gagné cette semaine", nil,
-      { ("Aujourd'hui %s · total %s"):format(money(m.realized.today), money(m.realized.total)), "Lu dans le courrier de l'HV (ventes − achats)." } },
+      { ("Aujourd'hui %s · total %s"):format(money(m.realized.today), money(m.realized.total)), D and "Ventes (prix − commission − prix d'achat), reventes au marchand, dépôts perdus." or "Lu dans le courrier de l'HV (ventes − achats)." } },
   }, 2)
   local function pick(v) return function() M.view = v end end
   local need = m.need or {}
@@ -2656,7 +2681,9 @@ local function emptyScan(Ly, m)
   return false
 end
 function M.RenderFlips(Ly, W, m)
-  if Ly.header("Acheter pour revendre", "hv:flips", #m.groups) then
+  local D = deskOn() and T.AHDesk or nil
+  if D and D.PageDeals then pcall(D.PageDeals, Ly, W)   -- (5.1 AH) la file du bureau d'achat-revente
+  elseif Ly.header("Acheter pour revendre", "hv:flips", #m.groups) then
     if #m.groups == 0 then
       if not emptyScan(Ly, m) then
         local why = (M.none and M.none.why) or { "Aucune annonce assez sous le prix du marché parmi les objets suivis." }
@@ -3092,7 +3119,8 @@ function M.AUCTION_HOUSE_SHOW()
   M.postRows = nil
   M.Plan()
   M.BuildQueue()
-  if cfg("window", true) then M.ShowWindow() end
+  -- (5.1 AH) le bureau d'achat-revente (AHDesk) se colle à l'HV à la place de l'ancienne fenêtre (/tai hv fenetre la rouvre)
+  if cfg("window", true) and not (T.AHDesk and T.AHDesk.Docked and T.AHDesk.Docked()) then M.ShowWindow() end
 end
 function M.AUCTION_HOUSE_CLOSED()
   if M.raf.on then rafaleStop("HV fermé") end
@@ -3190,6 +3218,12 @@ function M:OnEnable()
   self:RegisterEvent("PLAYER_LOGIN", function() M.HookAuctionator() end)
   M.HookAuctionator()
   self:On("SUMMARY", function() pcall(M.WriteSummary) end)
+  -- (5.1 AH) allumer l'HV allume son bureau d'achat-revente, sauf si le joueur l'a coupé lui-même
+  local D = T.modules and T.modules.AHDesk
+  if D and D.db and D.db.enabled == false and not (type(T.db) == "table" and type(T.db.modChoice) == "table" and T.db.modChoice.AHDesk == false) then
+    if T._loggedIn and T.SetModuleEnabled then T:After(0, function() pcall(T.SetModuleEnabled, T, "AHDesk", true) end)
+    else D.db.enabled = true end
+  end
   if T.RegisterTab then pcall(T.RegisterTab, T, "hv", "HV", 40) end
 end
 

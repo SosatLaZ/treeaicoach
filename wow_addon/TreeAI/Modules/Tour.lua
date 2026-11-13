@@ -326,20 +326,25 @@ local function suggestionRow()
 end
 M.TIPS = {
   { id = "ah", title = "Première fois à l'HV",
-    text = "Mode rafale : une touche par action sûre (acheter, vendre, annuler).",
-    note = "Bouton « Lier à une touche » en bas de la fenêtre HV de TreeAI.",
+    text = "Mode rafale : une touche = une action sûre (acheter, puis poster).",
+    note = "Bouton « Lier une touche » en bas du panneau TreeAI de l'HV.",
     when = function()
       local A = T.modules and T.modules.Auction
-      return modOn("Auction") and type(A) == "table" and visible(A.win)
+      local D = T.AHDesk   -- (5.1 AH) le bureau d'achat-revente collé à l'HV remplace l'ancienne fenêtre
+      return modOn("Auction") and type(A) == "table" and (visible(A.win) or (type(D) == "table" and visible(D.frame)))
     end,
     target = function()
       local A = T.modules and T.modules.Auction
+      local D = T.AHDesk
+      local d = type(D) == "table" and visible(D.frame) and D.frame or nil
+      if d then return firstVisible(d.bind, d.next, d) end
       local w = type(A) == "table" and A.win or nil
       return firstVisible(type(w) == "table" and w.rafBtn or nil, w)
     end,
     gone = function()
       local A = T.modules and T.modules.Auction
-      return not (type(A) == "table" and visible(A.win))
+      local D = T.AHDesk
+      return not ((type(A) == "table" and visible(A.win)) or (type(D) == "table" and visible(D.frame)))
     end },
   { id = "questitem", title = "Objet de quête",
     text = "Clic : utiliser l'objet de la quête. Maj + glisser : le déplacer.",

@@ -288,7 +288,10 @@ return function(M, ctx)
   if Tr.mode == "tip" then
     check(box().head:GetText() == "Première fois à l'HV" and tostring(box().body:GetText()):find("rafale", 1, true),
       "astuce HV : le mode rafale = une action par appui")
-    check(A and A.win and (Tr.curTarget == A.win.rafBtn or Tr.curTarget == A.win), "astuce HV : flèche sur la fenêtre TreeAI de l'HV")
+    -- (5.1 AH) the buy-and-resell desk docked to the AH replaces the 4.1 window: the arrow points at its key button
+    local Dk = T.AHDesk and T.AHDesk.frame
+    check((Dk and (Tr.curTarget == Dk.bind or Tr.curTarget == Dk.next or Tr.curTarget == Dk))
+      or (A and A.win and (Tr.curTarget == A.win.rafBtn or Tr.curTarget == A.win)), "astuce HV : flèche sur le panneau TreeAI de l'HV")
   end
   M.Advance(2, 0.5)
   M.EnterCombat()

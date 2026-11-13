@@ -2765,6 +2765,7 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Group = { lite = true, gate = "group", desc = "Groupe : tes amis (avec ou sans TreeAI), objectif, quêtes à partager, prêts à tirer" },
   Macros = { lite = true, liteParts = true, desc = "Macros intelligentes (panneau Macros)" },
   Auction = { lite = true, gate = "ah", desc = "Hôtel des ventes (quand l'HV est ouvert)" },
+  AHDesk = { lite = true, desc = "Achat-revente à l'HV : files Acheter / Poster, journal, objectif du jour" },   -- (5.1 AH)
   Highlight = { lite = true, liteParts = true, desc = "Surligne les objets utiles des sacs et du butin" },
   Hunter = { lite = true, combat = true, desc = "Chasseur : familier (humeur, nourriture, dressage), munitions, aspects, pièges" },
   Abandon = { lite = true, liteParts = true, desc = "Quêtes à abandonner (calculé à la demande)" },

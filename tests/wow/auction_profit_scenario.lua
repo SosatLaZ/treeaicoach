@@ -6,6 +6,9 @@
 return function(M, ctx)
   local T = TreeAI
   local A = T and T:GetModule("Auction")
+  -- (5.1 AH) this scenario covers the market-data layer and the 4.1 panel; the buy-and-resell desk that replaces that
+  -- panel at the AH has its own scenario (ah5_scenario.lua) and is switched off here.
+  if T and T.AHDesk and T.SetModuleEnabled then T:SetModuleEnabled("AHDesk", false) end
   local W = T and T.Window
   ctx.check(A and A.F and A.RenderPage, "Auction module with the 4.1 page")
   if not A then return end

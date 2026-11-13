@@ -155,6 +155,24 @@ M.PROBE = {
   { "C_QuestLog.GetQuestTagInfo", exists = true }, { "C_QuestLog.IsFailed", exists = true }, { "GetQuestLogTitle", 1 },
   { "GetNumQuestLogEntries" }, { "GetQuestLogLeaderBoard", exists = true }, { "GetQuestsCompleted", exists = true },
   { "IsQuestFlaggedCompleted", 1 }, { "GetQuestUiMapID", exists = true }, { "UnitIsQuestBoss", exists = true },
+  -- (5.1 AH) ce que le bureau d'achat-revente suppose du client : présent ? quelle forme de réponse ? (aucune action ici)
+  { section = "Hôtel des ventes" },
+  { "C_AuctionHouse.IsThrottledMessageSystemReady" }, { "C_AuctionHouse.SupportsCopperValues" },
+  { "C_AuctionHouse.GetNumOwnedAuctions" }, { "C_AuctionHouse.GetNumReplicateItems" },
+  { "C_AuctionHouse.GetItemCommodityStatus", 6948 }, { "C_AuctionHouse.MakeItemKey", 6948 },
+  { "C_AuctionHouse.CalculateCommodityDeposit", 2589, 2, 20 }, { "C_AuctionHouse.CalculateItemDeposit", exists = true },
+  { "C_AuctionHouse.SendSearchQuery", exists = true }, { "C_AuctionHouse.GetNumItemSearchResults", exists = true },
+  { "C_AuctionHouse.GetItemSearchResultInfo", exists = true }, { "C_AuctionHouse.GetNumCommoditySearchResults", exists = true },
+  { "C_AuctionHouse.GetCommoditySearchResultInfo", exists = true }, { "C_AuctionHouse.PlaceBid", exists = true },
+  { "C_AuctionHouse.StartCommoditiesPurchase", exists = true }, { "C_AuctionHouse.ConfirmCommoditiesPurchase", exists = true },
+  { "C_AuctionHouse.CancelCommoditiesPurchase", exists = true }, { "C_AuctionHouse.GetQuoteDurationRemaining", exists = true },
+  { "C_AuctionHouse.PostItem", exists = true }, { "C_AuctionHouse.PostCommodity", exists = true },
+  { "C_AuctionHouse.ConfirmPostItem", exists = true }, { "C_AuctionHouse.ConfirmPostCommodity", exists = true },
+  { "C_AuctionHouse.CancelAuction", exists = true }, { "C_AuctionHouse.CanCancelAuction", exists = true },
+  { "C_AuctionHouse.GetCancelCost", exists = true }, { "C_AuctionHouse.QueryOwnedAuctions", exists = true },
+  { "C_AuctionHouse.GetOwnedAuctionInfo", exists = true }, { "C_AuctionHouse.ReplicateItems", exists = true },
+  { "ItemLocation.CreateFromBagAndSlot", exists = true }, { "GetInboxNumItems" }, { "GetInboxHeaderInfo", exists = true },
+  { "GetInboxInvoiceInfo", exists = true }, { "GetInboxItem", exists = true }, { "GetMoney" },
   { section = "Divers" },
   { "issecretvalue", exists = true }, { "C_NamePlate.GetNamePlates", exists = true }, { "C_NamePlate.GetNamePlateForUnit", exists = true },
   { "C_UnitAuras.GetAuraDataByIndex", exists = true }, { "UnitAura", exists = true }, { "C_AddOns.GetAddOnMetadata", exists = true },
@@ -372,6 +390,14 @@ function M.Collect(note)
   -- (5.0 STABLE) pics de lenteur relevés en jeu (cœur : TreeAI.Spikes) et sonde d'API de ce client
   add("== Pics de lenteur (/tai pics)")
   for _, s in ipairs(M.SpikeLines(15, 15)) do add(s) end
+  -- (5.1 AH) ce que le jeu a VRAIMENT répondu aux actions du bureau d'achat-revente (compteurs, aucun nom)
+  if type(d.ah) == "table" and next(d.ah) ~= nil then
+    local ks = {}
+    for k, val in pairs(d.ah) do if type(k) == "string" and type(val) ~= "table" then ks[#ks + 1] = k end end
+    table.sort(ks)
+    add("== Hôtel des ventes : réponses du jeu (achats / mises en vente)")
+    for _, k in ipairs(ks) do add(("  %s = %s"):format(str(k, 30), str(d.ah[k], 20))) end
+  end
   local api = M.StoreProbe(true)   -- gardée à part (diag.api) : l'appli l'écrit dans sa propre section du fichier
   if type(api) == "table" and type(api.lines) == "table" then
     add(("== API du client : %d fonctions sondées (section « API du client » de TreeAI-erreurs.txt)"):format(#api.lines))
