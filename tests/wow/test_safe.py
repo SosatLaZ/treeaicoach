@@ -34,4 +34,4 @@ def test_safe_storm():
 def test_safe_set_is_declared():
     src = (ADDON / "Core.lua").read_text(encoding="utf-8")
     assert "TreeAI.SAFE_MODULES" in src and "PROFILE_V = 2" in src
-    assert "Mode sûr : les fonctions bêta sont à activer dans le menu" in src
+    assert "Profil Simple : les autres fonctions (bêta) s'allument dans « Fonctions »" in src

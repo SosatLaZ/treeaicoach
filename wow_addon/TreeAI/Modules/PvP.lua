@@ -1012,7 +1012,7 @@ function M:AutoRefresh()
 end
 
 T:RegisterSlash("kos", function(rest)
-  if not M.Active() then T:Print("Aides PvP désactivées : /tai pvp pour les activer") return end
+  if not M.Active() then T:Print("Aides JcJ coupées : /tai pvp on pour les allumer") return end
   rest = tostring(rest or "")
   if rest == "liste" or rest == "list" then
     local n = 0
@@ -1028,7 +1028,7 @@ T:RegisterSlash("kos", function(rest)
 end, "kos [Nom|liste] : liste KOS JcJ (ajoute / retire, alerte quand il est près)")
 
 T:RegisterSlash("jcj", function()
-  if not M.Active() then T:Print("Aides PvP désactivées : /tai pvp pour les activer") return end
+  if not M.Active() then T:Print("Aides JcJ coupées : /tai pvp on pour les allumer") return end
   local s = M:SessionStats()
   T:Print(("JcJ : %d honneur cette session (%d/h), %d victoires honorables, %d morts en BG"):format(s.honor, s.perHour, s.hk, s.deaths))
   local _, list = M.BestBG(M.char and M.char.history)

@@ -2818,7 +2818,8 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
 }
 
 TreeAI.MODULE_PROFILES = { sur = true, essentiel = true, tout = true }
-TreeAI.MODULE_PROFILE_LABEL = { sur = "Mode sûr", essentiel = "Essentiel (léger)", tout = "Tout (bêta compris)" }
+-- (5.1 CLEAN, audit B13) UN nom : « Simple » / « Complet » (« Mode sûr » ne désigne plus que le mode sûr des achats)
+TreeAI.MODULE_PROFILE_LABEL = { sur = "Simple", essentiel = "Léger", tout = "Complet" }
 function TreeAI:ModuleProfile()
   local db = self.db
   local p = type(db) == "table" and db.moduleProfile
@@ -2982,7 +2983,7 @@ end
 function TreeAI:_SafeNotice()
   if not self._safeNotice then return end
   self._safeNotice = nil
-  self:Suggest("core:safe", "Mode sûr : les fonctions bêta sont à activer dans le menu", 2, {
+  self:Suggest("core:safe", "Profil Simple : les autres fonctions (bêta) s'allument dans « Fonctions »", 2, {
     ttl = 900, tab = "now", sound = false, kind = "always", ownPage = "modules",
     tooltip = "Clic : la liste des fonctions (un clic par fonction). Aussi : pastille de la minimap → Fonctions bêta.",
     onClick = function()
@@ -3011,16 +3012,17 @@ function TreeAI:_BuildModulesTab()
   local lite = self:Lite()
   local prof = self:ModuleProfile()
   local head
-  if prof == "sur" then head = "Mode sûr : seules les fonctions vérifiées tournent — clic : tout allumer (bêta compris)"
-  elseif lite then head = "Profil : Essentiel (léger) — clic : tout réactiver"
-  else head = "Tout est allumé (bêta compris) — clic : revenir au mode sûr" end
+  -- (5.1 CLEAN, audit B13) un seul vocabulaire : profil « Simple » / « Complet » (+ « Léger »)
+  if prof == "sur" then head = "Profil Simple : seules les fonctions fiables tournent — clic : passer en Complet (tout, bêta compris)"
+  elseif lite then head = "Profil Léger : le minimum tourne — clic : passer en Complet"
+  else head = "Profil Complet : tout est allumé (bêta compris) — clic : revenir au profil Simple" end
   local lines = {
     { text = head, prio = 2, id = "core:profile",
-      tooltip = "Mode sûr = quêtes, zone de travail, trajet (et son tracé), boussole, carte « Prochaine étape », fenêtre TreeAI, surbrillance des objets de quête, course au corps, erreurs, macros.\n"
+      tooltip = "Profil Simple = quêtes, zone de travail, trajet (et son tracé), boussole, carte « Prochaine étape », fenêtre TreeAI, surbrillance des objets de quête, course au corps, erreurs, macros.\n"
         .. "Les fonctions « bêta » n'ont été testées que hors du jeu : allume-les une par une ci-dessous.",
       onClick = function() TreeAI:SetModuleProfile(prof == "sur" and "tout" or (lite and "tout" or "sur")) end },
     -- (« mod: » : l'orage de clics du harnais laisse les bascules de profil tranquilles)
-    { text = lite and "Revenir au mode sûr — clic" or "Profil léger (essentiel, moins de lag) — clic", prio = 1,
+    { text = lite and "Revenir au profil Simple — clic" or "Profil Léger (le minimum, moins de travail en fond) — clic", prio = 1,
       id = "mod:profile:alt", onClick = function() TreeAI:SetModuleProfile(lite and "sur" or "essentiel") end },
     { text = "Coût des fonctions — clic : afficher", prio = 1, id = "core:perf",
       onClick = function()   -- (4.0 QA) dans la page « Fonctions » de la fenêtre, jamais dans le chat
@@ -3063,7 +3065,7 @@ function TreeAI:PerfLines()
     if self.modules[n]._active then nOn = nOn + 1 end
   end
   out[#out + 1] = strformat("TreeAI : %s Ko de mémoire · %d/%d modules actifs · profil %s",
-    mem and tostring(math.floor(mem + 0.5)) or "?", nOn, nAll, self:ModuleProfile())
+    mem and tostring(math.floor(mem + 0.5)) or "?", nOn, nAll, self.MODULE_PROFILE_LABEL[self:ModuleProfile()] or self:ModuleProfile())
   local list = {}
   for name, st in pairs(self._stats) do if (st.calls or 0) > 0 then list[#list + 1] = { name = name, st = st } end end
   tsort(list, function(a, b) return (a.st.ms or 0) > (b.st.ms or 0) end)
@@ -3442,7 +3444,7 @@ TreeAI.PRESETS = {
   tout   = { nowMax = 8, nowMinPrio = 1, perModule = 0, alertGap = 20, topicGap = 60 },
 }
 TreeAI.PRESET_ORDER = { "simple", "calme", "normal", "tout" }
-TreeAI.PRESET_LABEL = { simple = "Simple", calme = "Mode calme", normal = "Normal", tout = "Tout", perso = "Perso" }
+TreeAI.PRESET_LABEL = { simple = "Simple", calme = "Calme", normal = "Normal", tout = "Tout", perso = "Perso" }
 TreeAI.PRESET_HELP = {
   simple = "3 lignes, seulement ce que tu peux faire maintenant",
   calme = "3 lignes, seulement l'utile, alerte rare (45 s mini)",
@@ -4720,15 +4722,38 @@ function TreeAI:HasSlash(cmd) return type(cmd) == "string" and slash[cmd:lower()
 
 -- Aide groupée : commande -> rubrique (les commandes des modules sans rubrique vont dans « Autres »)
 TreeAI.SLASH_GROUPS = TreeAI.SLASH_GROUPS or {
-  { "Démarrer", { "aide", "bienvenue", "mode", "profil", "options" } },
-  { "Panneau", { "afficher", "cacher", "basculer", "mini", "onglet", "edit", "placer", "verrou", "reset", "alerte" } },
-  { "Quêtes", { "quetes", "suivi", "itineraire", "zone", "pro", "abandon", "surbrillance", "highlight" } },
+  { "Démarrer", { "aide", "bienvenue", "fenetre", "guide", "profil", "conseils", "options" } },
+  { "Panneau", { "afficher", "cacher", "edit", "placer", "interface", "alerte" } },
+  { "Quêtes", { "quetes", "plan", "zone", "vite", "rendre", "prendre", "suivi", "abandon", "surbrillance" } },
   { "Boussole", { "boussole", "aller", "cible", "way" } },
   { "Groupe", { "groupe", "objectif", "partir", "pret", "sync" } },
   { "Combat", { "cherche", "stats", "pvp" } },
   { "Macros et touches", { "macros", "binds", "touches", "raccourcis", "combat" } },
   { "HV et métiers", { "hv", "metiers" } },
-  { "Outils", { "modules", "module", "statut", "perf", "pics", "selftest", "diag", "debug", "test", "bloque" } },
+  { "Outils", { "erreurs", "modules", "module", "statut", "perf", "pics", "selftest", "diag", "debug", "test", "bloque" } },
+}
+-- (5.1 CLEAN, audit B13 / B15) UN nom par interrupteur dans l'aide. Les commandes ci-dessous marchent toujours (anciens
+-- noms, doublons d'une autre commande) mais ne sont plus listées : « mode » = « conseils », « bug » / « export » =
+-- « erreurs », « itineraire » = « plan », « mission » = « groupe », « basculer » = « afficher », « reinit » / « reset »
+-- = « interface reset », « verrou » / « mini » / « onglet » = l'ancien panneau (la fenêtre TreeAI le remplace).
+TreeAI.SLASH_HIDDEN = TreeAI.SLASH_HIDDEN or {
+  mode = true, bug = true, export = true, itineraire = true, mission = true, basculer = true, reinit = true,
+  reset = true, verrou = true, mini = true, onglet = true, demo = true, reglages = false,
+}
+-- (5.1 CLEAN, audit B15) le module qui fait le travail d'une commande. Coupé : la commande ne fait rien et le DIT
+-- (« allume d'abord … »), au lieu d'annoncer « ACTIVÉ » ou d'ouvrir une fenêtre vide. Les commandes absentes de
+-- cette table appartiennent au cœur ou à un module toujours allumé.
+TreeAI.SLASH_OWNER = TreeAI.SLASH_OWNER or {
+  quetesauto = "QoL", recompense = "QoL", kos = "PvP", jcj = "PvP", cherche = "Finder", prets = "QuickTravel",
+  rdv = "QuickTravel", hv = "Auction", ah = "Auction", degats = "Meter", talents = "Talents", bilan = "Session",
+  stats = "Stats", donjon = "Dungeon", touches = "Binds", detect = "Detect", pro = "Pro", metiers = "Prof",
+  courses = "CityRun", groupe = "Group", mission = "Group", objectif = "Group", partir = "Group", pret = "Group",
+  macros = "Macros", sacs = "Bags", garde = "Bags", vends = "Bags", oublie = "Bags", equipement = "Gear",
+  surbrillance = "Highlight", abandon = "Abandon", todo = "Todo", afaire = "Todo", suivi = "Tracker",
+  boussole = "Compass", aller = "Compass", cible = "Compass", target = "Compass", way = "Compass",
+  plan = "Planner", trajet = "Planner", route = "Route", chemin = "PathDraw", icones = "QuestPins",
+  zone = "ZonePlan", pilote = false, addons = "Addons", visite = "Tour", tour = "Tour", menu = "Hub",
+  fenetre = "Window", chasseur = "Hunter", familier = "Hunter",
 }
 
 --- { { title=, items = { {cmd=, help=}, ... } }, ... } : toutes les commandes documentées, groupées.
@@ -4738,14 +4763,14 @@ function TreeAI:GetSlashHelp()
     local items = {}
     for _, c in ipairs(g[2]) do
       local e = slash[c]
-      if e and e.help and not used[c] then used[c] = true; items[#items + 1] = { cmd = c, help = L[e.help] } end
+      if e and e.help and not used[c] and not self.SLASH_HIDDEN[c] then used[c] = true; items[#items + 1] = { cmd = c, help = L[e.help] } end
     end
     if #items > 0 then out[#out + 1] = { title = L[g[1]], items = items } end
   end
   local other = {}
   for _, c in ipairs(slashOrder) do
     local e = slash[c]
-    if e.help and not used[c] then other[#other + 1] = { cmd = c, help = L[e.help] } end
+    if e.help and not used[c] and not self.SLASH_HIDDEN[c] then other[#other + 1] = { cmd = c, help = L[e.help] } end
   end
   if #other > 0 then out[#out + 1] = { title = L["Autres"], items = other } end
   return out
@@ -4759,6 +4784,16 @@ function TreeAI:PrintHelp()
   end
 end
 
+--- (5.1 CLEAN) le module d'une commande est-il coupé ? Renvoie son nom et son titre (pour « allume d'abord … »).
+function TreeAI:SlashOwnerOff(cmd)
+  local own = self.SLASH_OWNER[cmd]
+  if not own then return nil end
+  local mod = self.modules[own]
+  if not mod then return nil end
+  if mod.db and mod.db.enabled == false then return own, tostring(mod.title or own) end
+  return nil
+end
+
 function TreeAI:HandleSlash(input)
   input = tostring(input or "")
   local cmd, rest = input:match("^%s*(%S*)%s*(.-)%s*$")
@@ -4768,6 +4803,12 @@ function TreeAI:HandleSlash(input)
     return
   end
   local entry = slash[cmd]
+  -- (5.1 CLEAN, audit B15) module coupé : on le dit, la commande ne fait rien (ni fenêtre vide, ni « ACTIVÉ » à tort)
+  local own, title = self:SlashOwnerOff(cmd)
+  if own then
+    self:Print(("/tai %s : la fonction « %s » est coupée. Allume-la d'abord : page « Fonctions » de la fenêtre TreeAI, ou /tai module %s on."):format(cmd, title, own))
+    return
+  end
   if entry then
     safecall(entry.fn, rest)
   else
@@ -4783,45 +4824,96 @@ end
 
 local function onoff(v) return v and L["activé"] or L["désactivé"] end
 
+--- (5.1 CLEAN, audit B15) UN contrat pour toutes les commandes « interrupteur » :
+---   /tai x           son état + comment le changer — ne change RIEN (avant : un « /tai quetesauto » nu l'allumait)
+---   /tai x on | off  le change (oui / non, 1 / 0 acceptés)
+--- spec = { cmd, label, get = function() → bool, set = function(on), on = "texte allumé", off = "texte coupé" }
+do   -- (bloc : le fichier principal a déjà près de 200 variables locales)
+local ON_WORDS = { on = true, oui = true, ["1"] = true, allume = true, ["activé"] = true, active = true }
+local OFF_WORDS = { off = true, non = true, ["0"] = true, coupe = true, ["coupé"] = true, desactive = true }
+function TreeAI.ParseOnOff(rest)
+  local w = tostring(rest or ""):lower():match("^%s*(%S*)")
+  if ON_WORDS[w] then return true end
+  if OFF_WORDS[w] then return false end
+  return nil
+end
+function TreeAI:SlashSwitch(spec)
+  return function(rest)
+    local want = TreeAI.ParseOnOff(rest)
+    if want ~= nil then spec.set(want) end
+    local cur = spec.get() and true or false
+    local state = cur and (spec.on or "allumé") or (spec.off or "coupé")
+    if want == nil then
+      TreeAI:Print(("%s : %s. Pour changer : /tai %s %s"):format(spec.label, state, spec.cmd, cur and "off" or "on"))
+    else
+      TreeAI:Print(("%s : %s."):format(spec.label, state))
+    end
+  end
+end
+
 TreeAI:RegisterSlash("aide", function() end, "cette aide (/tai aide chat : dans le chat)")
-TreeAI:RegisterSlash("mode", function(rest)
+-- (5.1 CLEAN, audit B13) « Mode : Simple » (combien de conseils) et « Profil : Simple » (quelles fonctions) portaient
+-- le même mot : le niveau de bruit s'appelle « Conseils » partout (/tai conseils ; /tai mode reste accepté, hors aide)
+local function conseilsSlash(rest)
   rest = tostring(rest or ""):lower()
   if rest == "" then
     local cur = TreeAI.settings.preset or "normal"
-    TreeAI:Print(L["Mode"] .. " : " .. L[TreeAI.PRESET_LABEL[cur] or cur] .. "  (/tai mode simple | calme | normal | tout)")
+    TreeAI:Print(L["Conseils"] .. " : " .. L[TreeAI.PRESET_LABEL[cur] or cur] .. ". Pour changer : /tai conseils simple | calme | normal | tout")
     return
   end
   if rest == "calm" then rest = "calme" elseif rest == "all" then rest = "tout" end
   if TreeAI:ApplyPreset(rest) then
-    TreeAI:Print(L["Mode"] .. " : " .. L[TreeAI.PRESET_LABEL[rest]] .. " — " .. L[TreeAI.PRESET_HELP[rest]])
+    TreeAI:Print(L["Conseils"] .. " : " .. L[TreeAI.PRESET_LABEL[rest]] .. " — " .. L[TreeAI.PRESET_HELP[rest]])
   else
-    TreeAI:Print("/tai mode simple | calme | normal | tout")
+    TreeAI:Print("/tai conseils simple | calme | normal | tout")
   end
-end, "simple | calme | normal | tout : combien de conseils tu veux voir")
-TreeAI:RegisterSlash("profil", function(rest)
+end
+TreeAI:RegisterSlash("conseils", conseilsSlash, "conseils [simple | calme | normal | tout] : combien de conseils tu veux voir")
+TreeAI:RegisterSlash("mode", conseilsSlash, "comme /tai conseils")
+-- réglages propres à ce personnage ou communs au compte (avant : dans « /tai profil », avec le profil des fonctions)
+local function reglagesSlash(rest)
   rest = tostring(rest or ""):lower()
   local want = (rest == "perso" or rest == "char" or rest == "personnage") and "char"
     or ((rest == "compte" or rest == "account") and "account") or nil
   if want then TreeAI:SetProfile(want) end
   TreeAI:Print(L["Réglages"] .. " : " .. (TreeAI:ProfileMode() == "char" and L["propres à ce personnage"]
-    or L["communs au compte"]) .. "  (/tai profil perso | compte)")
-end, "perso | compte : réglages propres à ce perso ou communs")
+    or L["communs au compte"]) .. ". Pour changer : /tai reglages perso | compte")
+end
+TreeAI:RegisterSlash("reglages", reglagesSlash, "reglages [perso | compte] : réglages propres à ce perso ou communs au compte")
 TreeAI:RegisterSlash("bienvenue", function() if TreeAI.ShowWizard then TreeAI:ShowWizard(1) end end,
   "relancer l'assistant de démarrage")
-TreeAI:RegisterSlash("pvp", function()
-  TreeAI.settings.pvp = not TreeAI.settings.pvp
-  TreeAI:Print("Aides PvP : " .. (TreeAI.settings.pvp and "activées" or "désactivées (aide à quêter seulement)"))
-end, "aides PvP oui/non")
-TreeAI:RegisterSlash("afficher", function() TreeAI:ShowPanel() end, L["afficher le panneau"])
-TreeAI:RegisterSlash("show", function() TreeAI:ShowPanel() end)
-TreeAI:RegisterSlash("cacher", function() TreeAI:HidePanel() end, L["cacher le panneau"])
-TreeAI:RegisterSlash("hide", function() TreeAI:HidePanel() end)
-TreeAI:RegisterSlash("basculer", function() TreeAI:TogglePanel() end, L["afficher/cacher"])
-TreeAI:RegisterSlash("verrou", function()
-  local p = TreeAI.settings.panel
-  p.locked = not p.locked
-  TreeAI:Print(L["Panneau verrouillé"] .. ": " .. onoff(p.locked))
-end, L["verrouiller/déverrouiller le panneau"])
+TreeAI:RegisterSlash("pvp", TreeAI:SlashSwitch({ cmd = "pvp", label = "Aides JcJ",
+  get = function() return TreeAI.settings.pvp end, set = function(on) TreeAI.settings.pvp = on end,
+  on = "allumées", off = "coupées (aide à quêter seulement)" }), "pvp [on | off] : aides contre les joueurs")
+-- (5.1 CLEAN, audit B13) une seule fenêtre : « afficher » ouvre la fenêtre TreeAI ; l'ancien panneau ne s'ouvre que
+-- si la fenêtre est coupée (module « Fenêtre TreeAI »)
+local function windowOn()
+  local W = TreeAI.Window
+  return (W and W._active and type(W.Open) == "function") and W or nil
+end
+TreeAI.WindowOn = windowOn
+local function showMain()
+  local W = windowOn()
+  if W then W.Open() return end
+  TreeAI:ShowPanel()
+end
+local function hideMain()
+  local W = windowOn()
+  if W and type(W.Close) == "function" then W.Close() end
+  TreeAI:HidePanel()
+end
+TreeAI:RegisterSlash("afficher", showMain, "afficher la fenêtre TreeAI")
+TreeAI:RegisterSlash("show", showMain)
+TreeAI:RegisterSlash("cacher", hideMain, "cacher la fenêtre TreeAI")
+TreeAI:RegisterSlash("hide", hideMain)
+TreeAI:RegisterSlash("basculer", function()
+  local W = windowOn()
+  if W and type(W.Toggle) == "function" then W.Toggle() return end
+  TreeAI:TogglePanel()
+end, L["afficher/cacher"])
+TreeAI:RegisterSlash("verrou", TreeAI:SlashSwitch({ cmd = "verrou", label = L["Panneau verrouillé"],
+  get = function() return TreeAI.settings.panel.locked end, set = function(on) TreeAI.settings.panel.locked = on end,
+  on = "oui", off = "non" }), L["verrouiller/déverrouiller le panneau"])
 TreeAI:RegisterSlash("reset", function()
   if TreeAI.ResetPanel then TreeAI:ResetPanel() end
   TreeAI:Print(L["Position du panneau réinitialisée."])
@@ -4846,27 +4938,27 @@ TreeAI:RegisterSlash("alerte", function()
   end
 end, L["tester l'encadré d'alerte"])
 TreeAI:RegisterSlash("options", function() if TreeAI.OpenOptions then TreeAI:OpenOptions() end end, L["ouvrir les options"])
-TreeAI:RegisterSlash("perf", function() TreeAI:PrintPerf() end, "les modules qui coûtent le plus (CPU)")
--- (4.3 V43) UNE commande « profil » : la 1re (perso | compte) était écrasée par celle-ci → les deux usages ici
-TreeAI._profilSaves = slash.profil and slash.profil.fn
+TreeAI:RegisterSlash("perf", function() TreeAI:PrintPerf() end, "coût des fonctions : mesuré en jeu (ms réelles), les plus chères d'abord")
+-- (5.1 CLEAN, audit B13) UN nom pour le profil des fonctions : « Simple » (l'essentiel fiable, par défaut) ou
+-- « Complet » (tout, bêta compris). « Mode sûr », « sur », « tout », « essentiel » : anciens noms, toujours acceptés.
+local PROFILE_WORD = { simple = "sur", sur = "sur", ["sûr"] = "sur", safe = "sur", complet = "tout", tout = "tout",
+  all = "tout", leger = "essentiel", ["léger"] = "essentiel", essentiel = "essentiel" }
 TreeAI:RegisterSlash("profil", function(rest)
-  local profilSaves = TreeAI._profilSaves
   rest = tostring(rest or ""):lower()
-  if rest == "sûr" or rest == "safe" then rest = "sur" end
-  if profilSaves and (rest == "perso" or rest == "char" or rest == "personnage" or rest == "compte" or rest == "account") then
-    return profilSaves(rest)
+  if rest == "perso" or rest == "char" or rest == "personnage" or rest == "compte" or rest == "account" then
+    return reglagesSlash(rest)   -- ancien usage (réglages par perso) : /tai reglages
   end
-  if rest == "tout" or rest == "essentiel" or rest == "sur" then TreeAI:SetModuleProfile(rest) end
+  if PROFILE_WORD[rest] then TreeAI:SetModuleProfile(PROFILE_WORD[rest]) end
   local p = TreeAI:ModuleProfile()
-  TreeAI:Print("Profil des modules : " .. (TreeAI.MODULE_PROFILE_LABEL[p] or p) .. "  (/tai profil sur | essentiel | tout ; perso | compte : réglages)")
-end, "sur | essentiel | tout : profil des modules ; perso | compte : réglages propres à ce perso ou communs")
+  TreeAI:Print("Profil : " .. (TreeAI.MODULE_PROFILE_LABEL[p] or p) .. ". Pour changer : /tai profil simple | complet")
+end, "profil [simple | complet] : Simple = l'essentiel fiable ; Complet = toutes les fonctions (bêta comprises)")
 TreeAI:RegisterSlash("modules", function()
   for name, mod in TreeAI:IterModules() do
     TreeAI:Print("  " .. (mod.title or name) .. " (" .. name .. "): " .. onoff(mod:IsEnabled()))
   end
 end, L["liste des modules"])
 TreeAI:RegisterSlash("module", function(rest)
-  local name, state = rest:match("^(%S+)%s*(%S*)")
+  local name, state = tostring(rest or ""):match("^(%S+)%s*(%S*)")
   local mod
   if name then
     for n, m in TreeAI:IterModules() do
@@ -4874,19 +4966,32 @@ TreeAI:RegisterSlash("module", function(rest)
     end
   end
   if not mod then TreeAI:Print(L["Module introuvable."]); return end
-  local enable = not mod:IsEnabled()
-  if state == "on" then enable = true elseif state == "off" then enable = false end
-  TreeAI:SetModuleEnabled(name, enable)
-  TreeAI:Print((mod.title or name) .. ": " .. onoff(enable))
+  -- (5.1 CLEAN) sans « on » / « off » : l'état, rien n'est changé
+  local want = TreeAI.ParseOnOff(state)
+  if want == nil then
+    local on = mod.db and mod.db.enabled ~= false
+    TreeAI:Print(("%s : %s. Pour changer : /tai module %s %s"):format(tostring(mod.title or name), onoff(on), name, on and "off" or "on"))
+    return
+  end
+  TreeAI:SetModuleEnabled(name, want)
+  TreeAI:Print((mod.title or name) .. ": " .. onoff(want))
 end, L["<Nom> on|off"])
+-- guidage des quêtes (l'interrupteur de la bande) : même contrat — nu = l'état
+TreeAI:RegisterSlash("guide", TreeAI:SlashSwitch({ cmd = "guide", label = "Guidage des quêtes",
+  get = function() return TreeAI:QuestGuideOn() end,
+  set = function(on)
+    local S = TreeAI.modules.Shortcuts
+    if S and type(S.SetGuide) == "function" then S.SetGuide(on) else TreeAI:SetQuestGuide(on) end
+  end,
+  on = "allumé (trajet, flèche, zone, quêtes à prendre)", off = "coupé (TreeAI ne guide plus tes quêtes)" }),
+  "guide [on | off] : tout le guidage des quêtes (comme l'interrupteur de la bande)")
+end
 TreeAI:RegisterSlash("sync", function()
   if TreeAI:SendHello() then TreeAI:Print(L["Synchro envoyée au groupe."])
   else TreeAI:Print(L["Pas de groupe (ou comms désactivées)."]) end
 end, L["synchroniser avec le groupe"])
-TreeAI:RegisterSlash("debug", function()
-  TreeAI.settings.debug = not TreeAI.settings.debug
-  TreeAI:Print("Debug: " .. onoff(TreeAI.settings.debug))
-end, L["mode debug"])
+TreeAI:RegisterSlash("debug", TreeAI:SlashSwitch({ cmd = "debug", label = "Debug",
+  get = function() return TreeAI.settings.debug end, set = function(on) TreeAI.settings.debug = on end }), L["mode debug"])
 TreeAI:RegisterSlash("statut", function()
   local s = TreeAI:UpdateSummary()
   TreeAI:Print(strformat("v%s | %s %s | %s | %s: %d/%d", TreeAI.version, tostring(s.className or "?"),
@@ -4895,11 +5000,8 @@ TreeAI:RegisterSlash("statut", function()
   for _ in pairs(TreeAI.db.group.peers) do n = n + 1 end
   TreeAI:Print(L["Amis TreeAI connus"] .. ": " .. n)
 end, L["état de l'addon"])
-TreeAI:RegisterSlash("test", function()
-  TreeAI:Suggest("core:test1", L["Exemple: conseil d'information."], 1, { ttl = 20 })
-  TreeAI:Suggest("core:test2", L["Exemple: conseil utile."], 2, { ttl = 20 })
-  TreeAI:Suggest("core:test3", L["Exemple: alerte urgente !"], 3, { ttl = 20, sound = false })
-end, L["afficher des suggestions de test"])
+-- (5.1 CLEAN) « /tai test » = l'autotest (Modules/SelfTest.lua) : l'ancienne commande du cœur, écrasée au chargement
+-- depuis la 3.9, est retirée
 
 ---------------------------------------------------------------------------
 -- Lifecycle
@@ -4916,6 +5018,26 @@ function TreeAI:ADDON_LOADED(_, name)
     pcall(_G.RegisterAddonMessagePrefix, self.PREFIX)
   end
   if self.InitOptions then safecall(self.InitOptions, self) end
+end
+
+--- (5.1 CLEAN, audit B13) UNE fenêtre à la fois : ouvrir la fenêtre TreeAI cache l'ancien panneau ; ouvrir le panneau
+--- (ancienne interface, encore accessible à la main) ferme la fenêtre. Posé une fois, à la connexion, autour des
+--- fonctions de UI.lua / Window.lua (aucune des deux n'est modifiée).
+function TreeAI:_OneShell()
+  if self._oneShell then return end
+  local W = self.Window
+  if not (W and type(W.Open) == "function" and type(self.ShowPanel) == "function") then return end
+  self._oneShell = true
+  local openW, showP = W.Open, self.ShowPanel
+  W.Open = function(...)
+    local p = TreeAI.GetPanel and TreeAI:GetPanel()
+    if W._active and p and p.IsShown and p:IsShown() and TreeAI.HidePanel then TreeAI:HidePanel() end
+    return openW(...)
+  end
+  self.ShowPanel = function(me, ...)
+    if W._active and W.IsOpen and W.IsOpen() and W.Close then W.Close() end
+    return showP(me, ...)
+  end
 end
 
 function TreeAI:PLAYER_LOGIN()
@@ -4946,6 +5068,7 @@ function TreeAI:PLAYER_LOGIN()
   safecall(self._BuildModulesTab, self)
   if self._liteNotice then self:After(3, function() TreeAI:_LiteNotice() end) end
   if self._safeNotice then self:After(3, function() TreeAI:_SafeNotice() end) end
+  safecall(self._OneShell, self)
   self:Fire("READY")
   self:StartAutoRefresh()
   -- premier lancement : petit assistant en 3 étapes (hors combat)

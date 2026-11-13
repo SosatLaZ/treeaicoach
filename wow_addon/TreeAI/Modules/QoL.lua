@@ -387,17 +387,18 @@ end
 function Q:OnDisable() merchantOpen = false end
 
 -- (4.1.2) un interrupteur facile : /tai quetesauto on | off (récompense : /tai recompense on | off)
-if T.RegisterSlash then
-  T:RegisterSlash("quetesauto", function(rest)
-    if not Q.db then return end
-    rest = tostring(rest or ""):lower()
-    Q.db.questAuto = (rest == "on") or (rest == "" and not Q.db.questAuto)
-    T:Print(Q.db.questAuto and "Quêtes : accepter / rendre tout seul ACTIVÉ (Maj = pas cette fois)" or "Quêtes : accepter / rendre tout seul COUPÉ")
-  end, "accepter / rendre les quêtes tout seul : on / off")
-  T:RegisterSlash("recompense", function(rest)
-    if not Q.db then return end
-    rest = tostring(rest or ""):lower()
-    Q.db.questTake = (rest == "on") or (rest == "" and not Q.db.questTake)
-    T:Print(Q.db.questTake and "Récompense unique prise tout seul : ACTIVÉ" or "Récompense prise tout seul : COUPÉ (tu cliques)")
-  end, "prendre la récompense unique tout seul : on / off")
+-- (5.1 CLEAN, audit B15) sans « on » / « off » la commande DIT l'état et ne change rien (avant : un « /tai quetesauto »
+-- nu allumait l'acceptation automatique) ; module « Confort » coupé : le cœur répond « allume d'abord Confort »
+-- (TreeAI.SLASH_OWNER), jamais « ACTIVÉ » pour une fonction qui ne tourne pas.
+if T.RegisterSlash and T.SlashSwitch then
+  T:RegisterSlash("quetesauto", T:SlashSwitch({ cmd = "quetesauto", label = "Quêtes acceptées et rendues toutes seules",
+    get = function() return Q.db and Q.db.questAuto end,
+    set = function(on) if Q.db then Q.db.questAuto = on and true or false end end,
+    on = "ALLUMÉ (Maj enfoncée = pas cette fois)", off = "coupé (tu cliques toi-même)" }),
+    "quetesauto [on | off] : accepter / rendre les quêtes tout seul")
+  T:RegisterSlash("recompense", T:SlashSwitch({ cmd = "recompense", label = "Récompense unique prise toute seule",
+    get = function() return Q.db and Q.db.questTake end,
+    set = function(on) if Q.db then Q.db.questTake = on and true or false end end,
+    on = "ALLUMÉ", off = "coupé (tu cliques toi-même)" }),
+    "recompense [on | off] : prendre la récompense unique tout seul")
 end

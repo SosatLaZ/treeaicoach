@@ -27,7 +27,7 @@ return function(M, ctx)
   for _, e in ipairs(T:GetTabLines("now")) do if e.id == "core:safe" then notice = e end end
   check(notice == nil, "« Mode sûr » : pas dans « Maintenant »")
   for _, e in ipairs(T:GetSuggestions()) do if e.id == "core:safe" then notice = e end end
-  check(notice and notice.ownPage == "modules" and notice.text == "Mode sûr : les fonctions bêta sont à activer dans le menu"
+  check(notice and notice.ownPage == "modules" and notice.text == "Profil Simple : les autres fonctions (bêta) s'allument dans « Fonctions »"
     and notice.onClick, "notice « Mode sûr : … » (page « Fonctions »)")
 
   -- Plus → Modules: bêta tag, one click toggles
@@ -36,7 +36,7 @@ return function(M, ctx)
     if e.id == "mod:Boost" then boost = e end
     if e.id == "core:profile" then head = e end
   end
-  check(head and head.text:find("Mode sûr", 1, true), "modules tab: profile line says mode sûr")
+  check(head and head.text:find("Profil Simple", 1, true), "modules tab: profile line says « Profil Simple »")
   check(boost and boost.text:find("bêta", 1, true) and boost.text:find("OFF", 1, true), "Boost line: OFF + bêta")
   T:UserAction(boost.onClick)
   check(mod("Boost")._active == true, "one click: Boost on (no /reload)")
