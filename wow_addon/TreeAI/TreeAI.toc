@@ -21,6 +21,7 @@ Data\Consumables.lua
 Data\Dungeons.lua
 Data\Gear.lua
 Data\Talents.lua
+Data\TalentSpells.lua
 Data\Recipes.lua
 Data\Travel.lua
 Data\Pets.lua
@@ -71,6 +72,9 @@ Modules\MinimapPins.lua
 Modules\QuestPins.lua
 Modules\Watch.lua
 Modules\Gear.lua
+Modules\GearSpec.lua
+Modules\GearValue.lua
+Modules\GearRent.lua
 Modules\ItemInfo.lua
 Modules\Talents.lua
 Modules\Session.lua

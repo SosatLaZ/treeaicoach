@@ -179,6 +179,19 @@ function M.Read()
     end
     r.tabs[tab] = tabName(tab) or ("Arbre " .. tab)
   end
+  -- (5.0 GEAR) WoW Forever : l'arbre est un arbre C_Traits à 3 groupes (un par arbre classique) : on lit ce que la
+  -- fenêtre de talents du jeu affiche (GearSpec.lua : rang de chaque nœud, sinon les points par arbre)
+  if not r.ok then
+    local Gm = T.Gear
+    local tr = type(Gm) == "table" and type(Gm.TalentRanks) == "function" and try(Gm.TalentRanks) or nil
+    if type(tr) == "table" and type(tr.points) == "table" then
+      r.points = { tonumber(tr.points[1]) or 0, tonumber(tr.points[2]) or 0, tonumber(tr.points[3]) or 0 }
+      r.spent = r.points[1] + r.points[2] + r.points[3]
+      r.pointsKnown, r.traits = true, true
+      for t = 1, 3 do if type(tr.names) == "table" and tr.names[t] then r.tabs[t] = tr.names[t] end end
+      if tr.ok and type(tr.ranks) == "table" then r.ranks, r.ok = tr.ranks, true end
+    end
+  end
   if not r.ok and type(g("C_ClassTalents")) == "table" then r.modern = true end   -- arbre moderne : non géré
   local level = tonumber((try(g("UnitLevel"), "player"))) or 1
   local unspent = tonumber((try(g("UnitCharacterPoints"), "player")))
@@ -217,7 +230,7 @@ local function howTo(p, tabs)
 end
 local ROLE_FR = { solo = "quêtes en solo", ["groupe:dps"] = "dégâts", ["groupe:tank"] = "tank", ["groupe:soin"] = "soins" }
 M.ROLE_FR = ROLE_FR
-local FOREVER_TIP = "TreeAI ne lit pas tes talents sur Forever : compare tes points (touche N) avec le parcours."
+local FOREVER_TIP = "TreeAI n'a pas pu lire le rang de chaque talent : compare tes points (touche N) avec le parcours."
 
 --- le parcours comme guide, niveau par niveau (pur) : point n° i = niveau 9 + i ; un talent pris sur plusieurs
 --- niveaux d'affilée = une étape { name, tab, tier, col, from, to, rank1, rank2, target, why, lv1, lv2 }
@@ -285,8 +298,12 @@ function M.Lines(st)
   local tip = { b.summary, "Clic : auto, solo, groupe, puis auto", "(ou /tai talents solo | groupe | auto)" }
   if not r.ok then tip[#tip + 1] = FOREVER_TIP end
   add(fmt("Parcours : %s (%s) — %s", b.name, b.split, st.pickWhy), 1, tip, nil, M.CycleMode)
-  if not r.ok and r.level >= 10 then
-    add("Vérifie tes talents dans la fenêtre du jeu (touche N) : TreeAI ne peut pas les lire sur Forever", 1,
+  if not r.ok and r.pointsKnown then
+    -- (5.0 GEAR) points par arbre lus dans le jeu (en-têtes de la fenêtre de talents) ; le rang de chaque talent non
+    add(fmt("Tes points : %s (%s) — lus dans le jeu", C.Split(r.points), table.concat({ r.tabs[1] or "?", r.tabs[2] or "?", r.tabs[3] or "?" }, " / ")), 1,
+      { FOREVER_TIP, "« Parcours complet » : chaque talent avec son niveau et son pourquoi." })
+  elseif not r.ok and r.level >= 10 then
+    add("Vérifie tes talents dans la fenêtre du jeu (touche N) : leur lecture n'a pas répondu", 1,
       { FOREVER_TIP, "« Parcours complet » : chaque talent avec son niveau et son pourquoi." })
   end
   lines[#lines + 1] = { text = M.full and "[Clic] Masquer le parcours complet" or "[Clic] Voir le parcours complet, point par point",
