@@ -47,6 +47,19 @@ def test_syntax_no_globals(path):
     assert "SETGLOBAL" not in listing
 
 
+LUA_STD = {"_G", "coroutine", "ipairs", "math", "next", "pairs", "pcall", "rawget", "select", "setmetatable", "string", "table",
+           "tostring", "type", "unpack", "error", "tonumber"}
+
+
+@pytest.mark.skipif(not shutil.which("luac5.1"), reason="luac5.1 absent")
+@pytest.mark.parametrize("path", NEW_FILES[:3] + [ADDON / "Modules" / "Gear.lua"], ids=lambda p: p.name)
+def test_no_accidental_global_read(path):
+    """A local used before its definition compiles as a global read (nil at run time): only the Lua library and _G."""
+    listing = subprocess.run(["luac5.1", "-l", "-p", str(path)], capture_output=True, text=True).stdout
+    names = {ln.split(";")[-1].strip() for ln in listing.splitlines() if "GETGLOBAL" in ln}
+    assert names <= LUA_STD, sorted(names - LUA_STD)
+
+
 @pytest.mark.skipif(not shutil.which("lua5.1"), reason="lua5.1 absent")
 @pytest.mark.parametrize("cls,level,flavor", COMBOS)
 def test_gear5_scenario(cls, level, flavor):

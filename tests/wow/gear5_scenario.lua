@@ -591,6 +591,13 @@ return function(M, ctx)
     local kids = 0
     for _, c in ipairs(b1.__children or {}) do if c then kids = kids + 1 end end
     check(kids == 0, "D4 the arrow is never a child of the game's button")
+    -- the bag closes by a path we do not hook: the arrow goes away by itself, then nothing keeps running
+    b1:Hide()
+    for _ = 1, 4 do M.Advance(0.5) end
+    local still = 0
+    for _, c in ipairs(UIParent.__children or {}) do if c.btn == b1 and c:IsShown() then still = still + 1 end end
+    check(still == 0, "D4 arrow hidden when its bag button is gone")
+    b1:Show()
     Gr.db.arrows = false
     check(Gr.RefreshArrows() == 0, "D4 option off → no arrow")
     Gr.db.arrows = true
@@ -644,7 +651,7 @@ return function(M, ctx)
   -- E. cost and rules
   -------------------------------------------------------------------------------------------------
   -- E1. a plain bag change (loot) does not start a plan; the verdicts stay cached
-  for _ = 1, 160 do if not Gr.Pending() then break end M.Advance(0.5) end   -- the slot replans asked above are done
+  for _ = 1, 400 do if not Gr.Pending() then break end M.Advance(0.5) end   -- the slot replans asked above are done
   check(not Gr.Pending(), "E1 pending replans finish by themselves (one timer, no AutoRefresh)")
   local before = Gr.plan
   local r0 = Gr.Rent()
@@ -659,7 +666,7 @@ return function(M, ctx)
   settle(14)
   check(Gr.plan == before, "E2 no plan in combat")
   M.LeaveCombat()
-  for _ = 1, 60 do M.Advance(0.5) end
+  for _ = 1, 400 do if not Gr.Pending() then break end M.Advance(0.5) end   -- one slice per frame (T:Spread)
   check(Gr.plan ~= before and not Gr.Busy(), "E2 equipment change → new plan after combat")
   -- E3. nothing in chat, no blocked action
   check(#M.output == out0, "E3 nothing in chat (" .. (#M.output - out0) .. " lines)")

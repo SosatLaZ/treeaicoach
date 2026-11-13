@@ -1414,16 +1414,33 @@ end
 
 -- (4.4 SMART) la minuterie des tranches n'existe que pendant un calcul : au repos, zéro travail (avant : un rappel
 -- toutes les 0,1 s pour toujours, ≈ 600 réveils / min de l'ordonnanceur pour rien)
-local function stopTicker() if M._ticker then M._ticker:Cancel() M._ticker = nil end end
-local function step()
-  if not job then stopTicker() return end
-  if T:InCombat() then return end
+-- (5.0) les tranches du plan passent par T:Spread : une par image, et seulement dans une image sans autre travail lourd
+-- (avant : une minuterie de 0,1 s qui s'ajoutait à ce que l'image faisait déjà). Sans T:Spread : un rappel de 0,1 s.
+local stepGen, stepQueued = 0, false
+local step
+local function spreadStep(gen)
+  if gen ~= stepGen then return end   -- calcul annulé entre-temps
+  stepQueued = false
+  step()
+end
+local function queueStep()
+  if stepQueued or not job then return end
+  stepQueued = true
+  local gen = stepGen
+  if T.Spread then T:Spread(M, spreadStep, gen) else T:After(0.1, function() spreadStep(gen) end) end
+end
+local function stopTicker() stepGen, stepQueued = stepGen + 1, false end
+step = function()
+  if not job then return end
+  if T:InCombat() then return end   -- repris à la fin du combat (COMBAT_END)
   local ok, res = coroutine.resume(job)
   if not ok then M:Debug("plan:", res) job = nil stopTicker() return end
   if coroutine.status(job) == "dead" then
     job = nil
     stopTicker()
     if res then M:Publish(res) end
+  else
+    queueStep()
   end
 end
 
@@ -1435,7 +1452,6 @@ function M:Start()
   dirtySlots = {}
   job = coroutine.create(function() return M.Plan(400, only, prev) end)
   step()
-  if job and not M._ticker and T.NewTicker then M._ticker = T:NewTicker(0.1, step, M) end
 end
 
 -- (5.0) recalcul seulement quand une entrée a changé (équipement, niveau, spé, quête prise : markDirty) ; un simple
@@ -1651,6 +1667,14 @@ function M:OnEnable()
   for _, ev in ipairs({ "MERCHANT_SHOW", "AUCTION_HOUSE_SHOW", "QUEST_TURNED_IN" }) do
     self:RegisterEvent(ev, function() M.WantPlan() end)   -- moments où un achat / une récompense se décide
   end
+  -- le joueur joue (il se déplace, 30 s après l'activation) : un premier plan, une fois ; immobile / absent : rien
+  local enabledAt = (g("GetTime") and g("GetTime")()) or 0
+  self:RegisterEvent("PLAYER_STARTED_MOVING", function()
+    if M.plan or job then M:UnregisterEvent("PLAYER_STARTED_MOVING") return end
+    if ((g("GetTime") and g("GetTime")()) or 0) - enabledAt < 30 then return end
+    M:UnregisterEvent("PLAYER_STARTED_MOVING")
+    M.WantPlan()
+  end)
   -- (5.0) une quête prise ne relance le plan que si elle apporte une récompense d'équipement nouvelle
   local rewardSig, rewardQueued = nil, false
   self:RegisterEvent("QUEST_ACCEPTED", function()
@@ -1673,7 +1697,7 @@ function M:OnEnable()
     if now ~= grouped then grouped = now if M.ResetWeights then M.ResetWeights() end if M.plan then markDirty() end end
   end)
   self:On("COMBAT_END", function()   -- (un seul rappel par message et par module : les trois parties passent ici)
-    if job then T:After(1, step)
+    if job then T:After(1, function() step() end)
     elseif M._kickAfterCombat then M._kickAfterCombat = false kick(2) end
     if M.SpecCombatEnd then M.SpecCombatEnd() end
     if M.RentCombatEnd then M.RentCombatEnd() end
@@ -1682,12 +1706,11 @@ function M:OnEnable()
   self:On("SUMMARY", function(m) if m.plan then local s = T:Summary() if type(s) == "table" then s.gear = M.Summary(m.plan) end end end)
   if M.SpecEnable then M.SpecEnable() end
   if M.RentEnable then M.RentEnable() end
-  if self._ticker then self._ticker:Cancel() self._ticker = nil end
   if dirty then kick(8) end
 end
 
 function M:OnDisable()
-  if self._ticker then self._ticker:Cancel() self._ticker = nil end
+  if M._cancelJob then M._cancelJob() end
   job = nil
   hideGlow()
   if M.RentDisable then M.RentDisable() end

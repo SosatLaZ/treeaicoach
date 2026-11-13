@@ -134,7 +134,7 @@ return function(M, ctx)
   for _ = 1, 8 do M.Advance(1) end
   ctx.check(not (Gr.plan.slots[9] and Gr.plan.slots[9][1]) and not Gr.Busy(), "no computation in combat")
   M.LeaveCombat()
-  for _ = 1, 90 do M.Advance(0.2) end
+  for _ = 1, 400 do if not Gr.Pending() then break end M.Advance(0.2) end   -- one slice per frame (T:Spread)
   ctx.check(Gr.AutoRefresh == nil, "no AutoRefresh method: Gear never keeps the core's refresh cycle awake")
   ctx.check(Gr.plan.slots[9] and Gr.plan.slots[9][1] and Gr.plan.slots[9][1].id == 990011, "background plan finished")
 

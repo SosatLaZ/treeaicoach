@@ -185,6 +185,23 @@ end
 -- flèches vertes sur les boutons de sac (calque à nous, ancré sur le bouton, jamais son enfant)
 local arrows, arrowN = {}, 0
 local function hideArrows() for i = 1, arrowN do if arrows[i] then arrows[i]:Hide() end end end
+-- tant qu'une flèche est affichée : un coup d'œil toutes les 0,5 s (le sac peut se fermer sans passer par nos crochets) ;
+-- plus de flèche = plus de minuterie
+local arrowWatch
+local function watchArrows()
+  if arrowWatch or not T.NewTicker then return end
+  arrowWatch = T:NewTicker(0.5, function()
+    local shown = 0
+    for i = 1, arrowN do
+      local f = arrows[i]
+      if f and f:IsShown() then
+        local b = f.btn
+        if b and type(b.IsVisible) == "function" and try(b.IsVisible, b) then shown = shown + 1 else f:Hide() end
+      end
+    end
+    if shown == 0 and arrowWatch then arrowWatch:Cancel() arrowWatch = nil end
+  end, M)
+end
 local function arrowAt(i, btn)
   local f = arrows[i]
   if not f then
@@ -201,6 +218,7 @@ local function arrowAt(i, btn)
     arrows[i] = f
     if i > arrowN then arrowN = i end
   end
+  f.btn = btn
   f:ClearAllPoints()
   f:SetPoint("TOPLEFT", btn, "TOPLEFT", 1, -1)
   local lvl = type(btn.GetFrameLevel) == "function" and tonumber((try(btn.GetFrameLevel, btn)))
@@ -228,6 +246,7 @@ function M.RefreshArrows()
       arrowAt(n, r[1])
     end
   end
+  if n > 0 then watchArrows() end
   return n
 end
 local arrowQueued = false
@@ -321,10 +340,10 @@ local function verdictFor(slot, plan, bud, bags)
     local wait = soon and soon.score >= nowC.score * 1.15 and (soon.need - c.level) <= 2
     if not wait and cost > 0 and nowC.life and nowC.life - c.level <= 1 then wait = true end
     if cost > 0 and wait then
-      local s2 = soon or nowC
       local g2 = soon and (gainOf(soon, slot)) or nil
-      return done("wait", fmt("%s : attends le niveau %d — %s%s (%s)", head, (soon and soon.need) or nowC.life, nm(s2.name),
-        g2 and (" · " .. g2) or "", soon and srcShort(soon.src) or "meilleur à venir"), nil,
+      local wtext = soon and fmt("%s : attends le niveau %d — %s%s (%s)", head, soon.need, nm(soon.name), g2 and (" · " .. g2) or "", srcShort(soon.src))
+        or fmt("%s : attends le niveau %d — %s serait remplacé aussitôt", head, nowC.life, nm(nowC.name))
+      return done("wait", wtext, nil,
         { fmt("%s coûte %s et serait remplacé presque tout de suite.", nm(nowC.name), money(cost)),
           soon and fmt("Au niveau %d : %s (%s).", soon.need, nm(soon.name), tostring(soon.src.text)) or "Un objet nettement meilleur arrive au niveau suivant." },
         soon and function() M.GoSource(soon.src, soon) end or nil, soon and "Clic : voir où l'obtenir" or nil, 0, 0, 0, 1)
@@ -734,7 +753,7 @@ function M.RentEnable()
   -- (fin de combat : rappel unique dans Gear.lua → M.RentCombatEnd)
   if type(G.hooksecurefunc) == "function" and not M._bagHooks then
     M._bagHooks = true
-    for _, fn in ipairs({ "ToggleBag", "OpenBag", "OpenAllBags", "ToggleAllBags", "OpenBackpack", "ToggleBackpack", "CloseAllBags", "CloseBackpack" }) do
+    for _, fn in ipairs({ "ToggleBag", "OpenBag", "CloseBag", "OpenAllBags", "ToggleAllBags", "OpenBackpack", "ToggleBackpack", "CloseAllBags", "CloseBackpack" }) do
       if type(rawget(G, fn)) == "function" then pcall(G.hooksecurefunc, fn, function() if M._active then arrowsSoon() end end) end
     end
   end
@@ -742,4 +761,7 @@ end
 function M.RentCombatEnd()
   if M._bagsLater and M.OnBagsChanged then M._bagsLater = false T:After(1, function() pcall(M.OnBagsChanged) end) end
 end
-function M.RentDisable() hideArrows() end
+function M.RentDisable()
+  hideArrows()
+  if arrowWatch then arrowWatch:Cancel() arrowWatch = nil end
+end
