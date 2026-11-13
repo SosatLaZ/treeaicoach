@@ -114,8 +114,8 @@ def test_regret_replay_30_to_45(flavor):
     assert m and int(m.group(2)) >= 100 and int(m.group(4)) >= 20 and int(m.group(5)) >= 16, out[:1500]
     assert "REPLAY REGRETS : 0" in out
     # what the player reads when it sells: the profession indicator, the stock sentence
-    assert "« Pas besoin : sert en Couture (pas ton métier) → vends au marchand" in out
-    assert re.search(r"« Garde : \d+ pour Travail du cuir \(\d+→\d+\) · \d+ en trop → ", out)
+    assert "« Pas besoin : sert en Couture (pas ton métier) — vends au marchand" in out
+    assert re.search(r"« Garde : \d+ pour Travail du cuir \(\d+ à \d+\) · \d+ en trop — ", out)
     assert "chat:" not in out and "violation:" not in out
 
 

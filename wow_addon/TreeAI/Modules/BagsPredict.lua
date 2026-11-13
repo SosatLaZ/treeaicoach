@@ -568,7 +568,7 @@ I.builtin("métiers", function(id)
     return huge, "composant de métier (tes métiers ne sont pas encore lus)"
   end
   if u.live then
-    local range = fmt("%s (%d→%d)", u.liveLine, u.from, u.to)
+    local range = fmt("%s (%d à %d)", u.liveLine, u.from, u.to)
     Q.live = { range = range, line = u.liveLine, id = u.liveId, learn = u.learn, to = u.to, rank = u.rank }
     Q.phrase.Prof = "pour " .. range
     if I.EXT.prof then return nil end                       -- le plan de PROF donne le compte ; P.After tranche s'il se tait

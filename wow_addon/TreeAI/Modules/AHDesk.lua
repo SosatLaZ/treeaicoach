@@ -1166,16 +1166,16 @@ function M.DealText(d)
       d.class == "sur" and "sûr" or "probable", money(d.net))
   end
   if d.kind == "vendor" then
-    return fmt("Acheter %s ×%d pour %s → revendre au MARCHAND %s. Gain sûr : +%s (aucun frais).", d.name, d.qty, money(d.buy),
+    return fmt("Acheter %s ×%d pour %s, puis revendre au MARCHAND %s. Gain sûr : +%s (aucun frais).", d.name, d.qty, money(d.buy),
       money(d.gross), money(d.net))
   end
   if d.kind == "reset" then
-    return fmt("Réguler %s : racheter tout le mur bas (%d unités, %d annonce%s, %d vendeur%s) pour %s → reposter à %s l'unité. Gain probable : +%s après commission et dépôts, ~%s j. %s",
+    return fmt("Réguler %s : racheter tout le mur bas (%d unités, %d annonce%s, %d vendeur%s) pour %s, puis reposter à %s l'unité. Gain probable : +%s après commission et dépôts, ~%s j. %s",
       d.name, n0(d.wallQty), n0(d.wallRows), n0(d.wallRows) > 1 and "s" or "", n0(d.sellers), n0(d.sellers) > 1 and "s" or "",
       money(d.wallBuy), money(d.sellUnit), money(d.groupNet), dec(d.days), M.RiskText(d))
   end
   local ev = d.ev or {}
-  return fmt("Acheter %s ×%d pour %s → revendre à l'HV %s l'unité. Frais : commission %s, dépôts perdus prévus %s. Gain probable : +%s, vendu en ~%s j (%d j de preuves, ~%s ventes/j).",
+  return fmt("Acheter %s ×%d pour %s, puis revendre à l'HV %s l'unité. Frais : commission %s, dépôts perdus prévus %s. Gain probable : +%s, vendu en ~%s j (%d j de preuves, ~%s ventes/j).",
     d.name, d.qty, money(d.buy), money(d.sellUnit), money(d.cut), money(d.depLoss), money(d.net), dec(d.days), n0(ev.days),
     dec(ev.sold))
 end
@@ -1187,7 +1187,7 @@ function M.RiskText(d)
 end
 function M.CancelText(e)
   if not e then return nil end
-  return fmt("Annuler %s ×%d (%s l'unité, dépassée à %s) : dépôt perdu %s%s, reposter à %s → +%s espéré de plus qu'en attendant.",
+  return fmt("Annuler %s ×%d (%s l'unité, dépassée à %s) : dépôt perdu %s%s, reposter à %s : +%s espéré de plus qu'en attendant.",
     e.name, e.n, money(e.my), money(e.low), money(e.dep + n0(e.cost)), e.depExact and "" or " (estimé)", money(e.new), money(e.gain))
 end
 local HOW = { undercut = "juste sous le moins cher", match = "au prix de ta vente en cours", normal = "au prix habituel (personne d'autre)" }
@@ -1333,7 +1333,7 @@ local SRC = { marchand = "marchand", HV = "HV maintenant", habituel = "prix habi
 function M.CraftText(sp)
   local parts = {}
   for _, m in ipairs(sp.mats or {}) do parts[#parts + 1] = fmt("%s ×%d %s (%s)", itemName(m.id), m.n, money(m.c), SRC[m.src] or m.src) end
-  return fmt("%s%s : composants %s → revente ~%s l'unité. Gain probable : +%s après commission et dépôts, ~%s j (%d j de preuves).",
+  return fmt("%s%s : composants %s, revente ~%s l'unité. Gain probable : +%s après commission et dépôts, ~%s j (%d j de preuves).",
     sp.name, sp.made > 1 and (" ×" .. sp.made) or "", money(sp.cost), money(sp.sellUnit), money(sp.net), dec(sp.days),
     n0(sp.ev and sp.ev.days)), table.concat(parts, ", ")
 end
@@ -1528,6 +1528,9 @@ function M.Refresh()
   local f = M.frame
   if not (f and M.ahOpen and f:IsShown()) then return end
   local L = M.Lines()
+  -- (5.1 GLYPH) « ≈ »… : absents des polices du jeu (Core.SafeText ; noms d'objets lus hors combat)
+  local safe = T.SafeText
+  if safe then for k, v in pairs(L) do if type(v) == "string" then L[k] = safe(v) end end end
   f.goal:SetText(L.goal)
   f.goal2:SetText(L.goal2)
   f.capital:SetText(L.capital)

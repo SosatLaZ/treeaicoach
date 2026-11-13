@@ -18,6 +18,15 @@ local _, ns = ...
 ns = ns or {}
 
 local T = _G.TreeAI
+-- (5.1 GLYPH) texte à l'écran : signes absents des polices du jeu (« ≈ », « → »…) remplacés (Core.SafeText ; une
+-- valeur secrète passe telle quelle)
+local function safe(s)
+  s = tostring(s or "")
+  local f, ok, hit = T.SafeText, pcall(string.find, s, "[\226\227]")   -- (le cas courant : rien à faire, sans appel au cœur)
+  if not (f and ok and hit) then return s end
+  ok, hit = pcall(f, s)
+  return ok and hit or s
+end
 if not (T and T.RegisterModule) then return end
 
 local M = T:RegisterModule("Todo", {
@@ -375,11 +384,11 @@ end
 
 function M.SessionText(s)
   s = s or M.Session()
-  local t = ("Niv %d → %d : %d %%"):format(s.level, s.level + 1, floor(s.pct * 100))
+  local t = ("Niv %d à %d : %d %%"):format(s.level, s.level + 1, floor(s.pct * 100))
   if s.rested and s.rested > 0 and s.xpMax > 0 then t = t .. " (bonus de repos)" end
   if s.eta and s.eta > 0 then
     local Pl = T.Plain
-    t = t .. " · niveau " .. (s.level + 1) .. " dans " .. ((Pl and Pl.Minutes(s.eta)) or ("≈ " .. Time(s.eta)))
+    t = t .. " · niveau " .. (s.level + 1) .. " dans " .. ((Pl and Pl.Minutes(s.eta)) or ("~" .. Time(s.eta)))
   end
   return t
 end
@@ -958,7 +967,7 @@ function M.Paint(b, r, w, fs)
     b.icon:SetSize(fs + 4, fs + 4) b.icon:SetPoint("LEFT", b, "LEFT", 8, 0) b.icon:SetTexture(r.icon) b.icon:Show()
     setFont(b.text, fs + 1, "OUTLINE")
     b.text:SetPoint("LEFT", b.icon, "RIGHT", 6, 0)
-    b.text:SetText("|cffffd100" .. r.title .. "|r")
+    b.text:SetText(safe("|cffffd100" .. r.title .. "|r"))
     b.right:SetPoint("RIGHT", b, "RIGHT", -24, 0)
     b.right:SetText(r.count and ("|cffaaaaaa" .. r.count .. "|r") or "")
     b.fold:SetPoint("RIGHT", b, "RIGHT", -6, 0)
@@ -975,11 +984,11 @@ function M.Paint(b, r, w, fs)
     setFont(b.text, fs + 3, "OUTLINE")
     b.text:SetPoint("TOPLEFT", b, "TOPLEFT", 16 + isz, -6)
     b.text:SetWidth(w - isz - 24)
-    b.text:SetText(hex(PRIO_RGB[a.prio or 2]) .. a.title .. "|r")
+    b.text:SetText(safe(hex(PRIO_RGB[a.prio or 2]) .. a.title .. "|r"))
     b.sub:ClearAllPoints() setFont(b.sub, fs - 1)
     b.sub:SetPoint("TOPLEFT", b.text, "BOTTOMLEFT", 0, -3)
     b.sub:SetWidth(w - isz - 24)
-    b.sub:SetText("|cffbbbbbb" .. (a.why or "") .. "|r")
+    b.sub:SetText(safe("|cffbbbbbb" .. (a.why or "") .. "|r"))
     b.meta:ClearAllPoints() setFont(b.meta, fs - 1)
     b.meta:SetPoint("BOTTOMLEFT", b, "BOTTOMLEFT", 16 + isz, 8)
     b.meta:SetText("")
@@ -990,7 +999,7 @@ function M.Paint(b, r, w, fs)
       b.btn1.onClick = function() M.Go(a, false) end
       b.btn2.onClick = function() M.Go(a, true) end
       b.btn1.tip = "Flèche de la boussole TreeAI vers l'objectif"
-      b.btn2.tip = "Itinéraire : Shortest Path → TomTom → repère de carte (sur ton clic)"
+      b.btn2.tip = "Itinéraire : Shortest Path, sinon TomTom, sinon un repère de carte (sur ton clic)"
       b.btn1:Show() b.btn2:Show()
     end
     r.tip = { a.title, "|cff99ccffPourquoi ?|r " .. (a.why or "") }
@@ -1001,9 +1010,9 @@ function M.Paint(b, r, w, fs)
     b.text:SetPoint("LEFT", b.icon, "RIGHT", 6, 0)
     b.text:SetWidth(w - fs - 80)
     local head = r.group and "" or (s.n and ((r.first and "|cffffd100" or "|cffaaaaaa") .. s.n .. ".|r ") or "")
-    b.text:SetText(head .. (r.first and "|cffffffff" or "|cffcccccc") .. tostring(s.label) .. "|r")
+    b.text:SetText(safe(head .. (r.first and "|cffffffff" or "|cffcccccc") .. tostring(s.label) .. "|r"))
     b.right:SetPoint("RIGHT", b, "RIGHT", -8, 0)
-    b.right:SetText(s.eta and ("|cffaaaaaa" .. ((T.Plain and T.Plain.Minutes(s.eta)) or ("~" .. Time(s.eta))) .. "|r") or "")
+    b.right:SetText(s.eta and safe("|cffaaaaaa" .. ((T.Plain and T.Plain.Minutes(s.eta)) or ("~" .. Time(s.eta))) .. "|r") or "")
     if s.point or s.q then r.onClick = function() M.Go({ point = s.point, questID = s.q, title = s.label }, shift()) end end
     r.tip = { tostring(s.label), r.group and "Prochaine mission du groupe (Missions)" or "Clic : boussole · Maj-clic : Y aller", (T.AutoRunHint and ("|cff888888" .. T.AutoRunHint() .. "|r") or nil) }
     if r.group then local Mi = mod("Missions") r.onClick = function() if Mi and Mi.next and Mi.SetGroupTarget then pcall(Mi.SetGroupTarget, Mi, Mi.next.mission) end end end
@@ -1053,7 +1062,7 @@ function M.Paint(b, r, w, fs)
       anchor = b.reward
     end
     b.right:SetPoint("RIGHT", anchor, "LEFT", -4, 0)
-    b.right:SetText(rtxt .. tagText(c))
+    b.right:SetText(safe(rtxt .. tagText(c)))
     local rightW = 150 + (c.verdict and 17 or 0) + (c.reward and 17 or 0)
     b.text:SetPoint("LEFT", b.pin, "RIGHT", 4, 0)
     b.text:SetWidth(max(60, w - rightW - 30))
@@ -1077,7 +1086,7 @@ function M.Paint(b, r, w, fs)
     end
     setFont(b.bar.fs, fs - 1)
     b.bar.fs:SetWidth(w - ind - 18)
-    b.bar.fs:SetText((r.done and "|cffccffcc" or "|cffffffff") .. r.text .. "|r")
+    b.bar.fs:SetText(safe((r.done and "|cffccffcc" or "|cffffffff") .. r.text .. "|r"))
     b.bar:Show()
     r.tip = r.o and { r.o.name .. (" %d/%d"):format(r.have, r.need), r.o.hint or "" } or nil
     local qid = r.c.id
@@ -1107,7 +1116,7 @@ function M.Paint(b, r, w, fs)
     b.hide:SetPoint("RIGHT", b, "RIGHT", -4, 0) b.hide.onClick = function() M.ToggleHidden(e.key) end b.hide:Show()
     b.text:SetPoint("LEFT", b.icon, "RIGHT", 6, 0)
     b.text:SetWidth(w - fs - 50)
-    b.text:SetText(hex(PRIO_RGB[e.prio] or PRIO_RGB[1]) .. e.text .. "|r")
+    b.text:SetText(safe(hex(PRIO_RGB[e.prio] or PRIO_RGB[1]) .. e.text .. "|r"))
     r.tip = { e.text, "Le même conseil que dans « Maintenant » (sacs, munitions, maître de classe)" }
   elseif r.kind == "board" then
     local e = r.e
@@ -1130,13 +1139,13 @@ function M.Paint(b, r, w, fs)
   elseif r.kind == "foot" then
     setFont(b.text, fs - 1)
     b.text:SetPoint("LEFT", b, "LEFT", 12, 0)
-    b.text:SetText("|cff888888" .. r.text .. "|r")
+    b.text:SetText(safe("|cff888888" .. r.text .. "|r"))
     r.onClick = function() M.ShowAll() end
   else -- empty
     setFont(b.text, fs - 1)
     b.text:SetPoint("LEFT", b, "LEFT", 12, 0)
     b.text:SetWidth(w - 20)
-    b.text:SetText("|cffaaaaaa" .. tostring(r.text or "") .. "|r")
+    b.text:SetText(safe("|cffaaaaaa" .. tostring(r.text or "") .. "|r"))
   end
   return x
 end
@@ -1196,7 +1205,7 @@ function M.CreateFrame()
   head.close:SetPoint("RIGHT", head, "RIGHT", -6, 0)
   head.route = textButton(head, "Itinéraire", 66, 16, function() M.Route() end)
   head.route:SetPoint("RIGHT", head.close, "LEFT", -6, 0)
-  head.route.tip = "Tout le journal en un trajet (Shortest Path → boussole)"
+  head.route.tip = "Tout le journal en un trajet (Shortest Path, puis la boussole)"
   head.sort = textButton(head, "Tri", 82, 16, function() M.CycleSort() end)
   head.sort:SetPoint("RIGHT", head.route, "LEFT", -4, 0)
   head.sort.tip = "Changer l'ordre (les plus rapides, en chemin, les plus proches, niveau, zone)"
@@ -1365,7 +1374,7 @@ local function styleChrome(f, model)
     local rw = (s.xpMax > 0 and s.rested > 0) and min(1, (s.xp + s.rested) / s.xpMax) or 0
     f.session.rest:SetWidth(max(1, (f.session:GetWidth() or 300) * rw))
     f.session.rest:SetShown(rw > (s.pct or 0))
-    f.session.fs:SetText(M.SessionText(s))
+    f.session.fs:SetText(safe(M.SessionText(s)))
     f.session:Show()
   else
     f.session:Hide()

@@ -141,6 +141,10 @@ end
 local M = dofile(here .. "/wowmock.lua")
 M.addonName = addonName
 M.Install(opts.flavor)
+-- GLYPH (5.1): a text put on screen (SetText, tooltip lines, chat, error frame) with a character the game's fonts lack
+-- (« → ✓ ▶ • ≈ »…: an empty box in the client) fails the run (wowmock.lua M.GlyphScan; fix: TreeAI.SafeText at the
+-- output point, or a plain French literal)
+M.glyphGate = true
 -- PLACEBUG: frames anchored / measured like the real client, login race (UIParent unsized, UI scale after login)
 if opts.geometry then dofile(here .. "/geometry.lua")(M, opts.geometry) end
 M.tocMeta = { [addonName] = meta }
@@ -551,8 +555,18 @@ for _, e in ipairs(M.errors) do io.write("ERROR [", e.label, "] ", e.msg, "\n") 
 for _, v in ipairs(M.violations) do io.write("VIOLATION [", v.kind, "] ", v.msg, " @ ", v.where, "\n") end
 for _, l in ipairs(leakList) do io.write("LEAK global ", l, "\n") end
 for _, p in ipairs(svProblems) do io.write("SAVEDVARS ", p, "\n") end
+for _, g in ipairs(M.glyphs) do io.write("GLYPH [", g.kind, "] ", g.msg, " @ ", g.where, "\n") end
+do   -- TREEAI_WOW_GLYPHLOG=FILE: every offending text of every run, appended (survey of a whole suite)
+  local log = os.getenv("TREEAI_WOW_GLYPHLOG")
+  local f = log and log ~= "" and #M.glyphs > 0 and io.open(log, "a")
+  if f then
+    for _, g in ipairs(M.glyphs) do f:write(g.where, "\t", g.kind, "\t", g.msg, "\n") end
+    f:close()
+  end
+end
 
-local fail = #M.errors + #M.violations + #leakList + #svProblems
-io.write(("RESULT %s addon=%s flavor=%s loaded=%d skipped=%d errors=%d violations=%d leaks=%d savedvars=%d\n"):format(
-  fail == 0 and "ok" or "fail", addonName, opts.flavor, loaded, skipped, #M.errors, #M.violations, #leakList, #svProblems))
+local fail = #M.errors + #M.violations + #leakList + #svProblems + #M.glyphs
+io.write(("RESULT %s addon=%s flavor=%s loaded=%d skipped=%d errors=%d violations=%d leaks=%d savedvars=%d glyphs=%d\n"):format(
+  fail == 0 and "ok" or "fail", addonName, opts.flavor, loaded, skipped, #M.errors, #M.violations, #leakList, #svProblems,
+  #M.glyphs))
 os.exit(fail == 0 and 0 or 1)

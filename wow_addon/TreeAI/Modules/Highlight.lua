@@ -16,6 +16,15 @@
 -- Lua 5.1, aucune globale, toutes les API testées.
 local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
+-- (5.1 GLYPH) texte à l'écran : signes absents des polices du jeu (« ≈ », « → »…) remplacés (Core.SafeText ; une
+-- valeur secrète passe telle quelle)
+local function safe(s)
+  s = tostring(s or "")
+  local f, ok, hit = T.SafeText, pcall(string.find, s, "[\226\227]")   -- (le cas courant : rien à faire, sans appel au cœur)
+  if not (f and ok and hit) then return s end
+  ok, hit = pcall(f, s)
+  return ok and hit or s
+end
 if not T or not T.RegisterModule then return end
 local API = T.API or {}
 local G = _G
@@ -914,7 +923,7 @@ function M.CheckLoot()
         if btn then M.Apply(btn, kind, e) end
         local nextTxt = ""
         if kind == "need" and not e.provided then
-          nextTxt = (" (%d/%d → %d/%d)"):format(e.have or 0, e.need or 1, math.min(e.need or 1, (e.have or 0) + 1), e.need or 1)
+          nextTxt = (" (%d/%d, puis %d/%d)"):format(e.have or 0, e.need or 1, math.min(e.need or 1, (e.have or 0) + 1), e.need or 1)
         end
         lines[#lines + 1] = ("%s : %s%s"):format(name, M.Describe(kind, e) or "", nextTxt)
       end
@@ -927,7 +936,7 @@ function M.CheckLoot()
     elseif #lines > 0 and type(LF) == "table" and meth(LF, "IsShown") then
       panel:ClearAllPoints()
       panel:SetPoint("TOPLEFT", LF, "TOPRIGHT", 6, -6)
-      panel.text:SetText(table.concat(lines, "\n"))
+      panel.text:SetText(safe(table.concat(lines, "\n")))
       local r, g, b = color("colNeed")
       panel.text:SetTextColor(r, g, b)
       panel:Show()

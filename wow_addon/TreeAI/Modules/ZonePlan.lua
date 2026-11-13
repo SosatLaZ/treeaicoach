@@ -960,7 +960,7 @@ function Z:CycleStyle() return self:SetStyle(self:StyleIndex() % #Z.STYLES + 1) 
 --- infobulle du sélecteur : chaque mode en une ligne, le mode en cours marqué
 function Z:StyleTip()
   local cur, out = self:StyleIndex(), {}
-  for i, e in ipairs(Z.STYLES) do out[#out + 1] = (i == cur and "● " or "○ ") .. e.name .. " : " .. e.tip end
+  for i, e in ipairs(Z.STYLES) do out[#out + 1] = (i == cur and "(x) " or "( ) ") .. e.name .. " : " .. e.tip end
   return tconcat(out, "\n")
 end
 
@@ -2464,8 +2464,11 @@ function Z:ShowMenu(entries, kind)
   for _, r in ipairs(menu.rows) do r:Hide(); r.e = nil end
   local probe = menuRow(1)
   local w = 200
-  for _, e in ipairs(entries) do
-    probe.text:SetText(e.text)
+  -- (5.1 GLYPH) texte à l'écran = SafeText (signes absents des polices du jeu)
+  local txt, safe = {}, T.SafeText or tostring
+  for i, e in ipairs(entries) do txt[i] = safe(tostring(e.text or "")) end
+  for i in ipairs(entries) do
+    probe.text:SetText(txt[i])
     w = max(w, floor((probe.text:GetStringWidth() or 0) + 24))
   end
   w = min(w, 340)
@@ -2476,7 +2479,7 @@ function Z:ShowMenu(entries, kind)
     b:ClearAllPoints()
     b:SetPoint("TOPLEFT", menu, "TOPLEFT", 3, y)
     b:SetWidth(w - 6)
-    b.text:SetText(e.text)
+    b.text:SetText(txt[i])
     if e.head then b.text:SetTextColor(0.2, 0.8, 0.4) elseif e.dim then b.text:SetTextColor(0.6, 0.6, 0.6)
     else b.text:SetTextColor(1, 1, 1) end
     b:Show()
@@ -2503,18 +2506,18 @@ function Z:ZoneEntries()
   local out = { { text = "Mode du trajet", head = true } }
   local cur = self:StyleIndex()
   for i, e in ipairs(Z.STYLES) do
-    out[#out + 1] = { text = (i == cur and "● " or "○ ") .. e.name, fn = function() Z:SetStyle(i) end, keep = true }
+    out[#out + 1] = { text = (i == cur and "(x) " or "( ) ") .. e.name, fn = function() Z:SetStyle(i) end, keep = true }
   end
   out[#out + 1] = { text = "Zone de travail", head = true }
-  out[#out + 1] = { text = (mode == "auto" and "● " or "○ ") .. "Auto : ma zone (ses voisines si elle est vide)", fn = function() Z:SetMode("auto") end, keep = true }
-  out[#out + 1] = { text = (mode == "continent" and "● " or "○ ") .. "Toute la région (continent)", fn = function() Z:SetMode("continent") end, keep = true }
+  out[#out + 1] = { text = (mode == "auto" and "(x) " or "( ) ") .. "Auto : ma zone (ses voisines si elle est vide)", fn = function() Z:SetMode("auto") end, keep = true }
+  out[#out + 1] = { text = (mode == "continent" and "(x) " or "( ) ") .. "Toute la région (continent)", fn = function() Z:SetMode("continent") end, keep = true }
   out[#out + 1] = { text = "Zones (quêtes à mon niveau)", head = true }
   local shown = 0
   for _, e in ipairs(self:ZoneChoices()) do
     if shown >= 12 then break end
     local on = mode == "zones" and ch.zones[e.map]
     local cross = A.cont and Z.Cont(e.map) and Z.Cont(e.map) ~= A.cont
-    out[#out + 1] = { text = fmt("%s %s%s%s", on and "☑" or "☐", cut(e.name, 28), e.n and fmt(" · %d", e.n) or "",
+    out[#out + 1] = { text = fmt("%s %s%s%s", on and "[x]" or "[ ]", cut(e.name, 28), e.n and fmt(" · %d", e.n) or "",
       cross and " (autre continent)" or ""), fn = function() Z:SetMode("zone", e.map) end, keep = true }
     shown = shown + 1
   end
@@ -2536,12 +2539,12 @@ function Z:ModeEntries()
   local ok, modes = pcall(QBm and QBm.Modes or function() return {} end)
   for _, m in ipairs(ok and modes or {}) do
     local n = (m.count and m.count > 0) and fmt(" (%d)", m.count) or ""
-    out[#out + 1] = { text = (m.active and "● " or "○ ") .. m.label .. n, fn = function() QBm.SetMode(m.id) end }
+    out[#out + 1] = { text = (m.active and "(x) " or "( ) ") .. m.label .. n, fn = function() QBm.SetMode(m.id) end }
   end
   out[#out + 1] = { text = "Ordre dans la zone", head = true }
   local cur = self:StyleIndex()
   for i, e in ipairs(Z.STYLES) do
-    out[#out + 1] = { text = (i == cur and "● " or "○ ") .. e.name, fn = function() Z:SetStyle(i) end, keep = true }
+    out[#out + 1] = { text = (i == cur and "(x) " or "( ) ") .. e.name, fn = function() Z:SetStyle(i) end, keep = true }
   end
   return out
 end
@@ -2624,7 +2627,7 @@ function Z:HeadLines()
   local bm = Z.BrainMode()
   if QBm and QBm.Modes and QBm.IsEnabled and QBm:IsEnabled() then
     local tip = {}
-    for _, e in ipairs(QBm.MODES or {}) do tip[#tip + 1] = (e.id == bm and "● " or "○ ") .. e.label .. " : " .. e.tip end
+    for _, e in ipairs(QBm.MODES or {}) do tip[#tip + 1] = (e.id == bm and "(x) " or "( ) ") .. e.label .. " : " .. e.tip end
     out[#out + 1] = { text = "Que faire : " .. tostring(QBm.Label(bm)) .. " ▾", prio = 1, id = "qb:mode",
       onClick = function() Z:ShowModeMenu() end, onRightClick = function() Z:ShowModeMenu() end,
       tooltip = tconcat(tip, "\n") .. "\nClic : choisir (/tai rendre, /tai prendre, /tai cerveau zone | groupe)" }

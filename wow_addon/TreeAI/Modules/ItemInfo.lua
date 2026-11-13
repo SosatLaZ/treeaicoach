@@ -22,6 +22,15 @@
 -- par les sacs, l'équipement, le journal, le groupe, le familier, les métiers. Lua 5.1, aucune globale.
 local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
+-- (5.1 GLYPH) texte à l'écran : signes absents des polices du jeu (« ≈ », « → »…) remplacés (Core.SafeText ; une
+-- valeur secrète passe telle quelle)
+local function safe(s)
+  s = tostring(s or "")
+  local f, ok, hit = T.SafeText, pcall(string.find, s, "[\226\227]")   -- (le cas courant : rien à faire, sans appel au cœur)
+  if not (f and ok and hit) then return s end
+  ok, hit = pcall(f, s)
+  return ok and hit or s
+end
 if not T or not T.RegisterModule then return end
 local API = T.API or {}
 
@@ -36,7 +45,7 @@ local M = T:RegisterModule("ItemInfo", {
     { key = "group", type = "toggle", label = "Groupe : à qui il sert, Besoin / Cupidité" },
     { key = "pet", type = "toggle", label = "Familier : mange-t-il ça ? (chasseur)" },
     { key = "prof", type = "toggle", label = "Métiers : compo de tes recettes (combien tu peux en faire)" },
-    { key = "value", type = "toggle", label = "Valeur : marchand, HV si le marché est fiable → vendre ou garder" },
+    { key = "value", type = "toggle", label = "Valeur : marchand, HV si le marché est fiable : vendre ou garder" },
     { key = "source", type = "toggle", label = "Sources : où il tombe (taux mesuré), qui le vend" },
     { key = "shift", type = "toggle", label = "Maj : détails en plus (stats complètes, raisons, toutes les sources)",
       section = "Affichage" },
@@ -550,7 +559,7 @@ function SEC.group(it, c, o, st)
     if #others == 0 then o.label = nil return end
     o.text = "utile à " .. andList(others, 3)
   elseif #need == 0 then
-    o.text = "personne n'en a besoin → Cupidité pour tous"
+    o.text = "personne n'en a besoin : Cupidité pour tous"
   else
     o.text = "Besoin pour " .. andList(need, 3) .. ((#need < #members) and " · Cupidité pour les autres" or "")
   end
@@ -784,7 +793,7 @@ function SEC.value(it, c, o, st)
   local reliable = liq and liq.ok and (tonumber(liq.market) or 0) > 0
   if reliable then
     -- (4.1 AHPROFIT) « HV ≈ 1 po 20 pa (vendu ~6/j) · marchand 30 pa → vends à l'HV » : l'HV en premier
-    table.insert(parts, 1, fmt("HV ≈ %s (vendu ~%s/j)", money(liq.market), soldTxt(liq.sold)))
+    table.insert(parts, 1, fmt("HV ~%s (vendu ~%s/j)", money(liq.market), soldTxt(liq.sold)))
     o.details[#o.details + 1] = fmt("HV : %d jours de scans, confiance %d %%.", tonumber(liq.days) or 0, floor((tonumber(liq.conf) or 0) * 100 + 0.5))
   elseif stA then
     parts[#parts + 1] = "HV : pas de marché fiable"
@@ -816,7 +825,7 @@ function SEC.value(it, c, o, st)
   -- le prix unitaire seul, le jeu l'écrit déjà (« Prix de vente ») : dans les détails seulement
   if #parts == 1 and count <= 1 and it.sell > 0 and (not verdict or verdict == "Garder") then o.compact = false end
   o.label, o.tone = "Valeur", "info"
-  o.text = (#parts > 0 and tconcat(parts, " · ") or "") .. (verdict and ((#parts > 0 and " → " or "→ ") .. verdict) or "")
+  o.text = (#parts > 0 and tconcat(parts, " · ") or "") .. (verdict and ((#parts > 0 and " — " or "") .. verdict) or "")
 end
 
 -- sources : taux de drop MESURÉ (Stats, ≥ 10 corps), sinon les monstres de QuestieDB (sans taux), marchands, artisanat,
@@ -990,7 +999,7 @@ M.Pending = function() return pending, pendingN end
 
 local function apply(tt, lines)
   if #lines == 0 then return end
-  for _, l in ipairs(lines) do try(tt.AddLine, tt, l[1], l[2], l[3], l[4], true) end
+  for _, l in ipairs(lines) do try(tt.AddLine, tt, safe(l[1]), l[2], l[3], l[4], true) end
   if tt.Show then try(tt.Show, tt) end   -- la taille de l'infobulle suit les lignes ajoutées
 end
 

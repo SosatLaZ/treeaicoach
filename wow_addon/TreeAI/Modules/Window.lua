@@ -2564,8 +2564,8 @@ function W.Render()
   meth(content, "Show")
   local ttl = p.title
   if type(ttl) == "function" then ttl = try(ttl) end
-  meth(win.pageTitle, "SetText", ttl or p.label)
-  meth(win.pageSub, "SetText", p.sub and (type(p.sub) == "function" and (try(p.sub) or "") or p.sub) or "")
+  meth(win.pageTitle, "SetText", safe(ttl or p.label))
+  meth(win.pageSub, "SetText", safe(p.sub and (type(p.sub) == "function" and (try(p.sub) or "") or p.sub) or ""))
   local navPage = W.pageIndex[W.NavOf(id)]
   meth(win.pageIcon, "SetTexture", p.icon or (navPage and navPage.icon) or (ICON .. "INV_Misc_Book_09"))
   W.BuildNav()

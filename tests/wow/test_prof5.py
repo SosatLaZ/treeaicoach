@@ -38,7 +38,7 @@ def test_what_the_player_sees_dump():
                        capture_output=True, text=True, timeout=300, cwd=ROOT, env=env)
     seen = r.stderr
     assert "Va d'abord chez ton maître" in seen and "Apprends Peau moyenne traitée chez ton maître" in seen
-    assert "Tu passes devant tes maîtres" in seen and "Avec ton or : 92 →" in seen
+    assert "Tu passes devant tes maîtres" in seen and "Avec ton or : 92 à" in seen
     assert not re.search(r"\b\d+/\d+ (Cuir|Etoffe|Peau)", seen)          # « 28/271 Cuir moyen »
     assert not re.search(r"Apprendre [^\n]* à \d+", seen)                 # « Apprendre X à 67 »
     assert "objet " not in seen and "nil" not in seen.replace("| nil |", "")   # no raw id, no nil leaking in a line

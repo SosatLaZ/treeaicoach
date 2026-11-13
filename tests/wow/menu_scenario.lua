@@ -39,7 +39,7 @@ return function(M, ctx)
   local samples = {
     { text = "Danger : élite en approche", prio = 3, want = "danger" },
     { text = "Rends « Le cavalier céleste » à Kanati · 118 m", want = "turnin", right = "118 m" },
-    { text = "Tue 6 Loups des collines au nord (≈ 3 min)", want = "kill", right = "≈ 3 min" },
+    { text = "Tue 6 Loups des collines au nord (≈ 3 min)", want = "kill", right = "~3 min" },
     { text = "Ramasse 10 Oeufs de wyverne à l'ouest du camp, près de la rivière et des huttes · 18 min", want = "collect", right = "18 min" },
     { text = "Utilise la Fiole sur le cadavre", want = "use" },
     { text = "Va au camp de Brumefeu · 396 m", want = "travel", right = "396 m" },

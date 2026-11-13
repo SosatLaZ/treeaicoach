@@ -166,7 +166,7 @@ return function(M, ctx)
   T:InvalidatePlayerState()
   ctx.fire("PLAYER_ALIVE")   -- released: ghost at the graveyard
   local c = sugg("Speed:corpse")
-  check(c and c.text:find("^Cadavre : %d+ m au NE %(≈ %d+ s%)"), "corpse line: " .. tostring(c and c.text))
+  check(c and c.text:find("^Cadavre : %d+ m au NE %(~%d+ s%)"), "corpse line: " .. tostring(c and c.text))
   local top = (T:GetSuggestions() or {})[1]
   check(top and top.id == "Speed:corpse", "corpse line on top of « Maintenant »: " .. tostring(top and top.id))
   check(C.char.custom and C.char.custom.source == "corpse" and math.abs(C.char.custom.x - 0.55) < 1e-6,

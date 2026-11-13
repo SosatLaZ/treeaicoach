@@ -103,7 +103,7 @@ return function(M, ctx)
   for _, l in ipairs(lines) do txt = txt .. (l.text or "") .. "\n" end
   ctx.check(txt:find("Priorité des stats : Agilité"), "French stat priority line")
   -- (5.0 GEAR) one verdict per slot, verb first, ONE number (DPS for a hunter), same rows as the page
-  ctx.check(txt:find("Achète Gilet%-test agile · ≈ %+%d+,%d DPS"), "verdict line: verb + item + DPS gain: " .. txt)
+  ctx.check(txt:find("Achète Gilet%-test agile · ~%+%d+,%d DPS"), "verdict line: verb + item + DPS gain: " .. txt)
   ctx.check(txt:find("Spé : "), "spec and its source always shown: " .. txt)
   ctx.check(not txt:find("%+%d+ %%"), "hunter = DPS model: no percentage: " .. txt)
   ctx.check(txt:find("Achats conseillés : 2 objet"), "purchases summed against the free budget: " .. txt)
@@ -182,7 +182,7 @@ return function(M, ctx)
   if fn then
     fn(GameTooltip)
     local joined = table.concat(GameTooltip.__lines, " | ")
-    ctx.check(joined:find("TreeAI : nettement mieux pour toi — ≈ +0,7 DPS (remplace Gilet usé)", 1, true), "upgrade: verdict + number: " .. joined)
+    ctx.check(joined:find("TreeAI : nettement mieux pour toi — ~+0,7 DPS (remplace Gilet usé)", 1, true), "upgrade: verdict + number: " .. joined)
     ctx.check(joined:find("Se vend 3 pa au marchand"), "vendor price line: " .. joined)
     GameTooltip.__item, GameTooltip.__lines = 90104, {}
     fn(GameTooltip)

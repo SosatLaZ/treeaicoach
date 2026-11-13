@@ -598,7 +598,7 @@ return function(M, ctx)
     "hooked through TooltipDataProcessor (item tooltips)")
   GameTooltip.__lines = {}
   cbs[0](GameTooltip, { id = 9001 })
-  check(#GameTooltip.__lines == 1 and GameTooltip.__lines[1] == "TreeAI · Objet gris : ne sert à rien → vends au marchand (48 pc)",
+  check(#GameTooltip.__lines == 1 and GameTooltip.__lines[1] == "TreeAI · Objet gris : ne sert à rien — vends au marchand (48 pc)",
     "post-call adds the line: " .. tostring(GameTooltip.__lines[1]))
   M.EnterCombat()
   GameTooltip.__lines = {}
@@ -699,12 +699,12 @@ return function(M, ctx)
   settle(3)
   local want = {
     { 9031, "keep", "Garde : pour la quête « Des peaux pour le camp » (dès le niveau 32) — nombre demandé inconnu, je garde tout" },
-    { 9032, "sell", "Test : aucun plan n'en veut → vends au marchand (3 pa 20 pc)", "quête « Les écailles du marais » : déjà faite" },
+    { 9032, "sell", "Test : aucun plan n'en veut — vends au marchand (3 pa 20 pc)", "quête « Les écailles du marais » : déjà faite" },
     { 9033, "bank", "À la banque : pour la quête « Des crocs pour plus tard » (niveau 44) : à la banque en attendant" },
-    { 9034, "sell", "Test : aucun plan n'en veut → vends au marchand (3 pa 20 pc)", "quête « Secrets de mage » : pas pour ta classe / ta faction" },
+    { 9034, "sell", "Test : aucun plan n'en veut — vends au marchand (3 pa 20 pc)", "quête « Secrets de mage » : pas pour ta classe / ta faction" },
     { 9035, "use", "À utiliser : lance la quête « La lettre trouvée » (clic droit dessus)" },
-    { 9036, "sell", "Test : aucun plan n'en veut → vends au marchand (3 pa 20 pc)", "quête « Des pattes de débutant » : trop basse pour toi" },
-    { 9037, "sell", "Test : aucun plan n'en veut → vends au marchand (3 pa 20 pc)", "quête « Commande du tailleur » : demande un métier que tu n'as pas" },
+    { 9036, "sell", "Test : aucun plan n'en veut — vends au marchand (3 pa 20 pc)", "quête « Des pattes de débutant » : trop basse pour toi" },
+    { 9037, "sell", "Test : aucun plan n'en veut — vends au marchand (3 pa 20 pc)", "quête « Commande du tailleur » : demande un métier que tu n'as pas" },
     { 9038, "keep", "Garde : pour la quête répétable « Don d'étoffes » (pas encore prise) — nombre demandé inconnu, je garde tout" },
     { 9039, "keep", "Garde : pour la quête « Les os du passé » (pas encore prise) — nombre demandé inconnu, je garde tout" },
   }
@@ -756,7 +756,7 @@ return function(M, ctx)
   out("sans Questie : " .. line(17031))
   check(P.QuestState() == "absent" and vA.action == "keep" and vA.confirm and vA.confirm.action == "sell",
     "no Questie: nothing but « keep » for the rest of the addon, the possible sale is only a « confirm » (" .. tostring(vA.action) .. ")")
-  check(line(17031) == "À confirmer : Composant de mage : inutile pour toi → vends au marchand (7 pa 50 pc) · quêtes à venir inconnues (Questie absent)",
+  check(line(17031) == "À confirmer : Composant de mage : inutile pour toi — vends au marchand (7 pa 50 pc) · quêtes à venir inconnues (Questie absent)",
     "…and the line says what is not known: " .. line(17031))
   local slA = B.SellList()
   check(not has(slA.list, 17031) and has(slA.apart, 17031) and has(slA.list, 9001), "one-click = the grey only; the rune is listed apart")
@@ -839,23 +839,23 @@ return function(M, ctx)
   rawset(_G, "Auctionator", { API = { v1 = { GetAuctionPriceByItemID = function(_, id) return id == 2319 and 400 or 10 end } } })
   settle(2)
   out("métiers : " .. line(2604))
-  check(line(2604) == "Pas besoin : sert en Couture (pas ton métier) → vends au marchand (2 pa 50 pc)", "not his profession, said exactly: " .. line(2604))
+  check(line(2604) == "Pas besoin : sert en Couture (pas ton métier) — vends au marchand (2 pa 50 pc)", "not his profession, said exactly: " .. line(2604))
   check(B.Verdict(2604).action == "sell" and has(B.SellList().list, 2604), "…a sure sale (Questie rules the quests out)")
   if pastID then
     out("métiers : " .. line(pastID))
-    check(line(pastID) == ("Pas besoin : sert en Travail du cuir mais tu l'as dépassé (recettes grises depuis %d) → vends au marchand (3 pa)"):format(pastAt),
+    check(line(pastID) == ("Pas besoin : sert en Travail du cuir mais tu l'as dépassé (recettes grises depuis %d) — vends au marchand (3 pa)"):format(pastAt),
       "already past it, said exactly: " .. line(pastID))
   end
   out("métiers : " .. line(2319))
-  check(B.Verdict(2319).action == "keep" and line(2319):find("^Garde : sert à ton métier : Travail du cuir %(143→%d+%)$"),
+  check(B.Verdict(2319).action == "keep" and line(2319):find("^Garde : sert à ton métier : Travail du cuir %(143 à %d+%)$"),
     "useful and no plan known: everything kept, with the skill range (" .. line(2319) .. ")")
   -- the plan of PROF gives the count: « garde 20, 14 en trop »
   local planN = 20
   B.RegisterKeeper("Prof", function(id) if id == 2319 and planN then return planN, "ton plan de travail du cuir en utilise " .. planN end end)
   settle(1)
-  local to = line(2319):match("%(143→(%d+)%)")
+  local to = line(2319):match("%(143 à (%d+)%)")
   out("métiers : " .. line(2319))
-  check(line(2319) == ("Garde : 20 pour Travail du cuir (143→%s) · 14 en trop → HV ≈ 4 pa l'unité"):format(tostring(to)),
+  check(line(2319) == ("Garde : 20 pour Travail du cuir (143 à %s) · 14 en trop — HV ~4 pa l'unité"):format(tostring(to)),
     "stock covered, the player's sentence: " .. line(2319))
   check(B.Verdict(2319, 0, 4).action == "ah" and B.Verdict(2319, 0, 3).action == "keep" and B.TipLine(2319, 0, 3) == "TreeAI · " .. line(2319),
     "…the 14-stack is the surplus lot, the 20-stack is kept, both tooltips say the same sentence")
@@ -863,7 +863,7 @@ return function(M, ctx)
   P.SetOverride({ bank = { [2319] = 20 } })
   B.Invalidate(nil, "bank")
   out("métiers : (20 à la banque) " .. line(2319))
-  check(line(2319) == ("Garde : 20 pour Travail du cuir (143→%s), dont 20 à la banque · 34 en trop → HV ≈ 4 pa l'unité"):format(tostring(to)),
+  check(line(2319) == ("Garde : 20 pour Travail du cuir (143 à %s), dont 20 à la banque · 34 en trop — HV ~4 pa l'unité"):format(tostring(to)),
     "bank counted: " .. line(2319))
   P.SetOverride(nil)
   B.Invalidate(nil, "bank")
@@ -876,7 +876,7 @@ return function(M, ctx)
   out("métiers : " .. line(2319))
   -- (his plan stops at his rank max, 150 : the recipes using it give points up to 170, AFTER the plan → kept, said)
   local vA = B.Verdict(2319)
-  check(vA.action == "keep" and not vA.confirm and line(2319):find("^Garde : pour la suite de Travail du cuir %(143→%d+%), au%-delà de ton rang max %(150%)$"),
+  check(vA.action == "keep" and not vA.confirm and line(2319):find("^Garde : pour la suite de Travail du cuir %(143 à %d+%), au%-delà de ton rang max %(150%)$"),
     "used after his plan's cap (next rank at the trainer): kept, said (" .. line(2319) .. ")")
   -- Expert trained (rank max 225): the plan reaches 170, does not use it → not on his path
   local Pm = T.modules.Prof

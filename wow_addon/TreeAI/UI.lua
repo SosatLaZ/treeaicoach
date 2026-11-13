@@ -1247,7 +1247,8 @@ local function emptyText(tab)
     local top = Tr and Tr.shown and Tr.shown[1]
     if not title and type(top) == "table" and type(top.q) == "table" then title = top.q.title end
     if type(title) == "string" and title ~= "" and not isSecret(title) then
-      return L["Rien d'urgent"] .. " — " .. L["continue"] .. " « " .. plainOf(title) .. " »"
+      -- (5.1 GLYPH) le titre de l'étape porte « (≈ 1 min) » : SafeText (titre jamais secret ici)
+      return TreeAI.SafeText(L["Rien d'urgent"] .. " — " .. L["continue"] .. " « " .. plainOf(title) .. " »")
     end
   end
   return L[EMPTY[tab] or "Rien à signaler."]

@@ -68,6 +68,15 @@ local function pass(ok, ...) if ok then return ... end local sw = _G.TreeAI and 
 local function try(fn, ...) if type(fn) ~= "function" then return nil end return pass(pcall(fn, ...)) end
 local function g(name) return rawget(G, name) end
 local function meth(o, k, ...) if type(o) == "table" and type(o[k]) == "function" then return try(o[k], o, ...) end end
+-- (5.1 GLYPH) texte à l'écran (infobulles, cartes) : signes absents des polices du jeu remplacés (Core.SafeText ;
+-- une valeur secrète, jamais concaténée ici, passerait telle quelle)
+local function safe(s)
+  s = tostring(s or "")
+  local f, ok, hit = T.SafeText, pcall(string.find, s, "[\226\227]")   -- (le cas courant : rien à faire, sans appel au cœur)
+  if not (f and ok and hit) then return s end
+  ok, hit = pcall(f, s)
+  return ok and hit or s
+end
 -- valeurs secrètes (combat) : jamais comparées ni converties ; le test du jeu est lu une fois (appel direct, sans pcall)
 local ISV = type(g("issecretvalue")) == "function" and g("issecretvalue") or nil
 local function num(v) if v == nil or (ISV and ISV(v)) then return nil end return tonumber(v) end
@@ -1009,7 +1018,7 @@ local function destText(action, it, n, value, d, long)
         or fmt("HV (prix inconnu, marchand %s)", money(it.sell * n))
     end
     local rate = d.sold and fmt(", se vend ~%s/j", (d.sold >= 1) and tostring(floor(d.sold + 0.5)) or "<1") or ""
-    return fmt("%sHV ≈ %s l'unité%s", long and "vends à l'" or "", money(d.ah or 0), rate)
+    return fmt("%sHV ~%s l'unité%s", long and "vends à l'" or "", money(d.ah or 0), rate)
   end
   return "à jeter seulement si tu manques de place (0 pc)"
 end
@@ -1149,13 +1158,13 @@ local function compute(id, bag, slot)
   if action == "sell" then tail = fmt("marchand %s", money(value))
   elseif action == "ah" then
     tail = d.unknown and fmt("prix d'HV inconnu (scanne l'HV) · marchand %s", money(it.sell * picked))
-      or fmt("HV ≈ %s l'unité%s contre %s au marchand", money(d.ah or 0),
+      or fmt("HV ~%s l'unité%s contre %s au marchand", money(d.ah or 0),
         d.sold and fmt(" (se vend ~%s/j)", (d.sold >= 1) and tostring(floor(d.sold + 0.5)) or "<1") or (d.src == "Auctionator" and " (Auctionator)" or ""),
         money(it.sell))
   else tail = "0 pc" end
   local line = (kept > 0 or bankN > 0) and needN > 0
-    and fmt("Garde : %s · %d en trop → %s", phrase, surplus, destText(action, it, picked, value, d, false))
-    or fmt("%s → %s", cap(opinion), destText(action, it, picked, value, d, true))
+    and fmt("Garde : %s · %d en trop — %s", phrase, surplus, destText(action, it, picked, value, d, false))
+    or fmt("%s — %s", cap(opinion), destText(action, it, picked, value, d, true))
   if unsure then
     -- (5.1) un doute (quêtes à venir pas vérifiées, plan de métier muet, ta marque contre un besoin) : RIEN n'est
     -- proposé au clic unique — l'avis reste « garde » pour tout l'addon, et l'objet est listé à part (« à confirmer »)
@@ -1450,7 +1459,7 @@ local function shopEntry(cat, label, need, have, want, id)
   local parts = {}
   if id then
     local p, src = M.AHPrice(id)
-    if p then e.ah, e.ahSrc = p, src parts[#parts + 1] = "HV ≤ " .. money(p) end
+    if p then e.ah, e.ahSrc = p, src parts[#parts + 1] = "HV " .. money(p) .. " max" end
     local npc = M.char and type(M.char.vend) == "table" and M.char.vend[id]
     if type(npc) == "string" then e.npc = npc parts[#parts + 1] = "marchand " .. cut(npc, 20) end
     local it = itemInfo(id)
@@ -1775,9 +1784,9 @@ local function tipShow(owner, title, lines, hint)
   local tt = g("GameTooltip")
   if not tt then return end
   meth(tt, "SetOwner", owner, "ANCHOR_RIGHT")
-  meth(tt, "AddLine", title or "", 1, 0.82, 0.2, true)
-  for _, l in ipairs(lines or {}) do meth(tt, "AddLine", l, 0.88, 0.88, 0.88, true) end
-  if hint then meth(tt, "AddLine", hint, 0.4, 0.8, 1, true) end
+  meth(tt, "AddLine", safe(title), 1, 0.82, 0.2, true)
+  for _, l in ipairs(lines or {}) do meth(tt, "AddLine", safe(l), 0.88, 0.88, 0.88, true) end
+  if hint then meth(tt, "AddLine", safe(hint), 0.4, 0.8, 1, true) end
   meth(tt, "Show")
 end
 local function tipHide() local tt = g("GameTooltip") if tt then meth(tt, "Hide") end end
@@ -1888,7 +1897,7 @@ local function drawCard(kind, owner, label, info, rows, enabled)
     if f.btn.SetLabel then f.btn:SetLabel(label or "") else meth(f.btn, "SetText", label or "") end
     if enabled == false then meth(f.btn, "Disable") else meth(f.btn, "Enable") end
   end
-  if f.info then meth(f.info, "SetText", info or "") end
+  if f.info then meth(f.info, "SetText", safe(info)) end
   local infoH = 0
   if info and info ~= "" then
     -- hauteur de l'aide : ~50 caractères par ligne (texte accentué : octets ≠ lettres, d'où la marge), 12 px la ligne
@@ -1904,8 +1913,8 @@ local function drawCard(kind, owner, label, info, rows, enabled)
       if r then
         local e = rows[i]
         r.e = e
-        meth(r.t, "SetText", (e.verify and "→ " or e.sold and "vendu : " or e.apart and "? " or "") .. e.name
-          .. ((e.n or 0) > 1 and (" ×" .. e.n) or ""))
+        meth(r.t, "SetText", safe((e.verify and "» " or e.sold and "vendu : " or e.apart and "? " or "") .. e.name
+          .. ((e.n or 0) > 1 and (" ×" .. e.n) or "")))
         meth(r.v, "SetText", e.verify and "" or money(e.value))
         meth(r, "ClearAllPoints")
         meth(r, "SetPoint", "TOPLEFT", f, "TOPLEFT", 8, -y)
@@ -2621,7 +2630,7 @@ local function onTip(tt, data)
   if bag and slot and S.id[bag * 1000 + slot] ~= id then bag, slot = nil, nil end
   local text, r, gg, b = M.TipLine(id, bag, slot)
   if not text then return end
-  meth(tt, "AddLine", text, r, gg, b, true)
+  meth(tt, "AddLine", safe(text), r, gg, b, true)
   meth(tt, "Show")
 end
 M.OnTooltip = function(tt, data) local ok, err = pcall(onTip, tt, data) if not ok and T._errorHook then pcall(T._errorHook, err, "Bags:tooltip") end end
@@ -2701,7 +2710,7 @@ local function rowOf(r, kind)
   local tip = {}
   for _, w in ipairs(v.reasons or {}) do tip[#tip + 1] = w end
   if v.keep and v.keep > 0 and v.surplus and v.surplus > 0 then tip[#tip + 1] = fmt("Garde %d, %d en trop.", v.keep, v.surplus) end
-  if v.ah then tip[#tip + 1] = fmt("HV ≈ %s l'unité (%s).", money(v.ah), v.ahSrc or "?") end
+  if v.ah then tip[#tip + 1] = fmt("HV ~%s l'unité (%s).", money(v.ah), v.ahSrc or "?") end
   if (v.vendor or 0) > 0 then tip[#tip + 1] = fmt("Marchand : %s l'unité.", money(v.vendor)) end
   local mark = M.MarkOf(r.id)
   if v.bank then tip[#tip + 1] = fmt("À la banque : %d (dernier relevé).", v.bank) end

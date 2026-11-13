@@ -10,6 +10,15 @@
 -- Fenêtre fermée = rien ne tourne ; aucune fonction protégée ; jamais le chat.
 local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
+-- (5.1 GLYPH) texte à l'écran : signes absents des polices du jeu (« ≈ », « → »…) remplacés (Core.SafeText ; une
+-- valeur secrète passe telle quelle)
+local function safe(s)
+  s = tostring(s or "")
+  local f, ok, hit = T.SafeText, pcall(string.find, s, "[\226\227]")   -- (le cas courant : rien à faire, sans appel au cœur)
+  if not (f and ok and hit) then return s end
+  ok, hit = pcall(f, s)
+  return ok and hit or s
+end
 local W = T and T.Window
 if not (W and W.AddPage) then return end
 local G = _G
@@ -75,10 +84,10 @@ local function brow(Ly, r)
   local hasBtn = r.button and r.fn
   local tw = Ly.col - (hasBtn and (BTN_W + 28) or 20)
   meth(f.t, "SetWidth", tw); meth(f.s, "SetWidth", tw)
-  meth(f.t, "SetText", ucut(strip(r.title), floor(tw / 6.2)))
+  meth(f.t, "SetText", ucut(safe(strip(r.title)), floor(tw / 6.2)))
   local c = r.color
   if c then meth(f.t, "SetTextColor", c[1], c[2], c[3]) else meth(f.t, "SetTextColor", W._tok(r.dim and "muted" or "text", 0.92, 0.92, 0.92)) end
-  meth(f.s, "SetText", ucut(strip(r.sub or ""), floor(tw / 5.4)))
+  meth(f.s, "SetText", ucut(safe(strip(r.sub or "")), floor(tw / 5.4)))
   meth(f, "SetSize", Ly.col, ROW_H)
   W._color(f.bg, W._tok("button", 0.14, 0.15, 0.19, 0.55))
   W._border(f, 0, 0, 0, 0)

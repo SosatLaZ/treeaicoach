@@ -35,7 +35,7 @@ def test_desk_scenario(flavor):
     assert r.returncode == 0, r.stdout[-6000:] + r.stderr
     assert "RESULT ok" in r.stdout and "violations=0" in r.stdout
     if flavor != "legacy":   # what the player sees, in plain French
-        assert "VOIT (affaire): Acheter Cuir-test ×40 pour 2 po 44 pa → revendre à l'HV 9 pa 89 pc l'unité." in r.stdout
+        assert "VOIT (affaire): Acheter Cuir-test ×40 pour 2 po 44 pa, puis revendre à l'HV 9 pa 89 pc l'unité." in r.stdout
         assert "Gain probable : +" in r.stdout and "5 j de preuves" in r.stdout
         assert "VOIT (poster): Poster Cuir-test ×20 à 9 pa 89 pc l'unité (juste sous le moins cher). Plancher " in r.stdout
         assert "Objectif non atteignable sur ce marché pour l'instant" in r.stdout
@@ -49,10 +49,10 @@ def test_desk_slice2_scenario(flavor):
     assert "RESULT ok" in r.stdout and "violations=0" in r.stdout
     if flavor != "legacy":   # what the player sees, in plain French
         assert ("VOIT (réguler): Réguler Chiffon-test : racheter tout le mur bas (25 unités, 2 annonces, 2 vendeurs) pour 10 pa 75 pc"
-                " → reposter à 97 pc l'unité. Gain probable : +") in r.stdout
+                ", puis reposter à 97 pc l'unité. Gain probable : +") in r.stdout
         assert "Risque : un autre vendeur peut reposter sous ton prix ; au pire, revendu au marchand : perte 9 pa 50 pc." in r.stdout
         assert ("VOIT (annuler): Annuler Laine-test ×20 (4 pa 95 pc l'unité, dépassée à 4 pa 50 pc) : dépôt perdu 60 pc, "
-                "reposter à 4 pa 49 pc → +") in r.stdout
+                "reposter à 4 pa 49 pc : +") in r.stdout
         assert "tile:Acheter (" in r.stdout and "tile:Annuler (" in r.stdout and "Vendre tes sacs" not in r.stdout
 
 

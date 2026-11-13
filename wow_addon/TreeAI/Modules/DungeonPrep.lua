@@ -7,6 +7,15 @@
 -- Dungeon.Quests (un seul propriétaire de l'info, l'onglet « Donjon » montre les mêmes points).
 local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
+-- (5.1 GLYPH) texte à l'écran : signes absents des polices du jeu (« ≈ », « → »…) remplacés (Core.SafeText ; une
+-- valeur secrète passe telle quelle)
+local function safe(s)
+  s = tostring(s or "")
+  local f, ok, hit = T.SafeText, pcall(string.find, s, "[\226\227]")   -- (le cas courant : rien à faire, sans appel au cœur)
+  if not (f and ok and hit) then return s end
+  ok, hit = pcall(f, s)
+  return ok and hit or s
+end
 local M = T and T.Dungeon
 if not M then return end
 local G = _G
@@ -27,8 +36,8 @@ local function button(parent, text, w, h, fn, tip)
   b:SetSize(w, h)
   b.label = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   b.label:SetPoint("CENTER", b, "CENTER", 0, 0)
-  b.label:SetText(text)
-  b.SetLabel = function(self2, t2) self2.label:SetText(t2) end
+  b.label:SetText(safe(text))
+  b.SetLabel = function(self2, t2) self2.label:SetText(safe(t2)) end
   b:SetScript("OnClick", fn)
   return b
 end
@@ -38,8 +47,8 @@ local function tipOn(frame, fnLines)
     local lines = fnLines(self)
     if not (tt and lines and #lines > 0) then return end
     tt:SetOwner(self, "ANCHOR_RIGHT")
-    tt:AddLine(lines[1], 1, 1, 1, true)
-    for i = 2, #lines do tt:AddLine(lines[i], 0.85, 0.85, 0.85, true) end
+    tt:AddLine(safe(lines[1]), 1, 1, 1, true)
+    for i = 2, #lines do tt:AddLine(safe(lines[i]), 0.85, 0.85, 0.85, true) end
     tt:Show()
   end)
   frame:SetScript("OnLeave", function() local tt = G.GameTooltip if tt then tt:Hide() end end)
@@ -238,7 +247,7 @@ function M:RenderChecklist()
   local rows = M.PrepRows(d)
   W.last = rows
   local title = d and fmt("Prêt pour %s ?", d.n) or "Prêt pour le donjon ?"
-  if W.title then W.title:SetText(title) end
+  if W.title then W.title:SetText(safe(title)) end
   if W.name then
     W.name:SetText(d and fmt("%s · niv %d–%d%s%s", d.n, d.min or 1, d.max or 60, d.new and " · Forever" or "",
       why == "instance" and " · en cours" or (why == "suggéré" and " · clique < > pour choisir" or " · prévu")) or "—")
@@ -265,13 +274,13 @@ function M:RenderChecklist()
     if r then
       if r.header then
         row.icon:Hide()
-        row.text:SetText("|cff33cc66" .. r.text .. "|r")
+        row.text:SetText(safe("|cff33cc66" .. r.text .. "|r"))
         row.btn:Hide()
       else
         row.icon:SetTexture(M.STATE_ICON[r.state] or M.STATE_ICON.info)
         row.icon:Show()
         local c = STATE_COL[r.state] or STATE_COL.info
-        row.text:SetText(r.text)
+        row.text:SetText(safe(r.text))
         if row.text.SetTextColor then row.text:SetTextColor(c[1], c[2], c[3]) end
         if r.btn then row.btn:Show() else row.btn:Hide() end
       end

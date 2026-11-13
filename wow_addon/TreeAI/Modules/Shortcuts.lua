@@ -552,7 +552,7 @@ function S.TipLines(id)
   local n = 0
   for _, it in ipairs(type(lines) == "table" and lines or {}) do
     local s = itemText(it)
-    if s then n = n + 1 add("• " .. s, 0.8, 0.8, 0.8) end
+    if s then n = n + 1 add("– " .. s, 0.8, 0.8, 0.8) end
     if n >= 5 then break end
   end
   -- ce que compte la pastille (un nombre sans son nom ne dit rien)

@@ -608,10 +608,10 @@ local function partLines(parts, w, newIt, oldIts, slot)
     if e.k == K.DPS then
       local od = 0
       for _, o in ipairs(oldIts) do od = od + (o.it and o.it.st and tonumber(o.it.st[K.DPS]) or 0) end
-      label = ("Arme %s → %s DPS"):format(dec(od), dec(tonumber(newIt.st[K.DPS]) or 0))
+      label = ("Arme de %s à %s DPS"):format(dec(od), dec(tonumber(newIt.st[K.DPS]) or 0))
       if slot == 18 and newIt.speed and (w.b or 0) > 0 then
         local os = oldIts[1] and oldIts[1].it and oldIts[1].it.speed
-        label = label .. (os and (", vitesse %s → %s s"):format(dec(os), dec(newIt.speed)) or (", vitesse %s s"):format(dec(newIt.speed)))
+        label = label .. (os and (", vitesse de %s à %s s"):format(dec(os), dec(newIt.speed)) or (", vitesse %s s"):format(dec(newIt.speed)))
           .. (w.aimed and " (tirs auto + Flèches multiples + Visée)" or " (tirs auto + Flèches multiples)")
       end
     else
@@ -653,8 +653,8 @@ function V.Compare(it, olds, slot, w)
   if trade then kind = "same" end
   local text
   if #olds == 0 and new > 0 then
-    text = (w.unit == "dps" and hard >= 0.05) and ("≈ " .. signed(hard) .. " DPS (emplacement vide)") or "emplacement vide"
-  elseif w.unit == "dps" and abs(hard) >= 0.05 then text = "≈ " .. signed(hard) .. " DPS" .. (trade and ", mais plus de survie" or "")
+    text = (w.unit == "dps" and hard >= 0.05) and ("~" .. signed(hard) .. " DPS (emplacement vide)") or "emplacement vide"
+  elseif w.unit == "dps" and abs(hard) >= 0.05 then text = "~" .. signed(hard) .. " DPS" .. (trade and ", mais plus de survie" or "")
   elseif pct >= 100 and pct < 999 then text = "vaut " .. dec(new / old) .. " fois la pièce portée"
   elseif abs(pct) < 0.5 then text = nil   -- mêmes stats (ou presque) : « pareil », pas « +0 % »
   elseif pct < 999 then text = ("%s%d %%"):format(pct >= 0 and "+" or "-", floor(abs(pct) + 0.5)) end

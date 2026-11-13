@@ -87,7 +87,7 @@ return function(M, ctx)
   step.x = 60
   S:Tick()
   local d = sugg("Speed:death")
-  check(d and d.text == "Gardien des esprits : 6 min gagnées (mal de résurrection 10 min, −25 % durabilité)",
+  check(d and d.text == "Gardien des esprits : 6 min gagnées (mal de résurrection 10 min, -25 % durabilité)",
     "mort : ange conseillé : " .. tostring(d and d.text))
   check(not sugg("Speed:hearth"), "fantôme : pas de foyer")
   step.k = "obj"                                                -- combat juste après : le mal coûte trop

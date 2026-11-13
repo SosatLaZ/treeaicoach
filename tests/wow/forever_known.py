@@ -28,12 +28,12 @@ KNOWN: dict[str, tuple[str, str]] = {
 
 
 # « E   » = pytest failure text; the first line of an assertion message carries « AssertionError: » / « Failed: »
-_PROBLEM = re.compile(r"^(?:E\s+)?(?:(?:AssertionError|Failed):\s+)?((?:ERROR|VIOLATION|LEAK|SAVEDVARS)\b.*|FAIL .*)$")
+_PROBLEM = re.compile(r"^(?:E\s+)?(?:(?:AssertionError|Failed):\s+)?((?:ERROR|VIOLATION|LEAK|SAVEDVARS|GLYPH)\b.*|FAIL .*)$")
 # session_sim instruction / GC budgets (« FAIL hitch: », « FAIL gc: », « FAIL cpu: ») — 4.0: judged on forever too
 # (the real client; test_session_sim.py runs HUNTER on forever with the modern budgets) : never exempted here.
 _PERF = re.compile(r"^FAIL (?:hitch|gc|cpu): ")
 JUDGE_PERF_ON_FOREVER = True
-_RESULT = re.compile(r"RESULT \w+ addon=\S+ flavor=forever\b.*?errors=(\d+) violations=(\d+) leaks=(\d+) savedvars=(\d+)")
+_RESULT = re.compile(r"RESULT \w+ addon=\S+ flavor=forever\b.*?errors=(\d+) violations=(\d+) leaks=(\d+) savedvars=(\d+)(?: glyphs=(\d+))?")
 _RESULT_SIM = re.compile(r"RESULT \w+ session class=\S+ flavor=forever errors=(\d+) swallowed=(\d+) violations=(\d+) "
                          r"fails=(\d+)")
 
@@ -74,7 +74,7 @@ def explained_forever_failure(text: str):
         if not m:
             return None
         probs = [p for p in problems(text) if not p.startswith("LEAK")]
-    total = sum(int(x) for x in m.groups())
+    total = sum(int(x) for x in m.groups() if x is not None)
     if total == 0 or len(probs) < total:   # truncated output: unknown lines could hide in the cut part
         return None
     ids, rest = classify(text, session=session)

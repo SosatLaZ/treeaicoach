@@ -53,7 +53,7 @@ local SLOT_ICON = { [1] = "INV_Helmet_03", [2] = "INV_Jewelry_Necklace_01", [3] 
 -- Budget : ton or moins la réserve « monture du niveau 40 » (ton choix, demandé une fois)
 ---------------------------------------------------------------------------------------------------
 M.MOUNT_LEVEL = 40
-M.MOUNT_STEPS = { 0, 500000, 1000000 }   -- 0, 50 po, 100 po (en Classic : monture + apprentissage ≈ 100 po)
+M.MOUNT_STEPS = { 0, 500000, 1000000 }   -- 0, 50 po, 100 po (en Classic : monture + apprentissage ~100 po)
 function M.Budget()
   local c = type(M.char) == "table" and M.char or {}
   local have = (API.Money and tonumber((try(API.Money)))) or tonumber((try(g("GetMoney")))) or 0
@@ -411,7 +411,7 @@ local function verdictFor(slot, plan, bud, bags)
   if b then
     local sc = b.sc
     local name = nm(sc.item and sc.item.name)
-    local tip = { fmt("%s : %s → %s", head, cur.name or "(vide)", name) }
+    local tip = { fmt("%s : %s remplacé par %s", head, cur.name or "(vide)", name) }
     for _, l in ipairs(sc.lines or {}) do tip[#tip + 1] = l end
     tip[#tip + 1] = V.ModelText()
     return done("equip", fmt("Équipe %s · %s", name, sc.text or "mieux"), "dans tes sacs", tip,
@@ -428,7 +428,7 @@ local function verdictFor(slot, plan, bud, bags)
     local src = nowC.nowSrc
     local gain, cmp = gainOf(nowC, slot)
     local cost = tonumber(src.cost) or 0
-    local tip = { fmt("%s : %s → %s", head, cur.name or "(vide)", nm(nowC.name)), "Gain : " .. gain, "Où : " .. tostring(src.text or "?") }
+    local tip = { fmt("%s : %s remplacé par %s", head, cur.name or "(vide)", nm(nowC.name)), "Gain : " .. gain, "Où : " .. tostring(src.text or "?") }
     for _, l in ipairs(cmp and cmp.lines or {}) do tip[#tip + 1] = "  " .. l end
     tip[#tip + 1] = lifeText(nowC, c):gsub("^%l", string.upper) .. "."
     local wait = soon and soon.score >= nowC.score * 1.15 and (soon.need - c.level) <= 2
@@ -450,8 +450,8 @@ local function verdictFor(slot, plan, bud, bags)
     end
     local verb = VERB[src.kind] or "Vise"
     local text
-    if src.kind == "quest" then text = fmt("%s %s → %s · %s", verb, srcShort(src), nm(nowC.name), gain)
-    elseif src.kind == "boss" then text = fmt("%s : %s → %s · %s", verb, tostring(src.text):gsub(" — .*$", ""), nm(nowC.name), gain)
+    if src.kind == "quest" then text = fmt("%s %s : %s · %s", verb, srcShort(src), nm(nowC.name), gain)
+    elseif src.kind == "boss" then text = fmt("%s : %s, pour %s · %s", verb, tostring(src.text):gsub(" — .*$", ""), nm(nowC.name), gain)
     else text = fmt("%s %s · %s", verb, nm(nowC.name), gain) end
     local right = cost > 0 and money(cost) or nil
     if FREE[src.kind] then tip[#tip + 1] = "Gratuit : il ne coûte que du temps." end
@@ -468,14 +468,14 @@ local function verdictFor(slot, plan, bud, bags)
   if soon and not (later and (not (cur.id or cur.link) or soon.score < later.score * 1.15)) then
     local gain = gainOf(soon, slot)
     return done("wait", fmt("%s : attends le niveau %d — %s · %s (%s)", head, soon.need, nm(soon.name), gain, srcShort(soon.src)), nil,
-      { fmt("%s : %s → %s (niveau %d requis).", head, cur.name or "(vide)", nm(soon.name), soon.need), "Où : " .. tostring(soon.src.text) },
+      { fmt("%s : %s remplacé par %s (niveau %d requis).", head, cur.name or "(vide)", nm(soon.name), soon.need), "Où : " .. tostring(soon.src.text) },
       function() M.GoSource(soon.src, soon) end, "Clic : voir où l'obtenir", 0, 0, 0, 1)
   end
   if later then
     local src = later.src
     local gain, cmp = gainOf(later, slot)
     local cost = tonumber(src.cost) or 0
-    local tip = { fmt("%s : %s → %s", head, cur.name or "(vide)", nm(later.name)), "Gain : " .. gain, "Où : " .. tostring(src.text or "?") }
+    local tip = { fmt("%s : %s remplacé par %s", head, cur.name or "(vide)", nm(later.name)), "Gain : " .. gain, "Où : " .. tostring(src.text or "?") }
     for _, l in ipairs(cmp and cmp.lines or {}) do tip[#tip + 1] = "  " .. l end
     if (src.kind == "vendor" or src.kind == "ah") and cost > 0 then
       local why = bud.reserve > 0 and fmt("il te reste %s après la réserve monture", money(bud.free)) or fmt("tu as %s", money(bud.money))
@@ -719,9 +719,9 @@ local function budgetRow(Ly, rows)
   if bud.reserve > 0 then txt = fmt("Budget : %s libres (%s, dont %s gardés pour la monture)", money(bud.free), money(bud.money), money(bud.reserve))
   else txt = fmt("Budget : %s — rien de gardé pour la monture du niveau 40", money(bud.money)) end
   Ly.row({ id = "gear:budget", text = txt, kind = "money", right = "changer",
-    tooltip = { "Garder de côté pour la monture ? 0, 50 ou 100 po (en Classic : monture + apprentissage ≈ 100 po).",
+    tooltip = { "Garder de côté pour la monture ? 0, 50 ou 100 po (en Classic : monture + apprentissage ~100 po).",
       "Les achats d'équipement ne sont conseillés qu'avec l'or libre." },
-    clickHint = "Clic : changer la réserve (0 → 50 → 100 po)", onClick = function() M.CycleMountReserve() end })
+    clickHint = "Clic : changer la réserve (0, 50 puis 100 po)", onClick = function() M.CycleMountReserve() end })
 end
 
 local function emptyState(Ly)

@@ -40,7 +40,7 @@ local M = T:RegisterModule("Auction", {
     { key = "window", type = "toggle", label = "Fenêtre d'aide à l'ouverture de l'HV" },
     { key = "tips", type = "toggle", label = "Annoncer les affaires dans « Maintenant »" },
     { key = "minMargin", type = "range", label = "Acheter seulement sous le marché de (%)", min = 5, max = 60, step = 5 },
-    { key = "minProfit", type = "range", label = "Bénéfice net minimal par achat (pa ; et toujours ≥ 15 % de l'achat)", min = 1, max = 100, step = 1 },
+    { key = "minProfit", type = "range", label = "Bénéfice net minimal par achat (pa ; et toujours au moins 15 % de l'achat)", min = 1, max = 100, step = 1 },
     { key = "undercutPct", type = "range", label = "Sous-coter le moins cher de (% ; 0 = 1 pc dessous)", min = 0, max = 10, step = 1 },
     { key = "budget", type = "range", label = "Budget d'achat par jour (po, 0 = illimité)", min = 0, max = 5000, step = 10 },
     { key = "hours", type = "range", label = "Durée de mise en vente (12 / 24 / 48 h)", min = 12, max = 48, step = 12 },
@@ -601,8 +601,10 @@ local function ms() return try(_G.debugprofilestop) or clock() * 1000 end
 -- (4.1 AHPROFIT) RIEN dans le chat : les messages des clics / scans vont dans la ligne d'état du panneau HV
 -- (M.msg, gardés dans M.msgLog) ; seules les commandes tapées (/tai hv …) répondent dans le chat (out).
 M.msgLog = {}
+-- (5.1 GLYPH) la fenêtre HV ne passe pas par les lignes du panneau : signes absents des polices filtrés ici
+local function safe(s) s = tostring(s or "") if T.SafeText and s:find("[\226\227]") then return T.SafeText(s) end return s end
 local function say(msg)
-  msg = tostring(msg or "")
+  msg = safe(msg)
   M.msg, M.msgT = msg, now()
   local l = M.msgLog
   l[#l + 1] = msg
@@ -1193,7 +1195,7 @@ function M.SessionText()
   if s.buys + s.posts + s.cancels == 0 then return "Session : rien encore (1 clic = 1 action)." end
   local t = {}
   if s.buys > 0 then t[#t + 1] = ("%d achat%s (%s)"):format(s.buys, s.buys > 1 and "s" or "", money(-s.spent)) end
-  if s.posts > 0 then t[#t + 1] = ("%d mise%s en vente (≈ %s net)"):format(s.posts, s.posts > 1 and "s" or "", money(s.postNet)) end
+  if s.posts > 0 then t[#t + 1] = ("%d mise%s en vente (~%s net)"):format(s.posts, s.posts > 1 and "s" or "", money(s.postNet)) end
   if s.cancels > 0 then t[#t + 1] = ("%d annulée%s"):format(s.cancels, s.cancels > 1 and "s" or "") end
   return ("Session : %s · bénéfice prévu +%s"):format(table.concat(t, " · "), money(s.expect))
 end
@@ -1840,7 +1842,7 @@ function M.Post(p)
   local s = M.PostPrice(p.id, p.count)
   if not s.unit or s.better ~= "ah" or s.unit < floor(p.unit * 0.95) then
     p.state = "skip"
-    say(("%s : le prix a bougé (%s → %s), mise en vente ignorée."):format(itemName(p.id), money(p.unit), money(s.unit)))
+    say(("%s : le prix a bougé (de %s à %s), mise en vente ignorée."):format(itemName(p.id), money(p.unit), money(s.unit)))
     return false
   end
   local unit = s.unit
@@ -2301,7 +2303,7 @@ function M.BilanLines()
   L[#L + 1] = ("Budget de revente %s%s · dépensé aujourd'hui %s"):format(money(g.budget), g.cap > 0 and (" (plafond/jour " .. money(g.cap) .. ")") or "", money(g.spent))
   L[#L + 1] = ("Argent immobilisé %s (en vente %s, acheté non revendu %s)"):format(money(g.invested), money(g.listed), money(g.held))
   local np = #(M.plan or {})   -- (4.0) pluriels écrits, pas de « → » (absent des polices du jeu : la fenêtre HV ne le filtre pas)
-  L[#L + 1] = ("Plan : %d achat%s pour %s, profit attendu %s (max %d %% de ton or par objet, quantité ≤ ventes de %d j)"):format(np,
+  L[#L + 1] = ("Plan : %d achat%s pour %s, profit attendu %s (max %d %% de ton or par objet, quantité au plus égale aux ventes de %d j)"):format(np,
     np > 1 and "s" or "", money(M.planSpend), money(M.planGain), n0(cfg("capGold", 20)), n0(cfg("qtyDays", 3)))
   local lr = M.char and M.char.rafale
   if lr and n0(lr.n) > 0 then L[#L + 1] = ("Dernière série : %d action%s, +%s prévus"):format(n0(lr.n), n0(lr.n) > 1 and "s" or "", money(lr.gain)) end
@@ -2671,16 +2673,16 @@ function M.RenderFlips(Ly, W, m)
       if not emptyScan(Ly, m) then
         local why = (M.none and M.none.why) or { "Aucune annonce assez sous le prix du marché parmi les objets suivis." }
         Ly.text(F.NONE_TEXT .. ". " .. table.concat(why, " "), "S", "muted")
-        Ly.text(("Règle : bénéfice net ≥ max(1 pa, 15 %%) après commission et dépôt, et la preuve que l'objet se vend (≥ %s vente/jour mesurée entre tes scans)."):format(dec(LIQ.minSold)), "S", "muted")
+        Ly.text(("Règle : bénéfice net d'au moins max(1 pa, 15 %%) après commission et dépôt, et la preuve que l'objet se vend (au moins %s vente/jour mesurée entre tes scans)."):format(dec(LIQ.minSold)), "S", "muted")
       end
     end
     for _, e in ipairs(m.groups) do
       local name = itemName(e.id)
       local txt
       if e.kind == "vendor" then
-        txt = ("%s ×%d — achète ≤ %s/u, revends au marchand → +%s sûr"):format(name, e.qty, money(e.maxUnit), money(e.profit))
+        txt = ("%s ×%d — achète à %s/u au plus, revends au marchand : +%s sûr"):format(name, e.qty, money(e.maxUnit), money(e.profit))
       else
-        txt = ("%s ×%d — achète ≤ %s/u, revends ~%s/u → +%s net · risque %s · se vend ~%s/j%s"):format(name, e.qty, money(e.maxUnit),
+        txt = ("%s ×%d — achète à %s/u au plus, revends ~%s/u : +%s net · risque %s · se vend ~%s/j%s"):format(name, e.qty, money(e.maxUnit),
           money(e.sellUnit), money(e.profit), e.risk, soldShort(e.sold), daysShort(e.days) and (", " .. daysShort(e.days)) or "")
       end
       Ly.row({ text = txt, prio = 2, tooltip = { ("%d annonce%s, %s en tout."):format(e.n, e.n > 1 and "s" or "", money(e.buy)),
@@ -2690,7 +2692,7 @@ function M.RenderFlips(Ly, W, m)
   local vf = M.VendorFlips(6)
   if #vf > 0 and Ly.header("Acheter au marchand, revendre à l'HV", "hv:vflips", #vf) then
     for _, d in ipairs(vf) do
-      Ly.row({ text = ("%s ×%d — marchand %s/u%s, HV ~%s/u → +%s net · se vend ~%s/j"):format(itemName(d.id), d.count, money(d.buyUnit),
+      Ly.row({ text = ("%s ×%d — marchand %s/u%s, HV ~%s/u : +%s net · se vend ~%s/j"):format(itemName(d.id), d.count, money(d.buyUnit),
         d.lim and " (quantité limitée)" or "", money(d.sellUnit), money(d.profit), soldShort(d.sold)), prio = 1,
         tooltip = d.npc and ("Vu chez " .. d.npc) or "Vendu par les marchands de composants" })
     end
@@ -2705,7 +2707,7 @@ function M.RenderNeed(Ly, W, m)
         or "L'assistant d'inventaire (« Sacs ») est coupé : allume-le pour voir ce qu'il te manque.", "S", "muted")
     end
     for _, e in ipairs(need) do
-      local price = e.ah and ("HV ≈ %s/u (%s) → ~%s"):format(money(e.ah), tostring(e.ahSrc or "?"), money(n0(e.ah) * n0(e.n)))
+      local price = e.ah and ("HV ~%s/u (%s), soit ~%s"):format(money(e.ah), tostring(e.ahSrc or "?"), money(n0(e.ah) * n0(e.n)))
         or (e.src == "marchand" and (e.npc and ("chez un marchand : " .. e.npc) or "chez un marchand") or "pas de prix à l'HV : scanne")
       Ly.row({ text = ("%s%s — %s"):format(e.name or tostring(e.label), " ×" .. n0(e.n), price), prio = 2,
         onClick = (e.id and M.ahOpen) and function() M.SearchItem(e.id) end or nil, actionText = "chercher à l'HV",
@@ -2731,7 +2733,7 @@ local function rowsFor(tab)
     if #M.deals > 0 then return M.deals end
     local out = { { text = F.NONE_TEXT .. "." } }
     for _, w in ipairs((M.none and M.none.why) or { "Pas encore de scan : clique « Scanner » (2-3 fois sur 2 jours pour mesurer les ventes)." }) do out[#out + 1] = { text = "  " .. w } end
-    out[#out + 1] = { text = ("Règle : net ≥ max(1 pa, 15 %%) après commission et dépôt, et ≥ %s vente/jour mesurée entre tes scans."):format(dec(LIQ.minSold)) }
+    out[#out + 1] = { text = ("Règle : net d'au moins max(1 pa, 15 %%) après commission et dépôt, et au moins %s vente/jour mesurée entre tes scans."):format(dec(LIQ.minSold)) }
     return out
   elseif tab == "sell" then M.postRows = M.postRows or M.PostList() return M.postRows
   elseif tab == "owned" then return M.owned
@@ -2740,7 +2742,7 @@ local function rowsFor(tab)
 end
 
 local function cells(tab, e)
-  if e.text then return { e.text } end
+  if e.text then return { safe(e.text) } end
   if tab == "deals" then
     local name = itemName(e.id) .. (e.count > 1 and (" x" .. e.count) or "")
     if e.kind == "vendor" then return { name, money(e.buy), "marchand", "+" .. money(e.profit), "-", "aucun" } end
@@ -2751,7 +2753,7 @@ local function cells(tab, e)
     local st = (e.state == "cancelled" and "annulée") or (e.state2 == "scan…" and "scan…") or e.advice or "ok"
     return { itemName(e.id) .. " x" .. e.count, money(e.unit), e.lowest and money(e.lowest) or "-", st }
   end
-  return { e.text }
+  return { safe(e.text) }
 end
 
 local function buttonLabel(tab, e)
@@ -2847,7 +2849,7 @@ function M.CreateWindow()
   f.miniBtn = mini
   -- les 3 files : un clic = UNE action protégée (prix revérifié juste avant)
   f.buyBtn = quick(170, "Acheter (0)", function() M.BuyBest() end,
-    "Achète l'annonce suivante du plan, un clic à la fois, seulement si son prix est toujours ≤ au prix max (revérifié juste avant).")
+    "Achète l'annonce suivante du plan, un clic à la fois, seulement si son prix ne dépasse toujours pas le prix max (revérifié juste avant).")
   f.buyBtn:SetPoint("TOPLEFT", 10, -76)
   f.buySub = smallText(f, nil, W2 - 178)
   f.buySub:SetPoint("LEFT", f.buyBtn, "RIGHT", 8, 0)
@@ -2951,17 +2953,17 @@ function M.RefreshStatus()
   local sc = M.Scanning()
   local last = M.lastScan and M.lastScan.t or (M.db and n0(M.db.lastScanT) > 0 and M.db.lastScanT)
   local age = sc and ("scan en cours (" .. sc .. ")") or (last and ("scan il y a " .. mmss(now() - last))) or "aucun scan"
-  f.status:SetText(("Ton or %s · budget %s · %s%s"):format(money(g.total), money(g.budget), age,
-    cd > 0 and not sc and (" · complet dans " .. mmss(cd)) or ""))
+  f.status:SetText(safe(("Ton or %s · budget %s · %s%s"):format(money(g.total), money(g.budget), age,
+    cd > 0 and not sc and (" · complet dans " .. mmss(cd)) or "")))
   local q = M.ActionLabels()
-  local function set(b, text, on) if b then b:SetText(text) if b.SetEnabled then b:SetEnabled(on and true or false) end end end
+  local function set(b, text, on) if b then b:SetText(safe(text)) if b.SetEnabled then b:SetEnabled(on and true or false) end end end
   set(f.buyBtn, q.buy, q.buyOn)
   set(f.postBtn, q.post, q.postOn)
   set(f.cancelBtn, q.cancel, q.cancelOn)
-  if f.buySub then f.buySub:SetText(q.buySub) f.postSub:SetText(q.postSub) f.cancelSub:SetText(q.cancelSub) end
+  if f.buySub then f.buySub:SetText(safe(q.buySub)) f.postSub:SetText(safe(q.postSub)) f.cancelSub:SetText(safe(q.cancelSub)) end
   local rt, ron = M.RafaleText()
-  if f.hint then f.hint:SetText(rt) end
-  if f.sess then f.sess:SetText(M.SessionText()) end
+  if f.hint then f.hint:SetText(safe(rt)) end
+  if f.sess then f.sess:SetText(safe(M.SessionText())) end
   if f.msg and M.msg then f.msg:SetText(M.msg) end
   if f.rafBtn then
     local key = M.RafaleKey()
@@ -3187,7 +3189,7 @@ local function slash(rest)
   local api = rest:match("^api%s+(%S+)")
   if api then
     if M.db then M.db.api = (api:find("^mod") and "modern") or (api:find("^cla") and "classic") or "auto" end
-    out("API HV : " .. tostring(M.db and M.db.api) .. " → " .. tostring(M.Flavor()))
+    out("API HV : " .. tostring(M.db and M.db.api) .. ", jeu : " .. tostring(M.Flavor()))
     return
   end
   local k, v = rest:match("^(%a+)%s+(%d+)$")

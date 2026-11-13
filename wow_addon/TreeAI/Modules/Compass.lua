@@ -15,6 +15,15 @@ local _, ns = ...
 ns = ns or {}
 
 local T = _G.TreeAI
+-- (5.1 GLYPH) texte à l'écran : signes absents des polices du jeu (« ≈ », « → »…) remplacés (Core.SafeText ; une
+-- valeur secrète passe telle quelle)
+local function safe(s)
+  s = tostring(s or "")
+  local f, ok, hit = T.SafeText, pcall(string.find, s, "[\226\227]")   -- (le cas courant : rien à faire, sans appel au cœur)
+  if not (f and ok and hit) then return s end
+  ok, hit = pcall(f, s)
+  return ok and hit or s
+end
 if not (T and T.RegisterModule) then return end
 
 local M = T:RegisterModule("Compass", {
@@ -805,7 +814,7 @@ function M.Rebuild(reason)
           if not fini and prev.kind == "objective" and prev.questID then
             for _, t in ipairs(M.targets) do if t.key == "turn:" .. prev.questID then fini = true end end
           end
-          announce(nt, (prev.kind == "objective" and fini) and "Objectif fini → suivant" or "Cible suivante")
+          announce(nt, (prev.kind == "objective" and fini) and "Objectif fini : au suivant" or "Cible suivante")
         end
       elseif found then
         M.idx = found
@@ -1293,7 +1302,7 @@ local function createFrame()
       pcall(tt.AddLine, tt, t.title or t.label or "Cible", 1, 0.82, 0.2, true)
       if t.npc then pcall(tt.AddLine, tt, t.npc, 0.85, 0.85, 0.85) end
       if st.dist then
-        pcall(tt.AddLine, tt, (st.approx and "≈ " or "") .. G.Dist(st.dist, M.db.units) .. (st.eta and (" · " .. st.eta) or "")
+        pcall(tt.AddLine, tt, (st.approx and "~" or "") .. G.Dist(st.dist, M.db.units) .. (st.eta and (" · " .. st.eta) or "")
           .. (st.spf and " (chemin réel)" or " à pied"), 0.6, 0.8, 1)
       end
       if t.plan then pcall(tt.AddLine, tt, "Arrêt 1 du trajet (la carte « Prochaine étape » dit le même)", 0.85, 0.85, 0.85, true)
@@ -1475,7 +1484,7 @@ local function refresh()
   setTextOff(fight)
   local t = st.target
   local lt = M.ShortLabel(t.label or t.title or "Cible")
-  if lt ~= lastLabel then lastLabel = lt; label:SetText(lt) end
+  if lt ~= lastLabel then lastLabel = lt; label:SetText(safe(lt)) end
   -- (4.3.5 PICKFIX) « quand j'arrive, pour lui c'est bon, mais pas du tout » : au donneur, jamais la coche « Arrivé »
   -- tant que la quête n'est pas dans le journal — « Prends la quête » (l'arrêt reste jusqu'à QUEST_ACCEPTED)
   if st.arrived and t.kind == "pickup" then
@@ -1502,7 +1511,7 @@ local function refresh()
   end
   local s
   if st.dist then
-    s = (st.approx and "≈" or "") .. G.Dist(st.dist, M.db.units)
+    s = (st.approx and "~" or "") .. G.Dist(st.dist, M.db.units)
     if st.eta and not st.arrived then s = s .. "  ·  " .. st.eta end
     if not st.facing then s = s .. " " .. G.Cardinal(st.bearing) end
   else

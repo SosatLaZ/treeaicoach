@@ -709,8 +709,10 @@ ses actions à la souris. Options : préréglage, profil, assistant, « Tout »,
   **jeté** par `Suggest` ; `"advice"` (défaut) muet mort / fantôme / vol, **mis en attente** (caché, sans son)
   puis réaffiché ; `"death"` (`opts.death = true` : récap, course au corps) jamais muet. `opts.kind` force le
   genre ; les lignes `pin` des onglets suivent la même règle.
-* Textes : `TreeAI.SafeText` retire les glyphes absents des polices WoW (▶ ✔ → …), appliqué par `Suggest` et
-  `SetTabLines` ; `TreeAI.ObjectiveName("Atrexis : 0/1")` = « Atrexis » (insécables FR, compteur devant /
+* Textes : `TreeAI.SafeText` retire les glyphes absents des polices WoW (▶ ✔ → ≈ • ≥…), appliqué par `Suggest`,
+  `SetTabLines`, le chat (`Print`) et chaque sortie à l'écran des modules (infobulles, cartes, fenêtres HV) ; les
+  polices n'ont que l'ASCII, le Latin-1 (« » é ·) et œ ’ – — … : `tests/wow/harness.lua` fait échouer tout scénario
+  qui affiche un autre signe (ligne `GLYPH`, avec le texte et qui l'a écrit) ; `TreeAI.ObjectiveName("Atrexis : 0/1")` = « Atrexis » (insécables FR, compteur devant /
   derrière, « (Terminé) »). Règle des textes : verbe d'abord, ≤ 2 lignes courtes, jamais un chiffre qu'on n'a
   pas (« 0 dégâts », « ? »), une ligne sans action = cliquable ou supprimée.
 * Module coupé en direct : ses `Suggest` (avec `opts.module`) sont ignorés, ses blocs `SetTabLines` masqués

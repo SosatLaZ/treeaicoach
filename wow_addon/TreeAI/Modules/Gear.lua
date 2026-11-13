@@ -12,6 +12,15 @@
 -- combat ; zéro travail au repos. QuestieDB en LECTURE seule. Lua 5.1, aucune globale, toutes les API testées.
 local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
+-- (5.1 GLYPH) texte à l'écran : signes absents des polices du jeu (« ≈ », « → »…) remplacés (Core.SafeText ; une
+-- valeur secrète passe telle quelle)
+local function safe(s)
+  s = tostring(s or "")
+  local f, ok, hit = T.SafeText, pcall(string.find, s, "[\226\227]")   -- (le cas courant : rien à faire, sans appel au cœur)
+  if not (f and ok and hit) then return s end
+  ok, hit = pcall(f, s)
+  return ok and hit or s
+end
 if not T or not T.RegisterModule then return end
 local API = T.API or {}
 local G = _G
@@ -332,7 +341,7 @@ M.DUNGEONS, M.SLOT_FR, M.AMMO_OF = DUNGEONS, SLOT_FR, AMMO_OF
 local PRIORITY = {
   HUNTER = { default = "Agilité > DPS de l'arme à distance > Toucher / Critique > PA à distance > Endurance > Intelligence. "
     .. "Ton arc / fusil fait l'essentiel des dégâts : son DPS compte triple ; l'Agilité donne PA à distance + critique "
-    .. "+ armure. Arme lente (≥ 2,8 s) = Visée plus forte. Mailles au niv 40 (cuir avant), la mêlée compte peu." },
+    .. "+ armure. Arme lente (2,8 s ou plus) = Visée plus forte. Mailles au niv 40 (cuir avant), la mêlée compte peu." },
   WARRIOR = { default = "Force > Toucher / Critique > Agilité > Endurance. Le DPS de l'arme prime : une grosse arme "
     .. "2M lente avant tout pour Frappe héroïque / Fulgurance.",
     [3] = "Endurance > Défense > Armure > Agilité / Force. Bouclier obligatoire ; la survie avant les dégâts." },
@@ -702,7 +711,7 @@ function M.Sources(id, c)
   if opt("ah") and A and A.Stats and not (r and r.bind == 1) then
     local st = try(A.Stats, id)
     local p = type(st) == "table" and tonumber(st.market) or nil
-    if p and p > 0 then add("ah", "HV ≈ " .. money(p) .. (st.src and (" (" .. st.src .. ")") or ""), 5, p, { price = p, now = p <= c.money }) end
+    if p and p > 0 then add("ah", "HV ~" .. money(p) .. (st.src and (" (" .. st.src .. ")") or ""), 5, p, { price = p, now = p <= c.money }) end
   end
   if #out == 0 then
     if r and r.bind ~= 1 then add("world", "butin aléatoire (monde) — surveille l'HV", 120, 0)
@@ -1150,13 +1159,13 @@ function M.NowRows(plan)
       out.cost = out.cost + (src.cost or 0)
       out.min = out.min + ((src.kind ~= "bag" and not NO_EFFORT[src.kind]) and (src.min or 0) or 0)
       local right = cost and tm and (cost .. " · " .. tm) or cost or tm or KIND_FR[src.kind]
-      local tip = { ("%s : %s → %s"):format(SLOT_FR[slot] or slot, worn.name or "(vide)", cd.name or "?"),
+      local tip = { ("%s : %s remplacé par %s"):format(SLOT_FR[slot] or slot, worn.name or "(vide)", cd.name or "?"),
         "Gain : " .. gain .. " (" .. pctText(cd.pct) .. ")", "Où : " .. where }
       for i, e in ipairs(cd.sources or M.Sources(cd.id, c)) do
         if e ~= src and i <= 4 then tip[#tip + 1] = "  ou " .. e.text .. (e.now and "" or " (pas encore)") end
       end
       out[#out + 1] = { slot = slot, itemID = cd.id, src = src, srcKind = src.kind,
-        text = ("%s → %s · %s"):format(SLOT_FR[slot] or slot, cd.name or "?", gain),
+        text = ("%s : %s · %s"):format(SLOT_FR[slot] or slot, cd.name or "?", gain),
         sub = where, right = right, tooltip = tip, prio = (src.kind == "bag" or cd.pct >= BIG_GAIN) and 2 or 1,
         clickHint = GO_FR[src.kind] or "Clic : la boussole t'y mène",
         onClick = function() M.GoSource(src, cd) end }
@@ -1227,7 +1236,7 @@ function M.HunterNotes(plan)
     local nr = rec(nxt.id)
     local na = nr and AMMO_OF[nr.sub or -1]
     if na and h.ammoNeed and na ~= h.ammoNeed then
-      h.ammoSwitch = ("%s → %s"):format(AMMO_FR[h.ammoNeed], AMMO_FR[na])
+      h.ammoSwitch = ("%s, puis %s"):format(AMMO_FR[h.ammoNeed], AMMO_FR[na])
     end
   end
   h.mail = c.level < 40 and ("Niv 40 : apprends Mailles chez ton maître (encore %d niv) — les pièces en mailles"
@@ -1600,10 +1609,10 @@ function M.DecorateItem(tip, link)
     if sc and M.ScoreLine then label, text, kind = M.ScoreLine(sc) end
     if label then
       local c = VERDICT_COLOR[kind] or (kind == "warn" and VERDICT_COLOR.same) or { 0.6, 0.6, 0.6 }
-      tip:AddLine("TreeAI : " .. label:gsub("^%u", string.lower) .. ((text and text ~= "") and (" — " .. text) or ""), c[1], c[2], c[3])
+      tip:AddLine(safe("TreeAI : " .. label:gsub("^%u", string.lower) .. ((text and text ~= "") and (" — " .. text) or "")), c[1], c[2], c[3])
     else
       local ok, why = canUse(link)
-      if not ok then tip:AddLine("TreeAI : pas pour toi (" .. (why or "?") .. ")", 0.6, 0.6, 0.6) end
+      if not ok then tip:AddLine(safe("TreeAI : pas pour toi (" .. (why or "?") .. ")"), 0.6, 0.6, 0.6) end
     end
   end
   local ah = auctionValue(link)
@@ -1612,9 +1621,9 @@ function M.DecorateItem(tip, link)
     local txt = sell > 0 and ("Se vend " .. money(sell) .. " au marchand") or "Ne se vend pas au marchand"
     if ah then
       txt = txt .. " · HV (Auctionator) : " .. money(ah)
-      if sell > 0 then txt = txt .. ((ah > sell * 1.2) and " → vends à l'HV" or " → vends au marchand") end
+      if sell > 0 then txt = txt .. ((ah > sell * 1.2) and " : vends à l'HV" or " : vends au marchand") end
     end
-    tip:AddLine(txt, 0.8, 0.8, 0.8)
+    tip:AddLine(safe(txt), 0.8, 0.8, 0.8)
   end
 end
 local hooked = false

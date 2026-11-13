@@ -321,7 +321,7 @@ local function ensureBlock()
       meth(tt, "SetOwner", self, "ANCHOR_RIGHT")
       meth(tt, "AddLine", "TreeAI · Maintenant", 1, 0.82, 0.2)
       meth(tt, "AddLine", "Clic : la fenêtre TreeAI (tout le reste y est).", 0.8, 0.8, 0.8, true)
-      meth(tt, "AddLine", "Ce bloc se coupe dans Réglages → Autres addons.", 0.6, 0.6, 0.6, true)
+      meth(tt, "AddLine", "Ce bloc se coupe dans Réglages > Autres addons.", 0.6, 0.6, 0.6, true)
       meth(tt, "Show")
     end)
     meth(mb, "SetScript", "OnLeave", hideTip)
@@ -414,7 +414,7 @@ function N.RenderBlock()
       meth(r, "ClearAllPoints")
       meth(r, "SetPoint", "TOPLEFT", block, "TOPLEFT", 0, -HEAD_H - (i - 1) * ROW_H)
       meth(r, "SetPoint", "TOPRIGHT", block, "TOPRIGHT", 0, -HEAD_H - (i - 1) * ROW_H)
-      if r.btn then meth(r.btn, "SetText", line.btn and (line.btn .. " ›") or "") end
+      if r.btn then meth(r.btn, "SetText", line.btn and (line.btn .. " »") or "") end
       if r.text then
         meth(r.text, "SetText", line.text)
         local th = Th()

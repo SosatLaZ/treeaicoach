@@ -10,6 +10,15 @@
 -- Fenêtre fermée = rien ne tourne ; aucune fonction protégée appelée ici ; jamais le chat.
 local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
+-- (5.1 GLYPH) texte à l'écran : signes absents des polices du jeu (« ≈ », « → »…) remplacés (Core.SafeText ; une
+-- valeur secrète passe telle quelle)
+local function safe(s)
+  s = tostring(s or "")
+  local f, ok, hit = T.SafeText, pcall(string.find, s, "[\226\227]")   -- (le cas courant : rien à faire, sans appel au cœur)
+  if not (f and ok and hit) then return s end
+  ok, hit = pcall(f, s)
+  return ok and hit or s
+end
 local W = T and T.Window
 if not (W and W.AddPage) then return end
 local G = _G
@@ -110,9 +119,9 @@ local function jrow(Ly, it, gr)
     r, g, b = W._tok("prio3", 1, 0.45, 0.3)
   end
   meth(f.t, "SetWidth", tw); meth(f.s, "SetWidth", tw)
-  meth(f.t, "SetText", ucut(title, floor(tw / 6.2)))
+  meth(f.t, "SetText", ucut(safe(title), floor(tw / 6.2)))
   meth(f.t, "SetTextColor", r, g, b)
-  meth(f.s, "SetText", ucut(sub, floor(tw / 5.4)))
+  meth(f.s, "SetText", ucut(safe(sub), floor(tw / 5.4)))
   meth(f, "SetSize", Ly.col, ROW_H)
   W._color(f.bg, W._tok("button", 0.14, 0.15, 0.19, st == "confirm" and 0.85 or 0.55))
   if st == "confirm" then W._border(f, W._tok("prio3", 1, 0.45, 0.3, 0.9)) else W._border(f, 0, 0, 0, 0) end

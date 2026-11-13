@@ -170,7 +170,7 @@ return function(M, ctx)
   lb.slot = 1
   M.loot = { { name = "Sang de lion", questItem = true }, { name = "Lettre tachée de sang", questItem = true, questID = 777 } }
   ctx.fire("LOOT_OPENED")
-  ctx.check(H.lootLines and H.lootLines[1] and H.lootLines[1]:find("%(3/10 → 4/10%)"), "loot: « pour la quête (3/10 → 4/10) »: "
+  ctx.check(H.lootLines and H.lootLines[1] and H.lootLines[1]:find("%(3/10, puis 4/10%)"), "loot: « pour la quête (3/10 → 4/10) »: "
     .. tostring(H.lootLines and H.lootLines[1]))
   ctx.check(kind(lb) == "need", "loot button glows")
   ctx.check(H.lootLines[2] and H.lootLines[2]:find("Lance la quête"), "loot: starter line: " .. tostring(H.lootLines[2]))

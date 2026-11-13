@@ -50,6 +50,9 @@ end
 
 function TreeAI:Print(...)
   local msg = "|cff33cc66TreeAI|r: " .. joinArgs(...)
+  -- (5.1 GLYPH) « → », « ≈ »… : absents de la police du chat aussi (une valeur secrète passe telle quelle)
+  local ok, safe = pcall(TreeAI.SafeText, msg)
+  if ok and safe then msg = safe end
   local cf = _G.DEFAULT_CHAT_FRAME
   if cf and cf.AddMessage then cf:AddMessage(msg) elseif _G.print then _G.print(msg) end
 end
@@ -3740,19 +3743,26 @@ for _, ev in ipairs(TreeAI.STATE_EVENTS) do
 end
 
 -- Glyphes absents des polices WoW (carrés vides en jeu) -> équivalents lisibles. Appliqué aux textes
--- des conseils et des lignes d'onglet.
-local GLYPHS = {
+-- des conseils et des lignes d'onglet, et à chaque sortie à l'écran des modules (infobulles, cartes, chat).
+-- (5.1 GLYPH) Les polices du jeu (Friz Quadrata, Arial Narrow, frFR) n'ont que l'ASCII, le Latin-1 (« » é ç ·…)
+-- et œ Œ ’ – — … (GLYPH_OK) : tout autre signe à 3 octets devient son équivalent ici, ou rien
+-- (tests/wow/harness.lua fait échouer un scénario qui en affiche un).
+local GLYPHS = setmetatable({
   ["▶"] = "", ["►"] = "", ["→"] = ">", ["←"] = "<", ["⇒"] = ">", ["✔"] = "OK", ["✓"] = "OK",
-  ["✖"] = "x", ["✗"] = "x", ["●"] = "•", ["○"] = "o", ["↑"] = "+", ["↓"] = "-", ["≠"] = "<>",
+  ["✖"] = "x", ["✗"] = "x", ["●"] = "»", ["○"] = "", ["↑"] = "+", ["↓"] = "-", ["≠"] = "<>",
   ["★"] = "*", ["☆"] = "*", ["⚠"] = "!", ["⏱"] = "", ["⌛"] = "",
   ["▾"] = "", ["▴"] = "", ["▲"] = "^", ["▼"] = "v", ["◀"] = "<", ["◂"] = "<", ["▸"] = ">",   -- (4.0) « Zone ▾ », Todo…
-}
+  -- (5.1 GLYPH) « ≈ 3 min » -> « ~3 min » (ci-dessous), puces « • » -> tiret, choix « ● / ○ » -> « » » / rien
+  ["≈"] = "~", ["•"] = "–", ["≤"] = "<=", ["≥"] = ">=", ["−"] = "-", ["›"] = "»", ["‹"] = "«", ["↔"] = "<>",
+  ["☐"] = "[ ]", ["☑"] = "[x]", ["‰"] = " pour mille",
+  ["’"] = "’", ["–"] = "–", ["—"] = "—", ["…"] = "…",   -- (GLYPH_OK : présents dans les polices, gardés)
+}, { __index = function() return "" end })   -- tout autre signe : rien plutôt qu'un carré vide
 local safeCache, safeN = {}, 0
 local function safeText(s)
   if not strfind(s, "[\226\227]") then return s end
   local c = safeCache[s]
   if c then return c end
-  local r = strgsub(s, "[\226\227][\128-\191][\128-\191]", GLYPHS)
+  local r = strgsub(strgsub(s, "≈ ", "~"), "[\226\227][\128-\191][\128-\191]", GLYPHS)
   r = strgsub(strgsub(strgsub(r, "^%s+", ""), "%s+$", ""), "  +", " ")   -- « Zone : X ▾ » -> « Zone : X »
   if safeN > 400 then safeCache, safeN = {}, 0 end
   safeCache[s], safeN = r, safeN + 1

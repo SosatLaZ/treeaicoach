@@ -29,7 +29,8 @@ function M.Reset()
   M.strictTaint = true   -- protected frames / functions: blocked in combat (or outside a click)
   M.errors = {}          -- Lua errors raised by addon handlers
   M.violations = {}      -- ToS / API-contract violations
-  M.output = {}          -- print() / chat frame lines
+  M.glyphs = {}          -- GLYPH: on-screen texts with a character the game's fonts lack (M.GlyphScan)
+  M.output = {}         -- print() / chat frame lines
   M.sentAddon = {}       -- { prefix, msg, channel, target }
   M.sentChat = {}
   M.prefixes = {}
@@ -109,7 +110,7 @@ function M.Reset()
   M.SeedDefaults()
 end
 
-local function record(list, kind, msg)
+local function record(list, kind, msg, withChain)
   local where, lvl, chain = "?", 3, nil
   while true do
     local info = debug.getinfo(lvl, "Sl")
@@ -119,7 +120,7 @@ local function record(list, kind, msg)
       local here = src .. ":" .. tostring(info.currentline)
       if where == "?" then
         where = here
-        if kind ~= "secret" then break end
+        if kind ~= "secret" and not withChain then break end
         chain = {}
       elseif #chain < 4 then   -- secret: who called (where the secret value came from)
         chain[#chain + 1] = (here:gsub("^.-([%w_]+%.lua:%d+)$", "%1"))
@@ -131,6 +132,37 @@ local function record(list, kind, msg)
   list[#list + 1] = { kind = kind, msg = msg, where = where }
 end
 function M.Violation(kind, msg) record(M.violations, kind, msg) end
+
+-- GLYPH (5.1): the game's fonts (Friz Quadrata, Arial Narrow, frFR) have ASCII, Latin-1 and a few cp1252 signs; any
+-- other character (« → ✓ ▶ • ≈ ≤ »…) shows as nothing or an empty box. Every text the addon puts on screen goes
+-- through M.GlyphScan (SetText, tooltips, chat, error frame); with M.glyphGate on (tests/wow/harness.lua) a text with
+-- a character outside the list is recorded in M.glyphs { kind, msg, where } and the run fails.
+-- The list = what TreeAI.SafeText (Core.lua) lets through: Latin-1 (« » é ç…) + œ Œ ’ – — …
+local GLYPH_OK = {
+  ["\197\146"] = true, ["\197\147"] = true,                                   -- Œ œ
+  ["\226\128\153"] = true,                                                    -- ’
+  ["\226\128\147"] = true, ["\226\128\148"] = true, ["\226\128\166"] = true,  -- – — …
+}
+M.GLYPH_OK = GLYPH_OK
+local glyphSeen = {}
+function M.GlyphBad(t)   -- the first character of t the fonts lack (nil = all good)
+  if type(t) ~= "string" or not t:find("[\128-\255]") then return nil end
+  for ch in t:gmatch("[\192-\255][\128-\191]*") do
+    local b = ch:byte(1)
+    if not (((b == 194 or b == 195) and #ch == 2) or GLYPH_OK[ch]) then return ch end
+  end
+  if t:gsub("[\192-\255][\128-\191]+", ""):find("[\128-\255]") then return "(UTF-8 invalide)" end
+  return nil
+end
+function M.GlyphScan(t, via)
+  if not M.glyphGate or type(t) ~= "string" then return end
+  local ch = M.GlyphBad(t)
+  if not ch then return end
+  local n = #M.glyphs
+  record(M.glyphs, via, ("%q"):format(t) .. "  [" .. ch .. "]", true)   -- + callers (helpers like meth / pcall)
+  local key = M.glyphs[n + 1].msg .. "@" .. M.glyphs[n + 1].where
+  if glyphSeen[key] then M.glyphs[n + 1] = nil else glyphSeen[key] = true end
+end
 
 function M.SafeCall(label, fn, ...)
   local args, n = { ... }, select("#", ...)
@@ -339,9 +371,9 @@ function Widget:GetScale() return self.__scale or 1 end
 function Widget:SetScale(s) self.__scale = s end
 function Widget:SetAlpha(a) self.__alpha = a end
 function Widget:GetAlpha() return self.__alpha end
-function Widget:SetText(t) self.__text = t end
+function Widget:SetText(t) M.GlyphScan(t, "SetText") self.__text = t end
 function Widget:GetText() return self.__text end
-function Widget:SetFormattedText(fmt, ...) self.__text = string.format(fmt, ...) end
+function Widget:SetFormattedText(fmt, ...) self.__text = string.format(fmt, ...) M.GlyphScan(self.__text, "SetFormattedText") end
 function Widget:GetStringWidth()
   local t = self.__text
   if M.IsSecret and M.IsSecret(t) then return M.Secret(#tostring(M.Unsecret(t)) * 6, "number") end   -- aspect Text
@@ -478,10 +510,10 @@ function CreateFrame(kind, name, parent, template, id)
   if kind == "GameTooltip" then
     function f:SetOwner() end
     f.__lines = {}
-    function f:AddLine(t) self.__lines[#self.__lines + 1] = t end
+    function f:AddLine(t) M.GlyphScan(t, "AddLine") self.__lines[#self.__lines + 1] = t end
     function f:GetItem() if self.__item then return M.items[self.__item].name, M.ItemLink(self.__item) end end
     function f:GetUnit() return nil end
-    function f:AddDoubleLine() end
+    function f:AddDoubleLine(l, r) M.GlyphScan(l, "AddDoubleLine") M.GlyphScan(r, "AddDoubleLine") end
     function f:SetHyperlink() end
     function f:ClearLines() end
   end
@@ -758,6 +790,7 @@ function M.Install(flavor)
     local parts = {}
     for i = 1, select("#", ...) do parts[#parts + 1] = tostring((select(i, ...))) end
     M.output[#M.output + 1] = table.concat(parts, " ")
+    M.GlyphScan(M.output[#M.output], "print")
   end
 
   -- constants / tables -----------------------------------------------------------------------
@@ -805,12 +838,12 @@ function M.Install(flavor)
   function G.Minimap:GetZoomLevels() return 6 end
   G.IsIndoors = function() return M.indoors and true or false end
   local chat = newWidget("ScrollingMessageFrame", "ChatFrame1", G.UIParent)
-  function chat:AddMessage(msg) M.output[#M.output + 1] = tostring(msg) end
+  function chat:AddMessage(msg) M.GlyphScan(msg, "chat") M.output[#M.output + 1] = tostring(msg) end
   G.DEFAULT_CHAT_FRAME, G.ChatFrame1, G.SELECTED_CHAT_FRAME = chat, chat, chat
   G.UIErrorsFrame = newWidget("MessageFrame", "UIErrorsFrame", G.UIParent)
-  function G.UIErrorsFrame:AddMessage(msg) M.output[#M.output + 1] = "[UIError] " .. tostring(msg) end
+  function G.UIErrorsFrame:AddMessage(msg) M.GlyphScan(msg, "UIErrorsFrame") M.output[#M.output + 1] = "[UIError] " .. tostring(msg) end
   G.RaidWarningFrame = newWidget("MessageFrame", "RaidWarningFrame", G.UIParent)
-  G.RaidNotice_AddMessage = function(_, msg) M.output[#M.output + 1] = "[RaidNotice] " .. tostring(msg) end
+  G.RaidNotice_AddMessage = function(_, msg) M.GlyphScan(msg, "RaidNotice") M.output[#M.output + 1] = "[RaidNotice] " .. tostring(msg) end
   G.GameTooltip = CreateFrame("GameTooltip", "GameTooltip", G.UIParent)
   G.MerchantFrame = newWidget("Frame", "MerchantFrame", G.UIParent)
   G.MerchantFrame.__shown = false

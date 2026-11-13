@@ -222,7 +222,7 @@ offersRaw = function(line, pr)
     local okLvl = (tonumber(tr.lv) or 0) <= lvl
     if tr.a == 1 or (tr.r and okSkill and okLvl and tr.lv) then
       out.list[#out.list + 1] = { rank = true, name = tr.name or nr[1], cost = tonumber(tr.c) or 0,
-        why = fmt("rang %s : plafond %d → %d", nr[1], pr.max, nr[4]) }
+        why = fmt("rang %s : plafond de %d à %d", nr[1], pr.max, nr[4]) }
       out.cost = out.cost + (tonumber(tr.c) or 0)
     elseif tr.r or tr.lv then
       out.later[#out.later + 1] = { name = nr[1], at = tonumber(tr.r), lv = tonumber(tr.lv), rank = true }
@@ -644,8 +644,8 @@ function PL.Cards()
           end
         end
         if gain > 0 then
-          if c.short then c.goal = fmt("Avec ton or : %d → %d (but %d)", plan.skill, res.reached, goal)
-          else c.goal = fmt("Objectif %d (%s) : %d → %d", plan.target, MODE_FR[plan.mode], plan.skill, res.reached) end
+          if c.short then c.goal = fmt("Avec ton or : %d à %d (but %d)", plan.skill, res.reached, goal)
+          else c.goal = fmt("Objectif %d (%s) : %d à %d", plan.target, MODE_FR[plan.mode], plan.skill, res.reached) end
           c.cost = plan.cost
           c.time = plan.time
           c.perPt = plan.cost > 0 and floor(plan.cost / gain + 0.5) or 0
@@ -676,7 +676,7 @@ function PL.Cards()
       elseif pr.rank >= pr.max then
         local nr = E.NextRank(pr.max)
         c.goal = nr and fmt("Au plafond : rang %s chez le maître", nr[1]) or "Compétence maximale"
-      else c.goal = fmt("Monte en récoltant : %d → %d", pr.rank, pr.max) end
+      else c.goal = fmt("Monte en récoltant : %d à %d", pr.rank, pr.max) end
     end
     out[#out + 1] = c
   end
@@ -686,7 +686,7 @@ end
 function PL.CardSub(c)
   local parts = {}
   if c.goal then parts[#parts + 1] = c.goal end
-  if c.time and c.time > 0 then parts[#parts + 1] = "≈ " .. PL.Minutes(c.time) end
+  if c.time and c.time > 0 then parts[#parts + 1] = "~" .. PL.Minutes(c.time) end
   if c.cost then parts[#parts + 1] = c.cost > 0 and (money(c.cost) .. (c.perPt and c.perPt > 0 and fmt(" (%s par point)", money(c.perPt)) or "")) or "rien à acheter" end
   return tconcat(parts, " · ")
 end

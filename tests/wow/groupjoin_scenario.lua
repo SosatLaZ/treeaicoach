@@ -169,7 +169,7 @@ return function(M, ctx)
   M.pos = { mapID = 1441, x = 0.455, y = 0.50 }
   grp("Bravo", "4;D;2;j=" .. me .. ";je=180")
   settle(4)
-  local arr = line("Bravo arrive vers toi : ≈ ")
+  local arr = line("Bravo arrive vers toi : ~")
   check(arr and T.PlainText(arr.text):find("— attends-le", 1, true) and line("vient vers toi"), "« Bravo arrive vers toi : ≈ 3 min — attends-le » + carte")
   check(not line("Rejoindre Bravo (Les Tarides) : au plus vite"), "il arrive : pas de « Rejoindre Bravo » en double")
   grp("Bravo", "4;D;3;j=;je=0")
@@ -179,7 +179,7 @@ return function(M, ctx)
     M.Advance(15, 1)
   end
   settle(2)
-  local ap = line("Delta se rapproche : ≈ ")
+  local ap = line("Delta se rapproche : ~")
   check(ap and T.PlainText(ap.text):find("— attends-le", 1, true), "Delta se rapproche (positions du jeu) :\n" .. text())
   M.group[3].pos = { mapID = 1441, x = 0.70, y = 0.70 }
   M.Advance(32, 1)
@@ -201,7 +201,7 @@ return function(M, ctx)
   settle(3)
   local rv = line("Rendez-vous ")
   local rvTip = rv and table.concat(rv.tooltip, " | ") or ""
-  check(rv and T.PlainText(rv.text):find(": Bravo (≈ 4 min) y va · 2 sans réponse", 1, true) and rvTip:find("Charlie : pas encore répondu", 1, true)
+  check(rv and T.PlainText(rv.text):find(": Bravo (~4 min) y va · 2 sans réponse", 1, true) and rvTip:find("Charlie : pas encore répondu", 1, true)
     and rvTip:find("Delta : sans TreeAI", 1, true), "qui vient : " .. tostring(rv and rv.text) .. " / " .. rvTip)
   J._state.rdv = nil
 
