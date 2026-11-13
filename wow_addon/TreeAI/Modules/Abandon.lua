@@ -962,6 +962,7 @@ function M.Refresh(delay)
       if again then again = false M.Refresh(1) end
     end
     local function step()
+      if inCombat() then M._missed = true end   -- (5.0 STABLE) repris à la fin du combat (seulement dans ce cas)
       if inCombat() or not (M.IsEnabled and M:IsEnabled()) then done() return end
       i = i + 1
       if STEPS[i] then
@@ -1238,7 +1239,8 @@ function M:OnEnable()
     end
   end
   M:RegisterEvent("QUEST_REMOVED", function() M.Refresh(1) end)
-  if not lite then M:On("COMBAT_END", function() M.Refresh(1.5) end) end
+  -- (5.0 STABLE) fin de combat : seulement si un calcul a été sauté pendant le combat (avant : refait après CHAQUE combat)
+  if not lite then M:On("COMBAT_END", function() if M._missed then M._missed = nil M.Refresh(1.5) end end) end
   M:On("COMBAT_START", function() M.Disarm() end)   -- une confirmation ne survit pas au combat
   M:On("SUMMARY", function() pcall(M.WriteSummary, M) end)
   -- (QA-QUEST F20) le trajet vient d'être refait : un arrêt du trajet n'est jamais « à retirer » à côté

@@ -1252,6 +1252,8 @@ elseif CreateFrame then
   boot:SetScript("OnEvent", function() pcall(M.Enable, M) end)
 end
 
+-- (5.0 STABLE) au calme (aucun événement, joueur immobile) : rien à refaire — le cycle complet du cœur (30 s) suffit
+M.autoIdleSafe = true
 function M:AutoRefresh()
   if InCombatLockdown and InCombatLockdown() then return end
   pcall(M.CheckPet, M); pcall(M.CheckAmmo, M); pcall(M.CheckAspect, M); pcall(M.CheckTraining, M)

@@ -11,7 +11,7 @@ local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 local G = _G
 
-local MAX_LINES, MAX_BYTES = 200, 40000
+local MAX_LINES, MAX_BYTES = 240, 40000
 
 local function pass(ok, ...) if ok then return ... end return nil end
 local function try(fn, ...) if type(fn) ~= "function" then return nil end return pass(pcall(fn, ...)) end
@@ -82,6 +82,200 @@ function M.HookErrors()
     if type(prev) == "function" then return prev(err, ...) end
   end)
 end
+
+---------------------------------------------------------------------------------------------------
+-- (5.0 STABLE) Sonde d'API : quelles fonctions du jeu existent sur CE client et la forme de ce qu'elles rendent
+-- (nombre de retours, type des premiers, noms des champs d'une table) — jamais une valeur, jamais un nom de joueur.
+-- Lectures seules (aucune fonction d'action n'est appelée : pour elles, seulement « présente / absente »), hors combat.
+---------------------------------------------------------------------------------------------------
+local function at(path)   -- "C_QuestLog.GetInfo" → fonction (ou nil)
+  local v = G
+  for part in path:gmatch("[^%.]+") do
+    if type(v) ~= "table" then return nil end
+    v = rawget(v, part)
+    if v == nil then return nil end
+  end
+  return v
+end
+local function shape(v, depth)
+  if secret(v) then return "secret" end
+  local tv = type(v)
+  if tv ~= "table" then return tv end
+  if depth and depth > 0 then return "table" end
+  local keys = {}
+  for k, x in pairs(v) do
+    if type(k) == "string" then keys[#keys + 1] = k .. ":" .. shape(x, 1) elseif #keys < 1 then keys[#keys + 1] = "[" .. type(k) .. "]:" .. shape(x, 1) end
+    if #keys >= 40 then break end
+  end
+  table.sort(keys)
+  for i = #keys, 13, -1 do keys[i] = nil end
+  return "table{" .. table.concat(keys, ", ") .. "}"
+end
+local function packN(ok, ...) return ok, select("#", ...), ... end
+-- { chemin, arguments… } : appelée ; { chemin, exists = true } : présence seulement (action, ou argument inconnu)
+M.PROBE = {
+  { section = "Talents" },
+  { "GetNumTalentTabs" }, { "GetTalentTabInfo", 1 }, { "GetNumTalents", 1 }, { "GetTalentInfo", 1, 1 },
+  { "GetActiveTalentGroup" }, { "GetNumTalentGroups" }, { "UnitCharacterPoints", "player" },
+  { "GetSpecialization" }, { "GetSpecializationInfo", 1 }, { "GetNumSpecializations" },
+  { "C_SpecializationInfo.GetSpecialization" }, { "C_SpecializationInfo.GetSpecializationInfo", 1 },
+  { "C_SpecializationInfo.GetNumSpecializationsForClassID", exists = true }, { "C_SpecializationInfo.GetTalentInfo", exists = true },
+  { "C_SpecializationInfo.GetActiveSpecGroup" },
+  { "C_ClassTalents.GetActiveConfigID" }, { "C_ClassTalents.GetConfigIDsBySpecID", exists = true },
+  { "C_Traits.GetConfigInfo", exists = true }, { "C_Traits.GetTreeNodes", exists = true }, { "C_Traits.GetNodeInfo", exists = true },
+  { "IsSpellKnown", 75 }, { "IsPlayerSpell", 75 }, { "C_SpellBook.IsSpellKnown", 75 }, { "C_SpellBook.IsSpellInSpellBook", 75 },
+  { "C_Spell.GetSpellInfo", 75 }, { "GetSpellInfo", 75 }, { "GetNumSpellTabs" }, { "C_SpellBook.GetNumSpellBookSkillLines" },
+  { section = "Inspection" },
+  { "CanInspect", "player" }, { "NotifyInspect", exists = true }, { "ClearInspectPlayer", exists = true },
+  { "GetInspectSpecialization", exists = true }, { "GetInventoryItemLink", "player", 16 }, { "GetInventoryItemID", "player", 16 },
+  { "C_PaperDollInfo.GetInspectItemLevel", exists = true }, { "GetAverageItemLevel" },
+  { section = "Repères et carte" },
+  { "C_Map.GetBestMapForUnit", "player" }, { "C_Map.GetPlayerMapPosition", exists = true }, { "C_Map.SetUserWaypoint", exists = true },
+  { "C_Map.HasUserWaypoint" }, { "C_Map.ClearUserWaypoint", exists = true }, { "C_Map.CanSetUserWaypointOnMap", exists = true },
+  { "C_SuperTrack.SetSuperTrackedUserWaypoint", exists = true }, { "C_SuperTrack.IsSuperTrackingUserWaypoint" },
+  { "C_SuperTrack.GetSuperTrackedQuestID" }, { "UiMapPoint.CreateFromCoordinates", exists = true },
+  { "C_Navigation.GetDistance" }, { "UnitPosition", "player" }, { "GetPlayerFacing" }, { "C_TaxiMap.GetAllTaxiNodes", exists = true },
+  { section = "Infobulles" },
+  { "TooltipDataProcessor.AddTooltipPostCall", exists = true }, { "C_TooltipInfo.GetUnit", exists = true },
+  { "C_TooltipInfo.GetBagItem", exists = true }, { "C_TooltipInfo.GetHyperlink", exists = true },
+  { "GameTooltip.GetUnit", exists = true }, { "GameTooltip.GetItem", exists = true }, { "GameTooltip.SetUnit", exists = true },
+  { section = "Sacs" },
+  { "C_Container.GetContainerNumSlots", 0 }, { "C_Container.GetContainerItemInfo", 0, 1 }, { "C_Container.GetContainerItemLink", 0, 1 },
+  { "C_Container.GetContainerItemQuestInfo", 0, 1 }, { "C_Container.GetContainerNumFreeSlots", 0 },
+  { "C_Container.UseContainerItem", exists = true }, { "C_Container.PickupContainerItem", exists = true },
+  { "GetContainerNumSlots", 0 }, { "GetContainerItemInfo", 0, 1 }, { "UseContainerItem", exists = true },
+  { "C_Item.GetItemInfo", 6948 }, { "GetItemInfo", 6948 }, { "C_Item.GetItemInfoInstant", 6948 }, { "C_Item.GetItemCount", 6948 },
+  { "GetItemCount", 6948 }, { "C_Item.GetItemStats", exists = true }, { "GetItemStats", exists = true },
+  { section = "Quêtes" },
+  { "C_QuestLog.GetNumQuestLogEntries" }, { "C_QuestLog.GetInfo", 1 }, { "C_QuestLog.GetQuestObjectives", "quest" },
+  { "C_QuestLog.IsComplete", "quest" }, { "C_QuestLog.GetNextWaypoint", "quest" }, { "C_QuestLog.GetQuestsOnMap", exists = true },
+  { "C_QuestLog.GetTitleForQuestID", exists = true }, { "C_QuestLog.IsQuestFlaggedCompleted", 1 }, { "C_QuestLog.GetAllCompletedQuestIDs", exists = true },
+  { "C_QuestLog.UnitIsRelatedToActiveQuest", exists = true }, { "C_QuestLog.GetQuestWatchType", exists = true },
+  { "C_QuestLog.AddQuestWatch", exists = true }, { "C_QuestLog.RemoveQuestWatch", exists = true }, { "C_QuestLog.GetNumQuestWatches" },
+  { "C_QuestLog.GetQuestTagInfo", exists = true }, { "C_QuestLog.IsFailed", exists = true }, { "GetQuestLogTitle", 1 },
+  { "GetNumQuestLogEntries" }, { "GetQuestLogLeaderBoard", exists = true }, { "GetQuestsCompleted", exists = true },
+  { "IsQuestFlaggedCompleted", 1 }, { "GetQuestUiMapID", exists = true }, { "UnitIsQuestBoss", exists = true },
+  { section = "Divers" },
+  { "issecretvalue", exists = true }, { "C_NamePlate.GetNamePlates", exists = true }, { "C_NamePlate.GetNamePlateForUnit", exists = true },
+  { "C_UnitAuras.GetAuraDataByIndex", exists = true }, { "UnitAura", exists = true }, { "C_AddOns.GetAddOnMetadata", exists = true },
+  { "C_Timer.After", exists = true }, { "debugprofilestop" }, { "GetNumGroupMembers" }, { "C_CombatLog.IsCombatLogRestricted" },
+}
+function M.ProbeAPI()
+  local out = {}
+  local quest
+  local QL = rawget(G, "C_QuestLog")
+  if type(QL) == "table" and QL.GetInfo and QL.GetNumQuestLogEntries then
+    for i = 1, math.min(tonumber((try(QL.GetNumQuestLogEntries))) or 0, 40) do
+      local info = try(QL.GetInfo, i)
+      if type(info) == "table" and not info.isHeader and info.questID and not secret(info.questID) then quest = info.questID break end
+    end
+  end
+  for _, e in ipairs(M.PROBE) do
+    local path = e[1]
+    if e.section then
+      out[#out + 1] = "-- " .. e.section
+    else
+      local fn = at(path)
+      if type(fn) ~= "function" then
+        out[#out + 1] = path .. " : " .. (fn == nil and "absente" or ("présente (" .. type(fn) .. ")"))
+      elseif e.exists then
+        out[#out + 1] = path .. " : présente"
+      else
+        local args, skip = {}, false
+        for i = 2, #e do
+          local a = e[i]
+          if a == "quest" then a = quest if not a then skip = true end end
+          args[#args + 1] = a
+        end
+        if skip then
+          out[#out + 1] = path .. " : présente (journal vide : pas appelée)"
+        else
+          local r = { packN(pcall(fn, unpack(args, 1, #args))) }
+          if not r[1] then
+            out[#out + 1] = path .. " : présente, erreur à l'appel"
+          else
+            local n, parts = r[2], {}
+            for i = 1, math.min(n, 5) do parts[i] = shape(r[2 + i]) end
+            out[#out + 1] = ("%s : %d retour%s%s"):format(path, n, n > 1 and "s" or "", n > 0 and (" (" .. table.concat(parts, ", ")
+              .. (n > 5 and ", …" or "") .. ")") or "")
+          end
+        end
+      end
+    end
+  end
+  return out
+end
+--- garde la sonde dans TreeAIDB.diag.api (une fois par version et par client ; /tai erreurs la refait)
+function M.StoreProbe(force)
+  local d = diag()
+  if not d or (T.InCombat and T:InCombat()) then return nil end
+  local v, b = try(G.GetBuildInfo)
+  local key = str(T.version, 20) .. "|" .. str(v or "?", 20) .. "." .. str(b or "?", 12)
+  if not force and type(d.api) == "table" and d.api.key == key then return d.api end
+  local ok, lines = pcall(M.ProbeAPI)
+  if not ok or type(lines) ~= "table" then return nil end
+  for i = 1, #lines do lines[i] = str(lines[i], 260) end
+  d.api = { key = key, t = wall(), lines = lines }
+  return d.api
+end
+
+---------------------------------------------------------------------------------------------------
+-- (5.0 STABLE) « /tai pics » : les pics de lenteur relevés par le cœur (TreeAI.Spikes), dans la fenêtre — jamais le chat
+---------------------------------------------------------------------------------------------------
+local ICON = "Interface\\Icons\\"
+local picsHub = { group = "outils", id = "pics", icon = ICON .. "INV_Misc_PocketWatch_02", title = "Pics de lenteur",
+  desc = "Quand TreeAI a ralenti le jeu : quelle fonction, combien de ms, en combat ou non, combien de joueurs autour",
+  tip = "Clic : ouvrir le relevé (il part aussi dans /tai erreurs)",
+  fn = function() M.ShowSpikes() end }
+function M.SpikeLines(nTop, nLast)
+  local Sp = T.Spikes
+  if not (Sp and Sp.Lines) then return { "Pics de lenteur : relevé indisponible." } end
+  local ok, l = pcall(Sp.Lines, nTop, nLast)
+  return (ok and type(l) == "table") and l or { "Pics de lenteur : relevé illisible." }
+end
+function M.RegisterPage()
+  T.HUB_EXTRA = type(T.HUB_EXTRA) == "table" and T.HUB_EXTRA or {}
+  local have = false
+  for _, e in ipairs(T.HUB_EXTRA) do if e == picsHub then have = true end end
+  if not have then T.HUB_EXTRA[#T.HUB_EXTRA + 1] = picsHub end
+  local W = T.Window
+  if not (W and W.AddPage) or M._page then return end
+  M._page = true
+  local page = { id = "pics", hidden = true, parent = "settings", label = "Pics de lenteur", icon = picsHub.icon,
+    title = "Pics de lenteur", desc = "Quand TreeAI a ralenti le jeu, et quelle fonction",
+    render = function(Ly)
+      Ly.text("TreeAI chronomètre chacun de ses travaux. Un appel de plus de 8 ms, ou une image où TreeAI dépasse 12 ms, est noté ici "
+        .. "(fonction, travail, en combat ou non, barres de nom, groupe). Gardé pour « /tai erreurs » (TreeAI-erreurs.txt).", "S", "muted")
+      local WD = T.Watchdog
+      local asleep = WD and WD.Asleep and WD.Asleep() or {}
+      local btns = { { "Effacer le relevé", function() if T.Spikes and T.Spikes.Reset then T.Spikes.Reset() end end,
+        "Repart de zéro (le relevé repart aussi de zéro à chaque nouvelle version)" } }
+      if #asleep > 0 then
+        btns[#btns + 1] = { "Relancer les fonctions en pause", function() WD.WakeAll() end,
+          "Rallume ce que TreeAI a coupé pour garder le jeu fluide (sinon : au prochain /reload)" }
+      end
+      if Ly.buttons then Ly.buttons(btns, #btns) end
+      for _, l in ipairs(M.SpikeLines(30, 30)) do Ly.text(l, "S") end
+    end }
+  W.AddPage(page)
+  local P = W.PAGES   -- page cachée (ouverte depuis Outils / la ligne « mise en pause ») : rangée avant « Options »
+  if type(P) == "table" then
+    for i = #P, 1, -1 do if P[i] == page then table.remove(P, i) break end end
+    local pos = #P + 1
+    for i, q in ipairs(P) do if type(q) == "table" and q.id == "options" then pos = i break end end
+    table.insert(P, pos, page)
+  end
+end
+--- ouvre le relevé dans la fenêtre ; sans fenêtre (module coupé) : au pied du panneau, jamais dans le chat
+function M.ShowSpikes()
+  M.RegisterPage()
+  local W = T.Window
+  if W and W.Open and W.pageIndex and W.pageIndex.pics and (not W.IsEnabled or W:IsEnabled()) then W.Open("pics") return true end
+  local l = M.SpikeLines(3, 0)
+  if T.ClickNote then T:ClickNote(l[1] .. (l[3] and (" " .. l[3]) or "")) end
+  return false
+end
+T.ShowSpikes = function() return M.ShowSpikes() end
 
 ---------------------------------------------------------------------------------------------------
 -- Construction du rapport
@@ -175,6 +369,13 @@ function M.Collect(note)
   -- l'anneau (300) dans la section « Trajet / boussole » que l'appli écrit depuis diag.nav
   local NTr = T.NavTrace
   for _, s in ipairs(NTr and NTr.ExportLines and try(NTr.ExportLines, 25) or {}) do add(s) end
+  -- (5.0 STABLE) pics de lenteur relevés en jeu (cœur : TreeAI.Spikes) et sonde d'API de ce client
+  add("== Pics de lenteur (/tai pics)")
+  for _, s in ipairs(M.SpikeLines(15, 15)) do add(s) end
+  local api = M.StoreProbe(true)   -- gardée à part (diag.api) : l'appli l'écrit dans sa propre section du fichier
+  if type(api) == "table" and type(api.lines) == "table" then
+    add(("== API du client : %d fonctions sondées (section « API du client » de TreeAI-erreurs.txt)"):format(#api.lines))
+  end
   add("== Coût des modules (/tai perf)")
   local perf = T.PerfLines and try(T.PerfLines, T) or {}
   for _, s in ipairs(type(perf) == "table" and perf or {}) do add(s) end
@@ -235,9 +436,21 @@ function M.PushTab()
   }, "bugs")
 end
 
-function M:OnEnable() M.PushTab() end
+function M:OnEnable()
+  M.PushTab()
+  M.RegisterPage()
+  -- la sonde d'API une fois par version / client, au calme (≈ 100 lectures) : dans les SavedVariables même sans /tai erreurs
+  if T.After then T:After(20, function() if not (T.InCombat and T:InCombat()) then M.StoreProbe(false) end end) end
+end
 
 M.HookErrors()
+if T.On then T:On("READY", "Bugs:page", function() M.RegisterPage() end) end
+T:RegisterSlash("pics", function(rest)
+  local k = tostring(rest or ""):lower():gsub("%s+", "")
+  if k == "reset" or k == "effacer" then if T.Spikes and T.Spikes.Reset then T.Spikes.Reset() end end
+  if k == "reveil" or k == "réveil" or k == "relancer" then if T.Watchdog and T.Watchdog.WakeAll then T.Watchdog.WakeAll() end end
+  M.ShowSpikes()
+end, "pics de lenteur relevés par TreeAI (fenêtre) · /tai pics effacer · /tai pics relancer")
 local function slashFn(rest) M.Build(false, rest) end
 T:RegisterSlash("erreurs", slashFn, "préparer TreeAI-erreurs.txt (puis /reload)")
 T:RegisterSlash("bug", slashFn, "comme /tai erreurs")

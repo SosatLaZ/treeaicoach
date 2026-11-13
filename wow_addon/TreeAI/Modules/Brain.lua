@@ -1419,8 +1419,11 @@ function B.RunBody()
   local focus = T.FocusMode and T:FocusMode() or nil
   if focus then away = true end
   local done = false
+  local noGuide = T.QuestGuideOn and not T:QuestGuideOn()
   for _, cat in ipairs(B.HEAVY) do
     local v = d[cat]
+    -- (5.0 STABLE) guide de quêtes coupé : aucune règle de quête / de trajet (pause, zone, courses sur le trajet, foyer, groupe)
+    if v and noGuide and cat ~= "needs" then d[cat] = nil v = nil end
     if v and v <= t + 0.05 then
       if done then d[cat] = t + 0.1                       -- une seule par image : la suivante juste après
       else
@@ -1463,7 +1466,11 @@ end
 
 -- ===================================================================== cycle de vie
 local function ctxSoon() S.dirtyCtx = true due("ctx", 0.2) end
-local function questsSoon() due("park", 2.5) due("zone", 4) due("hearth", 4) end
+local function guideOff() return T.QuestGuideOn and not T:QuestGuideOn() or false end
+local function questsSoon()
+  if guideOff() then return end   -- (5.0 STABLE) guide de quêtes coupé : le pilote ne touche plus aux quêtes ni au trajet
+  due("park", 2.5) due("zone", 4) due("hearth", 4)
+end
 function B:OnEnable()
   ov()
   local Z = T.ZonePlan

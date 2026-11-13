@@ -128,7 +128,11 @@ local function qField(id, key)
   local db = Q and Q.QuestieDB and Q.QuestieDB()
   if db and db.QueryQuestSingle then return try(db.QueryQuestSingle, id, key) end
   local lib = g("LibQuestieDB")
-  if type(lib) == "table" and type(lib.Quest) == "table" and type(lib.Quest.Get) == "function" then return try(lib.Quest.Get, id, key) end
+  if type(lib) == "table" and type(lib.Quest) == "table" and type(lib.Quest.Get) == "function" then
+    local memo = T.API and T.API.QuestieMemo and T.API.QuestieMemo(lib.Quest, "Get", lib.Quest.Get)
+    if memo then return memo(id, key) end
+    return try(lib.Quest.Get, id, key)
+  end
   return nil
 end
 local function questDone(id)
@@ -456,6 +460,8 @@ local function run(fn, ...) return pcall(fn, ...) end
 local tick = 0
 --- une seule petite vérification par passage ; rien en combat (AutoRefresh n'y tourne pas)
 local ROT = { "CheckContest", "CheckLuck", "CheckLoot", "CheckEscort", "CheckTracking", "CheckBreadcrumb" }
+-- (5.0 STABLE) au calme (aucun événement, joueur immobile) : rien à refaire — le cycle complet du cœur (30 s) suffit
+M.autoIdleSafe = true
 function M:AutoRefresh()
   tick = tick + 1
   if inCombat() then return end

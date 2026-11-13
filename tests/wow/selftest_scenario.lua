@@ -91,6 +91,7 @@ return function(M, ctx)
   M.EnterCombat()
   M.FireEvent("PLAYER_TARGET_CHANGED")
   M.FireEvent("NAME_PLATE_UNIT_ADDED", "nameplate1")
+  M.Advance(0.4, 0.01)   -- (5.0 STABLE) nameplates reach the modules grouped, 0.1 s later
   M.FireEvent("UNIT_AURA", "player")
   M.FireEvent("UNIT_AURA", "target")
   M.FireEvent("UNIT_HEALTH", "pet")

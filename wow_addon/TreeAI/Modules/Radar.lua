@@ -1121,7 +1121,8 @@ function R:OnEnable()
   self:RegisterEvent("PLAYER_REGEN_ENABLED", function() R.Visibility() R.slowAt = 0 end)
   self:RegisterEvent("PLAYER_TARGET_CHANGED", function() R:ScanUnit("target") end)
   self:RegisterEvent("UPDATE_MOUSEOVER_UNIT", function() R:ScanUnit("mouseover") end)
-  self:RegisterEvent("NAME_PLATE_UNIT_ADDED", function(_, _, unit) R:ScanUnit(unit) end)
+  if T.OnPlates then T:OnPlates(R, function(_, us) for unit in pairs(us) do R:ScanUnit(unit) end end)   -- (5.0 STABLE) regroupées
+  else self:RegisterEvent("NAME_PLATE_UNIT_ADDED", function(_, _, unit) R:ScanUnit(unit) end) end
   self:RegisterEvent("PLAYER_DEAD", function()
     local me = R.Me()
     if me then R.char.death = { c = me.c, n = me.n, w = me.w, t = epoch() } R.slowAt = 0 end

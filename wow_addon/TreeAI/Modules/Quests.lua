@@ -68,7 +68,9 @@ local function say(text, prio, opts)
   if opts.sound == nil then opts.sound = (prio or 1) >= 2 end
   return M:Suggest(opts.id or "x", text, prio or 1, opts)
 end
+local function guideOff() return T.QuestGuideOn and not T:QuestGuideOn() or false end
 local function suggest(id, text, prio, opts)
+  if guideOff() then return false end   -- (5.0 STABLE) guide de quêtes coupé : plus aucun conseil de quête
   opts = opts or {}
   opts.id = id
   local ok = pcall(say, text, prio, opts)
@@ -953,14 +955,23 @@ local hooked = false
 local function hookTooltips()
   if hooked then return end
   hooked = true
+  -- (5.0 STABLE) infobulles d'unité : le crochet unique du cœur (T:OnUnitTip — une réponse par monstre, gardée ;
+  -- rien pour les joueurs ni en combat) ; l'ancien crochet direct ne reste que sans lui
+  local viaCore = T.OnUnitTip and T:OnUnitTip(M, function(_, _, name)
+    if not cfg("tooltip") or others.questie or not name then return nil end
+    local H = T.Highlight
+    if H and H.TooltipActive and H:IsEnabled() and H.TooltipActive() then return nil end   -- la surbrillance écrit sa ligne
+    local q, o = objectiveFor(name, true)
+    if q then return ("TreeAI : « %s » %d/%d"):format(cut(q.title, 30), o.have, o.need), 0.4, 0.8, 0.4 end
+  end)
   local TDP, E = _G.TooltipDataProcessor, _G.Enum
   if TDP and TDP.AddTooltipPostCall and E and E.TooltipDataType then
     -- pcall : une erreur ici s'afficherait dans l'infobulle de Blizzard (fenêtre d'erreur Lua)
     pcall(TDP.AddTooltipPostCall, E.TooltipDataType.Item, function(tt) if tt == _G.GameTooltip and not itemInfoOwns() then pcall(onItemTip, tt) end end)
-    pcall(TDP.AddTooltipPostCall, E.TooltipDataType.Unit, function(tt) if tt == _G.GameTooltip then pcall(onUnitTip, tt) end end)
+    if not viaCore then pcall(TDP.AddTooltipPostCall, E.TooltipDataType.Unit, function(tt) if tt == _G.GameTooltip then pcall(onUnitTip, tt) end end) end
   elseif _G.GameTooltip and _G.GameTooltip.HookScript then
     pcall(_G.GameTooltip.HookScript, _G.GameTooltip, "OnTooltipSetItem", function(tt) if not itemInfoOwns() then onItemTip(tt) end end)
-    pcall(_G.GameTooltip.HookScript, _G.GameTooltip, "OnTooltipSetUnit", onUnitTip)
+    if not viaCore then pcall(_G.GameTooltip.HookScript, _G.GameTooltip, "OnTooltipSetUnit", onUnitTip) end
   end
 end
 
@@ -1068,6 +1079,27 @@ function M.Update()
   local a = M.Analyse(list)
   M.last = a
   M.xp = M.XPEstimate(list)
+  if guideOff() then
+    -- (5.0 STABLE) guide de quêtes coupé : le relevé du journal reste (groupe, donjons, objets de quête le lisent),
+    -- plus de conseil ni de ligne « Quêtes » ; les lecteurs sont prévenus quand le journal change vraiment
+    if M.nextText or M.shownStep or not M._guideCleared then
+      M._guideCleared = true
+      if T.ClearSuggestions then T:ClearSuggestions("Quests:") end
+      if T.SetTabLines then T:SetTabLines("quests", {}, "Quests") end
+    end
+    M.nextText, M.shownStep = nil, nil
+    M.UpdateButton()
+    local sig0 = M.Signature(list)
+    M._updAt, M._updZone = now(), curZone()
+    M._updPos = M._updPos or {}
+    if T.Stamp then T:Stamp(M._updPos) end
+    if T.Fire and sig0 ~= M._firedSig then
+      M._firedSig, M._firedAt = sig0, now()
+      pcall(T.Fire, T, "QUESTS_UPDATED", list)
+    end
+    return a
+  end
+  M._guideCleared = nil
   toasts(list)
   greyHint(a)
   hardHint(a)
@@ -1313,6 +1345,7 @@ function M:OnEnable()
   self:RegisterEvent("PLAYER_REGEN_ENABLED", function() M.Refresh(1) end)
   self:On("SUMMARY", function() pcall(M.WriteSummary) end)
   hookTooltips()
+  self:On("QUEST_GUIDE_CHANGED", function() M.Refresh(0.1) end)   -- (5.0 STABLE) conseils de quête retirés / remis
   -- (4.0.1) « près de la remise » : seulement quand le joueur a bougé depuis le dernier passage (ou toutes les 5 min)
   local nearPos, nearAt = {}, -100
   if not M.ticker then M.ticker = T:NewTicker(5, function()
@@ -1335,8 +1368,20 @@ end
 
 function M:OnOptionChanged() M.Refresh(0.2) end
 
-local function slash() M.Report() end
-T:RegisterSlash("quetes", slash, "quêtes : à rendre, objectifs, XP, étape suivante")
+-- (5.0 STABLE) /tai quetes on|off : UN interrupteur pour tout le guidage de quêtes (trajet, boussole, icônes, suivi…)
+local function slash(rest)
+  local k = tostring(rest or ""):lower():gsub("%s+", "")
+  if k == "on" or k == "off" or k == "oui" or k == "non" then
+    local on = (k == "on" or k == "oui")
+    if T.SetQuestGuide then T:SetQuestGuide(on) end
+    local msg = on and "Guide de quêtes : allumé (trajet, boussole, icônes, suivi, conseils)."
+      or "Guide de quêtes : coupé — plus de trajet, d'icônes ni de conseils de quête. /tai quetes on pour le rallumer."
+    if T.ClickNote then T:ClickNote(msg) else T:Print(msg) end
+    return
+  end
+  M.Report()
+end
+T:RegisterSlash("quetes", slash, "quêtes : à rendre, objectifs, XP, étape suivante · /tai quetes on|off : tout le guidage de quêtes")
 T:RegisterSlash("quêtes", slash)
 T:RegisterSlash("quests", slash)
 

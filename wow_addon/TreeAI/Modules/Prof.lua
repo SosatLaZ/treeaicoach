@@ -980,7 +980,14 @@ local function hookTooltips()
   hooked = true
   local TDP, En = g("TooltipDataProcessor"), g("Enum") and g("Enum").TooltipDataType
   local GT = g("GameTooltip")
-  if TDP and TDP.AddTooltipPostCall and En and En.Unit then
+  -- (5.0 STABLE, petit ajout gardé) crochet unique du cœur : une réponse gardée par unité, rien pour les joueurs
+  local viaCore = T.OnUnitTip and T:OnUnitTip(M, function(_, unit)
+    local line
+    M.DecorateUnit({ AddLine = function(_, text, r, gr, b) line = { text, r, gr, b } end }, unit)
+    if line then return line[1], line[2], line[3], line[4] end
+  end, { combat = true })
+  if viaCore then   -- (les nœuds de récolte gardent leur lecture du titre, plus bas)
+  elseif TDP and TDP.AddTooltipPostCall and En and En.Unit then
     TDP.AddTooltipPostCall(En.Unit, function(tip)
       local unit = tip and tip.GetUnit and select(2, tip:GetUnit())
       pcall(M.DecorateUnit, tip, unit)

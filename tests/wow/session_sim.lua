@@ -19,6 +19,10 @@
 --     [--walk] (4.2 FIX42: the group of 4 walks the whole run — moving every second, a fight every ~40 s, bags opened /
 --       closed every 20 s, friends questing — and every Show / Hide of a TreeAI frame is logged: « flaps » = a frame
 --       toggling more than once in 10 s; use --minutes 5)
+--     [--crowd] (5.0 STABLE: « ça bugue quand il y a beaucoup de joueurs / quand les quêtes s'actualisent / quand je
+--       loot » — tests/wow/crowd_phases.lua: login storm, capital crowd, quest hub, battleground-like fight, loot bursts,
+--       quest bursts, rest; here a frame = the game events of that image + timers + OnUpdate; gate: no frame over 4 ms of
+--       TreeAI work (200 kinstr), nothing at rest; [--phases a,b] = only those phases)
 --     [--step S] (4.2 FIX42: main-client frame step in seconds, default 0.2; 0.02 ≈ real 50 fps frames)
 --     [--ms-rate K] (4.2 FIX42: debugprofilestop() of the main client counts K kilo-instructions per ms of addon work, so
 --       Core's time-sliced scheduler sees a real cost; report: worst frame of each steady second, in kinstr and ≈ ms)
@@ -42,8 +46,14 @@ do
     elseif a == "--ms-rate" then opts.msRate = tonumber(arg[i + 1]); i = i + 1
     elseif a == "--idle" then opts.idle = true
     elseif a == "--walk" then opts.walk = true
+    elseif a == "--crowd" then opts.crowd = true
+    elseif a == "--phases" then opts.phases = arg[i + 1]; i = i + 1
     elseif a == "-v" then opts.verbose = true end
     i = i + 1
+  end
+  if opts.crowd then   -- (5.0 STABLE) real frames: events + timers + OnUpdate, 25 images / s, 50 kinstr = 1 ms
+    opts.step = opts.step or 0.04
+    opts.msRate = opts.msRate or 50
   end
   local force = os.getenv("TREEAI_WOW_FORCE_FLAVOR")   -- FIDELITY: the whole suite on the faithful Forever mock
   if force and force ~= "" then opts.flavor = force end
@@ -112,24 +122,47 @@ BUDGET.kinstrModuleMin.GroupJoin = 60
 -- PERF4 (4.0.1) : « mode sûr » = ce que le joueur a. Gains verrouillés (HUNTER / forever, 4.0.0 mesuré : 796 kinstr/min,
 -- pire image 66, p99 25, 33,8 Ko/s ; 4.0.1 : ≈ 546 / 51 / 21 / 25,5). Plafonds serrés pour les modules dont le coût ne
 -- dépend que de leur propre travail ; Core paie aussi la répartition (événements, minuteurs) de tous les autres.
+-- (5.0 STABLE) le mode sûr de 4.0.1 comptait une trentaine de modules ; depuis, Groupe, Équipement du groupe, Rejoindre,
+-- Conseils pro, Pilote auto, Cerveau des quêtes, Courses en ville, la barre de boutons, la fenêtre… y sont entrés sans que
+-- ces plafonds soient revus (893 kinstr/min, pire image 144 mesurés sur 4.3.6 : test rouge). Mesuré en 5.0 : 812 / 159 /
+-- p99 32 / 27,9 Ko/s, avec en plus dans le cœur le relevé des pics sur chaque appel, les flux regroupés et l'état du
+-- journal. Plafonds = mesure + ~6 % ; pire image = la règle de la V5 (aucune image au-delà de 4 ms = 200 kinstr) ;
+-- les modules dont le coût ne dépend que d'eux gardent leur plafond de 4.0.1 (Surbrillance 28 → 15 mesuré, Suivi 15 → 11).
 if opts.profile == "sur" then
-  BUDGET.kinstrTotalMin = 640
-  BUDGET.frameWorstKinstr, BUDGET.frameP99Kinstr, BUDGET.allocKBps = 58, 25, 30
-  local caps = { Core = 260, Macros = 35, Quests = 30, Highlight = 28, Detect = 25, Export = 22, PathDraw = 16, Tracker = 15,
+  BUDGET.kinstrTotalMin = 860
+  BUDGET.frameWorstKinstr, BUDGET.frameP99Kinstr, BUDGET.allocKBps = 200, 36, 30
+  local caps = { Core = 370, Macros = 35, Quests = 30, Highlight = 20, Detect = 25, Export = 40, PathDraw = 16, Tracker = 15,
     Todo = 10, Window = 8, Speed = 6, Tour = 3, Glow = 3, ItemInfo = 8 }
   for k, v in pairs(caps) do BUDGET.kinstrModuleMin[k] = v end
 end
 -- PERF4 : 10 min sans RIEN (--idle : immobile, hors combat, aucun événement) : ce qui attend un changement ne travaille
 -- pas. 4.0.0 : 600 kinstr/min ; 4.0.1 : ≈ 285, dont ≈ 0 pour les modules à événements (≤ 2 chacun). Le reste : l'ordonnanceur
 -- (Core) et les minuteurs à la seconde de la boussole, du trajet et du placement (Compass, Route, Planner, UI).
+-- (5.0 STABLE) 4.3.6 mesurait 366 (test rouge : un seul module sans « autoIdleSafe » faisait tourner TOUS les
+-- :AutoRefresh() toutes les 3 s à l'arrêt). 5.0 : le calme se juge par module → 295 mesuré, plafond 320 (avant : 340).
+-- Le cœur (ordonnanceur + relevé des pics) et les aides de géométrie d'Export, appelées par le trajet / le groupe, ont
+-- leur plafond à la mesure ; le motif « 1 Hz » ne se juge pas sur ~2 kinstr par image.
+-- Sans --ms-rate, le budget de l'ordonnanceur lit l'horloge RÉELLE : d'un lancement à l'autre le cœur mesure 128 à 138
+-- et la pire image 32 à 39 kinstr (0,6 à 0,8 ms, le premier tour complet à 32 s : Groupe + Rejoindre). Plafonds =
+-- le haut de la fourchette + ~10 % (cœur 150 ; 4.3.6 : 177) et 48 kinstr (≈ 1 ms, quatre fois sous la règle des 4 ms).
 if opts.idle then
-  BUDGET.kinstrTotalMin = 340
-  BUDGET.frameWorstKinstr, BUDGET.frameP99Kinstr, BUDGET.allocKBps = 32, 12, 22
+  BUDGET.kinstrTotalMin = 320
+  BUDGET.frameWorstKinstr, BUDGET.frameP99Kinstr, BUDGET.allocKBps = 48, 12, 22
+  BUDGET.framePhaseRatio = 2.0
   -- (Detect et Export : appelés par la boussole et le trajet ; PathDraw : une passe au plus toutes les 30 s, puis dort)
-  local caps = { Core = 115, Export = 10, Detect = 8, PathDraw = 6, Quests = 4, Tracker = 4, Todo = 4, Speed = 3,
+  local caps = { Core = 150, Export = 26, Detect = 8, PathDraw = 6, Quests = 4, Tracker = 4, Todo = 4, Speed = 3,
     Highlight = 2, Macros = 2, Window = 2, Tour = 1, Glow = 1, Hub = 1, Shortcuts = 1, Bugs = 1, ItemInfo = 1,
     QuestPins = 1, Watch = 1, Addons = 1, Brain = 1 }   -- REPLACE : rien à l'arrêt (carte fermée, joueur immobile)
   for k, v in pairs(caps) do BUDGET.kinstrModuleMin[k] = v end
+end
+
+if opts.crowd then
+  -- (5.0 STABLE) the per-minute budgets belong to the 60-min session; here the gates are per image (crowd_phases.lua)
+  local H = math.huge
+  for _, k in ipairs({ "kinstrPerModuleMin", "kinstrPerModulePeak", "kinstrTotalMin", "kinstrStatsMin", "frameWorstKinstr",
+    "frameP99Kinstr", "framePhaseRatio", "allocKBps", "nowChangesPerMinMax", "nowChangesPerMinAvg", "edgeNowPct", "edgeKinstrMin",
+    "coachNowPct", "coachShowsPer10Min", "groupMsgsPerMin", "frameLoginKinstr", "alertsPer10Min", "dupMeaningPct" }) do BUDGET[k] = H end
+  BUDGET.kinstrModuleMin = {}
 end
 
 local BASE = {}
@@ -258,7 +291,7 @@ end
 local getinfo = debug.getinfo
 -- SPIKE: per-frame cost on the main client (one frame = timers + OnUpdate of one wowmock Advance step,
 -- 0.2 s on the main client). FR.acc = samples (×1000 instr) in the open frame; FR.mods = by Module:line.
-local FR = { open = false, acc = 0, mods = {}, jobs = {}, fjobs = {}, costs = {}, phase = {}, worst = {}, idx = 0, kbStart = 0, kb = {}, hookKB = 0 }
+local FR = { open = false, acc = 0, own = 0, ctx = {}, mods = {}, jobs = {}, fjobs = {}, costs = {}, phase = {}, worst = {}, idx = 0, kbStart = 0, kb = {}, hookKB = 0 }
 local FINE_ENV = {}         -- client name -> its Lua environment (4.4 SMART: read TreeAI._ctx in the hook)
 local fineIncl = {}         -- --fine: samples by « context  job » (4.4 SMART)
 local fine = {}             -- --fine: samples by « Module:line » of the innermost addon function (main client)
@@ -271,7 +304,7 @@ local function hook()
   local lvl, m = 2, nil
   -- forever: the hook's own allocations (debug.getinfo tables; the forever layer deepens the stacks it walks) are
   -- not the addon's GC pressure
-  local kb0 = MOCK_IS_C and FR.open and collectgarbage("count")
+  local kb0 = (MOCK_IS_C or opts.crowd) and FR.open and collectgarbage("count")
   if MOCK_IS_C then
     local info = getinfo(2, "S")
     if info and info.linedefined >= FOREVER_LINE and info.source:find("wowmock.lua", 1, true) then lvl = 1e9 end
@@ -281,7 +314,7 @@ local function hook()
     if not info then break end
     m = modOf(info.source)
     if m then
-      if opts.fine and CUR == "Arbrelune" and MINUTE >= 1 then   -- PERF4: steady state (login minute apart)
+      if opts.fine and CUR == "Arbrelune" and (MINUTE >= 1 or opts.crowd) then   -- PERF4: steady state (login minute apart)
         local k = m .. ":" .. info.linedefined
         -- + the first caller in another addon file (who pays for Core helpers)
         local l2 = lvl + 1
@@ -321,6 +354,14 @@ local function hook()
   end
   if FR.open and not (MOCK_IS_C and lvl >= 1e9) then   -- forever: the mock's forever layer = C code in the game
     FR.acc = FR.acc + 1
+    if m and opts.crowd then   -- (5.0 STABLE) TreeAI work only (addon code + the game API it calls), by dispatch context
+      FR.own = FR.own + 1
+      local E1 = FINE_ENV[CUR]
+      local T1 = E1 and rawget(E1, "TreeAI")
+      local ctx = T1 and rawget(T1, "_ctx") or "-"
+      if type(ctx) ~= "string" then ctx = "-" end
+      FR.ctx[ctx] = (FR.ctx[ctx] or 0) + 1
+    end
     local mk = m or "(mock/sim)"
     local byLine = FR.mods[mk]
     if not byLine then byLine = {}; FR.mods[mk] = byLine end
@@ -422,10 +463,48 @@ local function newWorld(spec, carryM)
       end
     end
   end
+  if opts.crowd and spec.idx == 1 then
+    -- (5.0 STABLE) what the instruction count does not see: the game's own work behind widget calls. Estimated weights
+    -- in µs (order of magnitude of a real client), added to the image's TreeAI work at 50 kinstr / ms; only calls made
+    -- from addon code (inside a handler) count. + the memory the addon allocates per image (handlers only).
+    local W = M.Widget
+    local WEIGHT = { SetText = 2, SetFormattedText = 2, GetStringWidth = 6, GetStringHeight = 6, SetFont = 4, SetPoint = 0.8,
+      ClearAllPoints = 0.5, SetSize = 0.6, SetWidth = 0.4, SetHeight = 0.4, Show = 0.6, Hide = 0.6, SetAlpha = 0.3, SetTexture = 2,
+      SetVertexColor = 0.3, SetTextColor = 0.3, SetFrameStrata = 1, SetFrameLevel = 0.6, CreateTexture = 6, CreateFontString = 8,
+      CreateAnimationGroup = 8 }
+    FR.apiUs, FR.apiN, FR.depth, FR.addonKB = 0, 0, 0, 0
+    for name, us in pairs(WEIGHT) do
+      local f = W[name]
+      if type(f) == "function" then
+        W[name] = function(...)
+          if FR.open and FR.depth > 0 then FR.apiUs = FR.apiUs + us FR.apiN = FR.apiN + 1 FR.virtUs = (FR.virtUs or 0) + us end
+          return f(...)
+        end
+      end
+    end
+    local cf = env.CreateFrame
+    env.CreateFrame = function(...)
+      if FR.open and FR.depth > 0 then FR.apiUs = FR.apiUs + 25 FR.apiN = FR.apiN + 1 FR.virtUs = (FR.virtUs or 0) + 25 end
+      return cf(...)
+    end
+    local sc = M.SafeCall
+    M.SafeCall = function(label, fn, ...)
+      if not FR.open then return sc(label, fn, ...) end
+      FR.depth = FR.depth + 1
+      local kb0 = FR.depth == 1 and collectgarbage("count")
+      local hk0 = FR.hookKB
+      local r = sc(label, fn, ...)
+      if kb0 then FR.addonKB = FR.addonKB + math.max(0, collectgarbage("count") - kb0 - (FR.hookKB - hk0)) end
+      FR.depth = FR.depth - 1
+      return r
+    end
+  end
   if opts.msRate and opts.msRate > 0 then
     -- (4.2 FIX42) addon work costs time: K kilo-instructions of addon code = 1 ms on this clock (scheduler budgets)
     local who, rate = spec.name, opts.msRate
-    env.debugprofilestop = function() return M.now * 1000 + (SAMP[who] or 0) / rate end
+    -- (5.0 STABLE) --crowd: + the estimated cost of the game's own work (widgets, QuestieDB reads: FR.virtUs, µs)
+    local virt = opts.crowd and spec.idx == 1
+    env.debugprofilestop = function() return M.now * 1000 + (SAMP[who] or 0) / rate + (virt and (FR.virtUs or 0) / 1000 or 0) end
   end
   FOREVER_LINE = M.FOREVER_LAYER_LINE or FOREVER_LINE
   M.traceSecretBooleans = false   -- forever: the harness lists secret booleans; the session does not read them
@@ -560,7 +639,7 @@ local function loadAddon(c, svString)
 end
 
 local function newClient(idx)
-  local spec = { idx = idx, name = NAMES[idx], class = CLASSES[idx], level = (idx == 1) and 26 or (25 + idx % 3),
+  local spec = { idx = idx, name = NAMES[idx], class = CLASSES[idx], level = opts.crowd and (idx == 1 and 30 or 28 + idx % 3) or ((idx == 1) and 26 or (25 + idx % 3)),
     xp = 15000 + idx * 1000 }
   local c = { name = spec.name, idx = idx, main = idx == 1, alerts = {}, sends = {} }
   c.env, c.M = newWorld(spec)
@@ -612,8 +691,12 @@ local function pump()
       for _, o in ipairs(order) do
         local deliver = (m.channel ~= "WHISPER") or (tostring(m.target):match("^[^%-]+") == o.name)
         if deliver and o.M.prefixes[m.prefix] then
-          CUR = o.name
-          o.M.DeliverAddon(m.prefix, m.msg, m.channel, c.name .. "-" .. REALM)
+          if o.main and FR.inbox then   -- (5.0 STABLE) --crowd: delivered inside the next image of the main client
+            FR.inbox[#FR.inbox + 1] = { m.prefix, m.msg, m.channel, c.name .. "-" .. REALM }
+          else
+            CUR = o.name
+            o.M.DeliverAddon(m.prefix, m.msg, m.channel, c.name .. "-" .. REALM)
+          end
         end
       end
     end
@@ -729,7 +812,10 @@ local FRAMES_PER_SEC = math.max(1, math.floor(1 / STEP + 0.5))   -- main client 
 FR.secMax = {}   -- (4.2 FIX42) worst frame of each steady second
 local function frameHook(begin)
   if begin then
-    FR.acc = 0
+    if FR.carry then FR.carry = false return end   -- (5.0 STABLE) --crowd: the frame was opened before its events
+    FR.acc, FR.own = 0, 0
+    FR.apiUs, FR.apiN, FR.addonKB, FR.depth = 0, 0, 0, 0
+    for k in pairs(FR.ctx) do FR.ctx[k] = nil end
     for _, byLine in pairs(FR.mods) do for k in pairs(byLine) do byLine[k] = nil end end
     for k in pairs(FR.fjobs) do FR.fjobs[k] = nil end
     collectgarbage("stop")
@@ -743,6 +829,7 @@ local function frameHook(begin)
   collectgarbage("restart")
   if not T0 then return end   -- login frames: not measured
   FR.idx = FR.idx + 1
+  if FR.onFrame then FR.onFrame(FR, kb) end   -- (5.0 STABLE) --crowd: per-phase frame statistics
   local sec = math.floor(order[1].M.now - T0)
   FR.kb[sec] = (FR.kb[sec] or 0) + math.max(0, kb)
   local cost = FR.acc
@@ -785,7 +872,17 @@ local function tick(sec)
     for _, c in ipairs(order) do
       CUR = c.name
       if c.main then c.M.FrameHook = frameHook end
-      c.M.Advance(1, c.main and STEP or 0.5)
+      if c.main and FR.driver then
+        -- (5.0 STABLE) --crowd: one image = the events the game sends in it, then timers + OnUpdate
+        for _ = 1, FRAMES_PER_SEC do
+          frameHook(true); FR.carry = true
+          FR.driver()
+          CUR = c.name
+          c.M.Advance(STEP, STEP)
+        end
+      else
+        c.M.Advance(1, c.main and STEP or 0.5)
+      end
     end
     pump()
     sampleMain(order[1])
@@ -1185,7 +1282,7 @@ local M0 = function() return main.M end
 for _, c in ipairs(order) do fire(c, "GROUP_ROSTER_UPDATE"); fire(c, "PARTY_MEMBERS_CHANGED") end
 for _, c in ipairs(order) do for qi = 1, 3 do accept(c, qi) end end
 for i = 2, #order do for qi = 1, 3 do accept(order[i], qi) end end
-tick(5)
+if not opts.crowd then tick(5) end
 
 local events = {}   -- [second] = fn
 local function at(min, fn) events[#events + 1] = { t = math.floor(min * 60), fn = fn } end
@@ -1365,6 +1462,18 @@ local total = opts.minutes * 60
 -- PERF4 (4.0.1) --idle: the player stands still out of combat, nothing happens for the whole run (no event, no fight,
 -- the friends idle too): what TreeAI costs « in the background » when nothing changes (budget: ≈ 0)
 if opts.idle then events = {}; questing.to, questing2.to = -1, -1 end
+local crowdOut
+if opts.crowd then
+  -- (5.0 STABLE) the three real-game complaints as phases (tests/wow/crowd_phases.lua); no scripted timeline
+  events = {}
+  questing.to, questing2.to = -1, -1
+  local run = assert(loadfile(HERE .. "/crowd_phases.lua"))()
+  crowdOut = run({ opts = opts, main = main, order = order, fire = fire, tick = tick, FR = FR, STEP = STEP, BASE = BASE, R = R,
+    addErr = addErr, fail = fail, simSeconds = simSeconds, friendLife = friendLife, addToBags = addToBags, hoverBags = hoverBags,
+    setCur = function(n) CUR = n end })
+  total = simSeconds()
+  opts.minutes = math.max(1, math.ceil(total / 60))
+end
 if opts.walk then
   -- (4.2 FIX42) the group walks: positions every second, PLAYER_STARTED_MOVING, a fight every ~40 s, bags every 20 s
   events = {}
@@ -1491,6 +1600,7 @@ if opts.walk then
   for _, f in ipairs(flaps) do P(("FLAP %s : %d toggles within 10 s (%d in all)"):format(f.id, f.n, f.total)) end
   if #flaps == 0 then P("flaps: none (no TreeAI frame toggles more than once per 10 s)") end
 end
+for _, l in ipairs(crowdOut or {}) do P(l) end
 -- SPIKE: per-frame peaks (hitches) + allocation rate, main client
 do
   local c = {}
@@ -1713,7 +1823,7 @@ if blockedN > BUDGET.blockedMax then fail(("%d blocked actions > %d"):format(blo
 -- the session really happened
 local p = main.M.player
 P(("player: level %d, %d quests in log, %d free slots, money %d"):format(p.level, #main.M.quests, countFree(main.M), p.money))
-if p.level < 27 and not opts.idle and not opts.walk then fail("no level-up happened") end
+if p.level < 27 and not opts.idle and not opts.walk and not opts.crowd then fail("no level-up happened") end
 if opts.verbose then for _, l in ipairs(S.nowLog) do P("  now " .. l) end end
 
 for _, e in ipairs(R.errors) do P(("ERROR [%s %s] x%d %s"):format(e.who, e.label, e.n, e.msg:sub(1, 400))) end

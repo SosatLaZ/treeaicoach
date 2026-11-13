@@ -396,7 +396,7 @@ end
 -- 1) addon QuestieDB (API publique, contrat 4 : LibQuestieDB.Quest/Npc/Object/Item.Get(id, champ), appel
 --    « . ») ; 2) repli : QuestieLoader._modules.QuestieDB (anciennes versions). Jamais ImportModule, jamais
 --    d'écriture (les lectures renvoient des copies).
-local libAdapter
+local libAdapter, legacyProxy
 local function libQuestieDB(mods)
   local L = rawget(_G, "LibQuestieDB")
   if type(L) ~= "table" then return nil end
@@ -409,6 +409,8 @@ local function libQuestieDB(mods)
     local t = type(L[field]) == "table" and L[field] or rawget(_G, short)
     if type(t) == "table" and type(t.Get) == "function" then
       local g = t.Get
+      local QM = T.API and T.API.QuestieMemo
+      if QM then return QM(t, "Get", g) end   -- (5.0 STABLE) une lecture par (id, champ)
       return function(id, key) local ok, v = pcall(g, id, key) if ok then return v end end
     end
   end
@@ -430,6 +432,18 @@ local function questie()
   if lib then return lib, zdb end
   local db = type(mods) == "table" and rawget(mods, "QuestieDB") or nil
   if type(db) ~= "table" or type(db.QueryQuestSingle) ~= "function" then return nil end
+  -- (5.0 STABLE) ancien Questie : même mémoire de lecture (les autres champs de sa base restent lus tels quels)
+  local QM = T.API and T.API.QuestieMemo
+  if QM then
+    if not (legacyProxy and legacyProxy.raw == db) then
+      local p = { raw = db }
+      for _, fn in ipairs({ "QueryQuestSingle", "QueryNPCSingle", "QueryObjectSingle", "QueryItemSingle" }) do
+        if type(db[fn]) == "function" then p[fn] = QM(db, fn, db[fn]) end
+      end
+      legacyProxy = setmetatable(p, { __index = db })
+    end
+    return legacyProxy, zdb
+  end
   return db, zdb
 end
 M.Questie = questie
@@ -674,6 +688,9 @@ local function byRank(a, b)
 end
 function M.BuildTargets(list, me)
   local out = {}
+  -- (5.0 STABLE) guide de quêtes coupé : plus aucune cible de quête ni d'arrêt du trajet (un point posé à la main reste)
+  local guide = not (T.QuestGuideOn and not T:QuestGuideOn())
+  if not guide then list = nil end
   local c = M.char and M.char.custom
   if type(c) == "table" and c.mapID and c.x then
     out[#out + 1] = { key = "custom", kind = "custom", title = c.name or "Point perso", label = c.name or "Point perso",
@@ -703,8 +720,9 @@ function M.BuildTargets(list, me)
   end
   -- (ZONEPLAN) l'arrêt en cours du trajet passe devant (après un point perso) ; (ZONEFIX) pendant un recalcul du
   -- trajet (quelques images sans étapes), l'ancien arrêt 1 reste visé : la boussole ne saute plus d'une cible à l'autre
-  local pt = routeTarget(me)
-  if type(pt) ~= "table" then
+  local pt = guide and routeTarget(me) or nil
+  if not guide then M.lastPlan = nil
+  elseif type(pt) ~= "table" then
     local P = T.Planner
     local busy = P and ((P.Busy and P:Busy()) or (P.route and not P.steps))
     local last = M.lastPlan
@@ -1583,7 +1601,8 @@ function M:OnEnable()
       -- (QA-QUEST F3) nouvelle zone : un point posé à la main sur un autre continent ne guide plus
       self:RegisterEvent(ev, function() pcall(M.DropUnreachable) rebuildSoon() end)
     else
-      self:RegisterEvent(ev, function() rebuildSoon() end)
+      -- (5.0 STABLE) guide de quêtes coupé : le journal ne fait plus rien recalculer ici
+      self:RegisterEvent(ev, function() if not (T.QuestGuideOn and not T:QuestGuideOn()) then rebuildSoon() end end)
     end
   end
   self:RegisterEvent("PLAYER_ENTERING_WORLD", function() rebuildSoon("init") M.Refresh() end)
@@ -1611,7 +1630,8 @@ function M:OnEnable()
   if A and type(A.Subscribe) == "function" and not M._spfSub then
     M._spfSub = spfCall(A, "Subscribe", function() if frame then pcall(M.Refresh) end end) or true
   end
-  self:On("QUESTS_UPDATED", function() rebuildSoon() end)
+  self:On("QUESTS_UPDATED", function() if not (T.QuestGuideOn and not T:QuestGuideOn()) then rebuildSoon() end end)
+  self:On("QUEST_GUIDE_CHANGED", function() pcall(M.Rebuild, "force") M.Refresh() end)   -- (5.0 STABLE)
   -- ticker (1 s) : immobile et affichée → un coup d'œil (as-tu bougé ?) ; effacée pour une raison qui peut changer
   -- seule (autre flèche, pas de position, pas de cible) → revue toutes les 2 s ; coupée, morte, en instance, en combat
   -- (option) → rien (les évènements la réveillent) ; cibles revues toutes les 10 s quand elle est à l'écran et que tu
@@ -1633,6 +1653,8 @@ function M:OnEnable()
       end
     end)
   end
+  -- (5.0 STABLE) immobile : le coup d'œil 3 fois moins souvent (le cœur le ramène à 1 s dès que tu bouges)
+  if M.ticker and M.ticker.IdleStretch then M.ticker:IdleStretch(3) end
   -- (PERF4, si le cœur l'offre) réveil dès que tu te remets à bouger : la flèche repart sans attendre le coup d'œil
   if T.OnMotion then T:OnMotion("Compass", function() if frame and frame:IsShown() then M.Glance() end end) end
   T:After(2, function() pcall(M.Rebuild, "init") M.Refresh() end)

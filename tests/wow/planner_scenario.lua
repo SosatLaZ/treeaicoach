@@ -136,6 +136,9 @@ return function(M, ctx)
   end
 
   -- ------------------------------------------------------------------ export (QuestieDB → TreeAIDB.export)
+  -- (5.0 STABLE) the quest log above was set without any game event: the shared log snapshot (kept until the log
+  -- really changes) is told so, as QUEST_LOG_UPDATE does in the game
+  ctx.fire("QUEST_LOG_UPDATE")
   local t0 = X.builtAt
   check(X:Rebuild(), "export lancé")
   check(X.builtAt == t0, "export découpé (coroutine), pas synchrone")

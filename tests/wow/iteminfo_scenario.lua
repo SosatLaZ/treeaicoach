@@ -357,9 +357,14 @@ return function(M, ctx)
   show(91001)
   check(st.built == b1 + 1, "quest log change invalidates")
   b1 = st.built
+  -- (5.0 STABLE) a real change of the group: a GROUP_ROSTER_UPDATE that changes nothing is noise the core drops
+  M.group = { { name = "Compagnon", class = "WARRIOR", level = 27, online = true } }
   ctx.fire("GROUP_ROSTER_UPDATE")
   show(91001)
   check(st.built == b1 + 1, "group change invalidates")
+  M.group = {}
+  ctx.fire("GROUP_ROSTER_UPDATE")
+  M.Advance(1, 0.1)
 
   -- 11. données d'objet asynchrones : « chargement… » une fois, puis la vraie réponse ----------------------
   M.AddItem(91030, { name = "Bottes lointaines", classID = 4, subclassID = 2, equipLoc = "INVTYPE_FEET", quality = 2,

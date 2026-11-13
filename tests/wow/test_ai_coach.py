@@ -337,6 +337,12 @@ def test_mode_flag_no_longer_shadows_the_wow_check(monkeypatch):
     eng._wow_db = E.scenario("full")["db"]
     monkeypatch.setattr(ai_context, "live_state", lambda engine=None: {})
     monkeypatch.setattr(ai_context, "load_plan", lambda engine=None: None)
+    # the scenario's data are dated E.NOW: the answers must not depend on the day the test runs (the AH prices of the
+    # fixture were « trop vieux » three days after it was written)
+    fixed = SimpleNamespace(time=lambda: E.NOW, strftime=ai_context.time.strftime, localtime=ai_context.time.localtime,
+                            gmtime=ai_context.time.gmtime, monotonic=ai_context.time.monotonic)
+    monkeypatch.setattr(ai_context, "time", fixed)
+    monkeypatch.setattr(F, "time", fixed)
     assert eng._wow_on() is True
     should_listen = (lambda: bool(getattr(eng, "_in_game", False)) or eng._wow_on())
     assert should_listen() is True

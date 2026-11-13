@@ -228,6 +228,47 @@ end
 
 -- (LITE) calculs tirés des sacs mémorisés jusqu'au prochain changement de sacs (événement), un nombre de cases
 -- libres différent, ou 10 s : API.BagMemo("clé", fn, ...) rend les mêmes valeurs que fn(...)
+do
+  -- (5.0 STABLE) lectures QuestieDB mémorisées : la base ne change pas pendant la session, mais chaque lecture de la
+  -- vraie bibliothèque décode une ligne et rend une COPIE (dizaines de µs). Une lecture par (source, champ, id), partagée
+  -- par tous les modules ; tables rendues en lecture seule. Vidé au changement de zone ou à QDB_MAX entrées.
+  local memo = setmetatable({}, { __mode = "k" })     -- source (table) -> { [nom] = lecteur mémorisé }
+  local caches = setmetatable({}, { __mode = "k" })   -- cache -> true
+  local count, NILV = 0, {}
+  API.QDB_MAX = 40000
+  function API.QuestieMemoReset()
+    for c in pairs(caches) do for k in pairs(c) do c[k] = nil end end
+    count = 0
+  end
+  function API.QuestieMemo(src, name, raw)
+    if type(src) ~= "table" or type(raw) ~= "function" then return raw end
+    local m = memo[src]
+    if not m then m = {}; memo[src] = m end
+    local f = m[name]
+    if f then return f end
+    local cache = {}
+    caches[cache] = true
+    f = function(id, key)
+      if id == nil or key == nil then return nil end
+      local c = cache[key]
+      if not c then c = {}; cache[key] = c end
+      local v = c[id]
+      if v ~= nil then
+        if v == NILV then return nil end
+        return v
+      end
+      local ok, r = pcall(raw, id, key)
+      if not ok then return nil end
+      count = count + 1
+      if count > API.QDB_MAX then API.QuestieMemoReset(); c = {}; cache[key] = c end
+      c[id] = (r == nil) and NILV or r
+      return r
+    end
+    m[name] = f
+    return f
+  end
+  function API.QuestieMemoCount() return count end
+end
 local bagGen, bagMemo = 0, {}
 function API.BagGen() return bagGen end
 function API.BagChanged() bagGen = bagGen + 1 end
@@ -492,9 +533,8 @@ TreeAI._stats = TreeAI._stats or {}   -- [module] = { calls, ms } (SelfTest / «
 local curOwner                         -- module dont le code tourne en ce moment (nil = cœur)
 local function isMod(o) return type(o) == "table" and o ~= TreeAI and o.IsEnabled ~= nil and o.name ~= nil end
 local statOf = setmetatable({}, { __mode = "k" })   -- propriétaire -> sa ligne de TreeAI._stats (sans recalcul)
-local coreKey = {}
 local function addStat(owner, ms)
-  local key = owner or coreKey
+  local key = owner or statOf   -- (le cœur : la table elle-même sert de clé)
   local st = statOf[key]
   if not st then
     local name = isMod(owner) and owner.name or "Core"
@@ -505,17 +545,59 @@ local function addStat(owner, ms)
   st.calls = st.calls + 1
   st.ms = st.ms + (ms or 0)
 end
+-- (5.0 STABLE) PICS : chaque appel réparti (événement, message, minuteur, travail étalé, crochet gardé) est déjà
+-- chronométré ici. Un appel dont le temps PROPRE (sans ceux qu'il déclenche) dépasse Spikes.MS, ou une image où TreeAI
+-- dépasse Spikes.FRAME_MS en tout, est noté (TreeAI.Spikes, plus bas) : module, travail, ms, combat, barres de nom,
+-- groupe. CHIEN DE GARDE : un module qui lève WD.ERR_N erreurs ou WD.SLOW_N pics en une minute est mis en pause
+-- jusqu'au /reload (le jeu reste jouable quoi qu'il arrive).
+local SK = { child = 0, depth = 0, frame = 0, max = 0, who = nil, job = nil, calls = 0 }   -- + SK.note / SK.trouble (TreeAI.Spikes)
 --- appelle fn au nom de `owner` (minuteurs créés dedans = les siens), chronométré
 local function runAs(owner, fn, ...)
   local prev = curOwner
   curOwner = owner
   local t0 = profile and profile()
+  local kid = SK.child
+  SK.child = 0
+  SK.depth = SK.depth + 1
+  local probe = SK.probe   -- (tests : mémoire allouée par appel ; nil en jeu)
+  if probe then probe(owner, TreeAI._ctx, true) end
   local ok, err = safecall(fn, ...)
-  if t0 then addStat(owner, (profile() or t0) - t0) end
+  if probe then probe(owner, TreeAI._ctx, false) end
+  SK.depth = SK.depth - 1
+  if t0 then
+    local dt = (profile() or t0) - t0
+    addStat(owner, dt)
+    local own = dt - SK.child   -- temps propre : sans les appels répartis qu'il a lui-même déclenchés
+    SK.child = kid + dt
+    if SK.depth == 0 then SK.frame = SK.frame + dt end
+    SK.calls = SK.calls + 1
+    if own > SK.max then SK.max, SK.who, SK.job = own, owner, TreeAI._ctx end
+    if own >= TreeAI.Spikes.MS and SK.note then SK.note(owner, TreeAI._ctx, own) end
+  else
+    SK.child = kid
+  end
+  if not ok and SK.trouble then SK.trouble(owner, "err") end
   curOwner = prev
   return ok, err
 end
 TreeAI._RunAs = runAs
+TreeAI._SetRunProbe = function(fn) SK.probe = type(fn) == "function" and fn or nil end
+TreeAI.Spikes = TreeAI.Spikes or { MS = 8, FRAME_MS = 12, KEEP = 30 }
+
+--- (5.0 STABLE) enveloppe d'un crochet qui ne passe pas par le répartiteur (infobulle, OnUpdate, hooksecurefunc) :
+--- compté dans /tai perf et /tai pics, erreurs retenues, plus rien si le module est coupé ou mis en pause.
+function TreeAI:Guard(owner, name, fn)
+  if type(fn) ~= "function" then return function() end end
+  local mod = isMod(owner) and owner or nil
+  local ctx = tostring(mod and mod.name or "core") .. ":" .. tostring(name)
+  return function(...)
+    if mod and (mod._asleep or mod._active == false) then return end
+    local prev = TreeAI._ctx
+    TreeAI._ctx = ctx
+    runAs(mod, fn, ...)
+    TreeAI._ctx = prev
+  end
+end
 
 local timerFrame, timers
 local function ensureTimerFrame()
@@ -535,13 +617,29 @@ local function ensureTimerFrame()
   end)
 end
 
+do  -- (5.0 STABLE) « Module:après 0.8 s » : le nom du travail dans /tai pics (une chaîne par module et par délai)
+  local memo = setmetatable({}, { __mode = "k" })
+  local coreMemo = {}
+  TreeAI._afterCtx = function(owner, sec)
+    local m = owner and memo[owner] or coreMemo
+    if owner and not memo[owner] then m = {}; memo[owner] = m end
+    local k = tonumber(sec) or 0
+    local c = m[k]
+    if not c then c = tostring(owner and owner.name or "core") .. ":après " .. tostring(k) .. " s"; m[k] = c end
+    return c
+  end
+end
 TreeAI.AFTER_HEAVY = 0.25   -- (4.2 FIX42) rappels différés « lourds » confiés à l'ordonnanceur (TreeAI._sliceAfter)
 function TreeAI:After(sec, fn)
   if type(fn) ~= "function" then return end
   local owner = isMod(curOwner) and curOwner or nil
+  local ctx = TreeAI._afterCtx(owner, sec)
   local cb = function()
     if owner and owner._suspended then return end   -- module coupé entre-temps : rien
+    local prev = TreeAI._ctx
+    TreeAI._ctx = ctx
     runAs(owner, fn)
+    TreeAI._ctx = prev
   end
   -- (4.2 FIX42, « micro-lag toutes les secondes ») un rafraîchissement regroupé (≥ 0,25 s : Quêtes, Planificateur,
   -- Nettoyage, Suivi…) passe par l'ordonnanceur : jamais deux travaux lourds dans la même image, budget ~1,5 ms
@@ -610,6 +708,7 @@ local function schedStep(elapsed)
     if n > 1 then tsort(dueBuf, byNext) end
     schedNext = math.huge   -- un minuteur lancé par un rappel ci-dessous l'abaisse (startTicker)
     local big, BIG_MS = false, TreeAI.BIG_MS
+    local ran = 0
     for i = 1, n do
       local p = dueBuf[i]
       dueBuf[i] = nil
@@ -622,7 +721,14 @@ local function schedStep(elapsed)
           or (t0 and (profile() - t0) + est > SLICE_MS)) then
         -- reste dû : passera à l'image suivante (file par échéance, le plus en retard d'abord)
         if p.next < m then m = p.next end
+      elseif not coarse and ran > 0 and t0 and (p.once or p.sec >= 1)
+          and (profile() - t0) >= ((p.once and not p.cost) and SLICE_MS / 3 or SLICE_MS) then
+        -- (5.0 STABLE) l'image a déjà dépensé son budget (rappels jamais mesurés à la connexion, travail plus long
+        -- que prévu) : tout ce qui n'est pas une minuterie rapide attend l'image suivante ; un rappel jamais mesuré
+        -- (coût inconnu : la connexion en lance des dizaines) n'entre que dans une image encore presque vide
+        if p.next < m then m = p.next end
       else
+        ran = ran + 1
         if p.once then
           p.cancelled = true   -- rappel unique : retiré au prochain passage
         else
@@ -661,6 +767,16 @@ local function schedStep(elapsed)
 end
 TreeAI._SchedStep = schedStep   -- tests
 
+--- (5.0 STABLE) un événement vient d'arriver pour ce minuteur « de marche » étiré : prochain battement à sa cadence
+--- normale (le joueur immobile ne retarde pas la réaction à ce qui se passe autour de lui)
+function Ticker:Kick()
+  local t = now()
+  if self.next and self.next > t + self.sec then
+    self.next = t + self.sec
+    if self.next < schedNext then schedNext = self.next end
+  end
+  return self
+end
 --- (4.0.1) le joueur se met à bouger : minuteurs étirés ramenés à leur cadence, dormeurs réveillés
 function TreeAI:WakeMotion()
   local t = now()
@@ -705,6 +821,11 @@ local function ensureSched()
         local a = MO.acc + (elapsed or 0)
         if a >= 1 then MO.acc = 0 safecall(motionPoll) else MO.acc = a end   -- (4.0.1) 1 coup d'œil / s
         if slicePending or SP.n > 0 or now() >= schedNext then safecall(schedStep, elapsed) end   -- image sans travail : 1 comparaison
+        -- (5.0 STABLE) fin d'image : TreeAI a-t-il dépassé Spikes.FRAME_MS en tout ? (image sans appel : 1 comparaison)
+        if SK.calls > 0 then
+          if SK.frame >= TreeAI.Spikes.FRAME_MS and SK.note then SK.note(SK.who, SK.job, SK.frame, SK.calls, SK.max) end
+          SK.frame, SK.max, SK.who, SK.job, SK.calls = 0, 0, nil, nil, 0
+        end
       end)
       schedFrame = f
     end
@@ -721,7 +842,13 @@ local function schedHandle(p)
 end
 local function startTicker(p)
   if p.real or p.cancelled then return end
-  local cb = function() runAs(p.owner, p.fn) end
+  local ctx = tostring(p.owner and p.owner.name or "core") .. ":minuteur " .. tostring(p.sec) .. " s"
+  local cb = function()
+    local prev = TreeAI._ctx
+    TreeAI._ctx = ctx
+    runAs(p.owner, p.fn)
+    TreeAI._ctx = prev
+  end
   if ensureSched() then
     schedSeq = schedSeq + 1
     local frac = (schedSeq * 0.6180339887) % 1   -- phase propre (nombre d'or) dans la seconde
@@ -795,7 +922,16 @@ local function ownerActive(owner)
   return true
 end
 
-local AURA_UNITS = { player = true, pet = true, target = true, focus = true }
+-- (5.0 STABLE) jeux d'unités nommés pour RegisterUnitEvent(event, "group", fn) : joueur, familier, membres du groupe / raid
+TreeAI.UNITSETS = { self = { player = true, pet = true }, focus = { player = true, pet = true, target = true, focus = true },
+  group = { player = true, pet = true } }
+for i = 1, 4 do TreeAI.UNITSETS.group["party" .. i] = true TreeAI.UNITSETS.group["partypet" .. i] = true end
+for i = 1, 40 do TreeAI.UNITSETS.group["raid" .. i] = true end
+-- événement -> false (un handler veut toutes les unités) | { unité = true } (union des unités voulues) ; nil = à refaire.
+-- Tous les handlers d'un UNIT_* filtrés : l'événement d'une barre de nom ne coûte qu'une lecture de table.
+-- DX.feed : événement -> fn(event, ...) : flux regroupés (T:OnBags / OnQuestLog / OnPlates / OnItemInfo)
+local DX = { aura = { player = true, pet = true, target = true, focus = true }, unitAny = {}, feed = {}, keep = { ADDON_LOADED = true, PLAYER_LOGIN = true, PLAYER_LOGOUT = true,
+  CHAT_MSG_ADDON = true, PLAYER_REGEN_ENABLED = true, PLAYER_REGEN_DISABLED = true } }
 local evGen = 0   -- (4.0.1) événements reçus : le cycle des :AutoRefresh() sait si quelque chose s'est passé
 -- (4.0.1) le journal de quêtes a pu changer : compteur avancé AVANT les handlers (T:QuestGen) → les relevés du
 -- journal partagés (Export.LogSnapshot) se refont, sans dépendre de l'ordre des modules
@@ -808,6 +944,13 @@ function TreeAI:QuestGen() return self._questGen end
 function TreeAI:QuestLogSig(fresh)
   local m = self._qsig
   if not fresh and m and m.gen == self._questGen then return m.sig end
+  if self._QuestRead then   -- (5.0 STABLE) client récent : lecture sans table (une passe par image, partagée)
+    local st, known = self._QuestRead()
+    if known then
+      self._qsig = { gen = self._questGen, sig = st }
+      return st
+    end
+  end
   local parts, ok = {}, false
   local QL = rawget(_G, "C_QuestLog")
   if QL and QL.GetNumQuestLogEntries and QL.GetInfo then
@@ -864,7 +1007,8 @@ local dispatch
 do
 local Q_OPEN = { QUEST_ACCEPTED = true, QUEST_REMOVED = true, QUEST_TURNED_IN = true }
 local Q_HOLD = { QUEST_LOG_UPDATE = true, UNIT_QUEST_LOG_CHANGED = true, QUEST_WATCH_UPDATE = true }
-local qb = { last = -100, held = {}, order = {}, armed = false, flushing = false, n = 0, seen = {}, open = false }
+local qb = { last = -100, first = -100, held = {}, order = {}, armed = false, flushing = false, n = 0, seen = {}, open = false,
+  out = {}, noise = 0 }
 local selfWatch = {}
 TreeAI._questBurst = qb
 --- TreeAI va changer le suivi de q (ajout = added) : l'événement que le jeu en renvoie est le nôtre
@@ -872,32 +1016,78 @@ function TreeAI:ExpectQuestWatch(q, added)
   q = tonumber(q)
   if q then selfWatch[q] = { a = added and true or false, at = now() } end
 end
+TreeAI._IsSelfWatch = function(q)
+  q = tonumber(pub(q))
+  local e = q and selfWatch[q]
+  return (e and now() - e.at < 3) and true or false
+end
+-- (5.0 STABLE) « ça bugue quand les quêtes s'actualisent » : le jeu envoie QUEST_LOG_UPDATE pour tout et pour rien
+-- (points de carte, journal d'un équipier, 3-4 fois par monstre). Chaque sorte d'événement n'est donnée que si l'état
+-- du journal (quêtes, finies, objectifs remplis, compteurs, textes : TreeAI._QuestState) a changé depuis SA dernière
+-- remise ; le bruit ne réveille plus personne. Et une rafale ne peut plus retenir les événements sans fin (avant :
+-- un QUEST_LOG_UPDATE toutes les 0,5 s repoussait la remise indéfiniment) : au plus 2 × QUEST_SETTLE après le premier.
+local function changed(ev)
+  -- QUEST_WATCH_UPDATE = « un objectif suivi vient d'avancer » : toujours vrai, jamais du bruit
+  if ev == "QUEST_WATCH_UPDATE" then return true end
+  local st = TreeAI._QuestState and TreeAI._QuestState()
+  if st ~= nil and st == qb.out[ev] then return false end
+  qb.out[ev] = st
+  return true
+end
 local function qbFlush()
-  local wait = qb.last + TreeAI.QUEST_SETTLE - now()
-  if wait > 0.02 then coreLater(wait, qbFlush) return end
+  local t = now()
+  local wait = qb.last + TreeAI.QUEST_SETTLE - t
+  if wait > 0.02 and t - qb.first < 2 * TreeAI.QUEST_SETTLE then coreLater(wait, qbFlush) return end
   qb.armed = false
-  local order, held = qb.order, qb.held
-  qb.order, qb.held = {}, {}
+  local order, held, open = qb.order, qb.held, qb.open
+  qb.order, qb.held, qb.open, qb.seen = {}, {}, false, {}
   qb.flushing = true
   for _, ev in ipairs(order) do
     local a = held[ev]
-    if a then qb.n = qb.n + 1 safecall(dispatch, ev, unpack(a, 1, a.n)) end
+    -- (QUEST_WATCH_LIST_CHANGED : toujours remis ; les autres seulement si le journal a changé depuis leur dernière remise)
+    if a and (open or not Q_HOLD[ev] or changed(ev)) then
+      if open and Q_HOLD[ev] then changed(ev) end   -- état remis = état courant
+      qb.n = qb.n + 1
+      safecall(dispatch, ev, unpack(a, 1, a.n))
+    elseif a then
+      qb.noise = qb.noise + 1
+    end
   end
   qb.flushing = false
 end
 local function qbHold(ev, ...)
   if not qb.held[ev] then qb.order[#qb.order + 1] = ev end
   qb.held[ev] = pack(...)
-  if not qb.armed then qb.armed = true coreLater(TreeAI.QUEST_SETTLE, qbFlush) end
+  if not qb.armed then
+    qb.armed, qb.first = true, now()
+    coreLater(TreeAI.QUEST_SETTLE, qbFlush)
+  end
   return true
 end
---- vrai = événement retenu (donné une fois à la fin de la rafale)
+--- (5.0 STABLE) T:QuestGen() n'avance que si le journal a VRAIMENT changé : un monstre tué envoie 3 sortes
+--- d'événements, mais les relevés partagés du journal (Export.LogSnapshot…) ne se refont qu'une fois
+function TreeAI._QuestGenBump(event)
+  if Q_HOLD[event] then
+    local st = TreeAI._QuestState and TreeAI._QuestState()
+    if st ~= nil and st == qb.genState then return end
+    qb.genState = st
+  else
+    qb.genState = nil
+  end
+  TreeAI._questGen = TreeAI._questGen + 1
+end
+--- vrai = événement retenu (donné une fois à la fin de la rafale) ; "noise" = rien n'a changé dans le journal : jeté
 function TreeAI._QuestHold(event, ...)
   if qb.flushing then return false end
   local t = now()
-  local fresh = t - qb.last >= TreeAI.QUEST_SETTLE and not qb.armed
-  if fresh then qb.seen, qb.open = {}, false end
-  if Q_OPEN[event] then qb.last, qb.open = t, true return false end
+  if Q_OPEN[event] then
+    qb.last, qb.open, qb.out = t, true, {}
+    if not qb.armed then   -- la rafale se referme même si rien ne suit (QUEST_REMOVED seul)
+      qb.armed, qb.first = true, t
+      coreLater(TreeAI.QUEST_SETTLE, qbFlush)
+    end
+    return false
+  end
   if event == "QUEST_WATCH_LIST_CHANGED" then
     local q = tonumber(pub((...)))
     local e = q and selfWatch[q]
@@ -910,25 +1100,82 @@ function TreeAI._QuestHold(event, ...)
   end
   if not Q_HOLD[event] then return false end
   if event == "UNIT_QUEST_LOG_CHANGED" and pub((...)) ~= "player" then return false end
+  if qb.open then qb.last = t return qbHold(event, ...) end   -- quête prise / rendue : tout regroupé à la fin
   -- hors quête prise / rendue (un monstre tué, un objectif qui avance) : le premier de chaque sorte tout de suite
-  -- (nombres à jour sur les barres de nom), les suivants regroupés en un seul, à la fin de la rafale
+  -- (nombres à jour sur les barres de nom) s'il apporte du neuf, les suivants regroupés en un seul à la fin
+  local seenAt = qb.seen[event]
+  if not seenAt or t - seenAt >= TreeAI.QUEST_SETTLE then
+    if not changed(event) then qb.noise = qb.noise + 1 return "noise" end
+    qb.seen[event] = t
+    return false
+  end
   qb.last = t
-  if not qb.open and not qb.seen[event] then qb.seen[event] = true return false end
   return qbHold(event, ...)
+end
+
+-- (5.0 STABLE) bruit : GROUP_ROSTER_UPDATE tombe en rafales sans que le groupe change (un équipier change de zone,
+-- champ de bataille, raid) ; ses handlers (17 modules) ne sont appelés que si la composition a VRAIMENT changé depuis
+-- la dernière remise (membres, connecté ou non, niveau : TreeAI._RosterState ; état illisible = remis). Les modules qui
+-- s'abonnent encore à l'événement brut en profitent sans changer. (BAG_UPDATE_DELAYED / UNIT_INVENTORY_CHANGED ne sont
+-- PAS filtrés : leurs handlers invalident des mémoires — une infobulle doit dire vrai tout de suite ; le travail lourd
+-- sur les sacs passe par T:OnBags.)
+local HOLD = {
+  GROUP_ROSTER_UPDATE = { sig = "_RosterState" },
+  PARTY_MEMBERS_CHANGED = { sig = "_RosterState" },
+}
+TreeAI.HOLD = HOLD
+for _, pol in pairs(HOLD) do pol.n, pol.noise = 0, 0 end
+--- vrai = jeté (rien n'a changé : le répartiteur ne donne rien)
+function DX.held(pol)
+  local f = TreeAI[pol.sig]
+  local st = f and f()
+  if st ~= nil and st == pol.state then pol.noise = pol.noise + 1 return true end
+  pol.state = st
+  pol.n = pol.n + 1
+  return false
 end
 end
 
+function DX.union(event)
+  local uo, list = TreeAI._unitOf[event], handlers[event]
+  local u = false
+  if uo and list then
+    u = {}
+    for _, fn in pairs(list) do
+      local f = uo[fn]
+      if not f then u = false break end
+      for k in pairs(f) do u[k] = true end
+    end
+  end
+  DX.unitAny[event] = u
+  return u
+end
 dispatch = function(event, ...)
+  local feed = DX.feed[event]
+  if feed then feed(event, ...) end
   local list = handlers[event]
   if not list then return end
-  if TreeAI.QUEST_EVENTS[event] and TreeAI._QuestHold(event, ...) then
-    TreeAI._questGen = TreeAI._questGen + 1
-    return
+  if TreeAI.QUEST_EVENTS[event] then
+    local h = TreeAI._QuestHold(event, ...)
+    if h then
+      if h ~= "noise" then TreeAI._QuestGenBump(event) end
+      return
+    end
+  else
+    local pol = TreeAI.HOLD[event]
+    if pol and DX.held(pol) then return end
   end
   -- (LITE) auras : seulement joueur / familier / cible (pas chaque membre du groupe ni chaque barre de nom)
-  if event == "UNIT_AURA" and not AURA_UNITS[(...)] then return end
+  if event == "UNIT_AURA" and not DX.aura[(...)] then return end
+  -- (5.0 STABLE) foule : un UNIT_* dont aucune unité n'intéresse personne, un message d'un autre addon : rien du tout
+  local ua = DX.unitAny[event]
+  if ua == nil then ua = DX.union(event) end
+  if ua then
+    local u1 = (...)
+    if u1 == nil or not ua[u1] then return end
+  elseif event == "CHAT_MSG_ADDON" and (...) ~= TreeAI.PREFIX then return end
   evGen = evGen + 1
-  if TreeAI.QUEST_EVENTS[event] then TreeAI._questGen = TreeAI._questGen + 1 end
+  if TreeAI.QUEST_EVENTS[event] then TreeAI._QuestGenBump(event) end
   local prev = TreeAI._ctx
   -- TAINT : le jeu signale le blocage pendant l'appel fautif → garder le module qui tournait (pas « core:ADDON_… »)
   if event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN" then TreeAI._blockCtx = prev end
@@ -990,6 +1237,7 @@ function TreeAI:RegisterEvent(event, owner, fn)
     end
   end
   handlers[event][owner] = fn
+  DX.unitAny[event] = nil
   return true
 end
 
@@ -1002,9 +1250,8 @@ function TreeAI:UnregisterEvent(event, owner)
   local list = handlers[event]
   if not list then return end
   list[owner] = nil
-  if next(list) == nil and event ~= "ADDON_LOADED" and event ~= "PLAYER_LOGIN"
-     and event ~= "PLAYER_LOGOUT" and event ~= "CHAT_MSG_ADDON"
-     and event ~= "PLAYER_REGEN_ENABLED" and event ~= "PLAYER_REGEN_DISABLED" then
+  DX.unitAny[event] = nil
+  if next(list) == nil and not DX.keep[event] then
     handlers[event] = nil
     if frame then pcall(frame.UnregisterEvent, frame, event) end
   end
@@ -1052,6 +1299,7 @@ local function resumeModule(mod)
   end
 end
 TreeAI._SuspendModule, TreeAI._ResumeModule = suspendModule, resumeModule
+TreeAI._UnitFilterChanged = function(event) DX.unitAny[event] = nil end
 
 --- les événements de jeu auxquels TreeAI est abonné (tests / perf)
 function TreeAI:RegisteredEvents()
@@ -1235,12 +1483,12 @@ end
 -- le cycle n'appelle personne (seules les lignes expirées sont retirées) ; un cycle complet au moins toutes les 30 s
 TreeAI.AUTO_IDLE_MAX = 30
 local cycEv, cycAt, cycPos = -1, -1e9, {}
-local function quietCycle(list, t)
+-- (5.0 STABLE) le calme se juge par module : avant, UN module sans autoIdleSafe (Conseils pro, Métiers… en mode sûr)
+-- suffisait pour que TOUS les :AutoRefresh() tournent toutes les 3 s à l'arrêt (le tracé de la minimap réveillé à
+-- chaque cycle…). Maintenant : au calme, seuls les modules qui ne se déclarent pas « sans travail au calme » sont
+-- appelés (cycle étiré ×3) ; les autres dorment jusqu'au prochain événement / mouvement / cycle complet.
+local function quietCycle(_, t)
   if evGen ~= cycEv or t - cycAt >= TreeAI.AUTO_IDLE_MAX or TreeAI:Moved(cycPos, 0.0005) then return false end
-  for i = 1, #list do
-    local m = TreeAI.modules[list[i]]
-    if m and m._active and not m.autoIdleSafe then return false end
-  end
   return true
 end
 
@@ -1263,19 +1511,23 @@ function TreeAI:StartAutoRefresh()
     local list = autoRefreshMods()
     local t = now()
     local rt = self._refreshTicker
-    if quietCycle(list, t) then
+    local quiet = quietCycle(list, t)
+    if quiet then
       if rt then rt.stretch = 3 end   -- calme plat et immobile : un cycle toutes les 9 s (le mouvement le ramène à 3 s)
-      if self.RefreshPanel and self:PanelDirty() then self:RequestRefresh() end
-      return
+    else
+      if rt then rt.stretch = nil end
+      cycEv, cycAt = evGen, t
+      self:Stamp(cycPos)
     end
-    if rt then rt.stretch = nil end
-    cycEv, cycAt = evGen, t
-    self:Stamp(cycPos)
     sliceFight = fighting and true or false
     for i = 1, #list do
       local name = list[i]
       local m = self.modules[name]
-      if m and m._active then sliceN = sliceN + 1; sliceQ[sliceN] = name end
+      if m and m._active and not (quiet and m.autoIdleSafe) then sliceN = sliceN + 1; sliceQ[sliceN] = name end
+    end
+    if sliceN == 0 then   -- calme et rien à appeler : seules les lignes expirées partent
+      if self.RefreshPanel and self:PanelDirty() then self:RequestRefresh() end
+      return
     end
     sliceHead, sliceAt = 1, now() + mmax(1, base * k - 1)
     if schedFrame then slicePending = true return end
@@ -1446,7 +1698,7 @@ end
 local ModuleMixin = {}
 
 function ModuleMixin:IsEnabled()
-  if self._enabled == false or self._gateOff then return false end
+  if self._enabled == false or self._gateOff or self._asleep or self._guideOff then return false end
   local s = TreeAI.settings
   if s and s.enabled == false then return false end
   return not (self.db and self.db.enabled == false) and self._classOK ~= false
@@ -1464,9 +1716,13 @@ function ModuleMixin:RegisterUnitEvent(event, unit1, unit2, fn)
   if ok then   -- filtre lu par le répartiteur avant tout appel (gardé tel quel quand le module est coupé / rallumé)
     local uo = TreeAI._unitOf[event]
     if not uo then uo = setmetatable({}, { __mode = "k" }); TreeAI._unitOf[event] = uo end
-    local set = { [unit1] = true }
-    if unit2 then set[unit2] = true end
+    local set = TreeAI.UNITSETS[unit1]   -- (5.0 STABLE) « group » / « self » / « focus » : jeu d'unités partagé
+    if not set then
+      set = { [unit1] = true }
+      if unit2 then set[unit2] = true end
+    end
     uo[handler] = set
+    TreeAI._UnitFilterChanged(event)
   end
   return ok
 end
@@ -1575,6 +1831,762 @@ local function moduleDisable(mod)
   suspendModule(mod)
 end
 TreeAI._ModuleEnable, TreeAI._ModuleDisable = moduleEnable, moduleDisable
+
+---------------------------------------------------------------------------
+-- (5.0 STABLE) « jouer sans que ça bugue » : pics de lenteur (TreeAI.Spikes), chien de garde (module en pause),
+-- flux regroupés (sacs / journal de quêtes / barres de nom / infos d'objet), interrupteur du guide de quêtes.
+-- Dans une fonction à part : la portée principale du fichier est au plafond des 200 locales de Lua.
+---------------------------------------------------------------------------
+;(function()
+  local Spk = TreeAI.Spikes
+  local PL = { set = {}, n = 0 }   -- barres de nom présentes (jeton -> true)
+  local function round1(v) return math.floor((tonumber(v) or 0) * 10 + 0.5) / 10 end
+  local function store()
+    local db = TreeAI.db
+    if type(db) ~= "table" then return nil end
+    db.diag = type(db.diag) == "table" and db.diag or {}
+    local s = db.diag.spikes
+    if type(s) ~= "table" or s.ver ~= TreeAI.version then   -- une version = un relevé propre
+      s = { ver = TreeAI.version, since = wallclock(), calls = 0, frames = 0, top = {}, last = {} }
+      db.diag.spikes = s
+    end
+    if type(s.top) ~= "table" then s.top = {} end
+    if type(s.last) ~= "table" then s.last = {} end
+    return s
+  end
+  Spk.Store = store
+  --- note un pic : un appel (ms = son temps propre) ou une image entière (calls = appels de l'image, big = le plus gros)
+  function Spk.Note(modName, job, ms, calls, big)
+    local s = store()
+    if not s then return nil end
+    ms = round1(ms)
+    local plates = PL.n
+    local NP = _G.C_NamePlate
+    if NP and NP.GetNamePlates then local l = try(NP.GetNamePlates) if type(l) == "table" then plates = #l end end
+    local kind = calls and "image" or "appel"
+    if calls then s.frames = (tonumber(s.frames) or 0) + 1 else s.calls = (tonumber(s.calls) or 0) + 1 end
+    local e = { m = tostring(modName or "Core"), j = tostring(job or "?"), ms = ms, k = kind, c = TreeAI:InCombat() or nil,
+      p = plates, g = tonumber((pub(try(_G.GetNumGroupMembers)))) or 0, t = wallclock(), n = calls, b = big and round1(big) or nil }
+    local last = s.last
+    last[#last + 1] = e
+    while #last > Spk.KEEP do tremove(last, 1) end
+    -- les 30 plus gros : une ligne par (module, travail, genre), le pire gardé, x = nombre de fois
+    local top, low, lowI = s.top, nil, nil
+    for i = 1, #top do
+      local x = top[i]
+      if type(x) == "table" then
+        if x.m == e.m and x.j == e.j and x.k == kind then
+          x.x = (tonumber(x.x) or 1) + 1
+          if ms > (tonumber(x.ms) or 0) then x.ms, x.c, x.p, x.g, x.t, x.n, x.b = ms, e.c, e.p, e.g, e.t, e.n, e.b end
+          return e
+        end
+        if not low or (tonumber(x.ms) or 0) < low then low, lowI = tonumber(x.ms) or 0, i end
+      end
+    end
+    local copy = { m = e.m, j = e.j, ms = ms, k = kind, c = e.c, p = e.p, g = e.g, t = e.t, n = e.n, b = e.b, x = 1 }
+    if #top < Spk.KEEP then top[#top + 1] = copy elseif lowI and ms > low then top[lowI] = copy end
+    return e
+  end
+  function Spk.Reset()
+    local db = TreeAI.db
+    if type(db) == "table" and type(db.diag) == "table" then db.diag.spikes = nil end
+    return store()
+  end
+  local function spikeText(e, withCount)
+    local where = {}
+    if e.c then where[#where + 1] = "en combat" end
+    if (tonumber(e.p) or 0) > 0 then where[#where + 1] = tostring(e.p) .. " barres de nom" end
+    if (tonumber(e.g) or 0) > 1 then where[#where + 1] = "groupe de " .. tostring(e.g) end
+    local what
+    if e.k == "image" then
+      what = strformat("image entière %.1f ms (%d appels, le plus gros : %s · %s %.1f ms)", tonumber(e.ms) or 0, tonumber(e.n) or 0,
+        tostring(e.m), tostring(e.j), tonumber(e.b) or 0)
+    else
+      what = strformat("%s · %s : %.1f ms", tostring(e.m), tostring(e.j), tonumber(e.ms) or 0)
+    end
+    if withCount and (tonumber(e.x) or 1) > 1 then what = what .. " ×" .. tostring(e.x) end
+    if #where > 0 then what = what .. " (" .. tconcat(where, ", ") .. ")" end
+    return what
+  end
+  --- lignes lisibles (fenêtre « Pics », rapport d'erreurs) : résumé, les plus gros, les derniers, modules en pause
+  function Spk.Lines(maxTop, maxLast)
+    local out = {}
+    local s = store()
+    if not s then return { "Pics de lenteur : pas encore de relevé." } end
+    local d = _G.date
+    local since = (type(d) == "function" and tonumber(s.since) and s.since > 0) and try(d, "%d/%m %H:%M", s.since) or "?"
+    out[#out + 1] = strformat("Pics de lenteur depuis le %s (TreeAI %s) : %d appel(s) de plus de %d ms, %d image(s) de plus de %d ms.",
+      tostring(since), tostring(s.ver), tonumber(s.calls) or 0, Spk.MS, tonumber(s.frames) or 0, Spk.FRAME_MS)
+    local asleep = {}
+    for n, a in pairs(type(s.asleep) == "table" and s.asleep or {}) do
+      if type(a) == "table" then asleep[#asleep + 1] = tostring(n) .. (a.why == "err" and " (erreurs)" or " (trop lent)") end
+    end
+    tsort(asleep)
+    if #asleep > 0 then out[#out + 1] = "Mis en pause par le chien de garde : " .. tconcat(asleep, ", ") end
+    local top = {}
+    for _, e in ipairs(s.top) do if type(e) == "table" then top[#top + 1] = e end end
+    tsort(top, function(a, b) return (tonumber(a.ms) or 0) > (tonumber(b.ms) or 0) end)
+    if #top == 0 then out[#out + 1] = "Aucun pic relevé : TreeAI n'a jamais dépassé la limite ici." return out end
+    out[#out + 1] = "Les plus gros :"
+    for i = 1, mmin(#top, maxTop or Spk.KEEP) do out[#out + 1] = strformat("  %d. %s", i, spikeText(top[i], true)) end
+    out[#out + 1] = "Les derniers :"
+    local n = #s.last
+    for i = n, mmax(1, n - (maxLast or Spk.KEEP) + 1), -1 do
+      local e = s.last[i]
+      if type(e) == "table" then
+        local at = (type(d) == "function" and tonumber(e.t)) and try(d, "%H:%M:%S", e.t) or "?"
+        out[#out + 1] = strformat("  %s  %s", tostring(at), spikeText(e))
+      end
+    end
+    return out
+  end
+
+  -- ------------------------------------------------------------------ chien de garde
+  -- ERR_N erreurs en WIN secondes, ou au moins SLOW_N pics dont la somme atteint SLOW_MS en WIN secondes : le module est
+  -- coupé (OnDisable, événements et minuteurs vraiment arrêtés) jusqu'au /reload ; UNE ligne dans « Maintenant ».
+  -- Les GRACE premières secondes après un écran de chargement ne comptent pas (tout y est lent).
+  local WD = { ERR_N = 5, SLOW_N = 4, SLOW_MS = 200, WIN = 60, GRACE = 15, exempt = { Window = true, Bugs = true, SelfTest = true } }
+  TreeAI.Watchdog = WD
+  local seen = setmetatable({}, { __mode = "k" })
+  local asleep = {}
+  local function notice()
+    local names, slow, err = {}, false, false
+    for _, n in ipairs(asleep) do
+      local m = TreeAI.modules[n]
+      if m and m._asleep then
+        names[#names + 1] = tostring(m.title or n)
+        if m._asleep == "err" then err = true else slow = true end
+      end
+    end
+    if #names == 0 then TreeAI:ClearSuggestion("core:asleep") return end
+    local many = #names > 1
+    local why = (slow and err) and "trop lentes ou en erreur" or (err and "trop d'erreurs") or (many and "trop lentes ici" or "trop lente ici")
+    TreeAI:Suggest("core:asleep", strformat(many and "Fonctions %s mises en pause : %s" or "Fonction %s mise en pause : %s",
+      tconcat(names, ", "), why), 2, { tab = "now", kind = "always", sound = false, ttl = 0,
+      tooltip = "TreeAI l'a coupée pour que le jeu reste fluide. Elle repart au prochain /reload.\nClic : le détail (/tai pics).",
+      onClick = function() if TreeAI.ShowSpikes then TreeAI:ShowSpikes() end end })
+  end
+  function WD.Sleep(mod, why)
+    if not isMod(mod) or mod._asleep then return false end
+    mod._asleep = why or "slow"
+    asleep[#asleep + 1] = mod.name
+    local s = store()
+    if s then
+      s.asleep = type(s.asleep) == "table" and s.asleep or {}
+      s.asleep[mod.name] = { why = mod._asleep, t = wallclock() }
+    end
+    local function finish()   -- OnDisable (ses cadres cachés), ses conseils retirés
+      moduleDisable(mod)
+      safecall(notice)
+      TreeAI:Fire("MODULE_ASLEEP", mod.name, mod._asleep)
+      if TreeAI._modulesStarted and TreeAI._BuildModulesTab then safecall(TreeAI._BuildModulesTab, TreeAI) end
+    end
+    coreLater(0, function()
+      -- tout de suite : plus d'événements ni de minuteurs (aucun cadre touché : permis en combat) ; le reste (cacher
+      -- ses cadres : interdit en combat s'ils sont ancrés sur un cadre protégé) à la sortie du combat
+      suspendModule(mod)
+      if TreeAI:InCombat() and TreeAI.RunOutOfCombat then
+        safecall(notice)
+        TreeAI:RunOutOfCombat("core:asleep:" .. tostring(mod.name), finish)
+      else
+        finish()
+      end
+    end)
+    return true
+  end
+  --- relance les modules en pause sans /reload (bouton de la page « Pics », /tai pics reveil)
+  function WD.WakeAll()
+    local n = 0
+    for _, name in ipairs(asleep) do
+      local m = TreeAI.modules[name]
+      if m and m._asleep then
+        m._asleep = nil
+        seen[m] = nil
+        n = n + 1
+        if TreeAI._loggedIn then moduleEnable(m) end
+      end
+    end
+    asleep = {}
+    local s = store()
+    if s then s.asleep = nil end
+    notice()
+    if TreeAI._modulesStarted and TreeAI._BuildModulesTab then safecall(TreeAI._BuildModulesTab, TreeAI) end
+    return n
+  end
+  function WD.Asleep() local out = {} for _, n in ipairs(asleep) do local m = TreeAI.modules[n] if m and m._asleep then out[#out + 1] = n end end return out end
+  SK.trouble = function(owner, kind, ms)
+    if not isMod(owner) or owner._asleep or WD.exempt[owner.name] then return end
+    local t = now()
+    if kind == "slow" and t - (WD.worldAt or -1e9) < WD.GRACE then return end
+    local w = seen[owner]
+    if not w then w = { err = {}, slow = {}, ms = {} } seen[owner] = w end
+    local l = w[kind]
+    l[#l + 1] = t
+    if kind == "slow" then w.ms[#w.ms + 1] = tonumber(ms) or 0 end
+    while l[1] and t - l[1] > WD.WIN do
+      tremove(l, 1)
+      if kind == "slow" then tremove(w.ms, 1) end
+    end
+    if kind == "err" then
+      if #l >= WD.ERR_N then WD.Sleep(owner, "err") end
+    elseif #l >= WD.SLOW_N then
+      local sum = 0
+      for i = 1, #w.ms do sum = sum + w.ms[i] end
+      if sum >= WD.SLOW_MS then WD.Sleep(owner, "slow") end
+    end
+  end
+  SK.note = function(owner, ctx, ms, calls, big)
+    local name = isMod(owner) and owner.name or "Core"
+    local job = type(ctx) == "string" and ctx or "?"
+    local cutJob = job:match("^[^:]+:(.+)$")
+    if cutJob then job = cutJob end
+    pcall(Spk.Note, name, job, ms, calls, big)
+    if not calls then SK.trouble(owner, "slow", ms) end
+  end
+
+  -- ------------------------------------------------------------------ flux regroupés
+  -- T:OnBags / T:OnQuestLog / T:OnItemInfo(owner, fn[, opts]) : fn(owner, info) UNE fois, au moins `settle` secondes
+  -- après le dernier événement de la rafale (au plus `max` secondes après le premier), jamais dans l'image de
+  -- l'événement, un abonné par image (T:Spread). opts.combat = true : aussi en combat (sinon : à la fin du combat, les
+  -- infos fusionnées). Un module coupé / en pause n'est pas appelé (il relit tout à son réveil).
+  local function merge(dst, src)
+    for k, v in pairs(src) do
+      if type(v) == "table" then
+        local d = dst[k]
+        if type(d) ~= "table" then d = {} dst[k] = d end
+        for k2, v2 in pairs(v) do d[k2] = v2 end
+      elseif v then dst[k] = v end
+    end
+    return dst
+  end
+  local flows = {}
+  TreeAI.FLOW_MS = 1.5   -- budget d'une image pour une tournée d'abonnés (un abonné lourd finit l'image)
+  local function subLive(owner)
+    if isMod(owner) and (owner._suspended or owner._active == false) then return false end
+    return ownerActive(owner)
+  end
+  local function newFlow(name, settle, maxWait)
+    local c = { name = name, subs = {}, order = {}, settle = settle, max = maxWait, armed = false, first = 0, last = 0, info = {}, n = 0, fired = 0 }
+    flows[name] = c
+    local function call(s, info)
+      local prev = TreeAI._ctx
+      TreeAI._ctx = s.ctx
+      runAs(isMod(s.owner) and s.owner or nil, s.fn, s.owner, info)
+      TreeAI._ctx = prev
+    end
+    -- une tournée : les abonnés l'un après l'autre tant que l'image a du budget, la suite à l'image suivante
+    local function round(i)
+      local info = c.cur
+      local t0 = profile and profile()
+      local order = c.order
+      while i <= #order do
+        local s = c.subs[order[i]]
+        i = i + 1
+        if s and subLive(s.owner) then
+          if not s.combat and TreeAI:InCombat() then
+            s.pending = merge(s.pending or {}, info)
+            c.held = true
+          else
+            call(s, info)
+            if t0 and i <= #order and (profile() - t0) >= TreeAI.FLOW_MS then
+              TreeAI:Spread(nil, round, i, nil, nil, nil, "core:" .. name)
+              return
+            end
+          end
+        end
+      end
+      c.cur = nil
+      if c.next then   -- une autre rafale est arrivée pendant la tournée : une seule tournée de plus, infos fusionnées
+        c.cur, c.next, c.curAt = c.next, nil, now()
+        TreeAI:Spread(nil, round, 1, nil, nil, nil, "core:" .. name)
+      end
+    end
+    c.deliverOne = function(s, info) if subLive(s.owner) then call(s, info) end end
+    c.flush = function()
+      local t = now()
+      local wait = c.last + c.settle - t
+      if wait > 0.02 and t - c.first < c.max then coreLater(wait, c.flush) return end
+      c.armed = false
+      local info = c.info
+      c.info = {}
+      if c.prepare and c.prepare(info) == false then return end
+      c.fired = c.fired + 1
+      if c.cur and now() - (c.curAt or 0) < 5 then c.next = merge(c.next or {}, info) return end
+      c.cur, c.curAt = info, now()
+      TreeAI:Spread(nil, round, 1, nil, nil, nil, "core:" .. name)
+    end
+    c.touch = function()
+      c.n = c.n + 1
+      local t = now()
+      c.last = t
+      if not c.armed and next(c.subs) ~= nil then
+        c.armed, c.first = true, t
+        coreLater(c.settle, c.flush)
+      end
+    end
+    c.sub = function(owner, fn, opts)
+      if owner == nil or type(fn) ~= "function" then return false end
+      if not c.subs[owner] then c.order[#c.order + 1] = owner end
+      c.subs[owner] = { owner = owner, fn = fn, combat = type(opts) == "table" and opts.combat and true or false,
+        ctx = tostring(type(owner) == "table" and owner.name or "core") .. ":" .. name }
+      return true
+    end
+    return c
+  end
+  TreeAI._flows = flows
+  --- fin du combat : ce qui a été retenu part (un abonné par image)
+  function TreeAI:_FlushFlows()
+    for _, c in pairs(flows) do
+      if c.held then
+        c.held = false
+        for _, owner in ipairs(c.order) do
+          local s = c.subs[owner]
+          if s and s.pending then
+            local info = s.pending
+            s.pending = nil
+            TreeAI:Spread(nil, c.deliverOne, s, info, nil, nil, "core:" .. c.name)
+          end
+        end
+      end
+    end
+  end
+  local function listen(events, fn)
+    for _, ev in ipairs(events) do
+      DX.feed[ev] = fn
+      DX.keep[ev] = true
+      if frame then pcall(frame.RegisterEvent, frame, ev) end
+    end
+  end
+
+  -- sacs : BAG_UPDATE(sac) ×N, BAG_UPDATE_DELAYED, équipement / munitions du joueur
+  local bags = newFlow("sacs", 0.3, 1.0)
+  listen({ "BAG_UPDATE", "BAG_UPDATE_DELAYED", "UNIT_INVENTORY_CHANGED", "PLAYER_EQUIPMENT_CHANGED", "PLAYERBANKSLOTS_CHANGED" },
+    function(event, a)
+      local info = bags.info
+      if event == "BAG_UPDATE" then
+        a = tonumber(pub(a))
+        if a then info.bags = info.bags or {} info.bags[a] = true end
+      elseif event == "UNIT_INVENTORY_CHANGED" then
+        if a ~= "player" then return end
+        info.equip = true
+      elseif event == "PLAYER_EQUIPMENT_CHANGED" then
+        info.equip = true
+        a = tonumber(pub(a))
+        if a then info.slots = info.slots or {} info.slots[a] = true end
+      elseif event == "PLAYERBANKSLOTS_CHANGED" then info.bank = true
+      else info.delayed = true end
+      bags.touch()
+    end)
+  bags.prepare = function(info) info.gen = API.BagGen() end
+  function TreeAI:OnBags(owner, fn, opts) return bags.sub(owner, fn, opts) end
+
+  -- infos d'objet arrivées du serveur (GET_ITEM_INFO_RECEIVED : par dizaines quand un autre addon balaie l'HV / la banque)
+  local items = newFlow("objets", 0.5, 2.0)
+  listen({ "GET_ITEM_INFO_RECEIVED" }, function(_, id, ok)
+    local info = items.info
+    id = tonumber(pub(id))
+    if id and ok ~= false then
+      info.n = (info.n or 0) + 1
+      if info.n <= 60 then info.items = info.items or {} info.items[id] = true else info.many = true end
+    end
+    items.touch()
+  end)
+  function TreeAI:OnItemInfo(owner, fn, opts) return items.sub(owner, fn, opts) end
+
+  -- journal de quêtes : la rafale entière (QUEST_LOG_UPDATE ×3-4 par monstre, UNIT_QUEST_LOG_CHANGED, suivi…) = UN appel,
+  -- et seulement si quelque chose a VRAIMENT changé : info.structure (quêtes prises / rendues / retirées, quête finie,
+  -- objectif rempli), info.counts (un compteur a bougé), info.watch (liste de suivi changée par le joueur / un autre
+  -- addon ; info.watchSelf = par TreeAI). Le bruit du jeu (QUEST_LOG_UPDATE sans rien de neuf, journal d'un équipier) : rien.
+  local quest = newFlow("quetes", 0.3, 1.2)
+  local qLast = { sig = false, counts = false }
+  --- compteurs + textes des objectifs (nil = illisible : valeur secrète en combat, API absente → « a peut-être changé »)
+  local function countSig()
+    local parts, k = {}, 0
+    local QL = rawget(_G, "C_QuestLog")
+    if QL and QL.GetNumQuestLogEntries and QL.GetInfo and QL.GetQuestObjectives then
+      local n = tonumber((pub(try(QL.GetNumQuestLogEntries)))) or 0
+      for i = 1, n do
+        local info = try(QL.GetInfo, i)
+        if type(info) == "table" and not info.isHeader and info.questID then
+          local obj = try(QL.GetQuestObjectives, info.questID)
+          for _, o in ipairs(type(obj) == "table" and obj or {}) do
+            if type(o) == "table" then
+              local v, tx = o.numFulfilled, o.text
+              if API.IsSecret(v) or API.IsSecret(tx) then return nil end
+              k = k + 1
+              parts[k] = tostring(v) .. (type(tx) == "string" and ("/" .. #tx) or "")
+            end
+          end
+          if QL.IsFailed and try(QL.IsFailed, info.questID) then k = k + 1 parts[k] = "F" end
+          k = k + 1
+          parts[k] = "|"
+        end
+      end
+    elseif _G.GetNumQuestLogEntries and _G.GetQuestLogLeaderBoard then
+      local n = tonumber((try(_G.GetNumQuestLogEntries))) or 0   -- (parenthèses : un 2e retour n'est jamais une base)
+      for i = 1, n do
+        local nb = tonumber((try(_G.GetNumQuestLeaderBoards, i))) or 0
+        for j = 1, nb do
+          local tx = try(_G.GetQuestLogLeaderBoard, j, i)
+          if API.IsSecret(tx) then return nil end
+          k = k + 1
+          parts[k] = tostring(tx or "?")
+        end
+        k = k + 1
+        parts[k] = "|"
+      end
+    else
+      return nil
+    end
+    return tconcat(parts, ",")
+  end
+  -- Lecture SANS TABLE du journal (C_QuestLog.GetQuestIDForLogIndex / GetNumQuestObjectives / IsComplete +
+  -- GetQuestObjectiveInfo : aucun déchet pour le ramasse-miettes, là où GetInfo + GetQuestObjectives allouent ~2 Ko par
+  -- quête) ; une passe par image au plus (plusieurs événements de quête dans la même image partagent la lecture).
+  -- Rend : signature de structure, état complet, vrai si l'API existe (sinon : anciens lecteurs, par tables).
+  local qr = { t = -1, buf = {}, sbuf = {} }
+  TreeAI._QuestRead = function()
+    local QL = rawget(_G, "C_QuestLog")
+    local goi = rawget(_G, "GetQuestObjectiveInfo")
+    if not (type(QL) == "table" and QL.GetNumQuestLogEntries and QL.GetQuestIDForLogIndex and QL.GetNumQuestObjectives
+        and QL.IsComplete and type(goi) == "function") then return nil, nil, false end
+    local t = now()
+    if qr.t == t then return qr.struct, qr.full, true end
+    local buf, sbuf, k, ks = qr.buf, qr.sbuf, 0, 0
+    local n, nq = try(QL.GetNumQuestLogEntries)
+    n = tonumber((pub(n))) or 0
+    local secret, IsSecret = false, API.IsSecret
+    k = k + 1 buf[k] = tonumber((pub(nq))) or n
+    for i = 1, n do
+      local q = try(QL.GetQuestIDForLogIndex, i)
+      if q ~= nil and IsSecret(q) then secret = true break end
+      q = tonumber(q)
+      if q and q > 0 then
+        local done = try(QL.IsComplete, q)
+        if IsSecret(done) then secret = true break end
+        local flag = done and "C" or ((QL.IsFailed and try(QL.IsFailed, q)) and "F" or ":")
+        k = k + 1 buf[k] = q
+        k = k + 1 buf[k] = flag
+        ks = ks + 1 sbuf[ks] = q
+        ks = ks + 1 sbuf[ks] = flag
+        local no = tonumber((try(QL.GetNumQuestObjectives, q))) or 0
+        for j = 1, no do
+          local text, _, fin, have = try(goi, q, j, false)
+          if IsSecret(text) or IsSecret(fin) or IsSecret(have) then secret = true break end
+          k = k + 1 buf[k] = fin and 1 or 0
+          k = k + 1 buf[k] = tonumber(have) or -1
+          k = k + 1 buf[k] = type(text) == "string" and #text or 0
+          ks = ks + 1 sbuf[ks] = fin and 1 or 0
+        end
+        if secret then break end
+      end
+    end
+    qr.t = t
+    if secret then qr.struct, qr.full = nil, nil return nil, nil, true end
+    qr.struct, qr.full = tconcat(sbuf, ",", 1, ks), tconcat(buf, ",", 1, k)
+    return qr.struct, qr.full, true
+  end
+  --- état complet du journal (quêtes, finies, objectifs remplis, compteurs, textes) ; nil = illisible
+  TreeAI._QuestState = function()
+    local _, full, known = TreeAI._QuestRead()
+    if known then return full end
+    local sig = TreeAI:QuestLogSig(true)
+    if sig == nil then return nil end
+    local c = countSig()
+    if c == nil then return nil end
+    return sig .. "#" .. c
+  end
+  quest.prepare = function(info)
+    local sig, counts, known = TreeAI._QuestRead()
+    if not known then sig, counts = TreeAI:QuestLogSig(true), countSig() end
+    if sig ~= qLast.sig or info.accepted or info.removed or info.turnedIn or sig == nil then info.structure = true end
+    if counts ~= qLast.counts or counts == nil then info.counts = true end
+    qLast.sig, qLast.counts = sig, counts
+    info.sig = sig
+    if not (info.structure or info.counts or info.watch or info.watchSelf) then return false end
+  end
+  listen({ "QUEST_LOG_UPDATE", "UNIT_QUEST_LOG_CHANGED", "QUEST_WATCH_UPDATE", "QUEST_ACCEPTED", "QUEST_REMOVED", "QUEST_TURNED_IN",
+    "QUEST_WATCH_LIST_CHANGED" }, function(event, a, b)
+    if TreeAI._questBurst and TreeAI._questBurst.flushing then return end   -- événements retenus puis rejoués : déjà comptés
+    local info = quest.info
+    if event == "UNIT_QUEST_LOG_CHANGED" then
+      if pub(a) ~= "player" then return end
+      info.log = true
+    elseif event == "QUEST_ACCEPTED" then
+      local q = tonumber(pub(b)) or tonumber(pub(a))   -- Classic : (index, questID) ; Forever / Mainline : (questID)
+      info.accepted = info.accepted or {}
+      if q then info.accepted[q] = true end
+    elseif event == "QUEST_REMOVED" then
+      info.removed = info.removed or {}
+      local q = tonumber(pub(a))
+      if q then info.removed[q] = true end
+    elseif event == "QUEST_TURNED_IN" then
+      info.turnedIn = info.turnedIn or {}
+      local q = tonumber(pub(a))
+      if q then info.turnedIn[q] = true end
+    elseif event == "QUEST_WATCH_LIST_CHANGED" then
+      if TreeAI._IsSelfWatch and TreeAI._IsSelfWatch(a) then info.watchSelf = true else info.watch = true end
+    else
+      info.log = true
+    end
+    quest.touch()
+  end)
+  function TreeAI:OnQuestLog(owner, fn, opts) return quest.sub(owner, fn, opts) end
+
+  -- groupe : GROUP_ROSTER_UPDATE tombe en rafales (chaque équipier qui change de zone, champ de bataille…) ; T:OnRoster
+  -- n'appelle que si la composition a changé (membres, connecté ou non, niveau) : info.n = taille, info.raid.
+  local UNITS = { party = {}, raid = {} }
+  for i = 1, 4 do UNITS.party[i] = "party" .. i end
+  for i = 1, 40 do UNITS.raid[i] = "raid" .. i end
+  TreeAI._RosterState = function()
+    local gn = _G.GetNumGroupMembers
+    if type(gn) ~= "function" then return nil end
+    local n = tonumber((pub(try(gn)))) or 0
+    local raid = try(_G.IsInRaid) and true or false
+    local parts = { raid and "R" or "P", tostring(n) }
+    local list = raid and UNITS.raid or UNITS.party
+    local count = raid and mmin(n, 40) or mmin(mmax(n - 1, 0), 4)
+    for i = 1, count do
+      local u = list[i]
+      local id = pub(try(_G.UnitGUID, u)) or pub(try(_G.UnitName, u))
+      if id == nil then return nil end   -- pas encore chargé / secret : « a peut-être changé »
+      parts[#parts + 1] = tostring(id) .. (try(_G.UnitIsConnected, u) and "+" or "-") .. tostring(pub(try(_G.UnitLevel, u)) or "")
+    end
+    return tconcat(parts, ",")
+  end
+  local roster = newFlow("groupe", 0.5, 2.0)
+  local rLast = false
+  roster.prepare = function(info)
+    local st = TreeAI._RosterState()
+    if st ~= nil and st == rLast then return false end
+    rLast = st
+    info.n = tonumber((pub(try(_G.GetNumGroupMembers)))) or 0
+    info.raid = try(_G.IsInRaid) and true or false
+  end
+  listen({ "GROUP_ROSTER_UPDATE", "PARTY_MEMBERS_CHANGED", "RAID_ROSTER_UPDATE" }, function() roster.touch() end)
+  function TreeAI:OnRoster(owner, fn, opts) return roster.sub(owner, fn, opts) end
+
+  -- barres de nom : T:OnPlates(owner, fn[, gone]) — fn(owner, units) regroupé (≥ 0,1 s après la première, une tournée
+  -- d'abonnés par image tant qu'elle a du budget) avec units[jeton] = true pour chaque barre apparue et toujours là ; gone(owner, jeton)
+  -- tout de suite quand une barre part (O(1) exigé : cacher SON cadre — la barre est aussitôt réutilisée par le jeu).
+  local plates = { subs = {}, order = {}, pend = {}, armed = false, n = 0, fired = 0 }
+  local function plateRound(units, i)
+    for u in pairs(units) do if not PL.set[u] then units[u] = nil end end
+    local t0 = profile and profile()
+    local order = plates.order
+    while next(units) ~= nil and i <= #order do
+      local s = plates.subs[order[i]]
+      i = i + 1
+      if s and subLive(s.owner) then
+        local prev = TreeAI._ctx
+        TreeAI._ctx = s.ctx
+        runAs(isMod(s.owner) and s.owner or nil, s.fn, s.owner, units)
+        TreeAI._ctx = prev
+        if t0 and i <= #order and (profile() - t0) >= TreeAI.FLOW_MS then
+          TreeAI:Spread(nil, plateRound, units, i, nil, nil, "core:barres")
+          return
+        end
+      end
+    end
+    plates.busy = false
+    if plates.more then   -- des barres sont apparues pendant la tournée
+      local more = plates.more
+      plates.more = nil
+      plates.busy, plates.busyAt = true, now()
+      TreeAI:Spread(nil, plateRound, more, 1, nil, nil, "core:barres")
+    end
+  end
+  local function plateFlush()
+    plates.armed = false
+    local pend = plates.pend
+    plates.pend = {}
+    plates.fired = plates.fired + 1
+    if plates.busy and now() - (plates.busyAt or 0) < 3 then
+      local more = plates.more or {}
+      for u in pairs(pend) do more[u] = true end
+      plates.more = more
+      return
+    end
+    plates.busy, plates.busyAt = true, now()
+    TreeAI:Spread(nil, plateRound, pend, 1, nil, nil, "core:barres")
+  end
+  local function plateGone(u)
+    for _, owner in ipairs(plates.order) do
+      local s = plates.subs[owner]
+      if s and s.gone and subLive(owner) then
+        local prev = TreeAI._ctx
+        TreeAI._ctx = s.ctxGone
+        runAs(owner, s.gone, owner, u)
+        TreeAI._ctx = prev
+      end
+    end
+  end
+  listen({ "NAME_PLATE_UNIT_ADDED", "NAME_PLATE_UNIT_REMOVED", "PLAYER_ENTERING_WORLD" }, function(event, u)
+    if event == "PLAYER_ENTERING_WORLD" then   -- écran de chargement : plus aucune barre (le jeu ne dit pas toujours « retirée »)
+      WD.worldAt = now()
+      local old = PL.set
+      PL.set, PL.n = {}, 0
+      plates.pend = {}
+      for unit in pairs(old) do plateGone(unit) end
+      return
+    end
+    if type(u) ~= "string" then return end
+    plates.n = plates.n + 1
+    if event == "NAME_PLATE_UNIT_ADDED" then
+      evGen = evGen + 1   -- une unité de plus à portée : le cycle des :AutoRefresh() n'est pas « au calme »
+      if not PL.set[u] then PL.set[u] = true PL.n = PL.n + 1 end
+      plates.pend[u] = true
+      if not plates.armed and next(plates.subs) ~= nil then
+        plates.armed = true
+        coreLater(0.1, plateFlush)
+      end
+    else
+      if PL.set[u] then PL.set[u] = nil PL.n = PL.n - 1 end
+      plates.pend[u] = nil
+      plateGone(u)
+    end
+  end)
+  function TreeAI:OnPlates(owner, fn, gone)
+    if owner == nil or type(fn) ~= "function" then return false end
+    if not plates.subs[owner] then plates.order[#plates.order + 1] = owner end
+    local nm = tostring(type(owner) == "table" and owner.name or "core")
+    plates.subs[owner] = { owner = owner, fn = fn, gone = type(gone) == "function" and gone or nil, ctx = nm .. ":barres", ctxGone = nm .. ":barre partie" }
+    return true
+  end
+  function TreeAI:PlateCount() return PL.n end
+  --- jeton -> true des barres de nom présentes (lecture seule)
+  function TreeAI:PlateUnits() return PL.set end
+  TreeAI._plates = plates
+
+  -- ------------------------------------------------------------------ infobulles d'unité : UN crochet, O(1)
+  -- T:OnUnitTip(owner, fn[, opts]) : fn(owner, unit, name, guid) → texte, r, g, b (ou rien). Le jeu refait l'infobulle
+  -- d'une unité ~5 fois / s tant que la souris reste dessus, et chaque joueur croisé en ville en ouvre une : la
+  -- réponse de chaque abonné est gardée par GUID (TIP_TTL secondes, jetée quand le journal de quêtes ou les sacs
+  -- changent) ; survol répété = 2 lectures du jeu + les lignes déjà prêtes. Les joueurs ne sont donnés qu'aux abonnés
+  -- opts.players ; en combat (noms / GUID secrets sur Forever) seulement aux abonnés opts.combat, sans mémoire.
+  local tips = { subs = {}, order = {}, cache = {}, n = 0, gen = -1, hooked = false, calls = 0, built = 0 }
+  TreeAI.TIP_TTL = 3
+  local function tipAdd(tt, line)
+    if type(line) == "table" and line[1] then
+      pcall(tt.AddLine, tt, line[1], line[2], line[3], line[4])
+      return true
+    end
+  end
+  local function tipCollect(s, lines, unit, name, guid)
+    local owner = s.owner
+    if isMod(owner) and (owner._asleep or owner._active == false) then return end
+    if not ownerActive(owner) then return end
+    local prev = TreeAI._ctx
+    TreeAI._ctx = s.ctx
+    local okRun = runAs(isMod(owner) and owner or nil, function()
+      local text, r, g, b = s.fn(owner, unit, name, guid)
+      if type(text) == "string" and text ~= "" then lines[#lines + 1] = { text, r, g, b } end
+    end)
+    TreeAI._ctx = prev
+    return okRun
+  end
+  local function onUnitTip(tt)
+    if tt ~= _G.GameTooltip or tips.n == 0 or type(tt) ~= "table" or not tt.AddLine then return end
+    tips.calls = tips.calls + 1
+    local unit
+    if tt.GetUnit then
+      local ok, _, u = pcall(tt.GetUnit, tt)
+      if ok then unit = pub(u) end
+    end
+    if type(unit) ~= "string" then unit = "mouseover" end
+    if not try(_G.UnitExists, unit) then return end
+    local combat = TreeAI:InCombat()
+    local guid = pub(try(_G.UnitGUID, unit))
+    local t = now()
+    if guid and not combat then
+      local gen = TreeAI._questGen + API.BagGen()
+      if gen ~= tips.gen then tips.gen, tips.cache, tips.size = gen, {}, 0 end
+      local c = tips.cache[guid]
+      if c and t - c.at < TreeAI.TIP_TTL then
+        local any = false
+        for i = 1, #c do if tipAdd(tt, c[i]) then any = true end end
+        if any and tt.Show then pcall(tt.Show, tt) end
+        return
+      end
+    end
+    tips.built = tips.built + 1
+    local isPlayer = try(_G.UnitIsPlayer, unit) and true or false
+    local name = pub(try(_G.UnitName, unit))
+    local lines = { at = t }
+    for _, owner in ipairs(tips.order) do
+      local s = tips.subs[owner]
+      if s and (s.players or not isPlayer) and (s.combat or not combat) then tipCollect(s, lines, unit, name, guid) end
+    end
+    if guid and not combat then
+      tips.size = (tips.size or 0) + 1
+      if tips.size > 300 then tips.cache, tips.size = {}, 1 end
+      tips.cache[guid] = lines
+    end
+    local any = false
+    for i = 1, #lines do if tipAdd(tt, lines[i]) then any = true end end
+    if any and tt.Show then pcall(tt.Show, tt) end
+  end
+  TreeAI._OnUnitTip = onUnitTip   -- tests
+  TreeAI._tips = tips
+  function TreeAI:OnUnitTip(owner, fn, opts)
+    if owner == nil or type(fn) ~= "function" then return false end
+    if not tips.subs[owner] then tips.order[#tips.order + 1] = owner tips.n = tips.n + 1 end
+    tips.subs[owner] = { owner = owner, fn = fn, players = type(opts) == "table" and opts.players and true or false,
+      combat = type(opts) == "table" and opts.combat and true or false,
+      ctx = tostring(type(owner) == "table" and owner.name or "core") .. ":infobulle" }
+    tips.cache, tips.size = {}, 0
+    if not tips.hooked then
+      tips.hooked = true
+      local TDP, E = _G.TooltipDataProcessor, _G.Enum
+      if TDP and TDP.AddTooltipPostCall and E and E.TooltipDataType and E.TooltipDataType.Unit ~= nil then
+        pcall(TDP.AddTooltipPostCall, E.TooltipDataType.Unit, function(tt) pcall(onUnitTip, tt) end)
+      elseif _G.GameTooltip and _G.GameTooltip.HookScript then
+        pcall(_G.GameTooltip.HookScript, _G.GameTooltip, "OnTooltipSetUnit", function(tt) pcall(onUnitTip, tt) end)
+      end
+    end
+    return true
+  end
+  --- les réponses gardées ne valent plus (réglage changé, données relues)
+  function TreeAI:UnitTipsChanged() tips.cache, tips.size = {}, 0 end
+
+  -- ------------------------------------------------------------------ guide de quêtes : UN interrupteur
+  -- Coupé : les modules de guidage (TreeAI.QUEST_GUIDE) sont vraiment arrêtés (événements, minuteurs, cadres : coût
+  -- nul) ; les autres lisent T:QuestGuideOn() (boussole : plus de cible de quête ; pilote : plus de règle de quête…)
+  -- et reçoivent le message QUEST_GUIDE_CHANGED(on).
+  TreeAI.QUEST_GUIDE = TreeAI.QUEST_GUIDE or { Tracker = true, Todo = true, Planner = true, Route = true, PathDraw = true,
+    ZonePlan = true, ZoneWatch = true, QuestBrain = true, QuestPins = true, Watch = true, Abandon = true, Horizon = true,
+    Region = true }
+  function TreeAI:QuestGuideOn()
+    local db = self.db
+    return not (type(db) == "table" and db.questGuide == false)
+  end
+  function TreeAI:_ApplyQuestGuide()
+    local on = self:QuestGuideOn()
+    for name in pairs(self.QUEST_GUIDE) do
+      local m = self.modules[name]
+      if m then m._guideOff = (not on) or nil end
+    end
+    return on
+  end
+  function TreeAI:SetQuestGuide(on)
+    local db = self.db
+    if type(db) ~= "table" then return false end
+    on = on and true or false
+    if on == self:QuestGuideOn() then return on end
+    db.questGuide = on
+    self:_ApplyQuestGuide()
+    for _, name in ipairs(self.moduleOrder) do
+      if self.QUEST_GUIDE[name] then
+        local m = self.modules[name]
+        if self._modulesStarted then if on then moduleEnable(m) else moduleDisable(m) end end
+      end
+    end
+    self:Fire("QUEST_GUIDE_CHANGED", on)
+    if self._modulesStarted and self._BuildModulesTab then safecall(self._BuildModulesTab, self) end
+    if self.RequestRefresh then self:RequestRefresh() end
+    return on
+  end
+end)()
 
 function TreeAI:RegisterModule(name, tbl)
   if type(name) ~= "string" or name == "" then return nil end
@@ -1997,6 +3009,8 @@ function TreeAI:_BuildModulesTab()
     local on = mod.db and mod.db.enabled ~= false
     local state
     if not on then state = "|cff888888OFF|r"
+    elseif mod._asleep then state = "|cffff7744PAUSE|r"       -- (5.0 STABLE) chien de garde : coupé jusqu'au /reload
+    elseif mod._guideOff then state = "|cff888888GUIDE COUPÉ|r"
     elseif mod._gateOff then state = "|cffddbb44ATTENTE|r"
     elseif mod._classOK == false then state = "|cff888888autre classe|r"
     else state = "|cff33dd33ON|r" end
@@ -3689,7 +4703,7 @@ TreeAI.SLASH_GROUPS = TreeAI.SLASH_GROUPS or {
   { "Combat", { "cherche", "stats", "pvp" } },
   { "Macros et touches", { "macros", "binds", "touches", "raccourcis", "combat" } },
   { "HV et métiers", { "hv", "metiers" } },
-  { "Outils", { "modules", "module", "statut", "perf", "selftest", "diag", "debug", "test", "bloque" } },
+  { "Outils", { "modules", "module", "statut", "perf", "pics", "selftest", "diag", "debug", "test", "bloque" } },
 }
 
 --- { { title=, items = { {cmd=, help=}, ... } }, ... } : toutes les commandes documentées, groupées.
@@ -3899,6 +4913,7 @@ function TreeAI:PLAYER_LOGIN()
   -- LITE : profil essentiel posé une fois ; conditions (groupe / instance / HV) avant d'allumer quoi que ce soit
   safecall(self._ApplyProfileOnce, self)
   safecall(self._EvalGates, self)
+  safecall(self._ApplyQuestGuide, self)   -- (5.0 STABLE) guide de quêtes coupé : ses modules ne démarrent pas
   if self.CreatePanel then safecall(self.CreatePanel, self) end
   for _, n in ipairs(self.moduleOrder) do moduleEnable(self.modules[n]) end
   self._modulesStarted = true
@@ -3951,6 +4966,7 @@ function TreeAI:PLAYER_REGEN_ENABLED()
     if fn then safecall(fn) end
   end
   self:Fire("COMBAT_END")
+  if self._FlushFlows then safecall(self._FlushFlows, self) end   -- (5.0 STABLE) sacs / journal retenus pendant le combat
   self:After(2, function() if not self:InCombat() then self:_FlushPendingAlert() end end)
 end
 
