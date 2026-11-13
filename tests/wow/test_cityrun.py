@@ -56,7 +56,7 @@ def test_toc_bindings_and_hooks():
     assert "BINDING_NAME_TREEAI_STEP_NEXT" in src and "T.FocusStep = function" in src
     # the guarded hunks in the shared modules
     pl = (ADDON / "Modules" / "ProfLevel.lua").read_text(encoding="utf-8")
-    for needle in ("CR.ApplyPick", "CR.Borrow", "CR.OwnsCard", "CR.Assume", "CR.PageButtons", "CR.RenderProfOptions",
+    for needle in ("CR.ApplyPick", "CR.Borrow", "CR.OwnsCard", "CR.Assume", "CR.PinsButton", "CR.RenderProfOptions",
                    "CR.ExtraList", "PL.SkipFn"):
         assert needle in pl, needle
     ii = (ADDON / "Modules" / "ItemInfo.lua").read_text(encoding="utf-8")

@@ -25,8 +25,8 @@ local API = T.API or {}
 local M = T:RegisterModule("Prof", {
   title = "Métiers",
   defaults = { enabled = true, overtime = 0, target = 0, knownOnly = true, nowTip = true, gather = true,
-    squad = true, camp = true, steps = 4, plMode = "full", askAH = true, plCompass = true, compsCard = true },
-  charDefaults = { known = {}, target = {}, nodes = {}, cal = {}, pl = {} },
+    squad = true, camp = true, steps = 4, plMode = "full", askAH = true, plCompass = true, compsCard = true, passHint = true },
+  charDefaults = { known = {}, target = {}, nodes = {}, cal = {}, pl = {}, fix = {} },
   options = {
     { key = "overtime", type = "range", label = "« Heures sup. » (Legacy) : rangs pris", min = 0, max = 5, step = 1, section = "Calcul" },
     { key = "target", type = "range", label = "Compétence visée (0 = fin du rang actuel)", min = 0, max = 300, step = 5, section = "Calcul" },
@@ -40,6 +40,8 @@ local M = T:RegisterModule("Prof", {
     { key = "plCompass", type = "toggle", label = "Session métier : la boussole va au PNJ de chaque étape", section = "Session métier" },
     -- (4.2 FIX42) « Composants de métier » chez un marchand / un maître / à la banque (jamais pendant les quêtes)
     { key = "compsCard", type = "toggle", label = "Composants de métier : petite carte chez le marchand, le maître, la banque", section = "Session métier" },
+    -- (5.0 PROF) en passant devant ton maître (place connue) : une alerte, une seule fois par lot de recettes
+    { key = "passHint", type = "toggle", label = "En passant devant ton maître : « N recettes à apprendre » (une fois)", section = "Session métier" },
   },
 })
 if T.MODULE_TAB then T.MODULE_TAB.Prof = "prof" end
@@ -110,6 +112,11 @@ E.UNKNOWN = 10000
 E.CRAFT_SEC = 3.5
 E.STICKY, E.LEARN_COST = 0.85, 1.3
 E.FLAG_AUTO, E.FLAG_EST = 1, 2
+-- (5.0 PROF) une recette sous 25 % de chance (vert foncé : ≥ 4 fabrications par point) n'est prise que si AUCUNE autre
+-- recette utilisable ne monte : plus de « 28× Peau traitée pour 2 points ». Fourchette d'une étape : espérance ± 1,28 σ
+-- (8 fois sur 10), σ² = Σ (1 − chance) / chance par fabrication (loi géométrique par point).
+E.MIN_CHANCE = 0.25
+E.Z80 = 1.2816
 local EPS = 1e-9
 --- utilisable à `sk` ? → ok, à apprendre (« trainer » / « pattern » / nil)
 function E.Usable(r, sk, known, learnAt, patterns)
@@ -177,7 +184,7 @@ function E.Session(inp)
     else
       guard = guard + 1
       if guard > maxCrafts then res.stop = "guard" break end
-      local best, bestV, bestC, bestL
+      local best, bestV, bestC, bestL, bestT
       for _, r in ipairs(rows) do
         local ok, needL = E.Usable(r, sk, known, learnAt, patterns)
         if ok then
@@ -205,14 +212,17 @@ function E.Session(inp)
               -- apprendre (visite au maître) doit faire 30 % mieux
               if stick == r[1] then v = v * E.STICKY end
               if needL and not planned[r[1]] then v = v * E.LEARN_COST end
-              if not bestV or v < bestV - EPS or (v <= bestV + EPS and (c > bestC + EPS or (c >= bestC - EPS and r[1] < best[1]))) then
-                best, bestV, bestC, bestL = r, v, c, needL
+              local tier = c >= E.MIN_CHANCE and 0 or 1
+              if not bestV or tier < bestT or (tier == bestT and (v < bestV - EPS
+                  or (v <= bestV + EPS and (c > bestC + EPS or (c >= bestC - EPS and r[1] < best[1]))))) then
+                best, bestV, bestC, bestL, bestT = r, v, c, needL, tier
               end
             end
           end
         end
       end
       if not best then res.stop = exact and "mats" or "none" break end
+      local cost0 = res.cost
       local m = best[10] or {}
       for k = 1, #m - 1, 2 do
         local id, n = m[k], m[k + 1]
@@ -229,16 +239,22 @@ function E.Session(inp)
       end
       if bestL and not planned[best[1]] then
         planned[best[1]] = true
-        res.learn[#res.learn + 1] = { spell = best[1], name = best[9], at = sk, kind = bestL, item = best[8] }
+        -- est : exigence non lue chez le maître (drapeau 2 de la table) → « à confirmer chez le maître »
+        res.learn[#res.learn + 1] = { spell = best[1], name = best[9], at = sk, kind = bestL, item = best[8],
+          req = (learnAt and learnAt[best[1]]) or best[4] or 1,
+          est = (not (learnAt and learnAt[best[1]]) and floor((best[11] or 0) / 2) % 2 == 1) or nil }
       end
       s = s + bestC * (best[7] or 1)
+      if s > cap then s = cap end                    -- (5.0) le jeu ne dépasse jamais le plafond du rang
       res.crafts, stick = res.crafts + 1, best[1]
       local to = floor(s + EPS)
       if last and last.spell == best[1] then
         last.crafts, last.to, last.colorTo = last.crafts + 1, to, E.Color2(best, sk)
+        last.var, last.minC, last.cost1 = last.var + (1 - bestC) / bestC, min(last.minC, bestC), res.cost
       else
         last = { kind = "craft", spell = best[1], name = best[9], from = sk, to = to, crafts = 1, color = E.Color2(best, sk),
-          colorTo = E.Color2(best, sk), learn = bestL, row = best }
+          colorTo = E.Color2(best, sk), learn = bestL, row = best, var = (1 - bestC) / bestC, minC = bestC,
+          cost0 = cost0, cost1 = res.cost }   -- coût cumulé avant / après l'étape (le plan d'une cible plus basse en est le début)
         res.seq[#res.seq + 1] = last
         res.steps[#res.steps + 1] = last
       end
@@ -246,7 +262,101 @@ function E.Session(inp)
   end
   res.reached, res.skill, res.cap = floor(s + EPS), s, cap
   res.time = res.crafts * (tonumber(inp.craftSec) or E.CRAFT_SEC)
+  for _, x in ipairs(res.steps) do x.lo, x.hi = E.Range(x.crafts, x.var, x.to - x.from) end
   return res
+end
+--- fourchette (8 fois sur 10) du nombre de fabrications d'une étape : espérance n, variance var, points gagnés
+function E.Range(n, var, points)
+  n, var = tonumber(n) or 0, tonumber(var) or 0
+  if var <= EPS then return n, n end
+  local sd = math.sqrt(var)
+  local lo = max(1, max(tonumber(points) or 0, floor(n - E.Z80 * sd + 0.5)))
+  if lo > n then lo = n end
+  return lo, ceil(n + E.Z80 * sd - EPS)
+end
+--- (5.0 PROF) garde-fous d'un plan : la liste des incohérences (vide = plan sain). Vérifié par les tests sur tous les
+--- métiers et toutes les compétences, ET en jeu avant d'afficher (un plan incohérent n'est jamais montré).
+---  * aucune étape sous ta compétence, au-dessus de la cible ou du plafond du rang en cours ; étapes croissantes ;
+---  * aucune recette grise / pas encore apprenable / patron non demandé ; rang suivant seulement au bon niveau ;
+---  * fabrications d'une étape ≤ ce que la plage de compétence demande (Σ 1 / chance + 1) ;
+---  * compos = Σ fabrications × quantité, pas une de plus ; rien d'acheté tant qu'il reste du stock ; coût = Σ prix.
+function E.Audit(res, inp)
+  local bad = {}
+  local function no(msg) if #bad < 12 then bad[#bad + 1] = msg end end
+  if type(res) ~= "table" or type(inp) ~= "table" then return { "plan absent" } end
+  local skill = floor(tonumber(inp.skill) or 0)
+  local target = min(300, floor(tonumber(inp.target) or 0))
+  local cap = floor(tonumber(inp.cap) or 300)
+  local level = tonumber(inp.level) or 60
+  local known, learnAt = inp.known, inp.learnAt
+  local at, need, crafts = skill, {}, 0
+  local curCap = cap
+  for _, x in ipairs(res.seq or {}) do
+    if x.kind == "train" then
+      if x.at ~= curCap then no(fmt("rang %s pris à %d (plafond %d)", tostring(x.rank), x.at, curCap)) end
+      if level < (x.level or 0) then no(fmt("rang %s : niveau %d requis, tu es %d", tostring(x.rank), x.level or 0, level)) end
+      if (x.cap or 0) <= curCap then no("rang suivant sans plafond plus haut") end
+      curCap = x.cap or curCap
+    else
+      local r = x.row
+      if type(r) ~= "table" then no("étape sans recette") break end
+      if x.from < skill then no(fmt("« %s » commence à %d, sous ta compétence %d", tostring(x.name), x.from, skill)) end
+      if x.from < at then no(fmt("« %s » revient en arrière (%d après %d)", tostring(x.name), x.from, at)) end
+      if x.to < x.from then no(fmt("« %s » descend (%d → %d)", tostring(x.name), x.from, x.to)) end
+      if x.from >= target then no(fmt("« %s » au-delà de la cible %d", tostring(x.name), target)) end
+      if x.to > curCap then no(fmt("« %s » dépasse le plafond %d", tostring(x.name), curCap)) end
+      if (x.crafts or 0) < 1 then no(fmt("« %s » : 0 fabrication", tostring(x.name))) end
+      local ok = E.Usable(r, x.from, known, learnAt, inp.patterns)
+      if not ok then no(fmt("« %s » pas encore apprenable à %d", tostring(x.name), x.from)) end
+      local c0 = E.Chance2(r, x.from, inp.overtime)
+      if c0 <= 0 then no(fmt("« %s » est grise à %d", tostring(x.name), x.from)) end
+      -- borne : Σ 1 / chance sur la plage (+ 1 fabrication d'arrondi, + 1 / chance au dernier point entamé)
+      local bound, ups = 1, max(1, r[7] or 1)
+      for k = x.from, max(x.from, x.to) do
+        local c = E.Chance2(r, k, inp.overtime)
+        if c > 0 then bound = bound + 1 / (c * ups) end
+      end
+      if (x.crafts or 0) > ceil(bound + EPS) then
+        no(fmt("« %s » : %d fabrications pour %d → %d (au plus %d)", tostring(x.name), x.crafts, x.from, x.to, ceil(bound)))
+      end
+      if x.lo and (x.lo > x.crafts or x.hi < x.crafts or x.lo < 1) then no(fmt("« %s » : fourchette %s–%s hors de %d", tostring(x.name), tostring(x.lo), tostring(x.hi), x.crafts)) end
+      local m = r[10] or {}
+      for k = 1, #m - 1, 2 do need[m[k]] = (need[m[k]] or 0) + m[k + 1] * x.crafts end
+      crafts = crafts + (x.crafts or 0)
+      at = x.to
+    end
+  end
+  if crafts ~= (res.crafts or 0) then no(fmt("total des fabrications %d ≠ %d", res.crafts or 0, crafts)) end
+  if (res.reached or 0) < skill then no("compétence atteinte sous la compétence de départ") end
+  if (res.reached or 0) > max(curCap, skill) then no(fmt("compétence atteinte %d au-delà du plafond %d", res.reached or 0, curCap)) end
+  local ids = {}
+  for id in pairs(need) do ids[id] = true end
+  for id in pairs(res.use or {}) do ids[id] = true end
+  for id in pairs(res.buy or {}) do ids[id] = true end
+  local stock = inp.stock or {}
+  local cost = 0
+  local vendor, price = inp.vendor or {}, inp.price
+  local pf
+  if type(price) == "function" then pf = price else pf = function(id) return price and price[id] end end
+  for id in pairs(ids) do
+    local u, b = (res.use and res.use[id]) or 0, (res.buy and res.buy[id]) or 0
+    if u + b ~= (need[id] or 0) then no(fmt("objet %s : %d prévus pour %d consommés", tostring(id), u + b, need[id] or 0)) end
+    local have = max(0, tonumber(stock[id]) or 0)
+    if u > have then no(fmt("objet %s : %d pris pour %d en stock", tostring(id), u, have)) end
+    if b > 0 and u < have then no(fmt("objet %s : %d achetés alors qu'il en reste %d", tostring(id), b, have - u)) end
+    local p = vendor[id] or pf(id)
+    if b > 0 then
+      if p then cost = cost + b * p
+      elseif ((res.unknown and res.unknown[id]) or 0) ~= b then no(fmt("objet %s : sans prix, pas marqué « à farmer »", tostring(id))) end
+    end
+  end
+  if math.abs(cost - (res.cost or 0)) > 0.5 then no(fmt("coût %d ≠ somme des achats %d", floor(res.cost or 0), floor(cost))) end
+  for _, l in ipairs(res.learn or {}) do
+    if l.at < skill then no(fmt("apprendre « %s » à %d, sous ta compétence %d", tostring(l.name), l.at, skill)) end
+    if (l.req or 0) > l.at then no(fmt("apprendre « %s » à %d : exigence %d", tostring(l.name), l.at, l.req or 0)) end
+    if l.kind == "pattern" and not inp.patterns then no(fmt("patron « %s » non demandé", tostring(l.name))) end
+  end
+  return bad
 end
 --- logistique d'un plan : d'où viennent les compos utilisées (sacs, puis banque, puis courrier ; la réserve de quête
 --- est prise dans les sacs d'abord) et quoi acheter où (marchand : marge si fabrications jaunes / vertes et prix
@@ -466,6 +576,8 @@ function M.ScanKnown()
         -- (PROFLEVEL) couleurs du jeu à ta compétence : gris exact (maxTrivialLevel), jaune corrigé (relativeDifficulty)
         local gx, dif = tonumber(r.maxTrivialLevel), tonumber(r.relativeDifficulty)
         if (gx and gx > 0) or (dif and sk) then cal[tonumber(id) or 0] = { g = gx, d = dif, s = sk } end
+        -- (5.0 PROF) compos RÉELLES de la recette (fenêtre du jeu) : gardées seulement si elles diffèrent de la table
+        if M.ReadReagents then pcall(M.ReadReagents, C, line, tonumber(id) or 0) end
       end
     end
     if line and next(cal) then
@@ -501,6 +613,53 @@ function M.ScanKnown()
   end
   return line, known
 end
+
+--- (5.0 PROF) les compos d'une recette connue lues dans la fenêtre du métier (C_TradeSkillUI.GetRecipeSchematic : cases
+--- « de base » avec un objet et une quantité). Une lecture par recette et par session, au plus 25 par passage (la
+--- liste se relit à chaque mise à jour) ; char.fix[ligne][sort] = { objet, n, … } seulement si la table se trompe,
+--- effacé si elle a raison. Rien n'est gardé d'une lecture vide ou incomplète.
+local rgSeen, rgBudget = {}, 0
+function M.ReadReagents(C, line, spell)
+  if not (line and spell and spell > 0) or rgSeen[spell] or type(C.GetRecipeSchematic) ~= "function" then return end
+  if rgBudget >= 25 then return end
+  rgBudget = rgBudget + 1
+  local sch = try(C.GetRecipeSchematic, spell, false)
+  local slots = type(sch) == "table" and sch.reagentSlotSchematics
+  if type(slots) ~= "table" then return end          -- pas encore chargée : relue à la prochaine mise à jour
+  rgSeen[spell] = true
+  local got, n = {}, 0
+  for _, sl in ipairs(slots) do
+    if type(sl) == "table" then
+      local rt = tonumber(sl.reagentType)
+      local it = type(sl.reagents) == "table" and sl.reagents[1]
+      local id, q = type(it) == "table" and tonumber(it.itemID) or nil, tonumber(sl.quantityRequired)
+      if (rt == nil or rt == 1) and sl.required ~= false then
+        if not (id and id > 0 and q and q > 0) then return end        -- case illisible : on ne garde rien
+        got[id] = (got[id] or 0) + q
+        n = n + 1
+      end
+    end
+  end
+  if n == 0 then return end
+  local d = D()
+  local row
+  for _, r in ipairs(d and d.r[line] or {}) do if r[1] == spell then row = r break end end
+  if not row then return end
+  local same, m, cnt = true, row[10] or {}, 0
+  for k = 1, #m - 1, 2 do cnt = cnt + 1 if got[m[k]] ~= m[k + 1] then same = false end end
+  if cnt ~= n then same = false end
+  M.char.fix = type(M.char.fix) == "table" and M.char.fix or {}
+  local fx = M.char.fix[line]
+  if same then if type(fx) == "table" then fx[spell] = nil end return end
+  local ids, flat = {}, {}
+  for id in pairs(got) do ids[#ids + 1] = id end
+  tsort(ids)
+  for _, id in ipairs(ids) do flat[#flat + 1] = id flat[#flat + 1] = got[id] end
+  if type(fx) ~= "table" then fx = {} M.char.fix[line] = fx end
+  fx[spell] = flat
+  M.fixGen = (M.fixGen or 0) + 1
+end
+function M.ResetReagentBudget() rgBudget = 0 end
 
 -- stock : sacs (+ banque si le jeu la connaît) pour les compos d'un métier
 local function count(id)
@@ -1047,8 +1206,9 @@ function M.Update(force)
   if force then M.dirty = true end
   if not force and now() - last < 3 then return end
   last = now()
-  -- recalcul complet seulement si quelque chose a changé (sacs, compétence, fenêtre, options) ou toutes les 60 s
-  if not M.dirty and M.lines and now() - (M.builtAt or 0) < 60 then return end
+  -- recalcul complet seulement si quelque chose a changé (sacs, compétence, fenêtre, options, prix de l'HV) ; (5.0 PROF)
+  -- au repos : plus rien toutes les 60 s (c'était 3 kinstr/min sans rien faire), une relecture de sécurité par 10 min
+  if not M.dirty and M.lines and now() - (M.builtAt or 0) < 600 then return end
   M.dirty, M.builtAt = false, now()
   if now() - priceStamp > 60 or force then priceCache, priceStamp = {}, now() end
   local ok, lines, out = pcall(M.Build)
@@ -1078,7 +1238,7 @@ function M:TRADE_SKILL_SHOW() M.TradeOpen = true M.Refresh(0.3) end
 -- (PROFLEVEL) la banque compte : relevée par ProfLevel (PL.On.BANKFRAME_OPENED), puis recalcul
 function M:BANKFRAME_OPENED() M.Refresh(1) end
 function M:TRADE_SKILL_CLOSE() M.TradeOpen = false M.Refresh(0.3) end
-function M:TRADE_SKILL_LIST_UPDATE() if not T:InCombat() then pcall(M.ScanKnown) end M.Refresh(0.5) end
+function M:TRADE_SKILL_LIST_UPDATE() if not T:InCombat() then M.ResetReagentBudget() pcall(M.ScanKnown) end M.Refresh(0.5) end
 M.TRADE_SKILL_UPDATE = M.TRADE_SKILL_LIST_UPDATE
 
 function M:WriteSummary()

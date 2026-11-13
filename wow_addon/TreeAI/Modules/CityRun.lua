@@ -377,7 +377,20 @@ function CR.Candidates(kind, opt)
   return out
 end
 --- es-tu en ville ? capitale, ou au repos (auberge) avec au moins 2 services connus tout près
+local townAt, townV = -10, false
 function CR.InTown()
+  -- (5.0 PROF, perf) demandé plusieurs fois par image (proposition, points, pastilles) : une réponse par seconde
+  -- (même endroit, même repos : la boucle sur les PNJ retenus n'est pas refaite)
+  local t = now()
+  local p = here()
+  local rest = try(g("IsResting")) and true or false
+  if p and t - townAt < 1 and t >= townAt and CR.townKey and CR.townKey.m == p.mapID and CR.townKey.r == rest
+      and math.abs(CR.townKey.x - p.x) < 0.002 and math.abs(CR.townKey.y - p.y) < 0.002 then return townV end
+  townAt, townV = t, CR.InTownNow()
+  CR.townKey = p and { m = p.mapID, x = p.x, y = p.y, r = rest } or nil
+  return townV
+end
+function CR.InTownNow()
   local p = here()
   if not p then return false end
   if CAPITALS[p.mapID] then return true end
@@ -703,8 +716,16 @@ end
 function CR.ExtraList()
   local out = {}
   local P = PL()
+  local B = T.Bags
   for id, v in pairs(CR.Verdicts()) do
-    if v and (v.extra or 0) > 0 then
+    -- (5.0 PROF) jamais un consommable (potion, nourriture, bandage) ; et le verdict des sacs (contrat BAGS) a le dernier
+    -- mot : « garder » / « utiliser » chez lui = pas « en trop » ici
+    local okSell = v and (v.extra or 0) > 0 and not CR.IsConsumable(id)
+    if okSell and type(B) == "table" and type(B.Verdict) == "function" then
+      local okV, bv = pcall(B.Verdict, id)
+      if okV and type(bv) == "table" and (bv.action == "keep" or bv.action == "use" or bv.action == "bank") then okSell = false end
+    end
+    if okSell then
       local sell = num(select(11, try(API.ItemInfo, id))) or 0
       local d = recipes()
       if sell <= 0 and d and d.mats[id] then sell = tonumber(d.mats[id][4]) or 0 end
@@ -771,7 +792,8 @@ function CR.TrainerCandidates(line)
     local flags = tonumber(r[11]) or 0
     local est = floor(flags / 2) % 2 == 1
     if est and flags % 2 == 0 and (r[8] or 0) == 0 and not (known and known[r[1]]) and not (learnAt and learnAt[r[1]])
-        and r[5] > pr.rank and r[5] <= pr.rank + 10 and r[6] > pr.rank then
+        and r[5] > pr.rank and r[5] <= pr.rank + 10 and r[6] > pr.rank
+        and not (P.NotTaught and P.NotTaught(line, r)) then      -- (5.0) maître lu : absente de sa liste = pas chez lui
       out[r[1]] = pr.rank
     end
   end
@@ -934,7 +956,20 @@ function CR.ApplyPick(kind, steps, line)
           if not learn[st.step.spell] then learn[st.step.spell] = true names[#names + 1] = st.step.name end
         end
       end
-      if at then
+      -- (5.0 PROF) « Va d'abord chez ton maître » est déjà là : pas une 2e étape pour le même PNJ, les recettes
+      -- espérées s'ajoutent à la sienne
+      local hasRead = false
+      for _, st in ipairs(steps) do
+        if st.read then
+          hasRead = true
+          if at and not st.hoped then
+            st.hoped = true
+            for sp in pairs(learn) do st.learn[#st.learn + 1] = { spell = sp, kind = "trainer", confirm = true } end
+            st.sub = (st.sub or "") .. " · à apprendre si possible : « " .. cut(tconcat(names, " », « "), 40) .. " »"
+          end
+        end
+      end
+      if at and not hasRead then
         local P = PL()
         local w = P and P.WhereTrainer and P.WhereTrainer(line) or nil
         local dt = w and distText(w.dist)
@@ -950,7 +985,9 @@ function CR.ApplyPick(kind, steps, line)
     local has = false
     for _, st in ipairs(steps) do if st.kind == "trainer" and (not st.at or st.at <= (st.skill or 1e9)) then has = true end end
     for _, st in ipairs(steps) do if st.kind == "trainer" then has = true end end
-    if not has then steps[#steps + 1] = CR.TrainerStep(line) end
+    -- (5.0 PROF) « aller au maître » seulement tant qu'il n'a pas été lu : ensuite c'est du bruit
+    local P5 = PL()
+    if not has and not (P5 and P5.TrainerSeen and P5.TrainerSeen(line)) then steps[#steps + 1] = CR.TrainerStep(line) end
   end
   local front, mid, back = nil, {}, {}
   for _, st in ipairs(steps) do
@@ -1122,9 +1159,15 @@ local function knownPrice(id)
   return nil, nil
 end
 CR.KnownPrice = knownPrice
+-- (5.0 PROF, perf) ce qui se vend sur TA carte : lu une fois par calcul de la liste (soldHere), plus une position
+-- du joueur par objet des tables (nourriture du familier, munitions… : des centaines d'appels dans une seule image)
+local soldHere
 local function soldBy(id)
-  local p = here()
-  local sold = p and memIndex().sold[tostring(p.mapID)]
+  local sold = soldHere
+  if sold == nil then
+    local p = here()
+    sold = p and memIndex().sold[tostring(p.mapID)] or false
+  end
   return sold and sold[id] and true or false
 end
 -- sacs relus UNE fois par calcul de la liste (pas un appel au jeu par objet des tables)
@@ -1217,7 +1260,38 @@ local function hunterErrands(out)
     end
   end
 end
+--- (5.0 PROF, contrat BAGS) les consommables à racheter viennent de T.Bags.Shopping() quand il existe : UNE source pour
+--- « quoi racheter » (potions, nourriture, munitions, bandages : son stock cible). Lecture défensive : une entrée =
+--- { id | itemID, n | need | count | buy (à acheter), why | reason, label | name, prio } ; tout le reste est ignoré.
+--- → vrai si la liste des sacs a été prise (les courses de consommables de ce module sont alors sautées)
+function CR.BagsShopping(out)
+  local B = T.Bags
+  if not (type(B) == "table" and type(B.Shopping) == "function") then return false end
+  local ok, list = pcall(B.Shopping)
+  if not ok or type(list) ~= "table" then return false end
+  local seen, nAdd = {}, 0
+  for _, e0 in ipairs(out) do for _, it0 in ipairs(e0.items or {}) do seen[it0.id] = true end end   -- déjà prévu (munitions…)
+  for _, e in ipairs(list) do
+    if type(e) == "table" and nAdd < 12 then
+      local id = num(e.id or e.itemID)
+      local n = num(e.buy or e.n or e.need or e.count)
+      if id and n and n > 0 and n <= 2000 and not seen[id] then
+        seen[id] = true
+        nAdd = nAdd + 1
+        local have = cnt(id)
+        local it = buyItem(id, have + floor(n), have)
+        if it then
+          out[#out + 1] = { id = "bags:" .. id, kind = "vendor", cat = "food", prio = num(e.prio) or PRIO.food, items = { it },
+            label = (str(e.label) and (cut(e.label, 24) .. " : ") or "À racheter : ") .. itemsText({ it }),
+            why = str(e.why or e.reason) or fmt("il t'en reste %d", have), any = "consommables", src = "Bags" }
+        end
+      end
+    end
+  end
+  return true
+end
 local function consumableErrands(out)
+  if CR.BagsShopping(out) then return end
   local C = T.Data and T.Data.Consumables
   if not C then return end
   local lvl = level()
@@ -1295,7 +1369,7 @@ local function profErrands(out, opts)
         end
         -- maître du métier : recettes / rang à prendre maintenant
         local learn, train = {}, nil
-        for _, l in ipairs(plan.res.learn or {}) do if l.at <= plan.skill then learn[#learn + 1] = l end end
+        for _, l in ipairs(plan.res.learn or {}) do if (l.req or l.at) <= plan.skill then learn[#learn + 1] = l end end   -- (5.0) exigence atteinte
         for _, x in ipairs(plan.prep or {}) do if x.learn then learn[#learn + 1] = { spell = x.spell, name = x.name } end end
         local okA, cand = pcall(CR.Assume, line)
         if okA and type(cand) == "table" then
@@ -1442,6 +1516,8 @@ function CR.Errands(opts)
       end
     else snap = nil end
   else snap = nil end
+  local p0 = here()
+  soldHere = p0 and memIndex().sold[tostring(p0.mapID)] or false
   pcall(profErrands, out, opts)
   if not opts.profOnly then
     pcall(hunterErrands, out)
@@ -1453,7 +1529,7 @@ function CR.Errands(opts)
     if e.items and not e.cost then local c, unk = sumCost(e.items) e.cost, e.unknownCost = c, e.unknownCost or unk end
     if e.optional and opts.picked and opts.picked[e.id] then e.optional, e.picked = false, true end
   end
-  snap = nil
+  snap, soldHere = nil, nil
   return out
 end
 --- l'or : si tout ne passe pas, la course la moins urgente sort (pure) → gardées, retirées, manque
@@ -2220,6 +2296,24 @@ function CR.CheckPropose()
   if not CR.InTown() then CR:Clear("propose") CR.proposedFor = nil return end
   local p = here()
   if not p or CR.proposedFor == p.mapID then return end
+  -- (5.0 PROF, perf) « rien à proposer ici » est retenu 2 min : chaque événement de repos / de zone ne refait plus toute
+  -- la liste des courses (c'était 3 recalculs en 3 s en entrant en ville)
+  local tried = CR.proposeTried
+  if tried and tried.map == p.mapID and now() - tried.t < 120 then return end
+  CR.proposeTried = { map = p.mapID, t = now() }
+  -- (5.0 PROF, perf) d'abord la liste seule (pas de PNJ, pas de trajet) : moins de 2 courses = on s'arrête là ; le plan
+  -- complet se calcule dans une AUTRE image (T:Spread : un gros travail par image)
+  local all = tempPlans(CR.Errands, {})
+  local n0 = 0
+  for _, e in ipairs(type(all) == "table" and all or {}) do if not e.optional and e.kind ~= "sell" then n0 = n0 + 1 end end
+  if n0 < 2 then return end
+  local map0 = p.mapID
+  if T.Spread then T:Spread(CR, function() pcall(CR.ProposeNow, map0) end) else CR.ProposeNow(map0) end
+end
+function CR.ProposeNow(map0)
+  if T.focus or inCombat() or not CR.InTown() then return end
+  local p = here()
+  if not p or p.mapID ~= map0 or CR.proposedFor == p.mapID then return end
   local plan = tempPlans(CR.Plan, {})
   if type(plan) ~= "table" then return end
   local n = 0
@@ -2924,7 +3018,13 @@ CR.handlers = {
       local p = here()
       if p and CR.run.map and p.mapID ~= CR.run.map and not CAPITALS[p.mapID] then CR.Stop("left") return end
     end
-    T:After(3, function() pcall(CR.CheckPropose) pcall(CR.PinsDirty) end)
+    -- (5.0 PROF, perf) deux gros travaux = deux images
+    T:After(3, function()
+      if T.Spread then
+        T:Spread(CR, function() pcall(CR.CheckPropose) end)
+        T:Spread(CR, function() pcall(CR.PinsDirty) end)
+      else pcall(CR.CheckPropose) pcall(CR.PinsDirty) end
+    end)
   end,
   PLAYER_UPDATE_RESTING = function() T:After(2, function() pcall(CR.CheckPropose) end) end,
   PLAYER_ENTERING_WORLD = function() T:After(4, function() pcall(CR.CheckPropose) end) end,

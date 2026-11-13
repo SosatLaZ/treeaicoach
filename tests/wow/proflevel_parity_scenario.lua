@@ -23,7 +23,7 @@ return function(M, ctx)
     local st = {}
     for _, x in ipairs(res.seq) do
       if x.kind == "train" then st[#st + 1] = "T" .. x.at .. ":" .. x.rank
-      else st[#st + 1] = x.spell .. ":" .. x.from .. ":" .. x.to .. ":" .. x.crafts .. ":" .. x.color .. ":" .. x.colorTo .. ":" .. tostring(x.learn or "-") end
+      else st[#st + 1] = x.spell .. ":" .. x.from .. ":" .. x.to .. ":" .. x.crafts .. ":" .. x.color .. ":" .. x.colorTo .. ":" .. tostring(x.learn or "-") .. ":" .. x.lo .. ":" .. x.hi end
     end
     parts[#parts + 1] = table.concat(st, ";")
     local ln = {}

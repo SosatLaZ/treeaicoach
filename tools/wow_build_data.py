@@ -649,6 +649,10 @@ def build_recipes(T: dict) -> dict:
             learn, flags = 1, FLAG_AUTO
         elif i(r["MinSkillLineRank"]) > 1:
             learn = i(r["MinSkillLineRank"])
+            # (5.0 PROF audit) a table requirement ABOVE the yellow threshold is a leftover (the recipe would be grey
+            # or green the day it is learned: « Pierre à aiguiser grossière » 75 for a grey at 55): estimate instead
+            if yellow > 0 and learn > yellow:
+                learn, flags = max(1, yellow), FLAG_EST
         elif req > 0:
             learn = req
         else:

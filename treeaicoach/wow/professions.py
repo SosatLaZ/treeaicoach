@@ -22,6 +22,7 @@ from __future__ import annotations
 import gzip
 import json
 import logging
+import math
 import os
 from typing import Any, Callable
 
@@ -40,6 +41,10 @@ FLAG_AUTO, FLAG_EST = 1, 2
 UNKNOWN = 10_000
 CRAFT_SEC = 3.5
 STICKY, LEARN_COST = 0.85, 1.3
+# (5.0 PROF) a recipe under 25 % (deep green: >= 4 crafts per point) is taken only when NO other usable recipe gives
+# points; range of a step = expectation +/- 1.2816 sigma (8 times out of 10), sigma^2 = sum (1 - c) / c per craft
+MIN_CHANCE = 0.25
+Z80 = 1.2816
 EPS = 1e-9
 
 
@@ -178,7 +183,7 @@ def session_plan(rows: list[list], skill: int, target: int, cap: int = 300, leve
         if guard > max_crafts:
             res["stop"] = "guard"
             break
-        best = best_v = best_c = best_l = None
+        best = best_v = best_c = best_l = best_t = None
         for r in rows:
             ok, need_l = usable(r, sk, known, learn_at, patterns)
             if not ok:
@@ -215,12 +220,15 @@ def session_plan(rows: list[list], skill: int, target: int, cap: int = 300, leve
                 v = v * STICKY
             if need_l and r[SPELL] not in planned:
                 v = v * LEARN_COST
-            if (best_v is None or v < best_v - EPS
-                    or (v <= best_v + EPS and (c > best_c + EPS or (c >= best_c - EPS and r[SPELL] < best[SPELL])))):
-                best, best_v, best_c, best_l = r, v, c, need_l
+            tier = 0 if c >= MIN_CHANCE else 1
+            if (best_v is None or tier < best_t or (tier == best_t and (
+                    v < best_v - EPS
+                    or (v <= best_v + EPS and (c > best_c + EPS or (c >= best_c - EPS and r[SPELL] < best[SPELL])))))):
+                best, best_v, best_c, best_l, best_t = r, v, c, need_l, tier
         if best is None:
             res["stop"] = "mats" if exact else "none"
             break
+        cost0 = res["cost"]
         m = best[MATS] or []
         for k in range(0, len(m) - 1, 2):
             iid, n = m[k], m[k + 1]
@@ -243,9 +251,14 @@ def session_plan(rows: list[list], skill: int, target: int, cap: int = 300, leve
                 res["var"][iid] = True
         if best_l and best[SPELL] not in planned:
             planned.add(best[SPELL])
+            read = (learn_at or {}).get(best[SPELL])
+            flags = best[FLAGS] if len(best) > FLAGS and best[FLAGS] else 0
             res["learn"].append({"spell": best[SPELL], "name": best[NAME], "at": sk, "kind": best_l,
-                                 "item": best[RECIPE]})
+                                 "item": best[RECIPE], "req": read or best[MIN] or 1,
+                                 "est": bool(not read and flags & FLAG_EST)})
         s = s + best_c * (best[UPS] if best[UPS] is not None else 1)
+        if s > cap:
+            s = float(cap)  # the game never goes past the rank cap
         res["crafts"] += 1
         stick = best[SPELL]
         to = int(s + EPS)
@@ -253,14 +266,114 @@ def session_plan(rows: list[list], skill: int, target: int, cap: int = 300, leve
             last["crafts"] += 1
             last["to"] = to
             last["color_to"] = color2(best, sk)
+            last["var"] += (1 - best_c) / best_c
+            last["min_c"] = min(last["min_c"], best_c)
+            last["cost1"] = res["cost"]
         else:
             last = {"kind": "craft", "spell": best[SPELL], "name": best[NAME], "from": sk, "to": to, "crafts": 1,
-                    "color": color2(best, sk), "color_to": color2(best, sk), "learn": best_l}
+                    "color": color2(best, sk), "color_to": color2(best, sk), "learn": best_l,
+                    "var": (1 - best_c) / best_c, "min_c": best_c, "row": best, "cost0": cost0, "cost1": res["cost"]}
             res["seq"].append(last)
             res["steps"].append(last)
     res["reached"], res["skill"], res["cap"] = int(s + EPS), s, cap
     res["time"] = res["crafts"] * craft_sec
+    for x in res["steps"]:
+        x["lo"], x["hi"] = craft_range(x["crafts"], x["var"], x["to"] - x["from"])
     return res
+
+
+def craft_range(n: int, var: float, points: int = 0) -> tuple[int, int]:
+    """Range (8 times out of 10) of the crafts of a step: expectation n, variance var (Prof.Engine.Range)."""
+    if var <= EPS:
+        return n, n
+    sd = math.sqrt(var)
+    lo = max(1, points, int(math.floor(n - Z80 * sd + 0.5)))
+    return min(lo, n), int(math.ceil(n + Z80 * sd - EPS))
+
+
+def audit(res: dict, skill: int, target: int, cap: int = 300, level: int = 60, stock: dict | None = None,
+          known: set | dict | None = None, learn_at: dict | None = None, patterns: bool = False,
+          vendor: dict | None = None, price: dict | Callable | None = None, overtime: int = 0, **_: Any) -> list[str]:
+    """Sanity checks of a plan (Prof.Engine.Audit): the list of inconsistencies, empty = sound plan."""
+    bad: list[str] = []
+    skill, target, cap = int(skill), min(300, int(target)), int(cap)
+    at, need, crafts, cur = skill, {}, 0, cap
+    for x in res.get("seq", []):
+        if x["kind"] == "train":
+            if x["at"] != cur:
+                bad.append(f"rank {x['rank']} taken at {x['at']} (cap {cur})")
+            if level < x["level"]:
+                bad.append(f"rank {x['rank']} needs level {x['level']}")
+            if x["cap"] <= cur:
+                bad.append("next rank without a higher cap")
+            cur = x["cap"]
+            continue
+        r, nm = x["row"], x["name"]
+        if x["from"] < skill:
+            bad.append(f"{nm} starts at {x['from']} below skill {skill}")
+        if x["from"] < at:
+            bad.append(f"{nm} goes back ({x['from']} after {at})")
+        if x["to"] < x["from"]:
+            bad.append(f"{nm} goes down")
+        if x["from"] >= target:
+            bad.append(f"{nm} beyond the target {target}")
+        if x["to"] > cur:
+            bad.append(f"{nm} beyond the cap {cur}")
+        if x["crafts"] < 1:
+            bad.append(f"{nm}: 0 craft")
+        if not usable(r, x["from"], known, learn_at, patterns)[0]:
+            bad.append(f"{nm} not learnable at {x['from']}")
+        if chance2(r, x["from"], overtime) <= 0:
+            bad.append(f"{nm} grey at {x['from']}")
+        ups = max(1, r[UPS] or 1)
+        bound = 1.0
+        for k in range(x["from"], max(x["from"], x["to"]) + 1):
+            c = chance2(r, k, overtime)
+            if c > 0:
+                bound += 1 / (c * ups)
+        if x["crafts"] > math.ceil(bound + EPS):
+            bad.append(f"{nm}: {x['crafts']} crafts for {x['from']}->{x['to']} (at most {math.ceil(bound)})")
+        if not (1 <= x["lo"] <= x["crafts"] <= x["hi"]):
+            bad.append(f"{nm}: range {x['lo']}-{x['hi']} outside {x['crafts']}")
+        m = r[MATS] or []
+        for k in range(0, len(m) - 1, 2):
+            need[m[k]] = need.get(m[k], 0) + m[k + 1] * x["crafts"]
+        crafts += x["crafts"]
+        at = x["to"]
+    if crafts != res.get("crafts", 0):
+        bad.append("craft total mismatch")
+    if res.get("reached", 0) < skill or res.get("reached", 0) > max(cur, skill):
+        bad.append(f"reached {res.get('reached')} outside [{skill}, {cur}]")
+    stock, vendor = stock or {}, vendor or {}
+    pf = price if callable(price) else (lambda i: (price or {}).get(i))
+    cost = 0.0
+    for iid in set(need) | set(res.get("use", {})) | set(res.get("buy", {})):
+        u, b = res["use"].get(iid, 0), res["buy"].get(iid, 0)
+        have = max(0, stock.get(iid, 0) or 0)
+        if u + b != need.get(iid, 0):
+            bad.append(f"item {iid}: {u + b} planned for {need.get(iid, 0)} consumed")
+        if u > have:
+            bad.append(f"item {iid}: {u} used for {have} owned")
+        if b > 0 and u < have:
+            bad.append(f"item {iid}: bought while {have - u} left")
+        p = vendor.get(iid)
+        if p is None:
+            p = pf(iid)
+        if b > 0:
+            if p is not None:
+                cost += b * p
+            elif res["unknown"].get(iid, 0) != b:
+                bad.append(f"item {iid}: no price and not flagged to farm")
+    if abs(cost - res.get("cost", 0)) > 0.5:
+        bad.append(f"cost {res.get('cost')} != {cost}")
+    for le in res.get("learn", []):
+        if le["at"] < skill:
+            bad.append(f"learn {le['name']} at {le['at']} below skill {skill}")
+        if le["req"] > le["at"]:
+            bad.append(f"learn {le['name']} at {le['at']}: requirement {le['req']}")
+        if le["kind"] == "pattern" and not patterns:
+            bad.append(f"pattern {le['name']} not asked for")
+    return bad
 
 
 def split(res: dict, have: dict | None = None, reserve: dict[int, int] | None = None,

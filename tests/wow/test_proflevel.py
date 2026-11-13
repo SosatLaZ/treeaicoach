@@ -39,7 +39,10 @@ def test_usable_and_chance():
 def test_session_full_exact_and_ranks():
     r = p.session_plan([A, B, C], 1, 12, stock={900: 3}, vendor={901: 50}, price={900: 10}, known={10})
     assert r["reached"] == 12 and r["stop"] == "target"
-    assert r["use"][900] == 3 and r["buy"][900] > 0 and r["buy"][901] == 4
+    # (5.0) A falls under 25 % at 9 (deep green): B takes over one point earlier → 3 crafts of B (6 × 901), not 2
+    assert r["use"][900] == 3 and r["buy"][900] > 0 and r["buy"][901] == 6
+    assert not p.audit(r, 1, 12, stock={900: 3}, vendor={901: 50}, price={900: 10}, known={10})
+    assert all(x["lo"] <= x["crafts"] <= x["hi"] for x in r["steps"]) and r["learn"][0]["req"] == 8
     assert r["learn"][0]["spell"] == 11 and r["learn"][0]["kind"] == "trainer"
     assert sum(x["crafts"] for x in r["steps"]) == r["crafts"]
     ex = p.session_plan([A, B, C], 1, 300, mode="exact", stock={900: 4}, vendor={901: 50})
@@ -86,7 +89,7 @@ def test_former_contract_still_answers():
     rows = [[10, 0, 1, 1, 5, 10, 1, 0, "A", [900, 1]], [11, 0, 1, 1, 20, 40, 1, 0, "B", [901, 2]]]
     r = p.plan(0, 1, 12, lambda i: 10 if i == 900 else 50, stock={900: 3}, rows=rows)
     assert r["reached"] == 12 and r["steps"][0]["name"] == "A" and r["steps"][-1]["name"] == "B"
-    assert r["used"] == {900: 3} and r["shopping"][901] == 4
+    assert r["used"] == {900: 3} and r["shopping"][901] == 6
     full = p.plan(129, 1, 300, lambda i: 100)
     assert full["reached"] >= 75 and full["cost"] > 0
 
@@ -154,7 +157,8 @@ def _canon(res, sp):
         if x["kind"] == "train":
             st.append(f"T{x['at']}:{x['rank']}")
         else:
-            st.append(f"{x['spell']}:{x['from']}:{x['to']}:{x['crafts']}:{x['color']}:{x['color_to']}:{x['learn'] or '-'}")
+            st.append(f"{x['spell']}:{x['from']}:{x['to']}:{x['crafts']}:{x['color']}:{x['color_to']}:{x['learn'] or '-'}"
+                      f":{x['lo']}:{x['hi']}")
     parts.append(";".join(st))
     parts.append(";".join(f"{l['spell']}:{l['at']}:{l['kind']}" for l in res["learn"]))
     parts += [kv(res["use"]), kv(res["buy"]), kv(res["unknown"]), kv(sp["bank"]), kv(sp["mail"])]

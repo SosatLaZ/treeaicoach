@@ -31,7 +31,9 @@ return function(M, ctx)
   local res = E.Session({ rows = rows, skill = 1, target = 12, cap = 300, stock = { [900] = 3 }, vendor = { [901] = 50 },
     price = { [900] = 10 }, known = { [10] = true } })
   check(res.reached == 12 and res.stop == "target", "full mode reaches the target: " .. tostring(res.reached) .. " " .. tostring(res.stop))
-  check(res.use[900] == 3 and res.buy[900] and res.buy[901] == 4, "stock used first, the rest bought")
+  check(res.use[900] == 3 and res.buy[900] and res.buy[901] == 6, "stock used first, the rest bought (5.0: A under 25 % at 9 → B one point earlier)")
+  check(#E.Audit(res, { skill = 1, target = 12, cap = 300, stock = { [900] = 3 }, vendor = { [901] = 50 }, price = { [900] = 10 }, known = { [10] = true } }) == 0,
+    "the plan passes its own audit")
   check(res.learn[1] and res.learn[1].spell == 11 and res.learn[1].kind == "trainer", "trainer recipe to learn listed")
   check(res.steps[1].name == "A" and res.steps[#res.steps].name == "B", "cheapest first, then the next recipe")
   local sumC = 0
@@ -121,7 +123,11 @@ return function(M, ctx)
   local kinds = {}
   for _, st in ipairs(steps) do kinds[st.kind] = (kinds[st.kind] or 0) + 1 end
   check(kinds.bank == 1 and kinds.vendor == 1 and (kinds.craft or 0) >= 1, "session: bank, vendor, crafts")
-  check(kinds.ask == 1 and steps[1].kind == "ask", "« me demander avant l'HV » : the AH purchase is a question first")
+  -- (5.0 PROF) the trainer of this profession was never read: « va d'abord chez ton maître » comes before the AH question
+  local askAt
+  for i, st in ipairs(steps) do if st.kind == "ask" then askAt = i end end
+  check(kinds.ask == 1 and askAt and askAt <= 2 and (askAt == 1 or (steps[1].kind == "trainer" and steps[1].read)),
+    "« me demander avant l'HV » : the AH purchase is a question first (after « va d'abord chez ton maître » if he was never read)")
   local ahRow
   for _, a in ipairs(plan.split.ah) do if a.id == 4234 then ahRow = a end end
   check(ahRow and ahRow.unit == 80 and ahRow.cost == ahRow.n * 80, "AH purchase priced from the AH data")
@@ -281,7 +287,7 @@ return function(M, ctx)
       for _, r in ipairs(Ly.rects) do labels[#labels + 1] = r.label end
       local all = table.concat(labels, "\n")
       check(all:find("Travail du cuir", 1, true) and all:find("Étapes", 1, true), "page: hero + steps")
-      check(all:find("Complet", 1, true) and all:find("Pile-poil", 1, true), "page: the two modes")
+      check(all:find("Réglages du plan", 1, true), "page: the two modes live under « Réglages du plan » (folded)")
     end
     W.Close()
   end

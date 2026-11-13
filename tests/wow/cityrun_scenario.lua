@@ -74,7 +74,7 @@ return function(M, ctx)
   for id, t in pairs({ [2319] = "Cuir moyen", [2318] = "Cuir léger", [4234] = "Cuir lourd", [2321] = "Bobine de fil raffiné",
     [2320] = "Bobine de fil grossier", [4289] = "Sel", [4340] = "Teinture grise", [4265] = "Renfort d'armure lourd",
     [5961] = "Pantalon noir en cuir", [4235] = "Peau lourde", [4236] = "Peau lourde traitée", [2589] = "Étoffe de lin",
-    [2592] = "Étoffe de laine", [2604] = "Teinture rouge" }) do
+    [2592] = "Étoffe de laine", [2604] = "Teinture rouge", [2605] = "Teinture verte" }) do
     M.AddItem(id, { name = t, stack = 20, sellPrice = 50, classID = 7 })
   end
   M.AddItem(4593, { name = "Poisson-Test", stack = 20, sellPrice = 1, classID = 0, subclassID = 5 })
@@ -107,7 +107,8 @@ return function(M, ctx)
   visitMerchant("Fournisseur-Test", 0.60, 0.50, { { id = 2321, price = 100, stack = 1, maxStack = 20 },
     { id = 2515, price = 10, stack = 200, maxStack = 1000 }, { id = 4593, price = 25, stack = 5, maxStack = 20 },
     { id = 4340, price = 350, stack = 1, maxStack = 20 }, { id = 4289, price = 50, stack = 1, maxStack = 20 },
-    { id = 2678, price = 2, stack = 1, maxStack = 20 }, { id = 3371, price = 20, stack = 5, maxStack = 20 } })
+    { id = 2678, price = 2, stack = 1, maxStack = 20 }, { id = 3371, price = 20, stack = 5, maxStack = 20 },
+    { id = 2605, price = 100, stack = 1, maxStack = 20 } })   -- (5.0) green dye: the plan may pick « Ceinture verte en cuir »
   local list = CR.db.npcs["1454"]
   local f = list and list["Fournisseur-Test"]
   local fi = f and CR.ItemsOf(f) or {}
@@ -250,8 +251,9 @@ return function(M, ctx)
   M.quests = {} M.FireEvent("QUEST_LOG_UPDATE") M.Advance(2)
 
   -- ------------------------------------------------------------------ 4b. one dismissible suggestion in a capital
-  CR.proposedFor = nil
-  CR.CheckPropose()
+  -- (5.0 PROF) the proposal is computed in two frames (errands, then the route) and « nothing to propose » is kept 2 min
+  CR.proposedFor, CR.proposeTried = nil, nil
+  CR.CheckPropose() M.Advance(0.6)
   local function proposals()
     local n, e0 = 0, nil
     for _, e in ipairs(T:GetSuggestions()) do if tostring(e.id):find("^CityRun:") then n, e0 = n + 1, e end end
@@ -259,11 +261,12 @@ return function(M, ctx)
   end
   local np, pe = proposals()
   check(np == 1 and pe.text:find("Courses en ville", 1, true) and type(pe.onClick) == "function", "one suggestion « Courses en ville : … » in Orgrimmar")
-  CR.CheckPropose()
+  CR.proposeTried = nil
+  CR.CheckPropose() M.Advance(0.6)
   check(select(1, proposals()) == 1, "proposed once per visit")
   T:DismissSuggestion(pe.id)
-  CR.proposedFor = nil
-  CR.CheckPropose()
+  CR.proposedFor, CR.proposeTried = nil, nil
+  CR.CheckPropose() M.Advance(0.6)
   check(select(1, proposals()) == 0, "dismissed: not proposed again")
   -- the window pages
   local Wp = T.Window
@@ -282,8 +285,12 @@ return function(M, ctx)
     local l2 = {}
     for _, r in ipairs(Ly2.rects) do l2[#l2 + 1] = r.label end
     local all2 = table.concat(l2, "\n")
-    check(all2:find("Me concentrer sur les métiers", 1, true) and all2:find("Courses en ville", 1, true) and all2:find("Points métiers sur la carte", 1, true),
-      "Métiers page header: « Me concentrer sur les métiers », « Courses en ville », map pins toggle")
+    -- (5.0 PROF) the 3 big actions are the page's « top » ; the map pins toggle lives under « Réglages du plan » (folded)
+    local tops = {}
+    for _, b in ipairs(Wp.pageIndex.prof.top()) do tops[#tops + 1] = b[1] end
+    local topAll = table.concat(tops, "\n")
+    check(topAll:find("Me concentrer", 1, true) and topAll:find("Courses en ville", 1, true) and topAll:find("Ce que je peux apprendre", 1, true)
+      and all2:find("Réglages du plan", 1, true), "Métiers page: 3 top actions (« Me concentrer », « Courses en ville », « Ce que je peux apprendre »), settings folded")
     check(all2:find("Options : le moins cher par point", 1, true) and all2:find("Étape suivante", 1, true), "Métiers page: options + next / previous step")
   end
 
@@ -338,7 +345,8 @@ return function(M, ctx)
       M.units.npc = { name = CR.ShownName(s.npcs[1]) }
       M.merchantItems = { { id = 2321, price = 100, stack = 1, maxStack = 20 }, { id = 2515, price = 10, stack = 200, maxStack = 1000 },
         { id = 4593, price = 25, stack = 5, maxStack = 20 }, { id = 4340, price = 350, stack = 1, maxStack = 20 }, { id = 4289, price = 50, stack = 1, maxStack = 20 },
-        { id = 2678, price = 2, stack = 1, maxStack = 20 }, { id = 3371, price = 20, stack = 5, maxStack = 20 } }
+        { id = 2678, price = 2, stack = 1, maxStack = 20 }, { id = 3371, price = 20, stack = 5, maxStack = 20 },
+        { id = 2605, price = 100, stack = 1, maxStack = 20 } }
       M.bought = {}
       M.SetMerchant(true) M.Advance(0.4)
       local c = card()

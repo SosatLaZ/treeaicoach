@@ -182,7 +182,15 @@ function PL.ScanMail()
   PL.Dirty("bank")
   return items
 end
-local function bagCount(id) return num(API.ItemCount and API.ItemCount(id, false)) or 0 end
+-- (5.0 PROF, idée lue chez SkillUp Forever) un compte illisible (valeur secrète en combat) n'est jamais « 0 » : le
+-- dernier compte lisible le remplace — sinon le plan croirait qu'il faut tout racheter
+local lastCount = {}
+local function bagCount(id)
+  local n = num(API.ItemCount and API.ItemCount(id, false))
+  if n == nil then return lastCount[id] or 0 end
+  lastCount[id] = n
+  return n
+end
 PL.BagCount = bagCount
 --- { bags, bank, mail } pour ces objets (ids = {[id] = true}) ; banque = dernier relevé, sinon le compte du jeu
 function PL.Have(ids)
@@ -303,11 +311,20 @@ local priceCache, priceAt = {}, -100
 function PL.PriceOf(id)
   if now() - priceAt > 60 then priceCache, priceAt = {}, now() end
   local c = priceCache[id]
-  if c then return c[1], c[2], c[3] end
+  if c then return c[1], c[2], c[3], c[4] end
   local d = D()
   local v = d and d.mats[id]
   local p, src, conf
-  if v and v[3] == 1 and (v[2] or 0) > 0 then p, src, conf = v[2], "vendeur", 1 end
+  local lot
+  if v and v[3] == 1 and (v[2] or 0) > 0 then
+    p, src, conf, lot = v[2], "vendeur", 1, v[5] or 1
+    -- (5.0 PROF) prix et lot LUS chez un marchand visité (réputation, lot réel) : ils passent avant la table
+    local CRm = T.CityRun
+    if CRm and type(CRm.KnownPrice) == "function" then
+      local okP, lp, ll = pcall(CRm.KnownPrice, id)
+      if okP and tonumber(lp) and lp > 0 then lot = max(1, tonumber(ll) or 1) p = ceil(lp / lot) end
+    end
+  end
   if not p then
     local Au = T.modules and T.modules.Auction
     if type(Au) == "table" and type(Au.Stats) == "function" then
@@ -323,8 +340,8 @@ function PL.PriceOf(id)
     local a = type(api) == "table" and try(api.GetAuctionPriceByItemID, "TreeAI", id)
     if type(a) == "number" and a > 0 then p, src, conf = floor(a), "Auctionator", 0.3 end
   end
-  priceCache[id] = { p, src, conf }
-  return p, src, conf
+  priceCache[id] = { p, src, conf, lot }
+  return p, src, conf, lot
 end
 --- « se vend bien » / « ≈ 12 vendus par jour » / « peu vu à l'HV » (historique HV de TreeAI) ou nil
 function PL.LiqText(id)
@@ -363,7 +380,7 @@ function PL.LearnAt(line)
   local out = {}
   for _, r in ipairs(d and d.r[line] or {}) do
     local e = req[fold(r[9])]
-    if type(e) == "table" and tonumber(e.r) then out[r[1]] = tonumber(e.r) end
+    if type(e) == "table" and (tonumber(e.r) or 0) > 0 then out[r[1]] = tonumber(e.r) end   -- (5.0) 0 = jamais lue
   end
   learnCache[line] = { k = key, v = out }
   return out
@@ -376,12 +393,24 @@ function PL.Rows(line)
   local rows = d and d.r[line]
   if not rows then return {} end
   local cal = M.char and type(M.char.cal) == "table" and M.char.cal[line]
-  if type(cal) ~= "table" or not next(cal) then return rows end
+  -- (5.0 PROF) compos réelles lues dans la fenêtre du métier (Prof.ReadReagents) : elles remplacent celles de la table
+  local fix = M.char and type(M.char.fix) == "table" and M.char.fix[line]
+  if type(fix) ~= "table" or not next(fix) then fix = nil end
+  if type(cal) ~= "table" or not next(cal) then cal = nil end
+  if not cal and not fix then return rows end
   local c = rowsCache[line]
-  if c and c.k == ver.known then return c.v end
+  local rk = ver.known .. ":" .. tostring(M.fixGen or 0)
+  if c and c.k == rk then return c.v end
   local out = {}
   for i, r in ipairs(rows) do
-    local o = cal[r[1]]
+    local fx = fix and fix[r[1]]
+    if type(fx) == "table" and #fx >= 2 then
+      local n = {}
+      for k = 1, 11 do n[k] = r[k] end
+      n[10], n.live = fx, true
+      r = n
+    end
+    local o = cal and cal[r[1]]
     if type(o) == "table" then
       local y, gr = r[5], r[6]
       local gx = tonumber(o.g)
@@ -395,13 +424,13 @@ function PL.Rows(line)
       if y ~= r[5] or gr ~= r[6] then
         local n = {}
         for k = 1, 11 do n[k] = r[k] end
-        n[5], n[6] = y, gr
+        n[5], n[6], n.live = y, gr, r.live
         r = n
       end
     end
     out[i] = r
   end
-  rowsCache[line] = { k = ver.known, v = out }
+  rowsCache[line] = { k = rk, v = out }
   return out
 end
 
@@ -414,12 +443,53 @@ local function castSec(spell)
   if ms and ms > 0 then return ms / 1000 + 0.4 end
   return E.CRAFT_SEC
 end
---- cible par défaut : Complet = la cible du métier (palier Legacy / fin du rang, ou celle choisie) ; Pile-poil = 300
+--- cible par défaut : Complet = la cible du métier (palier Legacy / fin du rang, ou celle choisie) ; Pile-poil = 300.
+--- (5.0 PROF) sans cible choisie, le plan s'arrête où ton or s'arrête (PL.Afford) : plus de « 410 Cuir moyen à l'HV ».
 function PL.Target(line, mode)
   local pr = profOf(line)
   if not pr then return 0 end
   if mode == "exact" then return 300 end
-  return M.TargetFor(pr)
+  local goal = M.TargetFor(pr)
+  local chosen = tonumber(M.char and M.char.target and M.char.target[line]) or tonumber(M.db and M.db.target) or 0
+  if chosen > pr.rank or (M.db and M.db.afford == false) or not PL.Afford then return goal end
+  return (PL.Afford(line, goal))
+end
+--- jusqu'où ton or te mène : la plus haute cible ≤ goal dont les achats tiennent dans 80 % de ton or (20 % gardés pour
+--- le reste : réparation, munitions, maître de classe). Le plan d'une cible plus basse est le DÉBUT du plan complet
+--- (le moteur choisit fabrication par fabrication) : la coupe se lit sur ses coûts cumulés, puis est vérifiée.
+--- → cible, but (goal), coût du plan complet, budget
+local affordMemo = {}
+function PL.Afford(line, goal)
+  local pr = profOf(line)
+  if not pr then return goal end
+  local goldNow = num(API.Money and API.Money()) or 0
+  local budget = floor(goldNow * 0.8)
+  local key = tconcat({ pr.rank, pr.max, goal, floor(goldNow / 100), ver.known, ver.prices, ver.bags, ver.bank, ver.focus,
+    tostring(API.BagGen and API.BagGen() or 0) }, ":")
+  local c = affordMemo[line]
+  if c and c.key == key then return c.t, goal, c.full, budget end
+  local full = PL.Compute(line, "full", goal)
+  local t = goal
+  if full and full.cost > budget then
+    t = pr.rank
+    for _, x in ipairs(full.res.steps) do
+      if (x.cost1 or 0) <= budget then t = x.to
+      else
+        local span = (x.cost1 or 0) - (x.cost0 or 0)
+        if span > 0 and budget > (x.cost0 or 0) then t = x.from + floor((budget - x.cost0) / span * (x.to - x.from)) end
+        break
+      end
+    end
+    local floorT = min(goal, pr.rank + 5)
+    t = max(t, floorT)
+    for _ = 1, 3 do
+      local p2 = t < goal and PL.Compute(line, "full", t) or nil
+      if not p2 or p2.cost <= budget or t <= floorT then break end
+      t = max(floorT, t - 3)
+    end
+  end
+  affordMemo[line] = { key = key, t = t, full = full and full.cost or nil }
+  return t, goal, full and full.cost or nil, budget
 end
 function PL.Mode() local m = M.db and M.db.plMode return m == "exact" and "exact" or "full" end
 --- le plan d'un métier : { line, name, mode, target, skill, cap, res (E.Session), split (E.Split), have, reserve,
@@ -450,7 +520,8 @@ function PL.Compute(line, mode, target, assume)
   for _, r in ipairs(PL.Rows(line)) do
     local okKnown = (known and known[r[1]]) or ((r[11] or 0) % 2 == 1)
     local need = (learnAt and learnAt[r[1]]) or r[4] or 1
-    if r[6] > pr.rank and (okKnown or ((r[8] or 0) == 0 and need <= hi)) then
+    -- (5.0 PROF) maître lu : une recette qu'il ne propose pas dans sa plage n'est pas planifiée (vraie ou absente)
+    if r[6] > pr.rank and (okKnown or ((r[8] or 0) == 0 and need <= hi and not (PL.NotTaught and PL.NotTaught(line, r)))) then
       rows[#rows + 1] = r
       local m = r[10] or {}
       for k = 1, #m - 1, 2 do ids[m[k]] = true end
@@ -461,7 +532,9 @@ function PL.Compute(line, mode, target, assume)
   local makers = {}
   for _, r in ipairs(PL.Rows(line)) do
     local out = r[2]
-    if out and out > 0 and ids[out] and not makers[out] and E.Usable(r, pr.rank, known, learnAt) then
+    -- (5.0 PROF) jamais pour une compo qui se récolte (Cuir lourd = 5 Cuir moyen : « 165× Cuir lourd, 807 Cuir moyen à
+    -- farmer » était absurde) : celle-là se dépèce / s'achète telle quelle
+    if out and out > 0 and ids[out] and not makers[out] and not (d.farm and d.farm[out]) and E.Usable(r, pr.rank, known, learnAt) then
       makers[out] = r
     end
   end
@@ -481,10 +554,10 @@ function PL.Compute(line, mode, target, assume)
     if n > 0 then stock[id] = n end
     sig[#sig + 1] = id .. ":" .. (have.bags[id] or 0) .. ":" .. (have.bank[id] or 0) .. ":" .. (have.mail[id] or 0)
       .. ":" .. (reserve[id] or 0)
-    local p, src, conf = PL.PriceOf(id)
+    local p, src, conf, plot = PL.PriceOf(id)
     unit[id] = { p, src, conf }
     local v = d.mats[id]
-    if src == "vendeur" then vendor[id] = p vinfo[id] = { p, (v and v[5]) or 1 }
+    if src == "vendeur" then vendor[id] = p vinfo[id] = { p, plot or (v and v[5]) or 1 }
     elseif p then price[id] = p end
     value[id] = p or (v and v[4] and v[4] > 0 and v[4]) or 1
   end
@@ -508,9 +581,13 @@ function PL.Compute(line, mode, target, assume)
     end
   end
   for out, p in pairs(made) do price[out] = p unit[out] = { p, "fabriqué", 1 } end
-  local res = E.Session({ rows = rows, skill = pr.rank, target = target, cap = pr.max, level = level, mode = mode,
+  -- (5.0 PROF) rang suivant : niveau lu chez le maître (sinon valeur Classic, « à confirmer »)
+  local ranks, ranksEst = nil, true
+  if PL.Ranks then ranks, ranksEst = PL.Ranks(line) end
+  local inp = { rows = rows, skill = pr.rank, target = target, cap = pr.max, level = level, mode = mode,
     stock = stock, known = known, learnAt = learnAt, vendor = vendor, price = price, value = value,
-    overtime = M.db and M.db.overtime or 0 })
+    overtime = M.db and M.db.overtime or 0, ranks = ranks }
+  local res = E.Session(inp)
   -- intermédiaires à faire soi-même : « Crée d'abord N× X » (ses compos : tes stocks d'abord, puis achats)
   local prep, use2, buy2, unk2 = {}, {}, {}, {}
   for id, n in pairs(res.use) do use2[id] = n end
@@ -553,12 +630,15 @@ function PL.Compute(line, mode, target, assume)
   if #res.learn > 0 or #res.train > 0 then visits = visits + 1 end
   local plan = { line = line, name = lineName(line), mode = mode, target = target, skill = pr.rank, cap = pr.max,
     res = res, split = split, prep = prep, use = use2, have = have, reserve = reserve, why = why, unit = unit, known = known ~= nil,
-    time = t + visits * 40, visits = visits, cost = floor(split.vendorCost + split.ahCost), at = now(), level = level }
+    time = t + visits * 40, visits = visits, cost = floor(split.vendorCost + split.ahCost), at = now(), level = level,
+    inp = inp, ranksEst = ranksEst }
+  -- (5.0 PROF) garde-fous : un plan incohérent n'est jamais montré (plan.bad = la liste, écrite dans le journal d'erreurs)
+  if PL.Check then local okC, bad = pcall(PL.Check, plan) plan.bad = (okC and type(bad) == "table" and #bad > 0) and bad or nil end
   PL.cache[key] = plan
   if line == ((PL.focus and PL.focus.line) or PL.Line()) then PL.lastBuys = #split.vendor + #split.ah end   -- bouton « Métiers »
   local order = PL.cacheOrder
   order[#order + 1] = key
-  while #order > 6 do PL.cache[table.remove(order, 1)] = nil end
+  while #order > 12 do PL.cache[table.remove(order, 1)] = nil end   -- (5.0) 3 métiers × (but, cible abordable, pile-poil)
   return plan
 end
 
@@ -626,16 +706,53 @@ function PL.LearnVendor()
   tsort(ids)
   return remember(A("vend"), p, name, { i = ids })
 end
---- maître de métier ouvert : exigences et prix réels des recettes, recettes déjà apprises, sa place
+--- (5.0 PROF) une ligne de la fenêtre du maître, quelle que soit la signature du client : Forever (famille Mainline)
+--- rend nom, type, icône, niveau requis ; Era rend nom, sous-texte, type, déplié. Le type est cherché dans les deux
+--- places, le niveau requis seulement si c'est un nombre ; l'exigence de compétence vient de
+--- GetTrainerServiceSkillReq (métier, rang, déjà atteinte). Rien n'est deviné : un champ illisible reste nil.
+local SVC_CAT = { available = true, unavailable = true, used = true, header = true }
+function PL.TrainerService(i)
+  local a, b, c, d4 = try(g("GetTrainerServiceInfo"), i)
+  local name = str(a)
+  if not name then return nil end
+  b, c, d4 = pub(b), pub(c), pub(d4)
+  local cat = (type(b) == "string" and SVC_CAT[b] and b) or (type(c) == "string" and SVC_CAT[c] and c) or nil
+  local lvl = type(d4) == "number" and d4 or num((try(g("GetTrainerServiceLevelReq"), i)))
+  local sk, rank = try(g("GetTrainerServiceSkillReq"), i)
+  return { i = i, name = name, cat = cat, lvl = lvl, skill = str(sk), rank = num(rank),
+    cost = num((try(g("GetTrainerServiceCost"), i))) }
+end
+--- maître de métier ouvert : exigences et prix réels des recettes, recettes déjà apprises, rang suivant, sa place.
+--- treq[ligne][nom] = { r = compétence exigée (lue), le = 1 si « au plus » (apprenable maintenant, exigence non dite),
+--- c = prix, lv = niveau requis, a = 1 si apprenable à cette visite, t } ; trank[ligne] = le rang suivant { cap = ton
+--- plafond à la visite, r, lv, c, a, name, t } ; tseen[ligne] = { t, n }.
 function PL.LearnTrainer()
-  if not try(g("IsTradeskillTrainer")) then return nil end
+  if not try(g("IsTradeskillTrainer")) then PL.trainerLine, PL.trainerSvcs = nil, nil return nil end
   local d = D()
   local n = num((try(g("GetNumTrainerServices")))) or 0
   if not d or n <= 0 then return nil end
+  local svcs = {}
+  for i = 1, min(n, 300) do
+    local sv = PL.TrainerService(i)
+    if sv and sv.cat ~= "header" then svcs[#svcs + 1] = sv end
+  end
   local line = M.LineOf(str((try(g("GetTrainerServiceSkillLine"), 1))) or "")
+  if not (line and d.lines[line]) then
+    for _, sv in ipairs(svcs) do
+      line = sv.skill and M.LineOf(sv.skill) or nil
+      if line and d.lines[line] then break end
+      line = nil
+    end
+  end
   if not line then
-    local sk = str((try(g("GetTrainerServiceSkillReq"), 1)))
-    line = sk and M.LineOf(sk)
+    -- dernier recours : le métier (parmi les tiens) dont le plus de recettes portent ces noms
+    local bestN = 0
+    for _, pr in ipairs(M.profs or {}) do
+      local names, hit = {}, 0
+      for _, r in ipairs(d.r[pr.line] or {}) do names[fold(r[9])] = true end
+      for _, sv in ipairs(svcs) do if names[fold(sv.name)] then hit = hit + 1 end end
+      if hit > bestN then line, bestN = pr.line, hit end
+    end
   end
   if not (line and d.lines[line]) then return nil end
   local byName = {}
@@ -643,21 +760,41 @@ function PL.LearnTrainer()
   local req = A("treq")
   req[line] = type(req[line]) == "table" and req[line] or {}
   local known = M.char and M.char.known
-  local learned = 0
-  for i = 1, min(n, 300) do
-    local name, _, cat = try(g("GetTrainerServiceInfo"), i)
-    name = str(name)
-    local spell = name and byName[fold(name)]
+  local pr = profOf(line)
+  local learned, rankSvc, t, hi = 0, nil, epoch(), 0
+  for _, sv in ipairs(svcs) do
+    local key = fold(sv.name)
+    local spell = byName[key]
     if spell then
-      local _, rank = try(g("GetTrainerServiceSkillReq"), i)
-      local e = { r = num(rank) or 0, c = num((try(g("GetTrainerServiceCost"), i))) or 0 }
-      req[line][fold(name)] = e
-      if cat == "used" and type(known) == "table" then
+      local e = type(req[line][key]) == "table" and req[line][key] or {}
+      if sv.rank and sv.rank > 0 then e.r, e.le = sv.rank, nil
+      elseif sv.cat == "available" and pr and ((tonumber(e.r) or 0) <= 0 or e.r > pr.rank) then e.r, e.le = pr.rank, 1
+      elseif (tonumber(e.r) or 0) <= 0 then e.r = nil end
+      if (tonumber(e.r) or 0) > hi then hi = e.r end
+      if sv.cost then e.c = sv.cost end
+      if sv.lvl then e.lv = sv.lvl end
+      e.a, e.t = (sv.cat == "available") and 1 or nil, t
+      req[line][key] = e
+      if sv.cat == "used" and type(known) == "table" then
         known[line] = type(known[line]) == "table" and known[line] or {}
         if not known[line][spell] then known[line][spell], learned = 1, learned + 1 end
       end
+    elseif sv.cat == "available" or sv.cat == "unavailable" then
+      -- pas une recette : le rang suivant du métier (le moins exigeant s'il y en a plusieurs)
+      if not rankSvc or (sv.rank or 1e9) < (rankSvc.rank or 1e9) then rankSvc = sv end
     end
   end
+  if pr then
+    local tr = A("trank")
+    if rankSvc then
+      tr[line] = { cap = pr.max, r = rankSvc.rank, lv = rankSvc.lvl, c = rankSvc.cost, a = (rankSvc.cat == "available") and 1 or nil,
+        name = rankSvc.name, t = t }
+    elseif type(tr[line]) == "table" and tr[line].cap ~= pr.max then tr[line] = nil end
+  end
+  -- hi = la plus haute exigence qu'il montre : une recette « du maître » absente de sa liste sous hi n'est pas chez lui
+  local old = A("tseen")[line]
+  A("tseen")[line] = { t = t, n = #svcs, hi = max(hi, type(old) == "table" and tonumber(old.hi) or 0) }
+  PL.trainerLine, PL.trainerSvcs = line, svcs
   local p = me()
   local who = str((try(g("UnitName"), "npc")))
   if p and who then remember(A("trn"), p, who, { l = line }) end
@@ -798,6 +935,7 @@ local function itemsText(list, maxN)
   return tconcat(parts, ", ")
 end
 PL.ItemsText = itemsText
+PL.WhereText = function(w, fallback) local dd = w and distText(w.dist) return w and (cut(w.name or fallback or "", 28) .. (dd and (" · " .. dd) or "")) or fallback end
 local function whereText(w, fallback)
   if not w then return fallback end
   local d = distText(w.dist)
@@ -880,7 +1018,7 @@ local function stepText(st, plan)
     if #names > 0 then what[#what + 1] = (later and "apprendre " or "apprends ") .. tconcat(names, ", ") end
     if #what == 0 then what[1] = tconcat(parts, ", ") end
     local txt = tconcat(what, ", ")
-    if later then st.title = "Maître : " .. txt .. fmt(" (dès %d)", st.at)
+    if later then st.title = "Maître : " .. txt .. fmt(" (dès %d)", (not st.train and st.req and st.req > plan.skill) and st.req or st.at)
     else st.title = (txt:gsub("^%l", string.upper)) .. " chez ton maître" end
     st.sub = whereText(st.where, "maître du " .. lineName(plan.line):lower() .. " (pas encore vu)")
     st.guideLabel = "Maître du métier"
@@ -917,8 +1055,12 @@ local function stepText(st, plan)
       st.title = fmt("Crée d'abord %d× %s", x.crafts, cut(x.name, 30))
       st.sub = "compo des recettes suivantes" .. (WHERE_CRAFT[plan.line] and (" · " .. WHERE_CRAFT[plan.line]) or "")
     else
-      st.title = fmt("Crée %d× %s (%s)", x.crafts, cut(x.name, 30), col)
+      -- (5.0 PROF) orange = compte exact ; jaune / vert = « ≈ N (de A à B) » : la fourchette 8 fois sur 10
+      local exactN = not x.hi or x.hi == x.lo
+      st.title = fmt(exactN and "Crée %d× %s (%s)" or "Crée ≈ %d× %s (%s)", x.crafts, cut(x.name, 30), col)
       st.sub = (x.to > x.from and fmt("%d → %d", x.from, x.to) or fmt("à %d (chance d'un point)", x.from))
+        .. ((not exactN) and fmt(" · de %d à %d fabrications", x.lo, x.hi) or "")
+        .. ((x.minC and x.minC < E.MIN_CHANCE) and fmt(" · vert foncé : ≈ %d par point, rien de mieux", ceil(1 / x.minC)) or "")
         .. (WHERE_CRAFT[plan.line] and (" · " .. WHERE_CRAFT[plan.line]) or "")
     end
   end
@@ -938,7 +1080,9 @@ function PL.Steps(plan)
   if next(sp.mail) then pre[#pre + 1] = { kind = "mail", items = listOf(sp.mail), where = PL.WhereService("mailbox") } end
   if next(sp.bank) then pre[#pre + 1] = { kind = "bank", items = listOf(sp.bank), where = PL.WhereService("bank") } end
   local learnNow, later = {}, {}
-  for _, l in ipairs(res.learn) do if l.at <= plan.skill then learnNow[#learnNow + 1] = l else later[l.spell] = l end end
+  -- (5.0 PROF) apprenable MAINTENANT = son exigence (lue, sinon estimée) est atteinte, même si le plan ne s'en sert que
+  -- plus tard : une seule visite au maître au début, jamais « apprendre X (dès 97) » pour une recette ouverte à 90
+  for _, l in ipairs(res.learn) do if (l.req or l.at) <= plan.skill then learnNow[#learnNow + 1] = l else later[l.spell] = l end end
   for _, x in ipairs(plan.prep or {}) do
     if x.learn then learnNow[#learnNow + 1] = { spell = x.spell, name = x.name, at = plan.skill, kind = "trainer" } end
   end
@@ -992,12 +1136,15 @@ function PL.Steps(plan)
       if l then
         local st = trainerAt(l.at)
         st.learn[#st.learn + 1] = l
+        st.req = max(st.req or 0, l.req or l.at)     -- « dès N » = la vraie exigence, pas le moment où le plan s'en sert
         later[x.spell] = nil
       end
       steps[#steps + 1] = { kind = "craft", step = x }
     end
   end
   for _, st in ipairs(steps) do stepText(st, plan) end
+  -- (5.0 PROF) honnêteté : « le maître d'abord » tant que ses exigences ne sont pas lues, « à confirmer », plan incohérent
+  if PL.Steps5 then local ok5, s5 = pcall(PL.Steps5, steps, plan) if ok5 and type(s5) == "table" then steps = s5 end end
   -- (4.1 CITYRUN) ton étape choisie d'abord, les passées à la fin, « Aller au maître » toujours proposée
   local CR = T.CityRun
   if CR and type(CR.ApplyPick) == "function" then
@@ -1341,6 +1488,7 @@ end
 function PL.HideCard()
   if acard then acard.fn = nil try(acard.Hide, acard) end
 end
+PL.OwnerOf = function(kind) return ownerOf(kind) end
 
 -- surbrillance des cases de banque à retirer (cadres à nous, posés sur les boutons du jeu, hors combat)
 local glows, glowN = {}, 0
@@ -1737,6 +1885,8 @@ end
 function PL.UpdateCard()
   local CR = T.CityRun   -- (4.1 CITYRUN) la carte est aux courses en ville pendant qu'elles tournent
   if not PL.focus and CR and type(CR.OwnsCard) == "function" and CR.OwnsCard() then return CR.UpdateCard() end
+  -- (5.0 PROF) chez le maître (session ou pas) : « tout ce que tu peux apprendre d'utile », un clic = une recette
+  if not inCombat() and PL.trainerOpen and PL.TrainerCard and PL.TrainerCard() then return end
   if not inCombat() and not PL.focus and PL.NpcCard() then return end
   if inCombat() or not PL.focus then PL.HideCard() PL.ClearGlows() return end
   local plan = PL.FocusPlan()
@@ -1943,7 +2093,12 @@ function PL.LearnedRecipe(spell)
   M.char.known[line][spell] = 1
   PL.Dirty("known")
 end
-local function busy() return PL.focus or pageShown() or PL.bankOpen or PL.merchantOpen end
+local function busy() return PL.focus or pageShown() or PL.bankOpen or PL.merchantOpen or PL.trainerOpen end
+function PL.BagsChanged()
+  PL.pendingBuy, PL.pendingBank, PL.pendingAH = {}, {}, {}
+  if PL.bankOpen then pcall(PL.ScanBank) end
+  if busy() then PL.Dirty("bags") end
+end
 -- événements (enregistrés par Prof:OnEnable sur le module Prof : coupés avec lui) ; handler(self, event, ...)
 PL.On = {
   MERCHANT_SHOW = function()
@@ -1967,11 +2122,8 @@ PL.On = {
     PL.Soon(0.1)
   end,
   PLAYERBANKSLOTS_CHANGED = function() if PL.bankOpen then pcall(PL.ScanBank) end end,
-  BAG_UPDATE_DELAYED = function()
-    PL.pendingBuy, PL.pendingBank, PL.pendingAH = {}, {}, {}
-    if PL.bankOpen then pcall(PL.ScanBank) end
-    if busy() then PL.Dirty("bags") end
-  end,
+  -- (5.0 PROF) avec le cœur 5.0 : T:OnBags (regroupé, jamais dans l'image de l'événement) appelle PL.BagsChanged
+  BAG_UPDATE_DELAYED = function() if not PL.viaOnBags then PL.BagsChanged() end end,
   MAIL_SHOW = function() PL.mailOpen = true PL.Soon(0.5) end,
   MAIL_INBOX_UPDATE = function() if PL.mailOpen then pcall(PL.ScanMail) PL.Soon(0.3) end end,
   MAIL_CLOSED = function() PL.mailOpen = false PL.Soon(0.1) end,
@@ -1982,6 +2134,7 @@ PL.On = {
   AUCTION_HOUSE_CLOSED = function()
     PL.ahOpen, PL.ahState = false, nil
     ver.prices = ver.prices + 1
+    M.dirty = true                                   -- (5.0) les prix ont pu changer : l'onglet se refait une fois
     if PL.focus then PL.Soon(0.1) end
   end,
   COMMODITY_SEARCH_RESULTS_UPDATED = function(_, _, id) if PL.ahState then PL.OnCommodityResults(id) end end,
@@ -2079,20 +2232,22 @@ function PL.Resale(plan)
 end
 --- Secourisme : le meilleur bandage que tu sais faire et le prochain palier utile (Data.Consumables.bandage)
 function PL.BandageTip()
+  -- (5.0 PROF) vrai ou absent : le meilleur bandage que tu SAIS fabriquer (recettes lues dans ta fenêtre de métier) ;
+  -- l'ancienne ligne prenait la table des consommables, qui ne porte pas le secourisme requis (« Bandage imprégné
+  -- de cristaux » conseillé à 42)
   local pr = profOf(129)
   local C = T.Data and T.Data.Consumables
-  if not (pr and C and type(C.bandage) == "table") then return nil end
-  local cur, nxt
-  for _, b in ipairs(C.bandage) do
-    local need, heal = tonumber(b[2]) or 0, tonumber(b[3]) or 0
-    if need <= pr.rank and (not cur or heal > cur.heal) then cur = { id = b[1], need = need, heal = heal } end
-    if need > pr.rank and (not nxt or need < nxt.need) then nxt = { id = b[1], need = need, heal = heal } end
+  local known = PL.Known(129)
+  if not (pr and known and C and type(C.bandage) == "table") then return nil end
+  local heal = {}
+  for _, b in ipairs(C.bandage) do heal[b[1]] = tonumber(b[3]) or 0 end
+  local cur
+  for _, r in ipairs(PL.Rows(129)) do
+    local h = heal[r[2]]
+    if h and h > 0 and (known[r[1]] or (r[11] or 0) % 2 == 1) and (not cur or h > cur.heal) then cur = { heal = h, name = r[9] } end
   end
-  if not cur and not nxt then return nil end
-  local parts = {}
-  if cur then parts[#parts + 1] = fmt("ton meilleur bandage : %s (%d PV)", matName(cur.id), cur.heal) end
-  if nxt then parts[#parts + 1] = fmt("à %d : %s (%d PV)", nxt.need, matName(nxt.id), nxt.heal) end
-  return "Secourisme : " .. tconcat(parts, " · ")
+  if not cur then return nil end
+  return fmt("Secourisme : ton meilleur bandage à fabriquer : %s (%d PV)", cur.name, cur.heal)
 end
 
 -- ===================================================================== onglet « Métiers » (panneau) pendant une session
@@ -2152,8 +2307,9 @@ function PL.Components(force)
       local learn = {}
       for _, l in ipairs((plan.res and plan.res.learn) or {}) do
         if #learn >= 2 then break end
-        if (l.at or 0) <= plan.skill then learn[#learn + 1] = fmt("Apprends %s chez ton maître", cut(l.name, 28))
-        else learn[#learn + 1] = fmt("Apprendre %s (dès %d)", cut(l.name, 28), l.at) end
+        local rq = l.req or l.at or 0
+        if rq <= plan.skill then learn[#learn + 1] = fmt("Apprends %s chez ton maître", cut(l.name, 28))
+        else learn[#learn + 1] = fmt("Apprendre %s (dès %d%s)", cut(l.name, 28), rq, l.est and ", à confirmer" or "") end
       end
       if #items > 0 or #learn > 0 then
         local parts, bySrc, order = {}, {}, {}
@@ -2252,58 +2408,78 @@ local function renderPage(Ly)
   if not pr then Ly.empty("Métier introuvable.") return end
   local mode = (PL.focus and PL.focus.line == line and PL.focus.mode) or PL.Mode()
   local plan = PL.Compute(line, mode, mode == "exact" and 300 or PL.Target(line, mode))
-  Ly.hero(PL.LineIcon(line), fmt("%s %d/%d (%s)", lineName(line), pr.rank, pr.max, rankName(pr)), planSub(plan), freshness(), nil,
-    { "Plan calculé avec tes sacs, ta banque et ton courrier (moins ce que tes quêtes demandent).",
-      "Orange = 1 point par fabrication ; jaune / vert : (gris − compétence) / (gris − jaune).",
-      "Prix : marchand exact, HV d'après l'historique TreeAI (ou Auctionator), sinon « à farmer »." })
-  -- métiers, mode, cible
-  local profBtns = {}
-  local d = D()
-  for _, p in ipairs(M.profs) do
-    local k = d and d.lines[p.line]
-    if k and k[1] ~= "g" and d.r[p.line] and #d.r[p.line] > 0 and #profBtns < 4 then
-      local l = p.line
-      profBtns[#profBtns + 1] = { (l == line and "• " or "") .. fmt("%s %d", lineName(l), p.rank), function() PL.SetLine(l) end,
-        "Clic : planifier " .. lineName(l) }
-    end
+  -- (5.0 PROF) une carte par métier : compétence, objectif, coût, durée, prochaine étape, ce que TreeAI ne sait pas
+  local CR = T.CityRun
+  local cards = PL.Cards and PL.Cards() or {}
+  for _, c in ipairs(cards) do
+    local l, sel = c.line, c.line == line
+    local planned = c.plan ~= nil
+    Ly.hero(c.icon, (sel and planned and "• " or "") .. c.title, PL.CardSub(c),
+      c.next and ("Prochaine étape : " .. c.next) or (planned and "Rien à faire pour l'instant" or nil),
+      planned and function() if sel and c.step then PL.RunStep(c.step) else PL.SetLine(l) end end or nil,
+      { "Plan calculé avec tes sacs, ta banque et ton courrier (moins ce que tes quêtes demandent).",
+        "Orange = 1 point par fabrication ; jaune / vert : « ≈ N (de A à B) », la fourchette 8 fois sur 10.",
+        "Prix : marchand exact, HV d'après l'historique TreeAI (ou Auctionator), sinon « à farmer ».",
+        sel and "Clic : la prochaine étape (boussole ou action)." or "Clic : voir le plan de ce métier." })
+    if c.short then Ly.text(c.short, "S", "muted", 1) end
+    if #c.unknown > 0 then Ly.text("Inconnu : " .. tconcat(c.unknown, " ; ") .. ".", "S", "muted", 1) end
   end
-  if #profBtns > 1 then Ly.buttons(profBtns, min(#profBtns, 3)) end
-  local CR = T.CityRun   -- (4.1 CITYRUN) « Me concentrer sur les métiers », « Courses en ville », points sur la carte
-  if CR and type(CR.PageButtons) == "function" then local okB, bl = pcall(CR.PageButtons) if okB and type(bl) == "table" then Ly.buttons(bl, min(#bl, 3)) end end
-  local ask = not (M.db and M.db.askAH == false)
-  Ly.buttons({
-    { (mode == "full" and "• " or "") .. "Complet", function() M.db.plMode = "full" if PL.focus then PL.focus.mode = "full" end PL.Dirty("focus") end,
-      "Atteindre la cible : ce qui manque s'achète (marchand au prix exact, HV, sinon à farmer)." },
-    { (mode == "exact" and "• " or "") .. "Pile-poil", function() M.db.plMode = "exact" if PL.focus then PL.focus.mode = "exact" end PL.Dirty("focus") end,
-      "Seulement ce que tu as (+ les compos d'un marchand) : le plus de points pour vider tes sacs." },
-    { "Demander avant l'HV : " .. (ask and "oui" or "non"), function() M.db.askAH = not ask PL.Dirty("focus") end,
-      "Oui : la session te demande avant de prévoir un achat à l'hôtel des ventes." },
-  }, 3)
-  -- (4.2 FIX42) achats / fabrications : un clic = un appel du jeu, ou « mode sûr » (TreeAI montre, tu cliques)
-  local safe = T.ShopSafe and T:ShopSafe() or false
-  Ly.buttons({
-    { "Achats : " .. (safe and "mode sûr (tu cliques)" or "un clic = un achat"), function() if T.SetShopSafe then T:SetShopSafe(not safe) end end,
-      safe and "Clic : les boutons TreeAI achètent / créent de nouveau d'un clic (jamais sans clic, jamais en combat)."
-        or "Clic : mode sûr — le bouton montre l'objet dans la fenêtre du jeu (surbrillance), tu achètes / crées toi-même. Autocontrôle : /tai bloque achats" },
-  }, 1)
-  if mode == "full" then
-    local tgt = PL.Target(line, mode)
+  Ly.text(freshness(), "S", "muted")
+  -- « Ce que je peux apprendre » (bouton du haut) : tout ce qui est utile chez tes maîtres, avec le prix
+  if PL.showLearn and PL.LearnList and Ly.header("Ce que je peux apprendre", "prof:learn", nil, ICON .. "INV_Misc_Book_11") then
+    local ll, nL, totL = PL.LearnList()
+    for _, e in ipairs(ll) do
+      local o = e.offers
+      if not o.seen then
+        Ly.row({ text = fmt("%s : maître pas encore lu — passe le voir une fois (gratuit)", e.name), kind = "info",
+          onClick = function() PL.Guide({ kind = "trainer", where = PL.WhereTrainer(e.line), guideLabel = "Maître de " .. e.name:lower() }, true) end,
+          tooltip = "Clic : la boussole va au maître s'il a déjà été vu ; sinon demande à un garde (TreeAI retiendra sa place)." })
+      elseif #o.list == 0 then
+        local nx = o.later[1]
+        Ly.row({ text = fmt("%s : rien d'utile maintenant%s", e.name, nx and fmt(" · ensuite %s%s", cut(nx.name, 26), nx.at and fmt(" dès %d", nx.at) or "") or ""), kind = "info" })
+      else
+        for i, x in ipairs(o.list) do
+          if i > 5 then Ly.row({ text = fmt("… et %d de plus", #o.list - 5), kind = "info" }) break end
+          Ly.row({ text = fmt("%s : %s — %s", e.name, cut(x.name, 30), x.why), right = x.cost > 0 and money(x.cost) or "gratuit", kind = "info",
+            onClick = function() PL.Guide({ kind = "trainer", where = PL.WhereTrainer(e.line), guideLabel = "Maître de " .. e.name:lower() }, true) end,
+            tooltip = { "Lu chez ton maître (exigence et prix réels).", "Clic : la boussole va au maître." } })
+        end
+      end
+    end
+    if nL > 0 then Ly.text(fmt("Total : %d à apprendre · %s (tu as %s)", nL, money(totL), money(num(API.Money and API.Money()) or 0)), "S", "gold") end
+  end
+  -- réglages du plan (repliés : la page se lit sans eux)
+  if Ly.header("Réglages du plan", "prof:opts", nil, nil, true) then
+    local ask = not (M.db and M.db.askAH == false)
     Ly.buttons({
-      { fmt("Cible : %d", tgt), function() M.CycleTarget(line) PL.Dirty("focus") end, "Clic : palier suivant (75, 150, 225, 300), puis automatique." },
-      { "Cible − 5", function() M.char.target[line] = max(pr.rank + 1, tgt - 5) PL.Dirty("focus") end, "Clic : cible 5 points plus bas" },
-      { "Cible + 5", function() M.char.target[line] = min(300, tgt + 5) PL.Dirty("focus") end, "Clic : cible 5 points plus haut" },
+      { (mode == "full" and "• " or "") .. "Complet", function() M.db.plMode = "full" if PL.focus then PL.focus.mode = "full" end PL.Dirty("focus") end,
+        "Atteindre la cible : ce qui manque s'achète (marchand au prix exact, HV, sinon à farmer)." },
+      { (mode == "exact" and "• " or "") .. "Pile-poil", function() M.db.plMode = "exact" if PL.focus then PL.focus.mode = "exact" end PL.Dirty("focus") end,
+        "Seulement ce que tu as (+ les compos d'un marchand) : le plus de points pour vider tes sacs." },
+      { "Demander avant l'HV : " .. (ask and "oui" or "non"), function() M.db.askAH = not ask PL.Dirty("focus") end,
+        "Oui : la session te demande avant de prévoir un achat à l'hôtel des ventes." },
     }, 3)
+    -- (4.2 FIX42) achats / fabrications : un clic = un appel du jeu, ou « mode sûr » (TreeAI montre, tu cliques)
+    local safe = T.ShopSafe and T:ShopSafe() or false
+    Ly.buttons({
+      { "Achats : " .. (safe and "mode sûr (tu cliques)" or "un clic = un achat"), function() if T.SetShopSafe then T:SetShopSafe(not safe) end end,
+        safe and "Clic : les boutons TreeAI achètent / créent de nouveau d'un clic (jamais sans clic, jamais en combat)."
+          or "Clic : mode sûr — le bouton montre l'objet dans la fenêtre du jeu (surbrillance), tu achètes / crées toi-même. Autocontrôle : /tai bloque achats" },
+    }, 1)
+    if mode == "full" then
+      local tgt = PL.Target(line, mode)
+      Ly.buttons({
+        { fmt("Cible : %d", tgt), function() M.CycleTarget(line) PL.Dirty("focus") end, "Clic : palier suivant (75, 150, 225, 300), puis automatique." },
+        { "Cible − 5", function() M.char.target[line] = max(pr.rank + 1, tgt - 5) PL.Dirty("focus") end, "Clic : cible 5 points plus bas" },
+        { "Cible + 5", function() M.char.target[line] = min(300, tgt + 5) PL.Dirty("focus") end, "Clic : cible 5 points plus haut" },
+      }, 3)
+    end
+    if CR and type(CR.PinsButton) == "function" then local okP, pb = pcall(CR.PinsButton) if okP and type(pb) == "table" then Ly.buttons({ pb }, 1) end end
   end
   if not plan then Ly.text("Pas de recettes pour ce métier dans les données de TreeAI.", "S", "muted") return end
-  if not plan.known then
-    Ly.text("Ouvre une fois la fenêtre de ce métier : TreeAI lira tes recettes connues (sinon il suppose celles du maître).", "S", "muted")
-  end
-  if not next(A("treq")[line] or {}) then
-    Ly.text("Passe voir ton maître de métier : TreeAI lira ce qu'il enseigne et à quelle compétence (plan plus juste, recettes orange comprises).", "S", "muted")
-  end
   -- étapes
   local steps = (PL.focus and PL.focus.line == line and PL.steps) or PL.Steps(plan)
-  if Ly.header(fmt("Étapes (%d)", #steps), "prof:steps", nil, PL.LineIcon(line)) then
+  if Ly.header(fmt("Étapes · %s (%d)", lineName(line), #steps), "prof:steps", nil, PL.LineIcon(line)) then
     if #steps == 0 then Ly.text(plan.res.reached >= plan.target and "Cible déjà atteinte." or "Rien à faire.", "S", "muted") end
     for i, st in ipairs(steps) do
       if i > 12 then Ly.text(fmt("… et %d étapes de plus.", #steps - 12), "S", "muted") break end
@@ -2409,15 +2585,29 @@ if Wn and type(Wn.AddPage) == "function" then
     badge = function() return PL.focus and "!" or nil end,
     -- (4.1 LAYOUT) en tête : les 1 à 3 actions utiles (agent CITYRUN : « Courses en ville », s'il est là)
     top = function()
+      -- (5.0 PROF) 3 grosses actions : Me concentrer · Courses en ville · Ce que je peux apprendre
       local out = {}
       local CR = T.CityRun
+      if M.IsEnabled and M:IsEnabled() then
+        if PL.focus then
+          out[#out + 1] = { "Quitter la session", function() PL.StopFocus() end, "Clic : fin de la session métier, le trajet de quêtes reprend" }
+        else
+          out[#out + 1] = { "Me concentrer", function()
+            if type(CR) == "table" and type(CR.ProfFocus) == "function" then CR.ProfFocus(PL.Line()) else PL.StartFocus(PL.Line()) end
+          end, "Clic : session métier guidée (trajet de quêtes en pause, la boussole te mène : maître, marchand, banque, HV, créer)" }
+        end
+      end
       if type(CR) == "table" and type(CR.Start) == "function" then
         out[#out + 1] = { "Courses en ville", function() pcall(CR.Start) end,
           "Clic : banque, marchands, maître, HV dans le meilleur ordre (la boussole te guide)" }
       end
-      if M.IsEnabled and M:IsEnabled() and not PL.focus then
-        out[#out + 1] = { "Me concentrer sur les métiers", function() PL.StartFocus(PL.Line()) end,
-          "Clic : session métier (trajet de quêtes en pause, la boussole te guide : marchand, banque, maître, créer)" }
+      if M.IsEnabled and M:IsEnabled() and PL.LearnList then
+        local _, nL = PL.LearnList()
+        out[#out + 1] = { nL > 0 and fmt("Ce que je peux apprendre (%d)", nL) or "Ce que je peux apprendre", function()
+          PL.showLearn = not PL.showLearn
+          local W2 = T.Window
+          if W2 and W2.Dirty then pcall(W2.Dirty) end
+        end, "Clic : tout ce qui est utile chez tes maîtres, avec le prix (lu chez eux)" }
       end
       return out
     end,

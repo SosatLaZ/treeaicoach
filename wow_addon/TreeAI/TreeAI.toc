@@ -93,5 +93,6 @@ Modules\Brain.lua
 Modules\BrainPage.lua
 Modules\ProfLevel.lua
 Modules\CityRun.lua
+Modules\ProfGuide.lua
 Modules\GroupGear.lua
 Modules\Tour.lua
