@@ -180,8 +180,23 @@ function M.ScanBags()
   return free, total
 end
 
+--- (5.0 BAGS) l'assistant d'inventaire (Sacs) quand il est allumé : UN seul avis « vendre / garder » pour tout l'addon
+local function brain()
+  local T = core()
+  local B = T and T.Bags
+  if type(B) == "table" and B._active and type(B.Verdict) == "function" then return B end
+  return nil
+end
+M.Brain = brain
+
 -- Liste des objets gris vendables : { {bag, slot, value, link}, ... }, valeur totale.
+-- (5.0 BAGS) par T.Bags.Verdict : un gris qu'un gardien réclame (objet de quête, marqué « garder ») n'y est pas.
 function M.GreyItems()
+  local B = brain()
+  if B and type(B.GreyItems) == "function" then
+    local ok, l, v = pcall(B.GreyItems)
+    if ok and type(l) == "table" then return l, tonumber(v) or 0 end
+  end
   local list, value = {}, 0
   for b = 0, NBAGS do
     for s = 1, numSlots(b) do
@@ -313,7 +328,10 @@ end
 function M.CheckBags()
   local free, total = M.ScanBags()
   local o = opts()
-  if total > 0 and free == 0 then
+  local B = brain()
+  if B and not (type(B.db) == "table" and B.db.warn == false) then
+    clear("inv_bags")   -- (5.0 BAGS) « 2 places : vends / jette X » : dit une fois, par Sacs (le moins cher surligné)
+  elseif total > 0 and free == 0 then
     suggest("inv_bags", "Sacs pleins : fais de la place pour ramasser le butin", 3, nil, M.DropTip(free))
   elseif total > 0 and free <= o.minFree then
     suggest("inv_bags", ("Fais de la place : plus que %d case%s libre%s"):format(free, free > 1 and "s" or "", free > 1 and "s" or ""),
@@ -488,7 +506,11 @@ local function ensureButton()
 end
 
 local function onMerchantShow()
-  if ensureButton() then button:Show() refreshButton() end
+  -- (5.0 BAGS) la carte « Vendre N objets » sous la fenêtre du marchand remplace ce bouton (jamais deux boutons de vente)
+  local B = brain()
+  if B and not (type(B.db) == "table" and B.db.card == false) then
+    if button then button:Hide() end
+  elseif ensureButton() then button:Show() refreshButton() end
   pcall(M.CheckFoodBuy)
   local p = M.Durability()
   if CanMerchantRepair and CanMerchantRepair() and GetRepairAllCost and p and p < 80 then

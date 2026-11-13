@@ -54,6 +54,7 @@ Modules\ZoneWatch.lua
 Modules\QuestBrain.lua
 Modules\NavTrace.lua
 Modules\Inventory.lua
+Modules\Bags.lua
 Modules\Boost.lua
 Modules\Fight.lua
 Modules\Pro.lua
