@@ -47,7 +47,7 @@ P.LIST = {
   { "outil", "classe d'objet du jeu : clés, sacs, carquois, monture, mascotte, outils de métier, pierre de foyer", "—" },
   { "équipement", "Gear (stats lues, spé) : mieux / équivalent / portable d'ici 10 niveaux / sets / porté récemment", "les stats pas encore chargées (alors : gardé)" },
   { "recette", "Data/Recipes : objet-recette → métier et compétence ; infobulle « déjà connue »", "une recette absente des tables" },
-  { "métiers", "Data/Recipes : composants des recettes ; plan de PROF pour le compte", "ce que tu fabriqueras hors du plan" },
+  { "métiers", "Data/Recipes : composants des recettes ; plan de PROF pour le compte ; au-delà de ton rang max : gardé", "ce que tu fabriqueras hors du plan ; le compte après ton rang max" },
   { "consommable+", "classe « consommable » du jeu, hors de nos tables", "son effet, donc son stock utile" },
   { "ami du groupe", "métiers partagés par les amis qui ont TreeAI ; GroupGear pour l'équipement", "un ami sans TreeAI" },
 }
@@ -418,7 +418,7 @@ P.QuestClaim = function(id) local db = questDB() if not db then return nil, "abs
 local RX = { by = nil, ready = false }
 P.RX = RX
 local function recipes() local D = T.Data and T.Data.Recipes return type(D) == "table" and type(D.r) == "table" and D or nil end
-local ROWS_PER_STEP = 400
+local ROWS_PER_STEP = 150
 --- lit les recettes [from, to] d'une ligne dans tmp[composant] = { gris * 1000 + apprendre, … }
 local function rxCollect(rows, from, to, tmp)
   for ri = from, to do
@@ -431,10 +431,14 @@ local function rxCollect(rows, from, to, tmp)
     end
   end
 end
---- ferme une ligne : l'escalier de chaque composant, ajouté à sa chaîne
-local function rxClose(line, tmp)
+--- ferme une ligne : l'escalier de chaque composant, ajouté à sa chaîne (au plus `budget` composants ; → true = fini)
+local function rxClose(line, tmp, budget)
   local by = RX.by
-  for mid, keys in pairs(tmp) do
+  local mid, keys = next(tmp)
+  local n = 0
+  while mid do
+    if budget and n >= budget then return false end
+    n = n + 1
     tsort(keys)
     local parts, low = {}, nil
     for i = #keys, 1, -1 do
@@ -446,8 +450,11 @@ local function rxClose(line, tmp)
     end
     local seg = line .. "=" .. tconcat(parts, ",")
     by[mid] = by[mid] and (by[mid] .. ";" .. seg) or seg
+    tmp[mid] = nil
+    mid, keys = next(tmp)
   end
   P.stats.built = P.stats.built + 1
+  return true
 end
 local function rxLines(D)
   local lines = {}
@@ -455,7 +462,7 @@ local function rxLines(D)
   tsort(lines)
   return lines
 end
---- construit l'index d'un coup (audits, tests) ; en jeu : RX.Start, ≤ 400 recettes par image
+--- construit l'index d'un coup (audits, tests) ; en jeu : RX.Start, par petits morceaux
 function RX.BuildNow()
   local D = recipes()
   RX.by, RX.started = {}, true
@@ -466,6 +473,7 @@ function RX.BuildNow()
   end
   RX.ready = true
 end
+local CLOSE_PER_STEP = 60
 function RX.Start()
   if RX.started then return end
   RX.started = true
@@ -473,18 +481,16 @@ function RX.Start()
   RX.by = {}
   if not D then RX.ready = true return end
   local lines, li, at, tmp = rxLines(D), 1, 0, {}
-  -- ≤ 400 recettes par image (≈ 1 ms), d'une ligne de métier à la suivante : 6 à 7 images en tout, une fois par session
+  -- une image = ≤ 150 recettes lues OU ≤ 60 composants rangés (≈ 0,3 ms), jamais les deux : ~40 images en tout, une
+  -- fois par session (la simulation de session mesure la pire image)
   local function step()
-    local left = ROWS_PER_STEP
-    while left > 0 and lines[li] do
-      local rows = D.r[lines[li]]
-      local to = min(#rows, at + left)
+    local rows = lines[li] and D.r[lines[li]]
+    if rows and at < #rows then
+      local to = min(#rows, at + ROWS_PER_STEP)
       rxCollect(rows, at + 1, to, tmp)
-      left, at = left - (to - at), to
-      if at >= #rows then
-        rxClose(lines[li], tmp)
-        li, at, tmp = li + 1, 0, {}
-      end
+      at = to
+    elseif rows then
+      if rxClose(lines[li], tmp, CLOSE_PER_STEP) then li, at, tmp = li + 1, 0, {} end
     end
     if lines[li] then return spread(step, "Bags:recettes") end
     RX.ready = true
@@ -525,11 +531,14 @@ local function profUse(id, ranks)
     local name = I.lineName(line)
     if rank then
       u.mine[#u.mine + 1] = name
-      local live, from, top = stairs(seg, rank)
+      local live, from, top, learn = stairs(seg, rank)
       if live then
-        -- une plage PAR métier (jamais le « dès » de l'un avec le « jusqu'à » de l'autre) ; affichée : celle qui va le plus loin
-        if not u.live or top > u.to or (top == u.to and name < u.liveLine) then
-          u.live, u.liveLine, u.from, u.to = true, name, from, top
+        -- une plage PAR métier (jamais le « dès » de l'un avec le « jusqu'à » de l'autre) ; affichée : d'abord celle qui
+        -- sert dès maintenant (une recette apprenable à ton rang), puis celle qui va le plus loin
+        local nowL = learn <= rank
+        local better = not u.live or (nowL and not u.nowL) or (nowL == u.nowL and (top > u.to or (top == u.to and name < u.liveLine)))
+        if better then
+          u.live, u.liveLine, u.liveId, u.from, u.to, u.learn, u.nowL, u.rank = true, name, line, from, top, learn, nowL, rank
         end
       elseif not u.pastAt or (top or 0) > u.pastAt then
         u.pastAt, u.pastLine = top or 0, name
@@ -560,14 +569,15 @@ I.builtin("métiers", function(id)
   end
   if u.live then
     local range = fmt("%s (%d→%d)", u.liveLine, u.from, u.to)
-    Q.live = { range = range, line = u.liveLine }
+    Q.live = { range = range, line = u.liveLine, id = u.liveId, learn = u.learn, to = u.to, rank = u.rank }
     Q.phrase.Prof = "pour " .. range
     if I.EXT.prof then return nil end                       -- le plan de PROF donne le compte ; P.After tranche s'il se tait
     Q.phrase["métiers"] = "pour " .. range
     return huge, "sert à ton métier : " .. range
   end
   if #u.mine > 0 then
-    return 0, fmt("Pas besoin : sert en %s mais tu l'as dépassé (recettes grises depuis %d)", u.pastLine, u.pastAt or 0)
+    local also = #u.other > 0 and fmt(", et en %s (pas ton métier)", tconcat(u.other, ", ", 1, min(2, #u.other))) or ""
+    return 0, fmt("Pas besoin : sert en %s mais tu l'as dépassé (recettes grises depuis %d)%s", u.pastLine, u.pastAt or 0, also)
   end
   if #u.other > 0 then return 0, fmt("Pas besoin : sert en %s (pas ton métier)", tconcat(u.other, ", ", 1, min(2, #u.other))) end
 end)
@@ -581,6 +591,19 @@ function P.After(_, _, _, Q, EXT)
   if said == "claim" then return end
   local PLv = T.Prof and T.Prof.Level
   local ready = type(PLv) == "table" and (tonumber(PLv.keepGen) or 0) > 0
+  if ready or said == "opinion" then
+    -- le plan de PROF s'arrête vers ton rang maximal actuel (75 / 150 / 225 / 300) : une recette qui donne encore des
+    -- points APRÈS lui (rang suivant, chez le maître) n'y figure pas — elle est sur ton chemin quand même → gardé
+    -- (banque si elle est encore loin) ; au-delà du rang suivant : avis « à confirmer » comme le reste
+    local cap = lv.id and I.profCaps and I.profCaps()[lv.id]
+    local rank = lv.rank or 0
+    if cap and lv.to and lv.to > cap and (lv.learn or 0) <= cap + 75 then
+      if not Q.all then Q.keep, Q.all = Q.keep + huge, true end
+      if not Q.why then Q.why, Q.keeper = fmt("pour la suite de %s, au-delà de ton rang max (%d)", lv.range, cap), "métiers" end
+      if (lv.learn or 0) > rank + 25 and Q.where == nil then Q.where = "bank" end
+      return
+    end
+  end
   if said == "opinion" then
     -- PROF dit « en trop » alors qu'une recette à venir s'en sert : c'est dit, et le clic est à part
     Q.unsure = Q.unsure or fmt("une recette de %s s'en sert encore", lv.range)

@@ -120,6 +120,18 @@ def test_regret_replay_30_to_45(flavor):
 
 
 @pytest.mark.skipif(not LUA, reason="lua5.1 absent")
+def test_regret_replay_with_his_secondary_professions():
+    # like the player: First Aid and Cooking level with him — silk (his First Aid plan) and mageweave (bandages from
+    # 210, after the plan's cap) are never sold; nothing sold is regretted
+    r = run("bags_replay_scenario.lua", env={"BAGS_PROFS": "player"})
+    out = r.stdout
+    assert r.returncode == 0 and "RESULT ok" in out, out[-6000:] + r.stderr[-2000:]
+    assert "REPLAY REGRETS : 0" in out
+    vendu = next(line for line in out.splitlines() if line.startswith("REPLAY vendu : "))
+    assert "Étoffe de soie" not in vendu and "Étoffe de tisse-mage" not in vendu, vendu
+
+
+@pytest.mark.skipif(not LUA, reason="lua5.1 absent")
 @pytest.mark.parametrize("mutation", ["veto", "tiers"])
 def test_regret_replay_catches_a_broken_predictor(mutation):
     r = run("bags_replay_scenario.lua", env={"BAGS_MUTATION": mutation})

@@ -873,10 +873,23 @@ return function(M, ctx)
   if PLv then PLv.keepGen = 1 end
   B.Invalidate(2319)
   out("métiers : " .. line(2319))
+  -- (his plan stops at his rank max, 150 : the recipes using it give points up to 170, AFTER the plan → kept, said)
+  local vA = B.Verdict(2319)
+  check(vA.action == "keep" and not vA.confirm and line(2319):find("^Garde : pour la suite de Travail du cuir %(143→%d+%), au%-delà de ton rang max %(150%)$"),
+    "used after his plan's cap (next rank at the trainer): kept, said (" .. line(2319) .. ")")
+  -- Expert trained (rank max 225): the plan reaches 170, does not use it → not on his path
+  local Pm = T.modules.Prof
+  M.skills[1].max = 225
+  if Pm and Pm.ScanProfessions then Pm.profs = Pm.ScanProfessions() end
+  B.Invalidate(nil, "prof")
+  out("métiers : (rang max 225) " .. line(2319))
   local vP = B.Verdict(2319)
   check(vP.action == "keep" and vP.confirm and line(2319):find("mais pas sur ton chemin", 1, true) and line(2319):find("^À confirmer : Pas besoin : sert en Travail du cuir"),
     "not on his path: said, to confirm (" .. line(2319) .. ")")
   check(not has(B.SellList().list, 2319), "…never in the one-click list")
+  M.skills[1].max = 150
+  if Pm and Pm.ScanProfessions then Pm.profs = Pm.ScanProfessions() end
+  B.Invalidate(nil, "prof")
   if PLv then PLv.keepGen = gen0 end
   B.UnregisterKeeper("Prof")
   -- a friend of the group has the profession (shared by TreeAI): « donne »

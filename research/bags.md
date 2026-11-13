@@ -106,7 +106,7 @@ qui n'est pas su. Un doute n'est jamais dans le clic unique.
 | outils, clés, sacs, monture, mascotte, pierre de foyer, coffres verrouillés | classe d'objet du jeu + listes | — |
 | équipement | gardien Gear (stats lues, spé), sets, « porté récemment », portable d'ici 10 niveaux, ami du groupe (GroupGear → « Donne ») | stats pas encore chargées (alors gardé) |
 | recettes | Data/Recipes (objet-recette → métier, compétence), infobulle « déjà connue » | recette hors des tables |
-| métiers | Data/Recipes (toutes les recettes de tous les métiers) ; le **compte** vient du plan de PROF | ce que tu fabriqueras hors du plan |
+| métiers | Data/Recipes (toutes les recettes de tous les métiers, secourisme et cuisine compris) ; le **compte** vient du plan de PROF ; une recette qui donne encore des points **au-delà de ton rang max** (le plan s'y arrête : rang suivant chez le maître) → gardé, banque si elle est à plus de 25 points | ce que tu fabriqueras hors du plan ; combien il en faudra après le rang max (alors : tout est gardé) |
 | ami du groupe (veto) | métiers partagés par les amis qui ont TreeAI | un ami sans TreeAI |
 
 Quantités : besoin = somme des prédicteurs (raison du plus grand), comparé à sacs + banque (dernier relevé fait banque
@@ -140,4 +140,4 @@ deux savent échouer (prédicteurs cassés exprès → violations / regrets).
 ## Perf
 Avis gardés **par cause** (`v.deps` : level, prof, quest, equip, pet, roster, price, bank) ; durée de vie de 45 s
 seulement pour les avis où un gardien d'un autre module a répondu. Un seul passage `Warm` à la fois (les demandes
-simultanées s'y ajoutent). Index des recettes : 12 morceaux (un par ligne de métier), une fois par session.
+simultanées s'y ajoutent). Index des recettes : ~40 images (≤ 150 recettes lues ou ≤ 60 composants rangés par image), une fois par session.

@@ -143,6 +143,13 @@ return function(M, ctx)
   p("== card")
   W.ShowCard()
   local c = W.GetCard()
+  if not c.steps[1] then
+    -- (5.1 BAGS) the module states left by the clicks above depend on how many rows each page has (new options
+    -- shift them): with nothing to do the card has no step — give it one so its click is still exercised
+    T:Suggest("qaui:step", "Étape de test", 2, { tab = "now", ttl = 0 })
+    W.ShowCard()
+    c = W.GetCard()
+  end
   run("card:hero", function() c.hero:GetScript("OnClick")(c.hero, "LeftButton") end)
   run("card:hero right", function() c.hero:GetScript("OnClick")(c.hero, "RightButton") end)
   run("card:Ouvrir", function() c.menuBtn:GetScript("OnClick")(c.menuBtn) end)

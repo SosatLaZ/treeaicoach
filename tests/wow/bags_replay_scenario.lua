@@ -126,6 +126,12 @@ return function(M, ctx)
   M.player.level = 30
   M.player.money = 500000
   M.skills = { { name = "Travail du cuir", rank = 143, max = 150 }, { name = "Dépeçage", rank = 150, max = 150 } }
+  -- BAGS_PROFS=player : like the player, the secondary professions too (First Aid, Cooking — they level with him)
+  local SECOND = os.getenv("BAGS_PROFS") == "player"
+  if SECOND then
+    M.skills[3] = { name = "Secourisme", rank = 150, max = 225 }
+    M.skills[4] = { name = "Cuisine", rank = 120, max = 150 }
+  end
   M.quests = {}
   for b = 0, 4 do M.bags[b].size = 28 M.bags[b].slots = {} end
   M.AddToBags(6948, 1)
@@ -177,6 +183,10 @@ return function(M, ctx)
     [6948] = "pierre de foyer", [3858] = "quête au-delà du niveau 45", [3928] = "quête au-delà du niveau 45" }
   if patLater then NEVER[patLater] = "recette à apprendre plus tard" end
   for _, id in ipairs(QI) do NEVER[id] = "objet de quête" end
+  if SECOND then
+    -- silk (heavy silk bandage, his First Aid plan) and mageweave (mageweave bandages: after his plan, from 210)
+    NEVER[4306], NEVER[4338] = "Secourisme : son plan", "Secourisme : après son plan (dès 210)"
+  end
   local HP = { { 858, 3, 160 }, { 929, 12, 320 }, { 1710, 21, 520 }, { 3928, 35, 800 }, { 13446, 45, 1400 } }   -- (Data/Consumables, read above)
   local FOOD = { { 4541, 5, 243 }, { 4544, 25, 874 }, { 3771, 25, 874 }, { 8950, 45, 1933 } }
   local function tierRegrets(kind, tiers, L)
@@ -349,6 +359,11 @@ return function(M, ctx)
     M.skills[1].max = cap
     M.skills[1].rank = math.min(cap, 143 + (L - 30) * 9)
     M.skills[2].max, M.skills[2].rank = (L >= 35) and 225 or 150, math.min((L >= 35) and 225 or 150, 150 + (L - 30) * 5)
+    if SECOND then
+      M.skills[3].rank = math.min(225, 150 + (L - 30) * 4)
+      M.skills[4].max = (L >= 35) and 225 or 150
+      M.skills[4].rank = math.min(M.skills[4].max, 120 + (L - 30) * 4)
+    end
     M.FireEvent("SKILL_LINES_CHANGED")
     if Pm and Pm.Update then Pm.Update(true) end
     loot(L)
@@ -391,7 +406,7 @@ return function(M, ctx)
     rawset(_G, "Auctionator", nil)
     return
   end
-  check(soldStacks >= 100 and kinds >= 20, "the clean-up really sold things (" .. soldStacks .. " stacks, " .. kinds .. " different items)")
+  check(soldStacks >= 100 and kinds >= (SECOND and 15 or 20), "the clean-up really sold things (" .. soldStacks .. " stacks, " .. kinds .. " different items)")
   check(taken >= 16, "the timeline really took its quests (" .. taken .. ")")
   check(#regrets == 0, ("regret replay: %d sold item(s) needed later"):format(#regrets))
   if CC and CC.UseContainerItem then CC.UseContainerItem = useReal else rawset(_G, "UseContainerItem", useReal) end

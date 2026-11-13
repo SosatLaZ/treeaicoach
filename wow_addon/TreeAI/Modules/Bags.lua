@@ -393,10 +393,18 @@ local function profRanks()
     list = try(P.ScanProfessions)                           -- module Métiers coupé : la lecture du jeu (au plus 1 / min)
   end
   if type(list) ~= "table" then C.profs = false return nil end   -- pas lu : on ne sait pas (une liste vide = aucun métier)
-  local map = {}
-  for _, p in ipairs(list) do if type(p) == "table" and p.line then map[p.line] = tonumber(p.rank) or 0 end end
-  C.profs = map
+  local map, caps = {}, {}
+  for _, p in ipairs(list) do
+    if type(p) == "table" and p.line then map[p.line], caps[p.line] = tonumber(p.rank) or 0, tonumber(p.max) end
+  end
+  C.profs, C.caps = map, caps
   return map
+end
+--- (5.1) rang maximal actuel de chaque métier (le plan de PROF s'arrête là) : { [ligne] = max } ; inconnu → absent
+local function profCaps()
+  if OVR and OVR.profs ~= nil then return OVR.caps or {} end
+  if not profRanks() then return {} end
+  return C.caps or {}
 end
 local function lineName(line)
   local D = T.Data and T.Data.Recipes
@@ -1776,7 +1784,10 @@ local function newCard(kind, onClick, onTip)
   if inCombat() then return nil end
   local Th, cf, UIP = T.Theme, g("CreateFrame"), g("UIParent")
   if type(cf) ~= "function" then return nil end
-  local f = (Th and Th.Frame and Th:Frame(UIP, (Th.KINDS and Th.KINDS.small) and "small" or "panel", CARD_W, 56)) or try(cf, "Frame", nil, UIP)
+  -- (5.1) fond « docked » (presque opaque, cartes posées sous une fenêtre du jeu) quand le thème l'a, sinon « small »
+  local K = Th and Th.KINDS
+  local bgKind = (K and K.docked and "docked") or (K and K.small and "small") or "panel"
+  local f = (Th and Th.Frame and Th:Frame(UIP, bgKind, CARD_W, 56)) or try(cf, "Frame", nil, UIP)
   if not f then return nil end
   meth(f, "SetSize", CARD_W, 56)
   meth(f, "SetFrameStrata", "DIALOG")
@@ -2834,7 +2845,7 @@ end
 
 -- (5.1) ce que Modules/BagsPredict.lua (les prédicteurs) partage avec ce fichier — rien d'autre ne doit s'en servir
 M._int = { g = g, try = try, num = num, pub = pub, now = now, epoch = epoch, level = level, class = class, cut = cut, mod = mod,
-  itemInfo = itemInfo, itemName = itemName, snapshot = snapshot, profRanks = profRanks, lineName = lineName, builtin = builtin,
+  itemInfo = itemInfo, itemName = itemName, snapshot = snapshot, profRanks = profRanks, profCaps = profCaps, lineName = lineName, builtin = builtin,
   PRE = PRE, EXT = EXT, S = S, C = C, money = money, after = after, inCombat = inCombat, optOn = optOn,
   cat = function(id) buildTables() return CAT[id], PET[id] end,
   setOverride = function(o) OVR = o end }
