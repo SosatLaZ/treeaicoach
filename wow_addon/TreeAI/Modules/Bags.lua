@@ -191,6 +191,9 @@ end
 ---                             "quest" (journal, quêtes rendues), "equip" (équipement porté), "pet" (familier),
 ---                             "roster" (groupe), "price" (prix d'HV), "bank" (banque)
 local CAUSE_PLAN = { level = true, prof = true, equip = true, pet = true }   -- ces causes changent aussi les stocks cibles
+M.listeners = {}
+--- (5.1 INTEG) un module veut savoir quand des avis changent (message BAGS_VERDICTS) : on = vrai le temps qu'il en a besoin
+function M.Listen(owner, on) if owner then M.listeners[owner] = on and true or nil end end
 function M.Invalidate(id, cause)
   if type(id) == "string" and cause == nil then id, cause = nil, id end
   id = tonumber(id)
@@ -216,9 +219,10 @@ function M.Invalidate(id, cause)
       for key, sid in pairs(S.id) do if S.touch[sid] then S.dirty[key] = true end end
     end
     S.touch = {}
-    -- (5.1 INTEG) des avis en attente (recettes lues, quêtes à venir vérifiées, métiers) ont pu changer : les autres
-    -- modules qui en dépendent (bureau de l'HV) refont leur file — pas pour un prix (c'est l'HV qui vient de le lire)
-    if n > 0 and (cause == "prof" or cause == "quest") and T.Fire then T:Fire("BAGS_VERDICTS", cause) end
+    -- (5.1 INTEG) des avis en attente (recettes lues, quêtes à venir vérifiées, métiers) ont pu changer : les modules
+    -- qui l'ont demandé (bureau de l'HV, HV ouvert) refont leur file — pas pour un prix (c'est l'HV qui vient de le lire) ;
+    -- personne n'écoute = rien n'est envoyé
+    if n > 0 and (cause == "prof" or cause == "quest") and next(M.listeners) and T.Fire then T:Fire("BAGS_VERDICTS", cause) end
   else
     V, PLAN = {}, {}
     C.gen = C.gen + 1

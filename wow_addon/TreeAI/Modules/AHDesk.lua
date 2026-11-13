@@ -1547,6 +1547,7 @@ end
 -- ===================================================================== cycle de vie
 function M.AUCTION_HOUSE_SHOW()
   M.ahOpen, M.openT = true, now()
+  if T.Bags and T.Bags.Listen then pcall(T.Bags.Listen, "ahdesk", true) end   -- BAGS_VERDICTS tant que l'HV est ouvert
   if not auc() then return end
   if cfg("dock", true) then
     local f = M.CreateDock()
@@ -1565,6 +1566,7 @@ function M.AUCTION_HOUSE_CLOSED()
   end
   M.ahOpen, M.openT, M.pend, M.search, M.build, M.pb, M.cb = false, nil, nil, nil, nil, nil, nil
   M.ownedWanted, M.cxlDirty, M.postsDirty = nil, nil, nil
+  if T.Bags and T.Bags.Listen then pcall(T.Bags.Listen, "ahdesk", false) end
   for _, d in ipairs(M.all) do if d.state == "confirm" then d.state = nil end d.liveT = nil end
   M.postQ, M.waitQ, M.sessPosted, M.cxlQ = {}, {}, {}, {}
   if M.frame then M.frame:Hide() end
@@ -1644,6 +1646,7 @@ function M:OnDisable()
   if M.frame then M.frame:Hide() end
   M.ahOpen, M.pend, M.search, M.build, M.pb, M.cb = false, nil, nil, nil, nil, nil
   if T.Bags and T.Bags.UnregisterKeeper then pcall(T.Bags.UnregisterKeeper, "ahdesk") end
+  if T.Bags and T.Bags.Listen then pcall(T.Bags.Listen, "ahdesk", false) end
 end
 
 -- touche « TreeAI : action HV suivante » (Bindings.xml) : le bureau quand il est là, sinon l'ancien chemin
