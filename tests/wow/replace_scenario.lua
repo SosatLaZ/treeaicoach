@@ -435,9 +435,12 @@ return function(M, ctx)
   for _, s in ipairs(secs) do if s.key == "questie" then qs = s end end
   check(qs and qs.lines[1].id == "data" and qs.lines[1].kind == "take" and qs.lines[2].id == "icons" and qs.lines[2].kind == "leave",
     "Questie section: its base is read, its icons and tracker are left to it")
-  A.SetLink("questie", "icons", false)
-  check(not A.Link("questie", "icons") and A.Link("questie", "data"), "each line switches off by itself")
-  A.SetLink("questie", "icons", true)
+  -- (5.1 LOOK) Questie's lines are information (the link is held by the modules that read it): no switch that cuts nothing
+  check(qs.lines[1].fixed and qs.lines[2].fixed and A.SetLink("questie", "icons", false) == false and A.Link("questie", "icons"),
+    "Questie lines: information, no dead switch")
+  A.SetLink("spf", "dock", false)
+  check(not A.Link("spf", "dock") and A.Link("spf", "arrow"), "each line switches off by itself")
+  A.SetLink("spf", "dock", true)
   local Wn = T.Window
   if Wn and Wn.Open then
     Wn.Open("addons")

@@ -616,12 +616,41 @@ end
 S.OnStrip = onStrip
 -- estompée au repos et en combat, pleine au survol (option « fade ») : aucun OnUpdate, un seul SetAlpha par changement
 local hoverGen = 0
+-- (5.1 LOOK) une fenêtre du jeu ouverte par-dessus la bande (marchand, PNJ, banque, HV, maître…) : la bande s'efface
+-- comme en combat — elle ne se pose jamais sur le titre de la fenêtre que le joueur regarde. Lecture seule (GetRect).
+S.PANELS = { "MerchantFrame", "GossipFrame", "QuestFrame", "BankFrame", "AuctionFrame", "AuctionHouseFrame", "ClassTrainerFrame",
+  "MailFrame", "TradeSkillFrame", "CraftFrame", "CharacterFrame", "SpellBookFrame", "PlayerTalentFrame", "TalentFrame", "FriendsFrame",
+  "QuestLogFrame", "TaxiFrame", "PetStableFrame", "TradeFrame" }
+local function screenRect(f)
+  local l, b, w, h = meth(f, "GetRect")
+  local es = tonumber(meth(f, "GetEffectiveScale")) or 1
+  if type(l) ~= "number" or type(b) ~= "number" or type(w) ~= "number" or type(h) ~= "number" then return nil end
+  local sec = T.API and T.API.IsSecret
+  if type(sec) == "function" and (sec(l) or sec(w)) then return nil end
+  return l * es, b * es, (l + w) * es, (b + h) * es
+end
+function S.UnderPanel()
+  if not strip or not meth(strip, "IsShown") then return nil end
+  local l, b, r, t = screenRect(strip)
+  if not l then return nil end
+  for _, n in ipairs(S.PANELS) do
+    local f = rawget(G, n)
+    if type(f) == "table" and not meth(f, "IsForbidden") and meth(f, "IsVisible") then
+      local pl, pb, pr, pt = screenRect(f)
+      if pl and pl < r and pr > l and pb < t and pt > b then return n end
+    end
+  end
+  return nil
+end
 function S.Alpha()
   local k = K()
   local a = k and k.alpha or { idle = 0.60, combat = 0.30 }
   if S._hover or not (S.db and S.db.fade ~= false) then return 1 end
   if (T.IsEditMode and T:IsEditMode()) then return 1 end
-  return inCombat() and (a.combat or 0.30) or (a.idle or 0.60)
+  if inCombat() then return a.combat or 0.30 end
+  local okP, under = pcall(S.UnderPanel)
+  if okP and under then return a.combat or 0.30 end
+  return a.idle or 0.60
 end
 function S.ApplyAlpha()
   if not strip then return end
@@ -1780,6 +1809,19 @@ function S:OnEnable()
     if strip and S.db and S.db.hideCombat and stripOn() and S.placed then meth(strip, "Show") S.Refresh() end
     T:After(0, S.ApplyAlpha)
   end)
+  -- (5.1 LOOK) une fenêtre du jeu s'ouvre / se ferme par-dessus la bande : un SetAlpha, un instant plus tard
+  local panelGen = 0
+  local function panelSoon()
+    panelGen = panelGen + 1
+    local gen = panelGen
+    T:After(0.2, function() if gen == panelGen then S.ApplyAlpha() end end)
+  end
+  for _, ev in ipairs({ "MERCHANT_SHOW", "MERCHANT_CLOSED", "GOSSIP_SHOW", "GOSSIP_CLOSED", "QUEST_DETAIL", "QUEST_FINISHED",
+      "BANKFRAME_OPENED", "BANKFRAME_CLOSED", "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED", "TRAINER_SHOW", "TRAINER_CLOSED",
+      "MAIL_SHOW", "MAIL_CLOSED", "TAXIMAP_OPENED", "TAXIMAP_CLOSED", "PLAYER_INTERACTION_MANAGER_FRAME_SHOW",
+      "PLAYER_INTERACTION_MANAGER_FRAME_HIDE" }) do
+    pcall(self.RegisterEvent, self, ev, panelSoon)
+  end
   self:On("LAYOUT_DONE", replace)
   self:On("QUEST_MODE_CHANGED", function() S.Refresh(true) end)
   self:On("QUEST_GUIDE_CHANGED", function() S.Refresh(true) end)

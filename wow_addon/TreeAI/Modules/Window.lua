@@ -1969,7 +1969,18 @@ function W.TopActions(Ly, p)
   for _, it in ipairs(list) do if type(it) == "table" and it[1] and it[2] and #keep < 3 then keep[#keep + 1] = it end end
   if #keep > 0 then Ly.actions(keep, #keep) end   -- (5.0) ≤ 3 grosses tuiles d'action en tête de page
   Ly.topN = #keep
+  Ly.topList = keep
   return #keep
+end
+--- (5.1 LOOK) le bouton du pied redit-il une action déjà en tête (même mot, ou le mot de la tête + une précision) ?
+function W.DupOfTop(label, top)
+  if type(label) ~= "string" or type(top) ~= "table" then return false end
+  local b = low(label)
+  for _, it in ipairs(top) do
+    local a = type(it[1]) == "string" and low(it[1]) or nil
+    if a and a ~= "" and (a == b or (b:sub(1, #a) == a and b:sub(#a + 1, #a + 1) == " ")) then return true end
+  end
+  return false
 end
 --- (5.0 LOOK) la recherche trouve N'IMPORTE QUELLE action et N'IMPORTE QUEL réglage : pages, actions rapides de la
 --- bande, éléments d'écran (case allumer / couper), profil, chaque réglage de chaque fonction, outils de la pastille.
@@ -2576,6 +2587,9 @@ function W.Render()
   -- bouton d'action de la page (un seul, en bas à droite)
   local label, fn, tip
   if p.action then label, fn, tip = try(p.action) end
+  -- (5.1 LOOK) pas de doublon : le bouton du pied qui redit une action déjà en tête de page (« Me concentrer » /
+  -- « Me concentrer sur les métiers ») n'est pas montré une 2e fois
+  if label and fn and W.DupOfTop(label, Ly.topList) then label = nil end
   if label and fn then
     win.action:SetLabel(label)
     win.action.fn, win.action.tip, win.action.labelText = fn, tip, label

@@ -235,6 +235,13 @@ return function(M, ctx)
       S.db.fade = false S:OnOptionChanged("fade")
       check(strip:GetAlpha() == 1, "option « estompée » coupée : pleine")
       S.db.fade = true S:OnOptionChanged("fade")
+      -- a game window opened over the strip (a NPC's dialog) : the strip fades like in combat, back when it closes
+      local gf = rawget(_G, "GossipFrame") or CreateFrame("Frame", "GossipFrame", UIParent)
+      gf:ClearAllPoints() gf:SetPoint("TOPLEFT", strip, "TOPLEFT", 10, 6) gf:SetSize(330, 420) gf:Show()
+      ctx.fire("GOSSIP_SHOW") M.Advance(0.5, 0.1)
+      check(math.abs(strip:GetAlpha() - 0.30) < 0.01, ("une fenêtre du jeu par-dessus la bande : elle s'efface (%.2f)"):format(strip:GetAlpha()))
+      gf:Hide() ctx.fire("GOSSIP_CLOSED") M.Advance(0.5, 0.1)
+      check(math.abs(strip:GetAlpha() - 0.60) < 0.01, ("la fenêtre fermée : estompée comme avant (%.2f)"):format(strip:GetAlpha()))
       -- off the strip, still working (key / slash)
       check(S.Do("suivant") ~= nil, "« Suivant » marche toujours (touche, /tai boutons suivant)")
       S.db.more = true S:OnOptionChanged("more")
@@ -303,6 +310,10 @@ return function(M, ctx)
     for _, p in ipairs(nav) do names[#names + 1] = p.label end
     out("navigation : " .. table.concat(names, " · "))
     check(#nav <= 9 and nav[1].id == "home", "9 catégories au plus, « Maintenant » en tête (" .. #nav .. ")")
+    -- no duplicate : the footer button that repeats an action of the page's top is not shown twice
+    check(W.DupOfTop("Me concentrer sur les métiers", { { "Me concentrer" } }) and W.DupOfTop("Pause", { { "Pause" } })
+      and not W.DupOfTop("Pause", { { "Rendre mes quêtes" }, { "Tout faire ici" } }) and not W.DupOfTop("Mettre", { { "Me" } }),
+      "le bouton du pied ne redit pas une action de la tête")
     -- every page : at most ONE primary action ; old pages still reachable
     local ids = {}
     for _, p in ipairs(W.PAGES) do ids[#ids + 1] = p.id end

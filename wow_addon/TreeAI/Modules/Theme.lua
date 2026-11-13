@@ -82,6 +82,9 @@ local KINDS = {
   -- (4.2 FIX42) petits cadres posés sur l'écran (bande, alertes, cartes du marchand / de l'HV / de la banque) : fond
   -- transparent ~0,4, liseré 1 px discret, petite police (Th.SMALL) — jamais la fenêtre ni les menus
   small = { bg = "small", border = "smallBorder" },
+  -- (5.1 LOOK) petite carte accrochée SOUS une fenêtre du jeu (marchand, banque, HV) : elle tombe souvent sur une
+  -- autre colonne (Suivi Forever) — fond presque opaque pour que les deux textes ne se mélangent pas
+  docked = { bg = "bg", border = "smallBorder" },
 }
 --- (4.2 FIX42) jetons des petits cadres : alpha du fond (0,35-0,5), police, hauteur des boutons
 Th.SMALL = { alpha = 0.45, font = "S", fontPx = 10, btnH = 20, pad = 6 }

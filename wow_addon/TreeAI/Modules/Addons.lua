@@ -50,7 +50,9 @@ A.NOTICE_V = 2
 -- ===================================================================== le registre : addons connus, liens, points d'entrée
 -- test = motif sur le nom de dossier (minuscules) ; globals = globales publiques qui prouvent qu'il est chargé ;
 -- entries = points d'entrée sondés (chemins « A.b.c ») ; links = ce que TreeAI lui PREND (take) ou lui LAISSE (leave),
--- chaque ligne se coupe (A.SetLink) ; layout = seulement évité au placement.
+-- chaque ligne se coupe (A.SetLink) ; layout = seulement évité au placement. fixed = ligne d'information : le lien est
+-- tenu par le module qui lit l'addon (Export / boussole pour Questie, module HV pour Auctionator, Icônes de quêtes),
+-- pas de case qui ne couperait rien.
 A.KNOWN = {
   { key = "spf", title = "Shortest Path Forever", icon = ICON .. "INV_Misc_Map_01",
     test = function(l) return l:find("shortestpath", 1, true) ~= nil end, globals = { "ShortestPathForever" },
@@ -69,11 +71,11 @@ A.KNOWN = {
     test = function(l) return l == "questie" or l == "questiedb" end, globals = { "Questie", "QuestieLoader", "LibQuestieDB" },
     entries = { "QuestieLoader.ImportModule", "LibQuestieDB.Quest.Get", "LibQuestieDB.Npc.Get", "Questie.db.profile", "Questie_BaseFrame" },
     links = {
-      { id = "data", kind = "take", label = "Base de quêtes",
+      { id = "data", kind = "take", label = "Base de quêtes", fixed = true,
         on = "Lue par TreeAI (donneurs, objectifs, chaînes) pour dire quelle quête faire ensuite. Rien n'y est écrit.",
         off = "TreeAI n'utilise que les points du jeu (quêtes de ton journal)." },
-      { id = "icons", kind = "leave", label = "Icônes et suivi de quêtes",
-        on = "Laissés à Questie et au jeu : TreeAI ne dessine pas ses propres icônes ni un 2e suivi.",
+      { id = "icons", kind = "leave", label = "Icônes et suivi de quêtes", fixed = true,
+        on = "Laissés à Questie et au jeu : TreeAI ne dessine pas ses icônes par-dessus ni un 2e suivi (pour forcer les siennes : option « Dessiner même quand Questie dessine les siennes »).",
         off = "TreeAI peut dessiner ses icônes / son suivi si tu les allumes (Réglages → Affichage)." },
     } },
   { key = "agf", title = "Adventure Guide Forever", icon = ICON .. "INV_Misc_Book_08",
@@ -97,7 +99,7 @@ A.KNOWN = {
     entries = { "Auctionator.API.v1.GetAuctionPriceByItemID", "Auctionator.API.v1.GetAuctionPriceByItemLink",
       "Auctionator.API.v1.MultiSearch", "Auctionator.API.v1.MultiSearchExact", "Auctionator.API.v1.CreateShoppingList" },
     links = {
-      { id = "prices", kind = "take", label = "Prix de l'hôtel des ventes",
+      { id = "prices", kind = "take", label = "Prix de l'hôtel des ventes", fixed = true,
         on = "Lus chez Auctionator (son API publique) pour les avis « vendre / garder / HV ». Rien n'y est écrit.",
         off = "TreeAI n'utilise que ses propres relevés de prix." },
     } },
@@ -199,6 +201,8 @@ local function linkDef(key, id)
 end
 --- le réglage du joueur pour ce lien (vrai = branché ; d'office : branché)
 function A.Wanted(key, id)
+  local def = linkDef(key, id)
+  if def and def.fixed then return true end
   local s = A.db and type(A.db.links) == "table" and A.db.links[key .. ":" .. id]
   return s ~= false
 end
@@ -209,7 +213,8 @@ function A.Link(key, id)
 end
 A.Defers = A.Link
 function A.SetLink(key, id, on)
-  if not (A.db and linkDef(key, id)) then return false end
+  local def = linkDef(key, id)
+  if not (A.db and def) or def.fixed then return false end
   if type(A.db.links) ~= "table" then A.db.links = {} end
   if on == false then A.db.links[key .. ":" .. id] = false else A.db.links[key .. ":" .. id] = nil end
   pcall(A.Apply)
@@ -470,7 +475,7 @@ function A.Sections()
       end
       for _, l in ipairs(k.links or {}) do
         local on = A.Wanted(k.key, l.id)
-        s.lines[#s.lines + 1] = { label = l.label, kind = l.kind, text = on and l.on or l.off, on = on, key = k.key, id = l.id }
+        s.lines[#s.lines + 1] = { label = l.label, kind = l.kind, text = on and l.on or l.off, on = on, key = k.key, id = l.id, fixed = l.fixed }
       end
       if k.key == "spf" then
         local st = A.SPFState()
@@ -502,9 +507,10 @@ local function render(Ly)
   for _, s in ipairs(secs) do
     if Ly.header(s.title .. (s.version and ("  v" .. s.version) or ""), "addons:" .. s.key, nil, s.icon) then
       for _, l in ipairs(s.lines) do
-        if l.id and Ly.toggle then
+        if l.id and Ly.toggle and not l.fixed then
           Ly.toggle({ label = (l.kind == "take" and "TreeAI prend : " or "TreeAI laisse : ") .. l.label, desc = l.text, on = l.on,
             set = function(v) A.SetLink(l.key, l.id, v) if W and W.Dirty then W.Dirty() end end })
+        elseif l.label then Ly.text((l.kind == "take" and "TreeAI prend : " or "TreeAI laisse : ") .. l.label .. " — " .. l.text, "S", "muted", 6)
         else Ly.text(l.text, "S", "muted", 6) end
       end
     end
