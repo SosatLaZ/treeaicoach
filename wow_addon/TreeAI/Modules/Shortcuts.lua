@@ -283,7 +283,8 @@ function S.State()
           if d.id ~= "zone" then st.title = m.label end
         end
         if type(m.tip) == "string" and m.tip ~= "" then st.modeTip = m.tip end
-        if type(m.count) == "number" and not secret(m.count) then st.count = m.count end
+        -- (« Vite » : son nombre est rendre + prendre, déjà montrés à côté → pas de pastille sans sens propre)
+        if type(m.count) == "number" and not secret(m.count) and d.id ~= "vite" then st.count = m.count end
         if type(m.key) == "string" and m.key ~= "" then st.modeKey = m.key end
       end
       if st.count == nil then
@@ -513,6 +514,8 @@ end
 T.StripAction = function(id) return S.Do(id) end   -- appelé par Bindings.xml
 
 -- ===================================================================== infobulles (une par bouton, toujours)
+local COUNT_TIP = { rendre = "Pastille : %d quête%s finie%s à rendre", prendre = "Pastille : %d quête%s à prendre près de toi",
+  zone = "Pastille : %d quête%s en cours dans ta zone", groupe = "Pastille : %d quête%s en commun avec le groupe" }
 --- les lignes de l'infobulle d'un bouton : { { texte, r, g, b, coupé à la ligne }, … } — la 1re est le titre
 function S.TipLines(id)
   local d = DEF[id]
@@ -547,6 +550,9 @@ function S.TipLines(id)
     if s then n = n + 1 add("• " .. s, 0.8, 0.8, 0.8) end
     if n >= 5 then break end
   end
+  -- ce que compte la pastille (un nombre sans son nom ne dit rien)
+  local nb = tonumber(st.count)
+  if nb and nb > 0 and COUNT_TIP[id] then add(COUNT_TIP[id]:format(nb, nb > 1 and "s" or "", nb > 1 and "s" or ""), 1, 0.82, 0.2) end
   local extra = hook(id, "tip")
   for i, l in ipairs(type(extra) == "table" and extra or {}) do if i <= 6 and type(l) == "string" then add(l, 0.8, 0.8, 0.8, true) end end
   if id == "metiers" then

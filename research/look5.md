@@ -107,9 +107,10 @@ JETON couleur key = 0.55 0.80 1.00, alpha 1.00
   infobulle « suivant » : Étape suivante / Un clic : passe à l'étape suivante (celle-ci est faite, ou tu veux la sauter). / Touche : aucune (« Touches conseillées » dans les réglages) / Clic droit : la page de la fenêtre
   alerte : « Quête finie : La revanche de test — va la rendre » — TreeAIAlert : gauche 799, haut 174, 300×23 unités = 300×23 px réels
 ```
-Lecture critique : la pastille « Vite (2) » compte rendre + prendre (donnée du cerveau des quêtes) — son infobulle ne dit
-pas ce qu'est ce nombre (à voir avec STABLE). « Sacs » / « Équipement » n'ont pas de pastille tant que leurs modules n'ont
-pas branché `S.SetAction`.
+Lecture critique (corrigé après ce relevé) : la pastille « Vite (2) » comptait rendre + prendre, déjà montrés à côté →
+plus de pastille sur « Vite » ; chaque infobulle dit maintenant ce que compte sa pastille (« Pastille : 2 quêtes finies à
+rendre », « … 3 quêtes en cours dans ta zone »). « Sacs » / « Équipement » n'ont pas de pastille tant que leurs modules
+n'ont pas branché `S.SetAction`. Touche trop longue pour le coin du bouton : abrégée (« C-M-3 »), entière dans l'infobulle.
 
 ### Matrice 3 résolutions × 3 échelles × 2 dispositions (toutes vertes : rien sur un cadre du jeu, rien hors écran)
 
