@@ -138,6 +138,49 @@ def _spike_lines(d: dict) -> list[str]:
     return out
 
 
+def _swallowed_lines(d: dict) -> list[str]:
+    """« Erreurs avalées » (5.1, audit B9): failures caught by the addon's own pcall wrappers (try / pass / meth) —
+    nothing on screen, nothing in chat. One entry per place (``file.lua:line`` or the wrapper's name), its count, the
+    first message, the job that was running."""
+    sw = _d(d.get("swallowed"))
+    sites = _d(sw.get("sites"))
+    total = _i(sw.get("total"))
+    if not sites and total <= 0:
+        return []
+    out = [f"== Erreurs avalées (sans message à l'écran) : {total} en tout, {len(sites)} endroit(s) =="]
+    rows = sorted(((k, _d(v)) for k, v in sites.items()), key=lambda kv: -_i(kv[1].get("n")))
+    for k, e in rows[:MAX_ITEMS]:
+        extra = " (en combat)" if e.get("combat") else ""
+        job = f" pendant {_s(e.get('ctx'), 60)}" if e.get("ctx") else ""
+        out.append(f"{_s(k, 80)} ×{max(1, _i(e.get('n'), 1))}{extra}{job} — dès le {_when(e.get('t'))}")
+        out.append(f"    {_s(e.get('msg'), 300)}")
+    if _i(sw.get("dropped")) > 0:
+        out.append(f"(+ {_i(sw.get('dropped'))} échec(s) à d'autres endroits, au-delà des 60 gardés)")
+    out.append("")
+    return out
+
+
+def _perf_lines(d: dict) -> list[str]:
+    """« Temps réel par module » (5.1, audit B14): milliseconds measured IN THE GAME (debugprofilestop around every
+    dispatched call) during the last session, saved at logout / reload — not the simulation's estimates."""
+    pf = _d(d.get("perf"))
+    mods = [m for m in _seq(pf.get("mods")) if isinstance(m, dict)]
+    if not mods:
+        return []
+    up = max(1, _i(pf.get("up"), 1))
+    total = sum(_f(m.get("ms")) for m in mods)
+    out = [f"== Temps réel par module (mesuré en jeu, session du {_when(pf.get('t'))}, {up // 60} min, "
+           f"TreeAI {_s(pf.get('ver'), 20)}) ==",
+           f"Total des {len(mods)} plus coûteux : {total:.0f} ms, soit {total / up * 60:.1f} ms par minute de jeu."]
+    for i, m in enumerate(mods, 1):
+        n = max(1, _i(m.get("n"), 1))
+        ms = _f(m.get("ms"))
+        out.append(f"{i:2d}. {_s(m.get('m'), 30)} : {ms / up * 60:.2f} ms/min ({ms:.0f} ms, {n} appels, "
+                   f"{ms / n:.3f} ms par appel)")
+    out.append("")
+    return out
+
+
 def _api_lines(d: dict) -> list[str]:
     """« API du client »: which game functions exist on this client and the shape of what they return (5.0)."""
     api = _d(d.get("api"))
@@ -164,6 +207,10 @@ def build_text(db: Any, now: float | None = None) -> str:
     n_blk = _blocked_total(d, blocked)
     out.append("== Résumé ==")
     out.append(f"Erreurs Lua : {len(errs)} différentes, {n_err} au total")
+    sw = _d(d.get("swallowed"))
+    if sw:
+        out.append(f"Erreurs avalées (aucun message à l'écran) : {_i(sw.get('total'))} en tout, "
+                   f"{len(_d(sw.get('sites')))} endroit(s)")
     out.append(f"Actions bloquées par le jeu : {n_blk}")
     if st:
         out.append(f"Autotest du {_when(st.get('t'))} : {_i(st.get('ok'))} ok, {_i(st.get('warn'))} à vérifier, "
@@ -221,7 +268,9 @@ def build_text(db: Any, now: float | None = None) -> str:
                 v = ", ".join(_s(x, 60) for x in (_seq(v) or [f"{a}={b}" for a, b in _d(v).items()]))
             out.append(f"  {k} : {_s(v, 200)}")
         out.append("")
+    out.extend(_swallowed_lines(d))
     out.extend(_spike_lines(d))
+    out.extend(_perf_lines(d))
     out.extend(_api_lines(d))
     nav = [_s(x, 300) for x in _seq(_d(d.get("nav")).get("lines")) if isinstance(x, str)]
     if nav:

@@ -30,7 +30,7 @@ def test_hunter_bar_reads_player_swing():
 
 def test_shop_actions_only_through_shopcall():
     # every purchase / craft / container move of the click flows goes through T:ShopCall (Core) or the module's shop()
-    for name in ("ProfLevel.lua", "CityRun.lua", "QuickFight.lua"):
+    for name in ("ProfLevel.lua", "CityRun.lua"):   # (5.1 CLEAN) QuickFight.lua removed
         src = code(MODS / name)
         for bad in ("pcall(fn, e.index", "pcall(fn, pick.bag", "pcall(fn, s.bag", "pcall(C.CraftRecipe", "pcall(fn, idx, n)",
                     "try(AH.StartCommoditiesPurchase", "try(AH.ConfirmCommoditiesPurchase", "try(buy, o.index", "local ok = pcall(fn)"):

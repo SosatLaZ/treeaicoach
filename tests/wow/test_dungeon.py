@@ -1,4 +1,5 @@
 """Module Dungeon (agent PVE): TOC, syntax, no globals / automation, data sanity, harness scenario."""
+# (5.1 CLEAN) harness default = the player's profile (« sur ») ; this file tests modules that are off there: « tout »
 import re
 import shutil
 import subprocess
@@ -79,7 +80,7 @@ def test_syntax_no_globals(path):
 @pytest.mark.skipif(not shutil.which("lua5.1"), reason="lua5.1 absent")
 @pytest.mark.parametrize("flavor", ["modern", "legacy"])
 def test_dungeon_scenario(flavor):
-    r = subprocess.run(["lua5.1", str(ROOT / "tests/wow/harness.lua"), "-q", "--flavor", flavor, "--class", "HUNTER",
+    r = subprocess.run(["lua5.1", str(ROOT / "tests/wow/harness.lua"), "-q", "--profile", "tout", "--flavor", flavor, "--class", "HUNTER",
                         "--scenario", str(ROOT / "tests/wow/dungeon_scenario.lua"), str(ADDON)],
                        capture_output=True, text=True, timeout=60, cwd=ROOT)
     assert r.returncode == 0, r.stdout + r.stderr
@@ -93,7 +94,7 @@ ALLOW = sum((["--allow", n] for n in ("LibQuestieDB", "QuestDB", "NpcDB", "Objec
 @pytest.mark.skipif(not shutil.which("lua5.1"), reason="lua5.1 absent")
 @pytest.mark.parametrize("flavor", ["forever", "modern", "legacy"])
 def test_dungeon2_scenario(flavor):
-    r = subprocess.run(["lua5.1", str(ROOT / "tests/wow/harness.lua"), "-q", "--flavor", flavor, "--class", "HUNTER", *ALLOW,
+    r = subprocess.run(["lua5.1", str(ROOT / "tests/wow/harness.lua"), "-q", "--profile", "tout", "--flavor", flavor, "--class", "HUNTER", *ALLOW,
                         "--scenario", str(ROOT / "tests/wow/dungeon2_scenario.lua"), str(ADDON)],
                        capture_output=True, text=True, timeout=60, cwd=ROOT)
     assert r.returncode == 0, r.stdout + r.stderr

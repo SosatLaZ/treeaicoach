@@ -10,138 +10,29 @@
 return function(M, ctx)
   local T = TreeAI
   local check = ctx.check
-  local R = T.Region
   local Th = T.Theme
   M.inCombat = false
-  check(R and R.ClassifyRaw and R.Arrange, "module Region chargé")
+  check(not T.Region, "Region retiré (5.1)")
   check(Th and Th.LINE and Th.LineStyle and Th.QuestDiffColor, "Theme : genres de ligne + couleurs de difficulté")
-  if not (R and Th) then return end
+  if not Th then return end
   if T.ApplyPreset then T:ApplyPreset("tout") end
   T:ShowPanel()
   T:SetMini(false)
   T.settings.panel.width = 340
   T.settings.panel.maxLines = 15
 
-  -- 1. classement pur ------------------------------------------------------------------------------
-  local ctxR = { zone = "Contreforts", level = 28, group = 1 }
-  local c = R.ClassifyRaw({ id = 1, zone = "Contreforts", level = 28 }, nil, ctxR)
-  check(c.band == "here" and not c.bad, "zone actuelle : Ici, pas de mise en garde")
-  c = R.ClassifyRaw({ id = 2, zone = "Hautebrande", level = 27 }, { dist = 900, travelSec = 140 }, ctxR)
-  check(c.band == "near" and not c.bad, "zone voisine (2 min 20) : Zones voisines")
-  c = R.ClassifyRaw({ id = 3, zone = "Tanaris", level = 44 }, nil, { zone = "Contreforts", level = 28, group = 1, onCont = false })
-  check(c.band == "far" and c.bad and table.concat(c.reasons, ","):find("autre continent", 1, true)
-    and table.concat(c.reasons, ","):find("trop haut", 1, true), "autre continent + trop haut : Plus loin, déconseillée")
-  c = R.ClassifyRaw({ id = 4, zone = "Contreforts", level = 29, elite = true }, nil, ctxR)
-  check(c.band == "here" and c.bad and c.reasons[1] == "élite, tu es seul", "élite seul : déconseillée même ici")
-  c = R.ClassifyRaw({ id = 4, zone = "Contreforts", level = 29, elite = true }, nil, { zone = "Contreforts", level = 28, group = 3 })
-  check(not c.bad, "élite à 3 : plus de mise en garde")
-  c = R.ClassifyRaw({ id = 5, zone = "Désolace", level = 30 }, { dist = 9000, travelSec = 900 }, ctxR)
-  check(c.band == "far" and c.reasons[1] == "loin (~15 min de trajet)", "15 min de trajet : loin (" .. tostring(c.reasons[1]) .. ")")
-  check(R.WhyAnyway({ complete = true }, nil, {}):find("prête à rendre", 1, true), "pourquoi quand même : prête à rendre")
-  check(R.WhyAnyway({}, nil, { hereOK = 0 }):find("plus rien de mieux", 1, true), "pourquoi quand même : rien ici")
-
-  -- 2. onglet Quêtes regroupé par région --------------------------------------------------------------
+  -- (5.1 CLEAN) Region.lua (« quêtes par région », coupé pour tout le monde depuis la 4.1, 3e écrivain du suivi du jeu)
+  -- est retiré : ses sections 1 à 4 (classement, onglet regroupé, changement de zone, « Suivi du jeu ») avec lui
   local Q = T.modules.Quests
   local Tr = T.Tracker
   local savedList, savedItems, savedZone = Q.lastList, Tr and Tr.items, M.player.zone
   local QL = rawget(_G, "C_QuestLog")
   local savedDist = QL and QL.GetDistanceSqToQuest
   local savedWatch = QL and QL.AddQuestWatch
-  local watchCalls = 0
-  if QL then
-    QL.GetDistanceSqToQuest = function(id)
-      if id == 9103 then return 4000 * 4000, false end
-      return 500 * 500, true
-    end
-    QL.AddQuestWatch = function() watchCalls = watchCalls + 1 return true end
-  end
-  M.player.zone = "Contreforts"
   local fake = {
     { id = 9101, title = "Les loups des Contreforts", level = 28, zone = "Contreforts", obj = {} },
-    { id = 9102, title = "Ours de Hautebrande", level = 27, zone = "Hautebrande", obj = {} },
     { id = 9103, title = "Les fouilles de Tanaris", level = 44, zone = "Tanaris", obj = {} },
-    { id = 9104, title = "Le cavalier céleste", level = 29, zone = "Contreforts", complete = true, turnZone = "Contreforts", obj = {} },
-    { id = 9105, title = "Courrier de Moulin-de-l'Ambre", level = 26, zone = "Moulin", obj = {} },
   }
-  Q.lastList = fake
-  if Tr then Tr.items = { { key = 9102, dist = 900, travelSec = 300 }, { key = 9105, dist = 700, travelSec = 120 } } end
-  R.Invalidate()
-  -- l'ordre du suivi (meilleure d'abord) : Tanaris en tête = la meilleure option malgré la région
-  local qlines = {
-    { text = "|cffffd100À faire maintenant|r : Ramasse 5 pierres", prio = 2 },
-    { text = "|cff99ccffTanaris|r (1)", prio = 1, header = true },
-    { text = "Les fouilles de Tanaris · Long", questID = 9103, onClick = function() end, tooltip = { "Clic : boussole · Maj-clic : Y aller" } },
-    { text = "Ours de Hautebrande · Rapide", questID = 9102, onClick = function() end },
-    { text = "Les loups des Contreforts · Rapide", questID = 9101, onClick = function() end },
-    { text = "Le cavalier céleste · Prête à rendre", questID = 9104, prio = 2, onClick = function() end },
-    { text = "Courrier de Moulin-de-l'Ambre · Rapide", questID = 9105, onClick = function() end },
-    { text = "Ouvrir la fenêtre « À faire »", onClick = function() end },
-  }
-  T:SetTabLines("quests", qlines)
-  T:SelectTab("quests")
-  T:RefreshPanel()
-  local vis = T:GetVisibleLines()
-  local pos, warn = {}, nil
-  for i, e in ipairs(vis) do
-    if e.questID then pos[e.questID] = pos[e.questID] or i end
-    if e.kind == "warn" then warn = e; pos.warn = i end
-    check(not (e.header and not e.onClick and e.source == "main"), "ancien titre de zone retiré : " .. tostring(e.text))
-  end
-  check(pos[9101] and pos[9104] and pos[9105] and pos[9102] and pos[9103], "les 5 quêtes restent listées")
-  check(pos[9101] < pos[9105] and pos[9104] < pos[9105], "Ici (Contreforts) avant les zones voisines")
-  check(pos[9105] < pos[9102], "zones voisines triées par temps de trajet (2 min avant 5 min)")
-  check(pos[9102] < pos[9103], "Plus loin (autre continent) en dernier")
-  check(warn and pos.warn == pos[9103] + 1, "ligne de mise en garde juste sous la meilleure quête déconseillée")
-  check(warn and warn.text:find("^Région déconseillée : ") and (warn.text:find("autre continent", 1, true) or not QL)
-    and warn.text:find("— on y va quand même parce que", 1, true), "mise en garde : raison + pourquoi : " .. tostring(warn and warn.text))
-  local labels = {}
-  for _, e in ipairs(vis) do if e._bandLabel then labels[#labels + 1] = e._bandLabel end end
-  local lj = table.concat(labels, "|")
-  check(lj:find("Ici · Contreforts", 1, true) and lj:find("Zones voisines", 1, true) and lj:find("Plus loin", 1, true),
-    "sections Ici · zone / Zones voisines / Plus loin")
-  check((T:GetPanel().sections or 0) >= 4, "titres de section dessinés (" .. tostring(T:GetPanel().sections) .. ")")
-  -- pastille de l'onglet : nombre de quêtes (pastilles relues au plus toutes les 2 s depuis 3.9.9)
-  M.Advance(2.1, 0.5)
-  T:RefreshPanel()
-  local qtab
-  for _, r in ipairs(T:GetTabLayout()) do if r.id == "quests" then qtab = r end end
-  check(qtab and qtab.badge == "5", "onglet Quêtes : pastille « 5 » (" .. tostring(qtab and qtab.badge) .. ")")
-  check(watchCalls == 0, "aucun appel au suivi du jeu sans clic")
-
-  -- 3. ZONE_CHANGED_NEW_AREA : on regroupe pour la nouvelle zone (sans clic, sans suivi du jeu) ---------------
-  M.player.zone = "Hautebrande"
-  M.FireEvent("ZONE_CHANGED_NEW_AREA")
-  M.Advance(1)
-  T:RefreshPanel()
-  vis = T:GetVisibleLines()
-  local firstQ
-  for _, e in ipairs(vis) do if e.questID then firstQ = e break end end
-  check(firstQ and firstQ.questID == 9102 and firstQ._bandLabel == "Ici · Hautebrande", "nouvelle zone : ses quêtes en tête (Ici · Hautebrande)")
-  check(watchCalls == 0, "changement de zone : toujours aucun appel au suivi du jeu")
-
-  -- 4. « Suivi du jeu » : seulement sur clic, hors combat, ≤ 5 ---------------------------------------------
-  M.player.zone = "Contreforts"
-  M.FireEvent("ZONE_CHANGED_NEW_AREA")
-  M.Advance(1)
-  Q.lastList = fake   -- (le module Quêtes relit le vrai journal du harnais au changement de zone)
-  R.Invalidate()
-  T:RefreshPanel()
-  local ctrl
-  for _, ch in ipairs({ T:GetPanel():GetChildren() }) do
-    if ch.entry and ch.entry.label == "Suivi du jeu" and ch:IsShown() then ctrl = ch end
-  end
-  check(ctrl ~= nil, "bouton d'onglet « Suivi du jeu »")
-  check(R.WatchZone() == 0 and watchCalls == 0, "appel direct hors clic : refusé")
-  if ctrl and QL then
-    M.EnterCombat()
-    ctrl:Click("LeftButton")
-    check(watchCalls == 0, "en combat : rien n'est ajouté")
-    M.LeaveCombat()
-    ctrl:Click("LeftButton")
-    check(watchCalls == 2, "clic : les 2 quêtes de la zone ajoutées au suivi du jeu (" .. watchCalls .. ")")
-    M.Script(ctrl, "OnEnter")
-    check(tostring(T._lastTooltipFirst):find("^Clic : ajoute les quêtes"), "infobulle du bouton : ce que fait le clic")
-  end
 
   -- 5. lignes : genre → icône + couleur ; colonne de droite ; pas de chevauchement ni de troncature -----------
   T:RegisterTab("zzmenu", "Essai", 98)
@@ -247,7 +138,6 @@ return function(M, ctx)
   -- 7. Maintenant : meilleur guide + mise en garde de région ; état vide --------------------------------------
   T:ClearSuggestions()
   Q.lastList = fake
-  R.Invalidate()
   -- (seule étape épinglée : celles du plan / du module Quêtes du harnais sont vidées)
   T:SetTabLines("quests", {}, "plan"); T:SetTabLines("quests", {}, "Quests")
   T:SetTabLines("quests", { { text = "Étape : Les fouilles de Tanaris", prio = 1, pin = true, questID = 9103 } })
@@ -259,7 +149,6 @@ return function(M, ctx)
   local guide
   for _, r in ipairs(T:GetRowLayout()) do if r.guide then guide = r end end
   check(guide and guide.right and guide.right:find("36 s", 1, true), "étape en cours : distance · durée à droite (" .. tostring(guide and guide.right) .. ")")
-  check(guide and guide.note and guide.note:find("^Région déconseillée"), "étape en cours déconseillée : dit pourquoi (sous la ligne)")
   for _, ch in ipairs({ T:GetPanel():GetChildren() }) do
     if ch.entry and ch.entry.pin and ch:IsShown() then
       check(ch.entry._guide and ch.entry._guide:find("^Direction : N"), "infobulle : direction (" .. tostring(ch.entry._guide) .. ")")
@@ -334,6 +223,5 @@ return function(M, ctx)
   if Tr then Tr.items = savedItems end
   M.player.zone = savedZone
   if QL then QL.GetDistanceSqToQuest, QL.AddQuestWatch = savedDist, savedWatch end
-  R.Invalidate()
   if T.ApplyPreset then T:ApplyPreset("normal") end
 end

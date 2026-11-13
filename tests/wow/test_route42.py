@@ -35,8 +35,10 @@ def test_no_data_provider_on_the_map():
 
 
 def test_tracker_never_hidden():
-    src = re.sub(r"--[^\n]*", "", (ADDON / "Modules" / "Watch.lua").read_text(encoding="utf-8"))
-    assert '"replace"' not in src and "hideTracker" not in src
+    # (5.1 CLEAN) Watch.lua (the TreeAI tracker that could hide the game's) is removed
+    assert not (ADDON / "Modules" / "Watch.lua").exists()
+    for p in (ADDON / "Modules").glob("*.lua"):
+        assert "hideTracker" not in re.sub(r"--[^\n]*", "", p.read_text(encoding="utf-8")), p.name
 
 
 def test_lifts_not_invented():
@@ -45,5 +47,4 @@ def test_lifts_not_invented():
 
 
 def test_watch_off_by_default():
-    src = (ADDON / "Modules" / "Watch.lua").read_text(encoding="utf-8")
-    assert "defaults = { enabled = false," in src
+    assert "Modules\\Watch.lua" not in (ADDON / "TreeAI.toc").read_text(encoding="utf-8")   # (5.1 CLEAN) removed

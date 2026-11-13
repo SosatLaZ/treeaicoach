@@ -17,7 +17,9 @@ local unpack = unpack or table.unpack
 local argv = arg or {}
 local here = (argv[0] or "harness.lua"):match("^(.*)[/\\][^/\\]*$") or "."
 
-local opts = { flavor = "modern", allow = {}, storm = true, profile = "tout" }
+-- (5.1 CLEAN, audit B5 / C1) default = the player's profile (« sur », what a new install runs); a scenario that tests a
+-- module that is off there asks for « --profile tout » explicitly
+local opts = { flavor = "modern", allow = {}, storm = true, profile = "sur" }
 local target
 do
   local i = 1
@@ -211,8 +213,8 @@ if opts.savedvars then
   end
 end
 
--- TreeAI module profile (LITE): scenarios test every module, so the default here is « tout » (everything on,
--- the one-time « essentiel » switch already done); --profile essentiel = what a new player gets.
+-- TreeAI module profile (LITE): --profile tout = everything on (the one-time « essentiel » switch already done) ;
+-- --profile essentiel = the old light set ; default (5.1) --profile sur = what a new player gets.
 if addonName == "TreeAI" then   -- (3.9.5) « essentiel » is opt-in: seeded only when asked
   local db = rawget(_G, "TreeAIDB")
   if type(db) ~= "table" then db = {}; rawset(_G, "TreeAIDB", db) end

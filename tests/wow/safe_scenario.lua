@@ -17,7 +17,8 @@ return function(M, ctx)
       check(mod(n)._active ~= true and mod(n).db.enabled == false, n .. " (bêta) off in mode sûr")
     end
   end
-  check(nBeta >= 26, "most modules are bêta (" .. nBeta .. ")")   -- (4.0.1) ZonePlan, PathDraw, Highlight : mode sûr
+  -- (4.0.1) ZonePlan, PathDraw, Highlight : mode sûr ; (5.1) 7 modules retirés, Hunter / Talents / PathLearn : mode sûr
+  check(nBeta >= 15, "most modules are bêta (" .. nBeta .. ")")
   check(not T:IsBeta("Quests") and not T:IsBeta("Compass") and not T:IsBeta("Speed") and T:IsBeta("Auction"), "safe set")
 
   -- one-line notice
@@ -74,7 +75,12 @@ return function(M, ctx)
 
   -- (4.0.1) ZonePlan, PathDraw, Highlight (+ Glow, la bibliothèque des lueurs) : mode sûr. Un joueur 4.0 en mode sûr
   -- les reçoit UNE fois, sauf ceux qu'il a coupés lui-même (un clic = db.modChoice)
-  for n in pairs(T.SAFE_ADDED) do check(T.SAFE_MODULES[n] and not T:IsBeta(n) and mod(n)._active == true, n .. " on in mode sûr (4.0.1)") end
+  -- (5.1) Hunter is in the default too, for a hunter only (class module)
+  for n in pairs(T.SAFE_ADDED) do
+    local m = mod(n)
+    local other = m and type(m.classes) == "table" and not m.classes[T:PlayerClass() or "?"]
+    check(T.SAFE_MODULES[n] and not T:IsBeta(n) and (other or m._active == true), n .. " on in mode sûr (4.0.1)")
+  end
   check(T.SAFE_MODULES.Glow, "Glow (lueurs de Highlight) in the safe set")
   local db = TreeAIDB
   for _, n in ipairs({ "ZonePlan", "PathDraw" }) do mod(n).db.enabled = false; T._ModuleDisable(mod(n)) end   -- état 4.0 (bêta)

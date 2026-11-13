@@ -61,6 +61,76 @@ function TreeAI:Debug(...)
   end
 end
 
+---------------------------------------------------------------------------
+-- (5.1 CLEAN, audit B9) Erreurs AVALÉES : des milliers d'appels protégés (try, pass, meth…) rendent nil en silence
+-- quand ils échouent — une page vide, une ligne absente, et « 0 erreur Lua ». Chaque échec passe ici : UNE entrée par
+-- endroit (fichier:ligne lu dans le message, sinon le nom donné par l'appelant), son nombre, le premier message, le
+-- travail en cours et l'heure. Rien sur le chemin du succès (les enveloppes ne nous appellent qu'en cas d'échec) ;
+-- un message déjà vu = un compteur de plus (une recherche dans une table) ; 60 endroits au plus, le reste compté à part.
+-- Gardé dans TreeAIDB.diag.swallowed, lu par l'appli : section « Erreurs avalées » de TreeAI-erreurs.txt.
+---------------------------------------------------------------------------
+do
+  local MAX_SITES, MAX_MEMO = 60, 400
+  local pend = { sites = {}, total = 0, n = 0, dropped = 0 }   -- avant le chargement de TreeAIDB
+  local memo, memoN, memoOf = {}, 0, nil                       -- message déjà vu -> son entrée (même réserve)
+  local function store()
+    local db = TreeAI.db
+    if type(db) ~= "table" then return pend end
+    if type(db.diag) ~= "table" then db.diag = {} end
+    local d = db.diag
+    local s = d.swallowed
+    if d.swV ~= TreeAI.version or type(s) ~= "table" or type(s.sites) ~= "table" then
+      s = { sites = {}, total = 0, n = 0, dropped = 0, since = wallclock() }
+      d.swallowed, d.swV = s, TreeAI.version
+    end
+    if pend.total > 0 then   -- ce qui a échoué avant le chargement de la base
+      for k, e in pairs(pend.sites) do
+        if not s.sites[k] and (s.n or 0) < MAX_SITES then s.sites[k] = e s.n = (s.n or 0) + 1 end
+      end
+      s.total = (tonumber(s.total) or 0) + pend.total
+      pend.sites, pend.total, pend.n = {}, 0, 0
+    end
+    return s
+  end
+  local function siteOf(err, label)
+    if type(err) == "string" then
+      local f, l = err:match("([%w_]+)%.lua:(%d+):")
+      if f then return f .. ".lua:" .. l end
+      local api = err:match("to '([%w_%.:]+)'") or err:match("^([%w_%.]+%(%)?)")
+      return tostring(label or "?") .. (api and (" · " .. api) or "")
+    end
+    return tostring(label or "?") .. " · " .. type(err)
+  end
+  --- une erreur avalée (err = le message de pcall ; label = le fichier / module qui l'a avalée)
+  function TreeAI.Swallow(err, label)
+    pcall(function()
+      local sec = _G.issecretvalue
+      if err ~= nil and sec and sec(err) then err = "<valeur secrète>" end
+      local s = store()
+      s.total = (tonumber(s.total) or 0) + 1
+      if memoOf ~= s then memo, memoN, memoOf = {}, 0, s end
+      local key = type(err) == "string" and err or nil
+      local e = key and memo[key]
+      if e then e.n = e.n + 1 return end
+      local site = siteOf(err, label)
+      e = s.sites[site]
+      if not e then
+        if (s.n or 0) >= MAX_SITES then s.dropped = (tonumber(s.dropped) or 0) + 1 return end
+        local msg = strgsub(tostring(err), "^Interface[/\\]AddOns[/\\]TreeAI[/\\]", "")
+        e = { n = 0, msg = strsub(msg, 1, 240), t = wallclock(), ctx = TreeAI._ctx and strsub(tostring(TreeAI._ctx), 1, 60),
+              who = label and tostring(label) or nil,
+              combat = (_G.InCombatLockdown and _G.InCombatLockdown()) and true or nil }
+        s.sites[site] = e
+        s.n = (s.n or 0) + 1
+      end
+      e.n = e.n + 1
+      if key and memoN < MAX_MEMO then memo[key] = e memoN = memoN + 1 end
+    end)
+    return nil
+  end
+  function TreeAI:SwallowedReport() return store() end
+end
+
 local function safecall(fn, ...)
   local ok, err = pcall(fn, ...)
   if not ok then
@@ -83,20 +153,24 @@ local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
   local ok, a, b, c, d, e, f, g, h, i, j, k, l, m, n = pcall(fn, ...)
   if ok then return a, b, c, d, e, f, g, h, i, j, k, l, m, n end
-  return nil
+  return TreeAI.Swallow(a, "Core")   -- (5.1 CLEAN, B9) compté, jamais muet
 end
+TreeAI._TryForTests = try
 
 -- Valeurs secrètes (Forever = famille Midnight) : en combat, certaines valeurs (PV d'une autre unité, auras,
 -- GUID / nom d'un monstre…) sont « secrètes » : les comparer, les additionner ou s'en servir de clé lève une
 -- erreur Lua. API.Pub(v) rend nil pour une valeur secrète (et v sinon) : à mettre autour de ces lectures.
+-- (5.1 CLEAN) issecretvalue ne lève jamais d'erreur : lu directement (avant : un pcall par valeur lue, des milliers
+-- par minute à travers tous les modules)
 function API.IsSecret(v)
   local f = _G.issecretvalue
-  if type(f) ~= "function" or v == nil then return false end
-  local ok, r = pcall(f, v)
-  return ok and r and true or false
+  if v == nil or type(f) ~= "function" then return false end
+  return f(v) and true or false
 end
 function API.Pub(v)
-  if v ~= nil and API.IsSecret(v) then return nil end
+  if v == nil then return nil end
+  local f = _G.issecretvalue
+  if f and f(v) then return nil end
   return v
 end
 local pub = API.Pub
@@ -1703,10 +1777,15 @@ function TreeAI:CharDB()
   local db = self.db or initDB()
   local key = self:CharKey()
   local c = db.chars[key]
+  -- (5.1 CLEAN) déjà vérifiée (même base, même perso, mêmes tables) : rendue telle quelle — le panneau la lit à chaque
+  -- rendu (onglet actif, compact) ; avant : 4 contrôles de type à chaque lecture
+  local cm = self._charMemo
+  if cm and cm[1] == c and cm[2] == c.summary and cm[3] == c.suggestions and cm[4] == c.modules and c ~= nil then return c end
   if type(c) ~= "table" then c = {}; db.chars[key] = c end
   c.summary = type(c.summary) == "table" and c.summary or {}
   c.suggestions = type(c.suggestions) == "table" and c.suggestions or {}
   c.modules = type(c.modules) == "table" and c.modules or {}
+  self._charMemo = { c, c.summary, c.suggestions, c.modules }
   return c
 end
 
@@ -2579,8 +2658,7 @@ TreeAI._ModuleEnable, TreeAI._ModuleDisable = moduleEnable, moduleDisable
   -- nul) ; les autres lisent T:QuestGuideOn() (boussole : plus de cible de quête ; pilote : plus de règle de quête…)
   -- et reçoivent le message QUEST_GUIDE_CHANGED(on).
   TreeAI.QUEST_GUIDE = TreeAI.QUEST_GUIDE or { Tracker = true, Todo = true, Planner = true, Route = true, PathDraw = true,
-    ZonePlan = true, ZoneWatch = true, QuestBrain = true, QuestPins = true, Watch = true, Abandon = true, Horizon = true,
-    Region = true }
+    ZonePlan = true, ZoneWatch = true, QuestBrain = true, QuestPins = true, Abandon = true }
   function TreeAI:QuestGuideOn()
     local db = self.db
     return not (type(db) == "table" and db.questGuide == false)
@@ -2734,19 +2812,27 @@ TreeAI.SAFE_MODULES = TreeAI.SAFE_MODULES or {
   Prof = true, CityRun = true,
   -- (4.1) le joueur joue toujours en groupe : la page Groupe (amis, rejoindre, intention) allumée en mode sûr
   Group = true,
+  -- (5.1 CLEAN, audit B5) demandé par le joueur et resté coupé jusqu'en 5.0 : aides du chasseur (familier mort /
+  -- absent / mécontent, munitions, aspect dangereux en combat — rien pour une autre classe), talents (le parcours,
+  -- le point libre), chemins appris (enregistrés au fil de tes déplacements). Coût mesuré (session_sim, chasseur,
+  -- Forever, 60 min, kinstr/min, 3 lancements) : sans eux 855-861 (cœur 362-366) ; avec 872-874 (cœur 367-370),
+  -- plafonds inchangés (890, cœur 370). Stats (XP/h, or/h mesurés) reste en « Complet » : +18 à +25 de plus
+  -- (898-903, cœur 382-385), au-delà des deux plafonds.
+  Hunter = true, Talents = true, PathLearn = true,
 }
 -- (4.0.1) entrés dans le mode sûr après la 4.0 : allumés une fois chez les joueurs en mode sûr (voir _ApplyProfileOnce)
 -- (4.1) Prof + CityRun : allumés une fois (SAFE_V 4) chez les joueurs en mode sûr, sauf s'ils les ont coupés eux-mêmes
-TreeAI.SAFE_ADDED = { ZonePlan = 1, PathDraw = 1, Highlight = 1, Prof = 4, CityRun = 4, Group = 4 }
-TreeAI.SAFE_V = 4
--- (4.0.5) sortis du mode sûr : coupés UNE fois chez tout le monde (le Suivi TreeAI cachait le suivi du jeu)
--- (4.1 LAYOUT) valeur = version qui les coupe : à l'écran il ne reste que les boutons rapides, la boussole et la
--- pastille (+ ses repères) ; bande d'horizon (2e flèche + texte au centre), radar, barres de combat (« c-1… »),
--- barre de quête (remplacée par les boutons rapides), points de minimap en plus (flèche « 76 m ») : coupés UNE fois,
--- chez tout le monde, quel que soit le profil ; un clic les rallume (Réglages → Affichage)
-TreeAI.SAFE_REMOVED = { Watch = 2, Horizon = 3, Radar = 3, QuickFight = 3, Quick = 3, MinimapPins = 3 }
+-- (5.1) Hunter + Talents + PathLearn : allumés une fois (SAFE_V 5), même règle (jamais ce qu'il a coupé lui-même)
+TreeAI.SAFE_ADDED = { ZonePlan = 1, PathDraw = 1, Highlight = 1, Prof = 4, CityRun = 4, Group = 4,
+  Hunter = 5, Talents = 5, PathLearn = 5 }
+TreeAI.SAFE_V = 5
+-- (4.0.5 / 4.1) Suivi TreeAI, bande d'horizon, radar, barres de combat et de quête, points de minimap en plus, quêtes
+-- par région : coupés chez tout le monde depuis la 4.1, RETIRÉS en 5.1 (5 703 lignes). Leurs réglages enregistrés
+-- sont effacés une fois (_ApplyProfileOnce) ; plus rien ne les lit.
+TreeAI.GONE_MODULES = { "Watch", "Horizon", "Radar", "QuickFight", "Quick", "MinimapPins", "Region" }
+TreeAI.SAFE_REMOVED = {}
 -- (4.1 LAYOUT) fenêtres cachées une fois (le module reste allumé) : clé du réglage « afficher » de chaque module
-TreeAI.SAFE_HIDDEN = { Meter = "shown", Abandon = "hint", Watch = "shown" }
+TreeAI.SAFE_HIDDEN = { Meter = "shown", Abandon = "hint" }
 --- module « bêta » (pas dans le mode sûr) ?
 function TreeAI:IsBeta(name) return not self.SAFE_MODULES[name] end
 TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
@@ -2759,7 +2845,6 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Compass = { lite = true, desc = "Boussole : flèche vers le prochain objectif" },
   NavTime = { lite = true, desc = "Temps de trajet justes (vitesse et détours mesurés)" },
   PathLearn = { lite = true, desc = "Chemins appris sur tes déplacements (rampes, virages, relief)" },
-  Horizon = { lite = true, desc = "Bande d'horizon : les prochains arrêts selon ton cap" },
   Planner = { lite = true, desc = "Itinéraire de quêtes optimisé" },
   Export = { lite = true, desc = "Export du perso et du plan vers TreeAI Coach" },
   Group = { lite = true, gate = "group", desc = "Groupe : tes amis (avec ou sans TreeAI), objectif, quêtes à partager, prêts à tirer" },
@@ -2781,11 +2866,8 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   CityRun = { lite = false, desc = "Courses en ville : tout à acheter / faire en ville, trajet le plus court, points métiers sur la carte" },
   PvP = { lite = false, combat = true, desc = "JcJ : aides contre les joueurs" },
   PvPMark = { lite = true, combat = true, desc = "Joueurs ennemis attaquables surlignés (barres de nom)" },
-  Radar = { lite = false, desc = "Radar rond des objectifs" },
   Detect = { lite = true, desc = "Détection : rares, trésors, monstres de quête, services proches" },
-  MinimapPins = { lite = true, desc = "Points sur la minimap (ce que Questie ne montre pas)" },
   Binds = { lite = false, desc = "Touches : sur quoi lier tes sorts et macros, nouveaux sorts à poser" },
-  QuickFight = { lite = true, combat = true, desc = "Barre de combat : manger, familier, aspect, pull, prêt ou pas" },
   Leveling = { lite = false, desc = "Progression : repos, zone dangereuse, talents, compétence d'arme" },
   Inventory = { lite = false, desc = "Inventaire : sacs, réparation, vente des gris, nourriture" },
   Bags = { lite = true, desc = "Sacs : quoi garder, vendre, mettre à l'HV ou à la banque ; ce qu'il te manque" },   -- (5.0 BAGS)
@@ -2799,18 +2881,15 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Speed = { lite = true, desc = "Aller plus vite : mort, monture, foyer" },
   QuickTravel = { lite = true, desc = "Raccourcis : vols, auberge, courses, outils du groupe" },
   Plain = { lite = true, desc = "Conseils de quête en mots simples" },
-  Region = { lite = true, desc = "Quêtes rangées par région (ici, à côté, loin)" },
   Hub = { lite = true, desc = "Pastille de la minimap : tout TreeAI en un clic" },
   Window = { lite = true, desc = "Fenêtre TreeAI (pages, recherche) + carte « Prochaine étape »" },
   Shortcuts = { lite = true, desc = "Bande d'actions rapides : guidage des quêtes ON / OFF, Rendre, Prendre, Suivant, Zone, Vite, Sacs, Équipement, Métiers, Groupe" },
-  Quick = { lite = true, desc = "Raccourcis : barre d'actions rapides, quêtes acceptées et rendues" },
   Edge2 = { lite = false, desc = "Avantages : camp disputé, objet qui ne tombe pas, corps à fouiller…" },
   Coach = { lite = true, desc = "Conseils pro : le bon geste au bon moment (repos, familier, munitions, XP…), un à la fois" },   -- (ADVICE) sûr : Coach.lua s'y inscrit
   Tour = { lite = true, desc = "Visite guidée et astuces (une fois chacune)" },   -- (ONBOARD) sûr : Tour.lua s'y inscrit
   GroupGear = { lite = true, gate = "group", desc = "Équipement du groupe : ce que portent tes amis, échanges conseillés, à qui sert un butin" },   -- (4.1 GEARTRADE) sûr : GroupGear.lua s'y inscrit
   -- (REPLACE 4.0.1) sans autres addons
   QuestPins = { lite = true, desc = "Icônes de quêtes : « ! » à prendre, « ? » à rendre, zones d'objectifs (carte + minimap)" },
-  Watch = { lite = false, desc = "Suivi TreeAI : quêtes du trajet, distance, direction et durée en direct, à côté du suivi du jeu" },
   Addons = { lite = true, desc = "Mes addons : ce que TreeAI remplace, Questie et Suivi Forever en silence en un clic" },
   QoL = { lite = true, desc = "Confort : vendre les gris et réparer, butin instantané, butin automatique, recul de caméra" },
   Meter = { lite = true, desc = "Dégâts : la fenêtre des dégâts du groupe (compteur du jeu, après chaque combat)" },
@@ -2915,6 +2994,20 @@ function TreeAI:_ApplyProfileOnce()
     local sc = self.modules and self.modules.Shortcuts
     if type(db.modChoice) == "table" then db.modChoice.Shortcuts = nil end
     if sc and sc.db then sc.db.enabled = true sc.db.strip = true end
+  end
+  -- (5.1 CLEAN) modules retirés : leurs réglages enregistrés (compte + chaque perso) partent une fois
+  if not db.gone51 then
+    db.gone51 = true
+    for _, n in ipairs(self.GONE_MODULES or {}) do
+      if type(db.modules) == "table" then db.modules[n] = nil end
+      if type(db.modChoice) == "table" then db.modChoice[n] = nil end
+      for _, c in pairs(type(db.chars) == "table" and db.chars or {}) do
+        if type(c) == "table" then
+          if type(c.moduleSettings) == "table" then c.moduleSettings[n] = nil end
+          if type(c.modules) == "table" then c.modules[n] = nil end
+        end
+      end
+    end
   end
   if (tonumber(db.profileV) or 0) < self.PROFILE_V then
     db.profileV = self.PROFILE_V
@@ -3079,6 +3172,31 @@ function TreeAI:PerfLines()
 end
 function TreeAI:PrintPerf()
   for _, s in ipairs(self:PerfLines()) do self:Print(s) end
+end
+--- (5.1 CLEAN, audit B14) à la déconnexion / au /reload : le temps RÉEL passé dans chaque module pendant la session,
+--- mesuré en jeu (debugprofilestop autour de chaque appel réparti : événement, minuteur, message, travail étalé) —
+--- pas une estimation de simulation. Gardé dans TreeAIDB.diag.perf ; l'appli l'écrit dans TreeAI-erreurs.txt
+--- (section « Temps réel par module »). Les 25 plus coûteux, une fois par session (rien pendant le jeu).
+function TreeAI:_SavePerf()
+  local db = self.db
+  if type(db) ~= "table" then return end
+  if type(db.diag) ~= "table" then db.diag = {} end
+  local list = {}
+  for name, st in pairs(self._stats or {}) do
+    if type(st) == "table" and (tonumber(st.calls) or 0) > 0 then list[#list + 1] = { name, tonumber(st.ms) or 0, st.calls } end
+  end
+  if #list == 0 then return end
+  tsort(list, function(a, b) return a[2] > b[2] end)
+  local mods = {}
+  for i = 1, mmin(25, #list) do
+    local e = list[i]
+    mods[i] = { m = e[1], ms = math.floor(e[2] * 10 + 0.5) / 10, n = e[3] }
+  end
+  local up = mmax(1, now() - (self._loginAt or 0))
+  local sk = self.Spikes
+  db.diag.perf = { t = wallclock(), ver = self.version, up = math.floor(up + 0.5), mods = mods,
+    profile = self:ModuleProfile(), clock = (_G.debugprofilestop and "debugprofilestop") or "aucune",
+    spikeMS = sk and sk.MS, frameMS = sk and sk.FRAME_MS }
 end
 
 do  -- conditions des modules (groupe / instance / HV) : réévaluées après coup (jamais pendant un parcours)
@@ -3876,6 +3994,7 @@ function TreeAI:Suggest(id, text, prio, opts)
   e.ownPage = (not opts.danger) and (opts.ownPage or TreeAI.OWN_PAGE[id]) or nil
   e.kind = kind
   suggestions[id] = e
+  if visible then TreeAI._sugGen = (TreeAI._sugGen or 0) + 1 end   -- (5.1 CLEAN) liste triée à refaire
   if quiet then   -- en attente : ni son, ni encadré, ni journal ; réaffiché quand l'état revient
     if visible then self:RequestRefresh() end
     return e
@@ -3959,11 +4078,33 @@ function TreeAI:ClearSuggestions(prefix)
   if any then self:RequestRefresh() end
 end
 
+do
+-- (5.1 CLEAN) la liste triée des conseils : chaque onglet et chaque pastille d'onglet la redemandait et la RETRIAIT
+-- (le tri = le plus gros coût du cœur que les lignes du chasseur ajoutaient). Gardée tant que rien n'a changé :
+-- génération des conseils (TreeAI._sugGen : ajout, retrait, priorité / genre / texte changés), mêmes filtres
+-- (priorité mini, calme), aucun conseil arrivé à échéance, et les mêmes entrées (un parcours, sans tri).
+local function bySugg(a, b)
+  if a.prio ~= b.prio then return a.prio > b.prio end
+  local sa, sb = a.since or a.time, b.since or b.time
+  if sa ~= sb then return sa > sb end
+  return a.id < b.id
+end
+local memo = { gen = -1 }
 function TreeAI:GetSuggestions()
   local t = now()
-  local list = {}
   local minPrio = (self.settings and self.settings.minPrio) or 1
   local qAdv, qBuf = self:Quiet("advice"), self:Quiet("buff")
+  local gen = self._sugGen or 0
+  if memo.gen == gen and memo.mp == minPrio and memo.qa == qAdv and memo.qb == qBuf and t < memo.exp and t >= memo.at then
+    local all, n, same = memo.all, 0, true
+    for _, e in pairs(suggestions) do
+      n = n + 1
+      if not all[e] then same = false break end
+    end
+    if same and n == memo.n then return memo.list end
+  end
+  local list = {}
+  local all, nAll = {}, 0
   local nextExp = math.huge
   for id, e in pairs(suggestions) do
     if e.expires and e.expires <= t then
@@ -3971,19 +4112,18 @@ function TreeAI:GetSuggestions()
       contentGen = contentGen + 1
     else
       if e.expires and e.expires < nextExp then nextExp = e.expires end
+      all[e], nAll = true, nAll + 1
       if e.prio >= minPrio and not ((e.kind == nil or e.kind == "advice") and qAdv or (e.kind == "buff" and qBuf)) then
         list[#list + 1] = e
       end
     end
   end
   self._nextExpiry = nextExp
-  tsort(list, function(a, b)
-    if a.prio ~= b.prio then return a.prio > b.prio end
-    local sa, sb = a.since or a.time, b.since or b.time
-    if sa ~= sb then return sa > sb end
-    return a.id < b.id
-  end)
+  tsort(list, bySugg)
+  memo.gen, memo.mp, memo.qa, memo.qb, memo.at, memo.exp = self._sugGen or 0, minPrio, qAdv, qBuf, t, nextExp
+  memo.all, memo.n, memo.list = all, nAll, list
   return list
+end
 end
 
 ---------------------------------------------------------------------------
@@ -4129,7 +4269,10 @@ function TreeAI:TabShown(id)
 end
 
 local function plain(text)
-  text = strgsub(tostring(text or ""), "|c%x%x%x%x%x%x%x%x", "")
+  text = tostring(text or "")
+  -- (5.1 CLEAN) sans « | », rien à enlever : appelé pour chaque ligne de chaque onglet à chaque recalcul
+  if not text:find("|", 1, true) then return text end
+  text = strgsub(text, "|c%x%x%x%x%x%x%x%x", "")
   text = strgsub(text, "|r", "")
   return text
 end
@@ -4837,6 +4980,12 @@ function TreeAI.ParseOnOff(rest)
   if OFF_WORDS[w] then return false end
   return nil
 end
+--- (5.1 CLEAN) la réponse d'un interrupteur : en haut de l'écran (comme la pastille de la bande), jamais dans le chat
+function TreeAI:SwitchNote(msg)
+  local ef = _G.UIErrorsFrame
+  if ef and ef.AddMessage and pcall(ef.AddMessage, ef, msg, 1, 0.82, 0) then return end
+  self:Print(msg)
+end
 function TreeAI:SlashSwitch(spec)
   return function(rest)
     local want = TreeAI.ParseOnOff(rest)
@@ -4844,9 +4993,9 @@ function TreeAI:SlashSwitch(spec)
     local cur = spec.get() and true or false
     local state = cur and (spec.on or "allumé") or (spec.off or "coupé")
     if want == nil then
-      TreeAI:Print(("%s : %s. Pour changer : /tai %s %s"):format(spec.label, state, spec.cmd, cur and "off" or "on"))
+      TreeAI:SwitchNote(("%s : %s. Pour changer : /tai %s %s"):format(spec.label, state, spec.cmd, cur and "off" or "on"))
     else
-      TreeAI:Print(("%s : %s."):format(spec.label, state))
+      TreeAI:SwitchNote(("%s : %s."):format(spec.label, state))
     end
   end
 end
@@ -5082,6 +5231,7 @@ end
 
 function TreeAI:PLAYER_LOGOUT()
   if self.db then safecall(self.UpdateSummary, self) end
+  if self.db then safecall(self._SavePerf, self) end
   if self.db then safecall(self._SaveRecentAlerts, self) end
 end
 

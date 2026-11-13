@@ -46,7 +46,7 @@ T.ItemInfo = M
 
 local floor, max, min, abs = math.floor, math.max, math.min, math.abs
 local fmt, tconcat, tsort = string.format, table.concat, table.sort
-local function pass(ok, ...) if ok then return ... end return nil end
+local function pass(ok, ...) if ok then return ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw((...), "ItemInfo") end return nil end
 local function try(fn, ...) if type(fn) ~= "function" then return nil end return pass(pcall(fn, ...)) end
 local function meth(o, k, ...) if type(o) == "table" and type(o[k]) == "function" then return try(o[k], o, ...) end end
 local function secret(v) local f = rawget(_G, "issecretvalue") return v ~= nil and type(f) == "function" and try(f, v) and true or false end

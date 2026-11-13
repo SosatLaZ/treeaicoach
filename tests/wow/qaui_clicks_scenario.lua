@@ -146,8 +146,12 @@ return function(M, ctx)
   run("card:hero", function() c.hero:GetScript("OnClick")(c.hero, "LeftButton") end)
   run("card:hero right", function() c.hero:GetScript("OnClick")(c.hero, "RightButton") end)
   run("card:Ouvrir", function() c.menuBtn:GetScript("OnClick")(c.menuBtn) end)
-  run("card:step1", function() c.steps[1]:GetScript("OnClick")(c.steps[1], "LeftButton") end)
-  run("card:step1 right", function() c.steps[1]:GetScript("OnClick")(c.steps[1], "RightButton") end)
+  -- (5.1 CLEAN) nothing to do on the card (no route, no « now » line: the macro notice lives on the Macros page since
+  -- 5.1) = no step row to click
+  if c.steps[1] then
+    run("card:step1", function() c.steps[1]:GetScript("OnClick")(c.steps[1], "LeftButton") end)
+    run("card:step1 right", function() c.steps[1]:GetScript("OnClick")(c.steps[1], "RightButton") end)
+  end
   -- 5. minimap button
   p("== minimap button")
   local b = H.Button()

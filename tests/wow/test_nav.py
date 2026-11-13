@@ -9,7 +9,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 ADDON = Path(os.environ.get("TREEAI_WOW_ADDON") or ROOT / "wow_addon" / "TreeAI")
-NEW = ["NavTime", "Horizon", "Glow"]
+NEW = ["NavTime", "Glow"]   # (5.1 CLEAN) Horizon removed
 LUA = shutil.which("lua5.1")
 needs_lua = pytest.mark.skipif(not LUA, reason="lua5.1 not installed")
 
@@ -22,7 +22,7 @@ def code(name):
 def test_toc_lists_new_modules():
     lines = [l.strip() for l in (ADDON / "TreeAI.toc").read_text(encoding="utf-8").splitlines()]
     c = lines.index("Modules\\Compass.lua")
-    assert lines.index("Modules\\NavTime.lua") > c and lines.index("Modules\\Horizon.lua") > c
+    assert lines.index("Modules\\NavTime.lua") > c and "Modules\\Horizon.lua" not in lines
     assert lines.index("Modules\\Glow.lua") < lines.index("Modules\\Highlight.lua")
 
 
@@ -35,8 +35,8 @@ def test_no_taint_or_automation(name):
 
 
 def test_horizon_and_compass_never_allocate_per_frame():
-    # the fast paths (Step / Draw) build no table and no closure
-    for name, fn in (("Compass", "function M.Step"), ("Horizon", "function Hz.Draw")):
+    # the fast paths (Step / Draw) build no table and no closure (5.1 CLEAN: Horizon removed)
+    for name, fn in (("Compass", "function M.Step"),):
         src = code(name)
         body = src[src.index(fn):]
         body = body[:body.index("\nend\n")]

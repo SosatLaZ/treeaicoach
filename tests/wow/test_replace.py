@@ -4,6 +4,7 @@ the « Mes addons » page (Questie / Shortest Path through their own options), t
 the « Dégâts » window on the game's own damage meter (Meter).
 Static rules (taint, no copied Questie data, only documented option keys written in other addons, TOC, session caps) +
 the harness scenario with a fake QuestieDB on modern and forever, including its perf measures (idle = 0)."""
+# (5.1 CLEAN) harness default = the player's profile (« sur ») ; this file tests modules that are off there: « tout »
 import os
 import re
 import shutil
@@ -14,7 +15,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 ADDON = Path(os.environ.get("TREEAI_WOW_ADDON") or ROOT / "wow_addon" / "TreeAI")
-MODS = ("QuestPins", "Watch", "Addons", "QoL", "Meter")
+MODS = ("QuestPins", "Addons", "QoL", "Meter")   # (5.1 CLEAN) Watch / MinimapPins removed
 LUA = shutil.which("lua5.1")
 needs_lua = pytest.mark.skipif(not LUA, reason="lua5.1 not installed")
 ALLOW = ["LibQuestieDB", "QuestDB", "NpcDB", "ObjectDB", "ItemDB", "TreeAIPlan", "IsQuestFlaggedCompleted", "Questie",
@@ -32,8 +33,7 @@ def code(name):
 
 def test_toc_order():
     toc = [ln.strip() for ln in (ADDON / "TreeAI.toc").read_text(encoding="utf-8").splitlines()]
-    assert toc.index("Modules\\QuestPins.lua") == toc.index("Modules\\MinimapPins.lua") + 1
-    assert toc.index("Modules\\Watch.lua") == toc.index("Modules\\QuestPins.lua") + 1
+    assert "Modules\\MinimapPins.lua" not in toc and "Modules\\Watch.lua" not in toc and "Modules\\QuestPins.lua" in toc
     for m in ("QoL", "Meter", "Addons"):   # the « Mes addons » page needs the TreeAI window (Window.lua) loaded first
         assert toc.index("Modules\\JournalPage.lua") < toc.index("Modules\\%s.lua" % m) < toc.index("Modules\\Tour.lua")
     assert toc[-1] == "Modules\\Tour.lua"
@@ -48,10 +48,6 @@ def test_taint_rules():
     qp = code("QuestPins")
     # (4.2 ROUTE42) icons INSIDE the map canvas (T.MapCanvas, PathDraw.lua), never a data provider, never on UIParent
     assert "AddDataProvider" not in qp and "MC.Layer()" in qp and 'CF("Frame", nil, up)' not in qp
-    w = code("Watch")
-    # the game's tracker: never hidden / moved (4.2: anchored under it), secure item buttons only out of combat
-    assert "hideTracker" not in w and "W.AnchorTarget" in w and "RunOutOfCombat(\"Watch:items\"" in w
-    assert "SecureActionButtonTemplate" in w and "g(\"UIParent\"), \"SecureActionButtonTemplate\"" in w
 
 
 def test_no_questie_data_copied():
@@ -69,15 +65,14 @@ def test_other_addons_only_their_option_keys():
     writes = set(re.findall(r"\bp\.([A-Za-z_.]+)\s*=(?!=)", a))
     assert writes <= {"enabled", "trackerEnabled", "minimap.hide"}, writes
     assert set(re.findall(r"\bd\.([A-Za-z_]+)\s*,?\s*(?:d\.[A-Za-z_]+\s*)?=(?!=)", a)) <= {"tracker", "journeyTracker"}
-    for m in ("QuestPins", "Watch", "QoL", "Meter"):
+    for m in ("QuestPins", "QoL", "Meter"):
         assert not re.search(r"Questie[^\n]*\.\w+\s*=(?!=)", code(m)), m      # read only everywhere else
 
 
 def test_labels_and_safe_set():
-    qp, w, a, q, d = (src(m) for m in MODS)
+    qp, a, q, d = (src(m) for m in MODS)
     for label in ("« ! » quêtes à prendre", "« ? » quêtes à rendre", "Zones d'objectifs", "quêtes grises"):
         assert label in qp, label
-    assert "Cacher le suivi du jeu" in w and "Par distance" in w and "Ordre du trajet" in w
     assert "Rendre Questie silencieux" in a and "Réafficher Questie" in a and "Activer les icônes" in a
     assert "Vendre les objets gris et réparer" in q and "Butin instantané" in q
     assert "C_DamageMeter" in d and "En combat" in d
@@ -86,7 +81,7 @@ def test_labels_and_safe_set():
     safe = "\n".join(line.split("--", 1)[0] for line in safe.splitlines())
     for m in ("QuestPins", "Addons"):       # on in « mode sûr » (nothing automatic, Questie keeps the duplicates off)
         assert re.search(r"\b%s = true" % m, safe), m
-    assert not re.search(r"\bWatch = true", safe)   # (4.0.5) the game's tracker stays the tracker
+    assert "Watch" not in core.split("TreeAI.MODULE_INFO = ")[1].split("\n}")[0]   # (5.1) removed: the game's tracker stays
     for m in ("QoL", "Meter"):                        # automations / a window: one click on the « Mes addons » page
         assert not re.search(r"\b%s = true" % m, safe), m
         assert "SAFE_MODULES" not in code(m)
@@ -111,7 +106,7 @@ def test_syntax():
 @needs_lua
 @pytest.mark.parametrize("flavor", ["modern", "forever"])
 def test_scenario(flavor):
-    cmd = [LUA, "tests/wow/harness.lua", "-q", "--flavor", flavor, "--class", "HUNTER"]
+    cmd = [LUA, "tests/wow/harness.lua", "-q", "--profile", "tout", "--flavor", flavor, "--class", "HUNTER"]
     for a in ALLOW:
         cmd += ["--allow", a]
     cmd += ["--scenario", "tests/wow/replace_scenario.lua", str(ADDON)]

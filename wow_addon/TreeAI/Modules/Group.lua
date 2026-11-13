@@ -91,7 +91,7 @@ do
 end
 
 -- ------------------------------------------------------------------ utilitaires (appels gardés)
-local function pass(ok, ...) if ok then return ... end return nil end
+local function pass(ok, ...) if ok then return ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw((...), "Group") end return nil end
 local function call(fn, ...) if type(fn) ~= "function" then return nil end return pass(pcall(fn, ...)) end
 local function pub(v)   -- valeur secrète (Forever, en combat) → nil
   local f = _G.issecretvalue

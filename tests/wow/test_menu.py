@@ -25,19 +25,8 @@ def test_menu_scenario(flavor, cls):
 
 def test_toc_order():
     lines = [l.strip() for l in (ADDON / "TreeAI.toc").read_text(encoding="utf-8").splitlines()]
-    assert lines.index("Modules\\Todo.lua") < lines.index("Modules\\Region.lua") < lines.index("Modules\\Hub.lua")
-
-
-def test_region_never_watches_automatically():
-    src = (ADDON / "Modules" / "Region.lua").read_text(encoding="utf-8")
-    # the game's quest watch is only called from WatchZone, which refuses outside a click (InUserAction)
-    calls = [m.start() for m in re.finditer(r"pcall\(add(Modern|Old)", src)]
-    assert calls, "AddQuestWatch call expected in WatchZone"
-    watch = src.index("function R.WatchZone")
-    guard = src.index("InUserAction", watch)
-    assert all(c > guard for c in calls)
-    for bad in ("SetSuperTracked", "SelectQuestLogEntry", "SetSelectedQuest", "Questie", "ShortestPath"):
-        assert bad + "(" not in src
+    assert lines.index("Modules\\Todo.lua") < lines.index("Modules\\Hub.lua")
+    assert "Modules\\Region.lua" not in lines   # (5.1 CLEAN) removed (off for everyone since 4.1, a 3rd watch-list writer)
 
 
 def test_hub_taint_rules():

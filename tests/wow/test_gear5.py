@@ -7,6 +7,7 @@ live help (tooltip line, reward pick, keeper for BAGS, bag arrows, page), no cha
 plain bag change. HUNTER / WARRIOR / MAGE / PRIEST at 30 and 60, on the faithful Forever mock and on modern
 (+ HUNTER on legacy). + the generated talent-spell table is up to date, syntax / no globals of the new files.
 """
+# (5.1 CLEAN) harness default = the player's profile (« sur ») ; this file tests modules that are off there: « tout »
 import shutil
 import subprocess
 import sys
@@ -63,7 +64,7 @@ def test_no_accidental_global_read(path):
 @pytest.mark.skipif(not shutil.which("lua5.1"), reason="lua5.1 absent")
 @pytest.mark.parametrize("cls,level,flavor", COMBOS)
 def test_gear5_scenario(cls, level, flavor):
-    r = subprocess.run(["lua5.1", "tests/wow/harness.lua", "-q", "--flavor", flavor, "--class", cls, "--level", str(level), *ALLOW,
+    r = subprocess.run(["lua5.1", "tests/wow/harness.lua", "-q", "--profile", "tout", "--flavor", flavor, "--class", cls, "--level", str(level), *ALLOW,
                         "--scenario", "tests/wow/gear5_scenario.lua", str(ADDON)],
                        cwd=ROOT, capture_output=True, text=True, timeout=300)
     assert r.returncode == 0, r.stdout[-6000:] + r.stderr[-2000:]

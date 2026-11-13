@@ -512,7 +512,7 @@ function A.HowTo(title) return fmt(A.HOWTO, cutT(title or "?", 40)) end
 -- Collecte (WoW, lecture seule)
 ---------------------------------------------------------------------------------------------------
 local function g(name) return rawget(_G, name) end
-local function pass(ok, ...) if ok then return ... end return nil end
+local function pass(ok, ...) if ok then return ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw((...), "Abandon") end return nil end
 local function try(fn, ...) if type(fn) ~= "function" then return nil end return pass(pcall(fn, ...)) end
 local function now() return try(g("GetTime")) or 0 end
 local function secret(v) local f = g("issecretvalue") return type(f) == "function" and f(v) and true or false end

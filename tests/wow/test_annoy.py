@@ -3,6 +3,7 @@
 Addon side: tests/wow/annoy_scenario.lua (first login, masquer qui tient, donjons, actions bloquées, alerte
 rejouée au /reload, combat, visites, ville, SavedVariables sur 40 jours). App side: no endless « Mettre à
 jour l'addon », no full re-hash every 3 s, the character card does not blink once a minute."""
+# (5.1 CLEAN) harness default = the player's profile (« sur ») ; this file tests modules that are off there: « tout »
 from __future__ import annotations
 
 import shutil
@@ -24,7 +25,7 @@ TESTS = ROOT / "tests"
 @pytest.mark.parametrize("flavor", ["forever", "modern", "legacy"])
 @pytest.mark.parametrize("cls", ["HUNTER", "WARRIOR"])
 def test_annoy_scenario(flavor: str, cls: str) -> None:
-    r = subprocess.run(["lua5.1", str(ROOT / "tests/wow/harness.lua"), "-q", "--no-storm", "--flavor", flavor,
+    r = subprocess.run(["lua5.1", str(ROOT / "tests/wow/harness.lua"), "-q", "--profile", "tout", "--no-storm", "--flavor", flavor,
                         "--class", cls, "--scenario", str(ROOT / "tests/wow/annoy_scenario.lua"), str(ADDON)],
                        capture_output=True, text=True, timeout=300, cwd=ROOT)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]

@@ -1,6 +1,7 @@
 """CITYRUN (4.1): « Courses en ville » (Modules/CityRun.lua) — shopping list from every source, NPC memory learned on
 visit, money cap, optimal route, focus contract, stops checked off by the game windows, one game action per click,
 profession session navigation, honest options, « en trop » verdicts, « Services » map pins (with / without Questie)."""
+# (5.1 CLEAN) harness default = the player's profile (« sur ») ; this file tests modules that are off there: « tout »
 import re
 import shutil
 import subprocess
@@ -19,7 +20,7 @@ needs_lua = pytest.mark.skipif(not LUA, reason="lua5.1 not installed")
 @needs_lua
 @pytest.mark.parametrize("flavor", ["modern", "legacy", "forever"])
 def test_cityrun_scenario(flavor):
-    r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--flavor", flavor, "--class", "HUNTER",
+    r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--profile", "tout", "--flavor", flavor, "--class", "HUNTER",
                         "--scenario", "tests/wow/cityrun_scenario.lua", str(ADDON)],
                        capture_output=True, text=True, timeout=240, cwd=ROOT)
     assert r.returncode == 0 and "RESULT ok" in r.stdout, r.stdout[-3000:] + r.stderr[-2000:]

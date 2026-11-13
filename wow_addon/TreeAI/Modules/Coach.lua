@@ -288,7 +288,7 @@ M.MAX_10MIN = 6      -- conseils différents montrés au plus par tranche de 10 
 
 -- ===================================================================================== utilitaires
 local function g(name) return rawget(G, name) end
-local function pass(ok, ...) if ok then return ... end return nil end
+local function pass(ok, ...) if ok then return ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw((...), "Coach") end return nil end
 local function try(fn, ...) if type(fn) ~= "function" then return nil end return pass(pcall(fn, ...)) end
 -- (coût) issecretvalue relu une fois par passage, appelé sans pcall (il ne lève jamais) ; lectures du joueur directes
 local issecret = rawget(G, "issecretvalue")
@@ -353,17 +353,6 @@ local function hostileTarget()
 end
 M.Q = { mul = qmul }
 
--- propriétaire déjà à l'écran ? La barre de combat (QuickFight) a son bouton manger / bandage / aspect, la barre de
--- quête (Quick) un bouton monture qui propose le Guépard : on ne redit pas leur conseil
-local function qfCovers(key)
-  local Q = mod("QuickFight")
-  return (Q and Q.db and Q.db.bar ~= false and Q.db[key] ~= false) and true or false
-end
-local function quickMount()
-  local Q = mod("Quick")
-  return (Q and Q.db and Q.db.bar ~= false and Q.db.btnMount ~= false) and true or false
-end
-M.QFCovers = qfCovers
 
 -- ===================================================================================== lectures (hors combat)
 -- vie / mana : dernière lecture HORS combat (Forever : secrète en combat et en instance)
@@ -712,7 +701,6 @@ CHECK.wellFed = function()
 end
 
 CHECK.eatDrink = function()
-  if qfCovers("eat") then return nil end
   local a, v = readAuras(), readVitals()
   local b = readBags()
   if a.eat and not a.drink and v.mana and v.mpP and v.mpP < 60 and b.drink then
@@ -736,7 +724,6 @@ CHECK.eatDrink = function()
 end
 
 CHECK.bandage = function()
-  if qfCovers("bandage") then return nil end
   local v, a = readVitals(), readAuras()
   if not (v.hp and v.hpMax and v.hpP and v.hpP < 85) or a.band or a.eat or a.drink then return nil end
   if v.mana and v.mpP and v.mpP < 50 then return nil end      -- tu vas boire : manger en même temps vaut mieux
@@ -756,7 +743,6 @@ CHECK.bandage = function()
 end
 
 CHECK.drinkNow = function()
-  if qfCovers("eat") then return nil end
   local v, a = readVitals(), readAuras()
   if not (v.mana and v.mpP) or a.drink or v.mpP >= 60 then return nil end
   local b = readBags()
@@ -950,7 +936,7 @@ CHECK.restedKill = function()
 end
 
 CHECK.cheetah = function()
-  if not hunter() or not knows(SP.CHEETAH) or qfCovers("aspect") or quickMount() then return nil end
+  if not hunter() or not knows(SP.CHEETAH) then return nil end
   local t = now()
   if not movingSince or t - movingSince < 15 then return nil end
   local st = pstate()

@@ -48,7 +48,7 @@ end
 
 local floor, min = math.floor, math.min
 local fmt = string.format
-local function pass(ok, ...) if ok then return ... end return nil end
+local function pass(ok, ...) if ok then return ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw((...), "QoL") end return nil end
 local function try(fn, ...) if type(fn) ~= "function" then return nil end return pass(pcall(fn, ...)) end
 local function g(name) return rawget(G, name) end
 local function secret(v) local f = g("issecretvalue") return type(f) == "function" and try(f, v) and true or false end
@@ -77,17 +77,8 @@ end
 -- ===================================================================== marchand : gris + réparation
 Q.stats = { sold = 0, repaired = 0, looted = 0 }
 local merchantOpen = false
---- la barre de quête s'en charge déjà ? (allumée + ses options vendre / réparer) → on ne fait rien (jamais deux fois)
-function Q.QuickDoesIt()
-  local K = T.modules and T.modules.Quick
-  return (K and K._active and type(K.db) == "table" and (K.db.autoSell ~= false or K.db.autoRepair ~= false)) and true or false
-end
+-- (5.1 CLEAN) la « barre de quête » (Quick.lua, qui faisait la même chose) est retirée : un seul propriétaire, ici
 local function greyItems()
-  local K = T.Quick
-  if K and type(K.GreyItems) == "function" then
-    local list, value = try(K.GreyItems)
-    if type(list) == "table" then return list, tonumber(value) or 0 end
-  end
   local I = T.modules and T.modules.Inventory
   if I and type(I.GreyItems) == "function" then
     local list, value = try(I.GreyItems)
@@ -170,7 +161,7 @@ end
 local function onMerchant()
   if merchantOpen then return end                  -- MERCHANT_SHOW et l'événement d'interaction : un seul passage
   merchantOpen = true
-  if not opt("sellRepair") or shift() or Q.QuickDoesIt() then return end
+  if not opt("sellRepair") or shift() then return end
   -- un instant plus tard : la fenêtre du marchand est vraiment ouverte (et ses données arrivées)
   after(0.15, function() if merchantShown() then Q.SellAndRepair() end end)
 end
@@ -207,14 +198,10 @@ end
 --  * rend les quêtes finies (jamais une quête qui demande de l'or) ;
 --  * récompense : sans choix (0 ou 1 objet) elle est prise ; avec un choix, le meilleur est ENTOURÉ (amélioration selon
 --    l'équipement porté, sinon la plus chère à la revente) et jamais choisi à ta place.
--- La barre de quête (Quick) fait déjà tout ça si son option est cochée : jamais deux fois. Rien dans le chat ;
+-- Rien dans le chat ;
 -- AcceptQuest / CompleteQuest / GetQuestReward / Select*Quest ne sont pas protégées (dialogue ouvert par le joueur).
 Q.qstats = { accepted = 0, turnedIn = 0, highlighted = 0 }
-function Q.QuickQuests()
-  local K = T.modules and T.modules.Quick
-  return (K and K._active and type(K.db) == "table" and K.db.autoQuest == true) and true or false
-end
-local function questAuto() return Q.db and Q.db.questAuto == true and not shift() and not Q.QuickQuests() end
+local function questAuto() return Q.db and Q.db.questAuto == true and not shift() end
 Q.QuestAutoOn = function() return Q.db and Q.db.questAuto == true or false end
 local function logFull()
   local QL = g("C_QuestLog")
@@ -358,8 +345,7 @@ function Q.ToggleCamera()
   return not maxed
 end
 function Q.State()
-  return { autoLoot = cvar("autoLootDefault") == "1", camera = (num(cvar("cameraDistanceMaxZoomFactor")) or 1.9) >= 2.55,
-    quick = Q.QuickDoesIt() }
+  return { autoLoot = cvar("autoLootDefault") == "1", camera = (num(cvar("cameraDistanceMaxZoomFactor")) or 1.9) >= 2.55 }
 end
 
 -- ===================================================================== cycle de vie

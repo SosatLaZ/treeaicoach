@@ -76,9 +76,6 @@ return function(M, ctx)
   end
   reset()
   -- les barres qui possèdent déjà un geste (manger, bandage, aspect, monture) : coupées pour tester nos lignes
-  local qfWas, quickWas = T.modules.QuickFight and T.modules.QuickFight._active, T.modules.Quick and T.modules.Quick._active
-  T:SetModuleEnabled("QuickFight", false)
-  T:SetModuleEnabled("Quick", false)
 
   local function ev(key) local r = C.Evaluate(key) return r and r.text end
   local function yes(key, pat)
@@ -133,9 +130,6 @@ return function(M, ctx)
   M.player.power = 560
   no("eatDrink", "mana presque plein")
   M.player.power = 150
-  T:SetModuleEnabled("QuickFight", true)
-  no("eatDrink", "la barre de combat a son bouton « Manger et boire »")
-  T:SetModuleEnabled("QuickFight", false)
   auras({ aura({ name = "Boisson", spellId = 430, duration = 18 }) })
   M.player.power, M.player.health = 300, 400
   yes("eatDrink", "Mange aussi pendant que tu bois")
@@ -525,8 +519,6 @@ return function(M, ctx)
   M.bags[4] = bag4
   T.API.BagChanged()
   Q.lastList = savedList
-  if qfWas then T:SetModuleEnabled("QuickFight", true) end
-  if quickWas then T:SetModuleEnabled("Quick", true) end
   reset()
   check(#M.blocked == 0, "aucune action bloquée (" .. #M.blocked .. ")")
 end

@@ -205,9 +205,7 @@ def test_data_and_window_contract():
     assert "p.before" in win
     src = (ADDON / "Modules" / "Macros.lua").read_text(encoding="utf-8")
     assert 'before = "modules"' in src and "useOnKeyDown" in src
-    qf = (ADDON / "Modules" / "QuickFight.lua").read_text(encoding="utf-8")
-    for bad in ("CreateMacro", "EditMacro", "CastSpellByName"):
-        assert bad not in qf
+    assert not (ADDON / "Modules" / "QuickFight.lua").exists()   # (5.1 CLEAN) the combat bar is removed
 
 
 @pytest.mark.skipif(not shutil.which("lua5.1"), reason="lua5.1 absent")

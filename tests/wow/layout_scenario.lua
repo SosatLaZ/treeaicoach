@@ -112,27 +112,24 @@ return function(M, ctx)
     local db = T.db
     local keep = { safeV = db.safeV, prof = db.moduleProfile }
     db.safeV, db.moduleProfile = 2, "tout"
-    for _, n in ipairs({ "Horizon", "Radar", "QuickFight", "Quick", "MinimapPins", "Meter", "Watch", "Abandon" }) do
+    for _, n in ipairs({ "Meter", "Abandon" }) do   -- (5.1 CLEAN) Horizon, Radar, QuickFight, Quick, MinimapPins, Watch : retirés
       local m = T.modules[n]
       if m and m.db then m.db.enabled = true end
     end
-    local Mt, Wt, Ab = T.modules.Meter, T.modules.Watch, T.modules.Abandon
+    local Mt, Ab = T.modules.Meter, T.modules.Abandon
     if Mt and Mt.db then Mt.db.shown = true end
-    if Wt and Wt.db then Wt.db.shown = true end
     if Ab and Ab.db then Ab.db.hint = true end
     T:_ApplyProfileOnce()
-    for _, n in ipairs({ "Horizon", "Radar", "QuickFight", "Quick", "MinimapPins" }) do
-      local m = T.modules[n]
-      if m and m.db then check(m.db.enabled == false, "migration 4.1 : " .. n .. " coupé une fois") end
+    for _, n in ipairs({ "Horizon", "Radar", "QuickFight", "Quick", "MinimapPins", "Watch" }) do
+      check(T.modules[n] == nil, "5.1 : " .. n .. " retiré")
     end
-    check(not (Mt and Mt.db and Mt.db.shown) and not (Ab and Ab.db and Ab.db.hint) and not (Wt and Wt.db and Wt.db.shown),
-      "migration 4.1 : fenêtres Dégâts / Suivi TreeAI et rappel du journal cachés")
+    check(not (Mt and Mt.db and Mt.db.shown) and not (Ab and Ab.db and Ab.db.hint),
+      "migration 4.1 : fenêtre Dégâts et rappel du journal cachés")
     check(db.safeV == T.SAFE_V and T.SAFE_V >= 3, "migration 4.1 : faite (safeV " .. tostring(db.safeV) .. ")")
-    local Hz = T.modules.Horizon
-    Hz.db.enabled = true
+    Mt.db.shown = true
     T:_ApplyProfileOnce()
-    check(Hz.db.enabled == true, "migration 4.1 : une seule fois (rallumé par le joueur = gardé)")
-    Hz.db.enabled = false
+    check(Mt.db.shown == true, "migration 4.1 : une seule fois (rallumé par le joueur = gardé)")
+    Mt.db.shown = false
     db.moduleProfile = keep.prof
     T:SetModuleProfile(keep.prof == "tout" and "tout" or "sur")
     M.Advance(2, 0.5)
@@ -281,22 +278,23 @@ return function(M, ctx)
     if rr.kind == "row" then keyRows = keyRows + 1 if rr.label:find("ouvrir / fermer la fenêtre", 1, true) then hasMain = true end end
   end
   check(hasMain and keyRows >= 5, "Raccourcis : toutes les touches TreeAI (" .. keyRows .. ")")
-  -- Affichage : Horizon off, one click on, one click off
+  -- Affichage : un clic coupe, un clic rallume (5.1 : la bande d'horizon est retirée ; la carte « Prochaine étape »)
   W.Select("display")
   local function displayRow(prefix)
     for _, b in ipairs(win.content.__children or {}) do
       if b:IsShown() and b.entry and tostring(b.entry.label):find(prefix, 1, true) == 1 then return b end
     end
   end
-  local hz = displayRow("Bande d'horizon")
-  check(hz and hz.on == false, "Affichage : bande d'horizon coupée")
-  if hz then hz:GetScript("OnClick")(hz) end
-  local Hz = T.modules.Horizon
-  check(Hz.db.enabled ~= false and Hz.db.shown == true, "Affichage : un clic l'allume")
-  W.Render()
-  hz = displayRow("Bande d'horizon")
-  if hz then hz:GetScript("OnClick")(hz) end
-  check(Hz.db.shown == false, "Affichage : un clic la coupe")
+  local card0 = W.db and W.db.card
+  local cr = displayRow("Carte « Prochaine")
+  if cr and W.db then
+    cr:GetScript("OnClick")(cr)
+    check(W.db.card == not card0, "Affichage : un clic change la carte")
+    W.Render()
+    cr = displayRow("Carte « Prochaine")
+    if cr then cr:GetScript("OnClick")(cr) end
+    check(W.db.card == card0, "Affichage : un 2e clic la remet")
+  end
   -- Groupe : « Partager »
   local pushed = {}
   rawset(_G, "QuestLogPushQuest", function(i) pushed[#pushed + 1] = i end)
@@ -441,23 +439,7 @@ return function(M, ctx)
   check(gv and gv[2] == 501, "dialogue : puis la quête que le plan veut")
   Qo.SetQuestAuto(false)
 
-  -- ------------------------------------------------------------ 5. Watch never over Questie's tracker
-  local Wt = T.Watch
-  local qf = CreateFrame("Frame", "Questie_BaseFrame", UIP)
-  qf.__w, qf.__h, qf.__points = 260, 400, { { "TOPRIGHT", UIP, "TOPRIGHT", -40, -230 } }
-  qf.__shown = true
-  T:SetModuleEnabled("Watch", true)
-  Wt.db.shown = true
-  if Wt.char then Wt.char.pos = { point = "TOPRIGHT", rel = "TOPRIGHT", x = -60, y = -240 } end   -- auto place over it
-  Wt.Apply()
-  M.Advance(1, 0.5)
-  local wf = rawget(_G, "TreeAIWatchFrame")
-  local wR = wf and wf:IsShown() and geo.Rect(wf)
-  local qR = geo.Rect(qf)
-  check(not overlap(wR, qR), "Suivi TreeAI jamais sur le suivi de Questie (" .. tostring(Wt.blockedBy) .. ")")
-  check((wf and wf:IsShown()) or Wt.blockedBy ~= nil, "Suivi TreeAI : à côté, ou caché avec une ligne sur la page Quêtes")
-  T:SetModuleEnabled("Watch", false)
-  qf:Hide()
+  -- (5.1 CLEAN) 5. le Suivi TreeAI (Watch.lua) est retiré : le suivi du jeu reste le seul suivi
 
   -- the whole run: nothing in the chat, no blocked action
   nChat = 0

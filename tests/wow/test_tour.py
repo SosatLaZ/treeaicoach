@@ -76,7 +76,7 @@ def test_no_globals():
 @pytest.mark.parametrize("flavor", ["forever", "modern", "legacy"])
 @pytest.mark.parametrize("cls", ["HUNTER", "WARRIOR"])
 def test_tour_scenario(flavor, cls):
-    r = subprocess.run([LUA, str(HARNESS), "-q", "--no-storm", "--flavor", flavor, "--class", cls,
+    r = subprocess.run([LUA, str(HARNESS), "-q", "--profile", "tout", "--no-storm", "--flavor", flavor, "--class", cls,
                         "--scenario", str(SCENARIO), str(ADDON)], capture_output=True, text=True, timeout=180, cwd=ROOT)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "RESULT ok" in r.stdout
@@ -113,22 +113,21 @@ def test_storm_hygiene(tmp_path, profile):
 
 
 def test_tuto_quick_start_and_faq():
+    # (5.1 CLEAN) rewritten from the 5.x screens (audit B5: the 4.0 tutorial spoke of pages, « bêta » and menus that
+    # no longer exist); its commands are checked against the addon by tests/wow/test_clean51.py
     tuto = (ROOT / "wow_addon" / "TUTO_FR.md").read_text(encoding="utf-8")
     lines = tuto.splitlines()
-    assert len(lines) <= 90, f"quick start + short FAQ, not a manual ({len(lines)} lines)"
-    for head in ("## Installer", "## Les 3 choses à savoir", "## Le menu de la pastille", "Bêta", "## Signaler un bug",
+    assert len(lines) <= 95, f"quick start + short FAQ, not a manual ({len(lines)} lines)"
+    for head in ("## Installer", "## La bande d'actions rapides", "## Le guidage des quêtes", "## Sacs, équipement, métiers",
+                 "## Les macros", "## Ce qui tourne d'office", "## Commandes utiles", "## Envoyer le rapport d'erreurs",
                  "## FAQ"):
         assert head in tuto, head
-    for must in ("/tai erreurs", "/reload", r"%APPDATA%\TreeAICoach\TreeAI-erreurs.txt", "Visite guidée",
-                 "Fonctions bêta", "mode sûr", "Erreurs WoW : ouvrir"):
+    for must in ("/tai erreurs", "/reload", r"%APPDATA%\TreeAICoach\TreeAI-erreurs.txt", "Erreurs WoW : ouvrir",
+                 "Visite guidée", "Tutoriel : quoi poser, sur quelle touche", "/tai guide on"):
         assert must in tuto, must
     faq = tuto.split("## FAQ", 1)[1]
-    for topic in ("lague", "bloqué", "Suivi Forever", "Questie", "macros", "Aucun achat-revente sûr"):
+    for topic in ("lague", "bloqué", "n'apparaît pas"):
         assert topic in faq, topic
-    # every Hub entry the menu shows has its line
-    for entry in ("Recherche", "Macros", "Fenêtre « À faire »", "Boussole", "Options", "Fonctions bêta (n/m)",
-                  "Erreurs, Blocages", "Visite guidée"):
-        assert entry in tuto, entry
 
 
 def test_readme_documents_the_contract():

@@ -90,7 +90,9 @@ return function(M, ctx)
     H:CheckAmmo()
     a = S["Hunter:ammo"]
     check(a and a.prio == 3 and a.text == "Rachète des flèches vite : plus que 30", "munitions critiques : " .. tostring(a and a.text))
-    -- fiche « Chasseur »
+    -- fiche « Chasseur » (5.1 : onglet de l'ancien panneau et barre de piège = options, coupées d'office)
+    H.db.tab, H.db.trapBar, H.db.fdTimer = true, true, true
+    H:OnOptionChanged("tab", true) H:OnOptionChanged("trapBar", true)
     H:PushTab(true)
     local ht = tabText("hunter")
     check(T.tabs.hunter and T.tabs.hunter.title == "Chasseur", "onglet « Chasseur »")
@@ -111,7 +113,8 @@ return function(M, ctx)
     M.LeaveCombat()
     check((sug("Hunter:fd") or ""):find("^Feindre la mort a marché : pose ton piège maintenant"), "Feindre la mort réussi → piège")
     check(sug("Hunter:pethp") == nil, "pas de PV du familier en combat (secret sur Forever)")
-    -- avant le pull : aspect et marque
+    -- avant le pull : aspect et marque (5.1 : rappels avant le pull = option « pullTips », coupée d'office)
+    H.db.pullTips = true H:OnOptionChanged("pullTips", true)
     M.auras.player = {}
     M.target = { exists = true, name = "Ogre-test", level = 27, hostile = true, classification = "elite", guid = "Creature-0-0-0-0-56-1" }
     M.FireEvent("PLAYER_TARGET_CHANGED")

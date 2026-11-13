@@ -165,8 +165,12 @@ return function(M, ctx)
   fire("TRAINER_SHOW"); M.Advance(3, 0.5); fire("TRAINER_CLOSED")
   M.SetAuctionHouse(true); M.Advance(4, 0.5); M.SetAuctionHouse(false); M.Advance(2, 0.5)
   UIParent:SetSize(1600, 900); fire("UI_SCALE_CHANGED"); fire("DISPLAY_SIZE_CHANGED"); M.Advance(5, 0.5)
-  check(chatSince() == 0, "monture / vol / groupe / niveau / marchand / courrier / maître / HV / échelle : rien dans le chat ("
-    .. chatSince() .. ")")
+  -- (5.1 CLEAN) le chat seulement : la note d'écran du « Confort » chez le marchand (« Réparé : … · Vendu : … », module
+  -- allumé à la main, ex-propriétaire Quick.lua retiré) n'est pas une ligne de chat
+  local chatN = 0
+  for i = o + 1, #M.output do if not tostring(M.output[i]):find("^%[UIError%]") then chatN = chatN + 1 end end
+  check(chatN == 0, "monture / vol / groupe / niveau / marchand / courrier / maître / HV / échelle : rien dans le chat ("
+    .. chatN .. ")")
   check(alertsSince() <= 2, "visites : ≤ 2 encadrés (" .. alertsSince() .. ")")
 
   -- 8. a city full of nameplates: cheap

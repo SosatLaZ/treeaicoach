@@ -36,14 +36,12 @@ Modules\Quests.lua
 Modules\Compass.lua
 Modules\NavTime.lua
 Modules\PathLearn.lua
-Modules\Horizon.lua
 Modules\Detect.lua
 Modules\Stats.lua
 Modules\Macros.lua
 Modules\Binds.lua
 Modules\Tracker.lua
 Modules\Todo.lua
-Modules\Region.lua
 Modules\Hub.lua
 Modules\Export.lua
 Modules\Planner.lua
@@ -68,10 +66,8 @@ Modules\PvP.lua
 Modules\PvPMark.lua
 Modules\Dungeon.lua
 Modules\DungeonPrep.lua
-Modules\Radar.lua
-Modules\MinimapPins.lua
+Modules\MinimapGeo.lua
 Modules\QuestPins.lua
-Modules\Watch.lua
 Modules\Gear.lua
 Modules\GearSpec.lua
 Modules\GearValue.lua
@@ -83,8 +79,6 @@ Modules\Errands.lua
 Modules\Edge2.lua
 Modules\Bugs.lua
 Modules\Finder.lua
-Modules\Quick.lua
-Modules\QuickFight.lua
 Modules\QuickTravel.lua
 Modules\Shortcuts.lua
 Modules\Window.lua

@@ -2,6 +2,7 @@
 died + ready before the pull; Hunter = pet / ammo / aspects / traps owner; Stats = XP/h with its measuring time;
 Gear = words not %; Inventory food; Errands real trainer price; Session mount; Leveling rested = info; Binds new
 spells; core auto-slow) — harness scenario on three API flavours, hunter + a caster."""
+# (5.1 CLEAN) harness default = the player's profile (« sur ») ; this file tests modules that are off there: « tout »
 import shutil
 import subprocess
 from pathlib import Path
@@ -16,7 +17,7 @@ ADDON = ROOT / "wow_addon" / "TreeAI"
 @pytest.mark.parametrize("flavor", ["modern", "legacy", "forever"])
 @pytest.mark.parametrize("cls", ["HUNTER", "MAGE"])
 def test_clean_scenario(flavor, cls):
-    r = subprocess.run(["lua5.1", str(ROOT / "tests/wow/harness.lua"), "-q", "--flavor", flavor, "--class", cls,
+    r = subprocess.run(["lua5.1", str(ROOT / "tests/wow/harness.lua"), "-q", "--profile", "tout", "--flavor", flavor, "--class", cls,
                         "--scenario", str(ROOT / "tests/wow/clean_scenario.lua"), str(ADDON)],
                        capture_output=True, text=True, timeout=120, cwd=ROOT)
     assert r.returncode == 0, r.stdout[-4000:] + r.stderr[-2000:]

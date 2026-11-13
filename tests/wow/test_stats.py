@@ -1,6 +1,7 @@
 """STATS: the stats hub `TreeAI.Stats` (Modules/Stats.lua) — drop rates (Beta posterior, exact numbers), kill
 time, XP/h, travel speed, sheet, tab + export — scenario on the real addon (3 API flavours), static cost /
 ToS checks, and the app-side reader (treeaicoach/wow/stats.py + WoW page Session tab)."""
+# (5.1 CLEAN) harness default = the player's profile (« sur ») ; this file tests modules that are off there: « tout »
 import re
 import shutil
 import subprocess
@@ -46,7 +47,7 @@ def test_syntax_no_globals():
 @pytest.mark.skipif(not shutil.which("lua5.1"), reason="lua5.1 absent")
 @pytest.mark.parametrize("flavor,cls", [("modern", "HUNTER"), ("legacy", "MAGE"), ("forever", "HUNTER"), ("forever", "WARRIOR")])
 def test_stats_scenario(flavor, cls):
-    r = subprocess.run(["lua5.1", str(ROOT / "tests/wow/harness.lua"), "-q", "--flavor", flavor, "--class", cls,
+    r = subprocess.run(["lua5.1", str(ROOT / "tests/wow/harness.lua"), "-q", "--profile", "tout", "--flavor", flavor, "--class", cls,
                         "--scenario", str(ROOT / "tests/wow/stats_scenario.lua"), str(ADDON)],
                        capture_output=True, text=True, timeout=120, cwd=ROOT)
     assert r.returncode == 0, r.stdout + r.stderr

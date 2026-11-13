@@ -45,10 +45,10 @@ def test_clean_screen_defaults() -> None:
     core = (ADDON / "Core.lua").read_text(encoding="utf-8")
     m = re.search(r"TreeAI\.SAFE_V = (\d+)\b", core)   # 3 = the 4.1 LAYOUT migration (4 = Prof / CityRun added)
     assert m and int(m.group(1)) >= 3
+    # (5.1 CLEAN) the modules switched off once by 4.1 (SAFE_REMOVED = 3) are removed: code, TOC and saved settings
+    gone = core[core.index("TreeAI.GONE_MODULES = "):].split("\n")[0]
     for n in ("Horizon", "Radar", "QuickFight", "Quick", "MinimapPins"):
-        assert re.search(r"SAFE_REMOVED = \{[^}]*\b%s = 3" % n, core), n
-    assert "defaults = { enabled = true, shown = false, stops = 3 }" in _src("Horizon.lua")
-    assert "target = false" in _src("MinimapPins.lua")
+        assert '"%s"' % n in gone and not (ADDON / "Modules" / (n + ".lua")).exists(), n
     assert "hint = false" in _src("Abandon.lua")
     assert "questAuto = false" in _src("QoL.lua")
     assert "onScreen = false" in _src("Coach.lua")

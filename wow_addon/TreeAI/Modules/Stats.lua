@@ -43,14 +43,32 @@ local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
   local ok, a, b, c, d, e, f, h = pcall(fn, ...)
   if ok then return a, b, c, d, e, f, h end
+  local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw(a, "Stats") end   -- (5.1 CLEAN, B9) compté
 end
-local function secret(v) local f = g("issecretvalue") return v ~= nil and f ~= nil and try(f, v) and true or false end
+-- (5.1 CLEAN) lectures de base sans pcall : « issecretvalue » et « GetTime » ne lèvent jamais d'erreur et sont lus
+-- des centaines de fois par minute (chaque nombre passe par num()) — avant : deux pcall par nombre lu
+local issecret, getTime
+local function secret(v)
+  if v == nil then return false end
+  local f = issecret
+  if f == nil then f = g("issecretvalue") or false issecret = f end
+  return (f and f(v)) and true or false
+end
 local function num(v) if secret(v) then return nil end return tonumber(v) end
 local function str(v) if secret(v) or type(v) ~= "string" or v == "" then return nil end return v end
-local function now() return num(try(g("GetTime"))) or 0 end
+local function now()
+  local f = getTime
+  if f == nil then f = g("GetTime") or false getTime = f end
+  return (f and tonumber(f())) or 0
+end
 local function epoch() return num(try(g("GetServerTime"))) or num(try(g("time"))) or floor(now()) end
 local function r1(v) return v and floor(v * 10 + 0.5) / 10 or nil end
-local function inCombat() return T.InCombat and T:InCombat() or false end
+local inLockdown
+local function inCombat()
+  local f = inLockdown
+  if f == nil then f = g("InCombatLockdown") or false inLockdown = f end
+  return (f and f()) and true or false
+end
 local function learning() return not (M.db and M.db.learn == false) end
 local function onTaxi() return try(g("UnitOnTaxi"), "player") and true or false end
 local function mounted() return try(g("IsMounted")) and true or false end
@@ -183,27 +201,25 @@ function M.ReadSheet()
   return s
 end
 
-local sheetPending, sheetWanted, lastSheetAt = false, false, -1e9
+local sheetWanted, sheetFast, lastSheetAt = true, true, -1e9
 local auraPending = false
 local auraScan   -- défini plus bas
 local function refreshSheet()
-  if inCombat() then sheetWanted = true return end
-  sheetWanted = false
+  if inCombat() then return false end
+  sheetWanted, sheetFast = false, false
   lastSheetAt = now()
   M.sheet = M.ReadSheet()
   local c = C()
   if c then c.sheet = M.sheet end
+  return true
 end
--- anti-rebond : la rafale d'UNIT_AURA / UNIT_STATS d'un changement d'équipement = 1 seule relecture (1 s) ;
--- une simple aura (buff qui tombe) relit au plus toutes les 10 s
+-- (5.1 CLEAN) la fiche (une quarantaine de lectures) ne sert qu'à l'export pour l'appli et à l'onglet : elle est
+-- relue QUAND on la demande (M:Sheet : au résumé, à l'export, à la déconnexion), si elle a changé — équipement ou
+-- niveau : tout de suite ; un simple buff : au plus toutes les 5 min. Avant : un minuteur et une relecture après
+-- chaque combat et chaque rafale d'auras.
 local function schedule(withSheet, fast)
   if withSheet then sheetWanted = true end
-  if sheetPending then return end
-  sheetPending = true
-  T:After(fast and 1 or max(1, 10 - (now() - lastSheetAt)), function()
-    sheetPending = false
-    if sheetWanted then refreshSheet() end
-  end)
+  if fast then sheetFast = true end
 end
 M.Schedule = schedule
 -- repas : on ne regarde les auras que si PV ou mana ne sont pas pleins (on ne mange pas plein), ou pendant un repas
@@ -989,7 +1005,13 @@ function M:Downtime()
   return down / c.fight.n, (down + fs) > 0 and down / (down + fs) or 0
 end
 function M:Sheet()
-  if not M.sheet then M.sheet = M.ReadSheet() end
+  if not M.sheet then
+    M.sheet = M.ReadSheet()
+    lastSheetAt = now()
+    if not inCombat() then sheetWanted, sheetFast = false, false end   -- lue en combat : valeurs secrètes, à relire
+    local c = C()
+    if c then c.sheet = M.sheet end
+  elseif sheetWanted and (sheetFast or now() - lastSheetAt >= 300) then refreshSheet() end
   return M.sheet
 end
 function M:GoldPerHour()
@@ -1177,7 +1199,13 @@ function M.Lines(s, lvl)
   return out
 end
 
-function M.WriteSummary()
+-- (5.1 CLEAN) relu à la déconnexion (PLAYER_LOGOUT) et à l'export ; le résumé du cœur (chaque pièce ramassée, chaque
+-- zone) ne le refait qu'au plus toutes les 5 min
+local lastWrite = -1e9
+function M.WriteSummary(final)
+  local t = now()
+  if not final and t - lastWrite < 300 and t >= lastWrite then return nil end
+  lastWrite = t
   local sm = T.Summary and try(T.Summary, T)
   if type(sm) ~= "table" then return nil end
   local s = M:Snapshot()
@@ -1185,7 +1213,7 @@ function M.WriteSummary()
   return s
 end
 function M.ExportNow()
-  M.WriteSummary()
+  M.WriteSummary(true)
   M:Suggest("export", "Fais /reload : tes stats sont prêtes pour l'appli TreeAI", 1, { ttl = 30, tab = TAB, sound = false })
 end
 
@@ -1236,7 +1264,7 @@ function M:OnEnable()
   M:RegisterUnitEvent("UNIT_AURA", "player", function() if not inCombat() then schedule(true) maybeEat() end end)
   M:RegisterEvent("PLAYER_LEVEL_UP", function() schedule(true, true) end)
   M:RegisterEvent("PLAYER_REGEN_DISABLED", function() M.FightStart() end)
-  M:RegisterEvent("PLAYER_REGEN_ENABLED", function() M.FightEnd() if sheetWanted then schedule(true, true) end end)
+  M:RegisterEvent("PLAYER_REGEN_ENABLED", function() M.FightEnd() end)
   M:RegisterEvent("PLAYER_TARGET_CHANGED", function()
     if not inCombat() then M.lastFoe = str(try(g("UnitName"), "target")) or M.lastFoe end
   end)
@@ -1260,12 +1288,15 @@ function M:OnEnable()
   M:RegisterEvent("MERCHANT_SHOW", function() M.MerchantShow() end)
   M:RegisterEvent("MERCHANT_CLOSED", function() M.MerchantClosed() end)
   M:RegisterEvent("UPDATE_INVENTORY_DURABILITY", function() M.OnDurability() end)
-  M:RegisterEvent("PLAYER_LOGOUT", function() pcall(M.WriteSummary) end)
+  M:RegisterEvent("PLAYER_LOGOUT", function() pcall(M.WriteSummary, true) end)
   M:On("SUMMARY", function() pcall(M.WriteSummary) end)
   if not M.ticker and T.NewTicker then M.ticker = T:NewTicker(60, function() pcall(M.Tick) end) end
   if T.RegisterSlash then
     T:RegisterSlash("stats", function()
       M.Refresh(true)
+      -- (5.1 CLEAN, B13) une seule fenêtre : la page Stats vit dans l'ancien panneau ; la fenêtre TreeAI se ferme avant
+      local W = T.WindowOn and T.WindowOn()
+      if W and type(W.Close) == "function" then pcall(W.Close) end
       if T.SelectTab then pcall(T.SelectTab, T, TAB) end
       if T.Show then pcall(T.Show, T) end
     end, "stats : tes stats mesurées (kills, XP/h, vitesse, drops…) + export pour TreeAI")

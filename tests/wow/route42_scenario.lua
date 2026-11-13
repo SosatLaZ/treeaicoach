@@ -20,9 +20,9 @@ return function(M, ctx)
   local VARIANT = os.getenv("R42_VARIANT") or "full"
   local withSPF = VARIANT == "full" or VARIANT == "spf"
   local withQuestie = VARIANT == "full" or VARIANT == "questie"
-  local R, P, Zp, QB, W, Cm = T.Route, T.Planner, T.ZonePlan, T.QuestBrain, T.Watch, T.Compass
-  check(R and P and Zp and QB and W and Cm and T.MapCanvas, "Route, Planner, ZonePlan, QuestBrain, Watch, Compass, MapCanvas loaded")
-  if not (R and P and Zp and QB and W and Cm and T.MapCanvas) then return end
+  local R, P, Zp, QB, Cm = T.Route, T.Planner, T.ZonePlan, T.QuestBrain, T.Compass
+  check(R and P and Zp and QB and Cm and T.MapCanvas, "Route, Planner, ZonePlan, QuestBrain, Compass, MapCanvas loaded")
+  if not (R and P and Zp and QB and Cm and T.MapCanvas) then return end
   M.LeaveCombat()
   local chat0 = #M.output
   local blocked0 = #M.blocked
@@ -249,45 +249,17 @@ return function(M, ctx)
   end
   R.db.waypoint = false
 
-  -- ------------------------------------------------------------ 4. « Suivi TreeAI » : off by default, anchored, tracker untouched
+  -- ------------------------------------------------------------ 4. (5.1 CLEAN) « Suivi TreeAI » (Watch.lua) retiré : le suivi du jeu
+  -- reste LE suivi, jamais déplacé ni caché
   local tf = rawget(_G, "ObjectiveTrackerFrame") or CreateFrame("Frame", "ObjectiveTrackerFrame", UIParent)
   tf:ClearAllPoints()
   tf:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -60, -230)
   tf:Show()
   local tfPoints = #tf.__points
-  T:SetModuleEnabled("Watch", true)
-  W.db.shown, W.db.route = true, true
-  if W.char then W.char.pos = nil end
-  W._force = true
-  W.Apply()
   M.Advance(1, 0.5)
-  local wf = rawget(_G, "TreeAIWatchFrame")
-  local p1 = wf and { wf:GetPoint(1) }
-  check(wf and wf:IsShown() and p1[2] == tf and p1[1] == "TOPRIGHT" and p1[3] == "BOTTOMRIGHT",
-    "anchored under the game's tracker: " .. tostring(p1 and p1[1]) .. " → " .. tostring(p1 and p1[3]))
-  check(tf:IsShown() and #tf.__points == tfPoints and (tf.__alpha or 1) == 1, "the game's tracker never moved / hidden")
-  local lines = {}
-  for i = 1, W.rowsShown or 0 do
-    local r = W.rows[i]
-    if r.kind == "route" then lines[#lines + 1] = (r.fs:GetText() or "") .. ((r.rt:GetText() or "") ~= "" and (" [" .. r.rt:GetText() .. "]") or "") end
-  end
-  say("WATCH", table.concat(lines, " | "))
-  local li = (lines[1] or ""):find("^Histoire : ") and 2 or 1
-  check(#lines >= li + 2 and lines[li]:find("^Trajet %d+:%d%d · ") and lines[li]:find("Arrêt 1 sur 2 :", 1, true) and lines[li + 1]:find("Rendre", 1, true)
-    and lines[li + 2]:find("^1%. Marcher jusqu'au PNJ %(rendre%)"), "Suivi: « Trajet m:ss · km · Arrêt 1 sur N : » + numbered timed sub-steps")
-  local qf = CreateFrame("Frame", "Questie_BaseFrame", UIParent)
-  qf:Show()
-  W.Render()
-  p1 = { wf:GetPoint(1) }
-  check(p1[2] == qf, "Questie's tracker shown over the game's: the column goes under Questie's")
-  qf:Hide()
-  W.Render()
-  check(({ wf:GetPoint(1) })[2] == tf, "Questie's tracker hidden: back under the game's")
-  M.EnterCombat()
-  W.Render()
-  check(({ wf:GetPoint(1) })[2] == tf and #M.blocked == blocked0, "same place in combat, nothing blocked")
-  M.LeaveCombat()
-  T:SetModuleEnabled("Watch", false)
+  check(not T.Watch and not rawget(_G, "TreeAIWatchFrame"), "no TreeAI tracker column")
+  check(tf:IsShown() and #tf.__points == tfPoints and (tf.__alpha or 1) == 1 and #M.blocked == blocked0,
+    "the game's tracker never moved / hidden, nothing blocked")
 
   -- ------------------------------------------------------------ 10. world map : inside the canvas, no data provider
   local wm = CreateFrame("Frame", "WorldMapFrame", UIParent)

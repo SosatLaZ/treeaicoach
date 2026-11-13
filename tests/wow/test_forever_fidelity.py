@@ -79,7 +79,6 @@ RUNS = {   # every TreeAI harness run of the suite (TREEAI_WOW_RUNLOG, regenerat
     'macrofix-warrior': '--class WARRIOR --scenario tests/wow/macrofix_scenario.lua',
     'menu-hunter': '--class HUNTER --scenario tests/wow/menu_scenario.lua',
     'menu-warrior': '--class WARRIOR --scenario tests/wow/menu_scenario.lua',
-    'minipins-hunter': '--class HUNTER --scenario tests/wow/minipins_scenario.lua',
     'nav-hunter': '--class HUNTER --scenario tests/wow/nav_scenario.lua',
     'next10-hunter': '--class HUNTER --scenario tests/wow/next10_scenario.lua',
     'next10-mage': '--class MAGE --scenario tests/wow/next10_scenario.lua',
@@ -97,15 +96,9 @@ RUNS = {   # every TreeAI harness run of the suite (TREEAI_WOW_RUNLOG, regenerat
     'questpro-hunter': '--class HUNTER --scenario tests/wow/questpro_scenario.lua',
     'questqa-hunter': '--class HUNTER --allow LibQuestieDB --allow QuestDB --allow NpcDB --allow ObjectDB --allow ItemDB --allow TreeAIPlan --allow IsQuestFlaggedCompleted --scenario tests/wow/questqa_scenario.lua',
     'quests': '--scenario tests/wow/quests_scenario.lua',
-    'quick-hunter': '--class HUNTER --scenario tests/wow/quick_scenario.lua',
-    'quick-warrior': '--class WARRIOR --scenario tests/wow/quick_scenario.lua',
-    'quick2-hunter': '--class HUNTER --scenario tests/wow/quick2_scenario.lua',
-    'quick2-mage': '--class MAGE --scenario tests/wow/quick2_scenario.lua',
-    'quick2-warrior': '--class WARRIOR --scenario tests/wow/quick2_scenario.lua',
     'quicktravel-hunter': '--class HUNTER --scenario tests/wow/quicktravel_scenario.lua',
     'quicktravel-mage': '--class MAGE --scenario tests/wow/quicktravel_scenario.lua',
     'quicktravel-warrior': '--class WARRIOR --scenario tests/wow/quicktravel_scenario.lua',
-    'radar-hunter': '--class HUNTER --scenario tests/wow/radar_scenario.lua',
     'robustness-hunter': '--class HUNTER --scenario tests/wow/robustness_scenario.lua',
     'robustness-mage': '--class MAGE --scenario tests/wow/robustness_scenario.lua',
     'robustness-priest': '--class PRIEST --scenario tests/wow/robustness_scenario.lua',
@@ -153,6 +146,8 @@ _cache: dict[str, tuple[int, str]] = {}
 
 def _run(rid: str) -> tuple[int, str]:
     args = shlex.split(RUNS[rid])
+    if "--profile" not in args:   # (5.1 CLEAN) recorded when the harness default was « tout »
+        args = ["--profile", "tout", *args]
     r = subprocess.run([LUA, str(HERE / "harness.lua"), "-q", "--flavor", "forever", *args, str(ADDON)],
                        cwd=ROOT, capture_output=True, text=True, timeout=900)
     return r.returncode, r.stdout + r.stderr

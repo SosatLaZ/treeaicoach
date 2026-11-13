@@ -29,7 +29,7 @@ local M = T:RegisterModule("Binds", {
 if not M then return end
 T.Binds = M
 
-local function pass(ok, ...) if ok then return ... end return nil end
+local function pass(ok, ...) if ok then return ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw((...), "Binds") end return nil end
 local function try(fn, ...) if type(fn) ~= "function" then return nil end return pass(pcall(fn, ...)) end
 local function API() return type(T.API) == "table" and T.API or {} end
 local function opt(k) return M.db and M.db[k] end

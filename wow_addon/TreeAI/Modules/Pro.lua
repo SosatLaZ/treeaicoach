@@ -49,7 +49,7 @@ if T.MODULE_TAB and not T.MODULE_TAB.Pro then T.MODULE_TAB.Pro = "quests" end
 
 local floor, max, min, abs = math.floor, math.max, math.min, math.abs
 local function g(name) return rawget(_G, name) end
-local function pass(ok, ...) if ok then return ... end return nil end
+local function pass(ok, ...) if ok then return ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw((...), "Pro") end return nil end
 local function try(fn, ...) if type(fn) ~= "function" then return nil end return pass(pcall(fn, ...)) end
 local function now() return try(g("GetTime")) or 0 end
 local function epoch() local f = g("time") or (g("os") and g("os").time) return (f and f()) or 0 end

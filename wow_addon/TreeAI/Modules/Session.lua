@@ -48,6 +48,7 @@ local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
   local ok, a, b, c, d, e = pcall(fn, ...)
   if ok then return a, b, c, d, e end
+  local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw(a, "Session") end   -- (5.1 CLEAN, B9) compté
 end
 -- valeur « secrète » (WoW Forever, en combat) = inconnue
 local function sv(v)

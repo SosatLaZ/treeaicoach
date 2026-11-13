@@ -25,6 +25,7 @@ local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
   local ok, a, b, c, d, e, f, g, h, i, j, k, l, m, n = pcall(fn, ...)
   if ok then return a, b, c, d, e, f, g, h, i, j, k, l, m, n end
+  local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw(a, "Macros") end   -- (5.1 CLEAN, B9) compté
   return nil
 end
 
@@ -2587,11 +2588,42 @@ function CLICK_SRC.rare()
   if not name then return nil, "aucun rare repéré pour l'instant" end
   return "/targetexact " .. name, name
 end
+-- (5.1 CLEAN) le monstre de l'objectif en cours (repris de Quick.lua, retiré) : la cible de la boussole si c'est un
+-- objectif / un rendu nommé, sinon l'objectif « … tué » le plus utile du journal (suivi, puis le plus proche)
+local function objMob(name, isMob)
+  if type(name) ~= "string" then return nil end
+  local s = T.ObjectiveName and T.ObjectiveName(name) or name
+  local base = s
+  for _, suf in ipairs({ " tuées", " tués", " tuée", " tué", " slain", " killed" }) do
+    if #base > #suf and base:sub(-#suf) == suf then base = base:sub(1, -#suf - 1) break end
+  end
+  if (base == s and not isMob) or base == "" then return nil end
+  return base
+end
+function M.NextQuestTarget()
+  local Cmp = T.modules and T.modules.Compass
+  local okC, t = false, nil
+  if Cmp and type(Cmp.Current) == "function" then okC, t = pcall(Cmp.Current) end
+  if okC and type(t) == "table" and (t.kind == "objective" or t.kind == "turnin") and type(t.npc) == "string" then return t.npc end
+  local Q = T.modules and T.modules.Quests
+  local best
+  for _, q in ipairs(Q and type(Q.lastList) == "table" and Q.lastList or {}) do
+    if not q.complete then
+      for _, o in ipairs(q.obj or {}) do
+        local nm = not o.finished and objMob(o.name, o.t == "m")
+        if nm then
+          local sc = (q.watched and 2 or 0) + (q.dist and math.max(0, 1 - q.dist / 1000) or 0)
+          if not best or sc > best.s then best = { s = sc, name = nm } end
+        end
+      end
+    end
+  end
+  return best and best.name or nil
+end
 function CLICK_SRC.quest()
   local lines, info = {}, {}
-  local Qk = T.Quick
-  if Qk and type(Qk.NextTarget) == "function" then
-    local ok, name = pcall(Qk.NextTarget)
+  do
+    local ok, name = pcall(M.NextQuestTarget)
     name = ok and cleanName(name) or nil
     if name then lines[#lines + 1] = "/targetexact " .. name; info[#info + 1] = name end
   end

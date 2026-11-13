@@ -4,6 +4,7 @@ still flags as lootable (CanLootUnit) in solo, gathering tracking off, failed es
 world-buff yell in a capital). « Finished quests = next level » moved to « Conseils pro » (Coach.lua). Former Edge (« Coups d'avance ») merged in; guesses and duplicates removed.
 Each one = one verb-first line (no « ? »), hidden unless useful, togglable, routed to the « Avantages » tab, never
 automation, never chat, ≤ 80 kinstr/min in session_sim."""
+# (5.1 CLEAN) harness default = the player's profile (« sur ») ; this file tests modules that are off there: « tout »
 import re
 import shutil
 import subprocess
@@ -20,7 +21,7 @@ SRC = (ADDON / "Modules" / "Edge2.lua").read_text(encoding="utf-8")
 @pytest.mark.parametrize("flavor", ["modern", "legacy", "forever"])
 @pytest.mark.parametrize("cls", ["HUNTER", "WARRIOR", "MAGE"])
 def test_edge2_scenario(flavor, cls):
-    r = subprocess.run(["lua5.1", str(ROOT / "tests/wow/harness.lua"), "-q", "--flavor", flavor, "--class", cls,
+    r = subprocess.run(["lua5.1", str(ROOT / "tests/wow/harness.lua"), "-q", "--profile", "tout", "--flavor", flavor, "--class", cls,
                         "--scenario", str(ROOT / "tests/wow/edge2_scenario.lua"), str(ADDON)],
                        capture_output=True, text=True, timeout=120, cwd=ROOT)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]

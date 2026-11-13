@@ -5,11 +5,9 @@
 return function(M, ctx)
   local T = TreeAI
   local check = ctx.check
-  local C, N, Hz, H = T.Compass, T.NavTime, T.Horizon, T.modules and T.modules.Highlight
-  check(C and N and Hz and T.Glow and H, "Compass, NavTime, Horizon, Glow, Highlight present")
-  if not (C and N and Hz and T.Glow and H) then return end
-  -- (4.1 LAYOUT) la bande d'horizon est coupée d'office (la boussole est LA flèche) : le joueur l'allume ici
-  if Hz.db then Hz.db.shown = true end
+  local C, N, H = T.Compass, T.NavTime, T.modules and T.modules.Highlight   -- (5.1 CLEAN) Horizon removed
+  check(C and N and T.Glow and H and not T.Horizon, "Compass, NavTime, Glow, Highlight present ; Horizon gone")
+  if not (C and N and T.Glow and H) then return end
   local pi = math.pi
   local G = C.Geo
   M.LeaveCombat()
@@ -24,10 +22,6 @@ return function(M, ctx)
   r, g = G.AlignColor(pi)
   check(r == 1 and g < 0.05, "target behind = red")
   check(math.abs(G.Shortest(0.1, 2 * pi - 0.1) + 0.2) < 1e-9, "shortest arc wraps through north")
-  local x0, o0 = Hz.X(0)
-  local xl = Hz.X(pi / 4)
-  local _, ob = Hz.X(pi)
-  check(x0 == 0 and o0 == 0 and xl < 0 and ob ~= 0, "horizon: ahead = centre, left = negative x, behind = clamped")
 
   -- ------------------------------------------------------------ compass: arrow, colour, behind, arrival
   M.instance = false
@@ -55,7 +49,6 @@ return function(M, ctx)
   M.pos = { mapID = 1424, x = 0.497, y = 0.40 }
   st = C.Refresh()
   check(st.arrived, "arrival (≤ 12 yd for a custom point)")
-  check(Hz.Sync(st) == false, "horizon hidden once arrived")
 
   -- ------------------------------------------------------------ one guide: TreeAI by default, SPF only on opt-in
   local active, est = true, 61
@@ -71,8 +64,6 @@ return function(M, ctx)
   st = C.Refresh()
   check(not st.dup and fr:IsShown(), "SPF installed and guiding, not chosen → TreeAI compass stays (only guide)")
   check(not st.spf and math.abs(st.sec - 300 * 1.15 / 7) < 0.5, "SPF estimate ignored without opt-in: " .. tostring(st.sec))
-  check(rawget(_G, "TreeAIHorizonFrame") and TreeAIHorizonFrame:IsShown(), "horizon strip shown while TreeAI guides")
-  check(Hz.count == 1, "horizon: stop 1 = compass target")
   M.hardware = true                          -- « Aller là » is a click
   local how = C.Pin(C.Current())
   M.hardware = false
@@ -87,7 +78,6 @@ return function(M, ctx)
     local CMw = rawget(_G, "C_Map")
     check(not (CMw and CMw.HasUserWaypoint and CMw.HasUserWaypoint()), "our « Aller là » waypoint removed when SPF guides")
   end
-  check(not TreeAIHorizonFrame:IsShown(), "horizon hidden too")
   active = false
   C.travelT = nil
   st = C.Refresh()

@@ -1,5 +1,6 @@
 """POLISH: anti-bruit (dédoublonnage par sens, budget, encadré ≤ 1/20 s, combat), préréglages, assistant,
 page « Tout » cliquable, modules on/off en direct, profil perso, placement auto, mode édition."""
+# (5.1 CLEAN) harness default = the player's profile (« sur ») ; this file tests modules that are off there: « tout »
 import shutil
 import subprocess
 from pathlib import Path
@@ -14,7 +15,7 @@ ADDON = ROOT / "wow_addon" / "TreeAI"
 @pytest.mark.parametrize("flavor", ["modern", "legacy"])
 @pytest.mark.parametrize("cls", ["HUNTER", "MAGE"])
 def test_polish_scenario(flavor, cls):
-    r = subprocess.run(["lua5.1", str(ROOT / "tests/wow/harness.lua"), "-q", "--flavor", flavor, "--class", cls,
+    r = subprocess.run(["lua5.1", str(ROOT / "tests/wow/harness.lua"), "-q", "--profile", "tout", "--flavor", flavor, "--class", cls,
                         "--scenario", str(ROOT / "tests/wow/polish_scenario.lua"), str(ADDON)],
                        capture_output=True, text=True, timeout=120, cwd=ROOT)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]
