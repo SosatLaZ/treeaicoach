@@ -5,9 +5,9 @@ Joueur : chasseur Horde ~40, WoW: Forever 1.60.1 frFR (API `C_AuctionHouse`), Au
 gourer, genre sur des items de merde … rends le truc bcp plus réactif pour que je puisse faire de l'achat-revente en
 masse, objectif visé 50 po par jour voire plus ». Plaintes d'avant : conseils parfois faux, potions vendues, gels.
 
-Livré en deux tranches. **Tranche 1 (ce document, §1 à §6)** : calculs exacts, affaires « sûr » et « probable », files
-Acheter / Poster, panneau collé à l'HV, journal et objectif. **Tranche 2 (§7, à faire)** : « réguler » un petit marché,
-file Annuler / reposter, marges d'artisanat, tableau de bord, parité Python.
+Livré en deux tranches. **Tranche 1 (§1 à §6)** : calculs exacts, affaires « sûr » et « probable », files Acheter /
+Poster, panneau collé à l'HV, journal et objectif. **Tranche 2 (§7 à §12)** : « réguler » un petit marché, file
+Annuler / reposter, marges d'artisanat, moments de vente, tableau de bord unique, parité Python.
 
 Rien n'est copié d'un autre addon : ce qui suit décrit des idées connues de tous les joueurs d'HV (et la façon dont
 des outils comme TradeSkillMaster ou Auctionator les rangent : valeur de marché tirée d'un historique, prix
@@ -95,9 +95,91 @@ coup). Avec le bureau : pire image 1,4 ms, 0 travail une fois l'HV fermé.
 Les compteurs `diag.ah` du fichier d'erreurs (prix reçus, achats confirmés par événement / par l'or seulement, sans
 réponse, créations d'enchères, avertissements, taux de commission vu, part de dépôt apprise) disent ce qui s'est passé.
 
-## 7. Tranche 2 (pas encore fait)
+## 7. « Réguler » un petit marché bon marché (classe « regul »)
 
-« Réguler » un petit marché bon marché (acheter tout le mur bas, reposter au prix normal : seulement avec peu de
-vendeurs, des ventes prouvées, un mur plafonné, et le risque dit en une ligne) ; file « Annuler / reposter » ; marges
-d'artisanat liées à ses métiers ; tableau de bord de la page HV et retrait des anciennes tuiles ; fonctions Python
-miroir testées contre le Lua ; habitudes par heure / jour de la semaine.
+L'idée (ce que le joueur appelle « réguler ») : sur un objet bon marché que peu de gens vendent, un vendeur pressé
+poste un « mur » d'annonces très sous le prix habituel. Racheter **tout** le mur et reposter au prix habituel rend le
+marché à son niveau, et la différence est le gain.
+
+Quand ça marche : peu de vendeurs (personne ne reposte derrière toi), des ventes réelles au prix habituel (mesurées sur
+plusieurs jours, pas supposées), un mur peu profond par rapport à ce qui se vend (il faut l'écouler avant que d'autres
+vendeurs arrivent), un mur qui ne coûte pas cher (si tout tourne mal, la perte est petite).
+Quand ça rate : l'offre est élastique (dès que le prix remonte, d'autres reviennent poster — beaucoup de vendeurs
+dans l'historique), le prix habituel est faux (peu de jours de scans), le mur est plus profond que ce qui se lit (au-delà
+des 12 annonces lues), ou on n'en rachète qu'une partie (le reste sous-cote ta revente).
+
+Seuils **explicites** (`AHMath.RULES`, réglables : plafond du mur et interrupteur dans les options) :
+
+| Seuil | Valeur | Pourquoi |
+|---|---|---|
+| vendeurs dans le mur | ≤ 3 (noms lus dans les annonces ; inconnus → rien) | peu de monde pour reposter derrière toi |
+| vendeurs vus sur le marché (historique) | ≤ 3 | l'offre n'est pas élastique |
+| prix habituel | ≤ 1 po l'unité | « items de merde » : petite mise, petite perte possible |
+| le mur | toutes les annonces sous 75 % du prix habituel, **en entier** | une annonce laissée sous-cote ta revente |
+| coût du mur | ≤ 3 po (option « Plafond d'un mur ») et ≤ la part d'or choisie | perte bornée |
+| ventes | ≥ 2 / jour mesurées (≥ 3 jours, ≥ 4 scans, ≥ 12 h mesurées) | le prix habituel est un prix de VENTE |
+| délai | (mes unités déjà en vente + le mur) ÷ ventes/jour ≤ 4 j | écouler avant que d'autres reviennent |
+| marge | net ≥ max(1 pa, 30 % de la mise) | le risque se paie (15 % pour un achat-revente prouvé) |
+| ma propre vente | aucune sous le prix de revente | sinon je me sous-cote moi-même |
+
+Revente = min(prix habituel prudent, 1 pc sous la première annonce au-dessus du mur). Net = Σ par annonce
+(revente × n − commission − dépôts perdus attendus − prix payé), même chance de vente pour tout le lot. La file prend le
+mur **entier ou rien** (`AHMath.allocate` : un groupe). Une ligne de risque est toujours affichée : « Risque : un autre
+vendeur peut reposter sous ton prix ; au pire, revendu au marchand : perte X » (pire cas = prix marchand × n − mise).
+Le « prix en chute » du jour est accepté ici (c'est le mur lui-même qui tire la médiane du jour) ; rien d'autre ne
+l'est.
+
+## 8. Annuler / reposter une vente dépassée
+
+Annuler perd le dépôt ; ne pas annuler laisse la vente derrière un concurrent moins cher. Pour une vente (prix p,
+n unités, dépôt d), concurrents moins chers a unités, nouveau prix p' (1 pc sous le moins cher, jamais sous le
+plancher), nouveau dépôt d', frais d'annulation c (lus par `GetCancelCost` s'ils existent, comptés en plus — prudent) :
+
+* garder = ⌊ P(a, n) × (net(p × n) + d) / 1000 ⌋ (le dépôt revient si ça se vend) ;
+* annuler = ⌊ P(a', n) × (net(p' × n) + d') / 1000 ⌋ − d' − c ;
+* annuler seulement si annuler − garder ≥ max(1 pa, 5 % du net reposté).
+
+P = chance de vendre pendant une mise en vente (‰, §2). Pas d'annulation sans ventes prouvées, ni si le moins cher est
+anormalement bas (< 70 % du prix habituel : on attend qu'il parte), ni sur des prix lus il y a plus de 10 min (relecture
+ciblée d'abord). Une annulation = un clic, une seule `CancelAuction`, limiteur du jeu respecté ; comptée au journal quand
+le jeu la confirme (`AUCTION_CANCELED`, sinon la vente absente de la liste) ; le courrier « annulée » qui suit n'est pas
+recompté. L'objet revient par courrier ; la file « Poster » le remet au bon prix.
+
+## 9. Marges d'artisanat (tes métiers)
+
+Pour chaque recette que tu connais (lue dans ta fenêtre de métier, sinon celles de ton rang) : composants au prix lu
+(marchand : prix exact ; HV : coût réel des unités les moins chères à l'instant, `AHMath.buyCost` ; sinon prix habituel
+de tes scans, signalé), revente au prix habituel prudent de l'objet fabriqué, commission et dépôts perdus déduits, marge
+≥ 15 %. Seulement si l'objet fabriqué a des ventes prouvées (classe « probable »). Affiché dans « Mes métiers » ; pas de
+file d'achat de composants (encore à faire, voir §12).
+
+## 10. Moments de vente (jour × heure)
+
+Entre deux scans complets espacés de ≤ 6 h, les unités disparues sont rangées dans un créneau (jour de la semaine ×
+tranche de 4 h, au milieu de l'intervalle). Rien n'est dit tant qu'il n'y a pas ≥ 8 créneaux d'au moins 6 h mesurées
+sur ≥ 4 jours différents ; un créneau n'est annoncé « meilleur » que s'il vend ≥ 1,2 × la moyenne. Il faut donc
+plusieurs semaines de scans réguliers : en attendant, la page le dit (« pas encore assez de scans espacés »).
+
+## 11. Ce que le joueur voit, et l'appli
+
+* Page « HV » = un tableau de bord : objectif du jour, capital libre / immobilisé, tuiles **Acheter (n)**, **Poster
+  (n)**, **Annuler (n)**, puis En vente, Mes métiers, Ce qu'il te manque ; la liste choisie ; le résultat par objet ;
+  la ligne « Moments de vente ». Les anciennes tuiles (« Vendre tes sacs à l'HV », « Acheter-revendre », « gagné
+  cette semaine », « Scanner ») sont retirées.
+* Panneau collé à l'HV : Acheter · Poster · Annuler, « Action suivante » (achat, puis annulation, puis mise en vente),
+  la touche.
+* L'appli (`treeaicoach/wow/ahmath.py`) refait les mêmes calculs, comparés au Lua sur des milliers de cas générés
+  (`tests/wow/test_ahmath_parity.py`) ; `auction.py` lit le résumé du bureau (objectif, files, capital).
+
+## 12. Encore à vérifier ou à faire
+
+À vérifier dans le vrai client (compteurs `diag.ah` du fichier d'erreurs) :
+* les recherches donnent-elles les noms des vendeurs des autres (`owners`) ? (`sellerNamesKnown` / `sellerNamesMissing`)
+  — sans eux, aucune régulation n'est proposée ;
+* `CancelAuction(auctionID)` → `AUCTION_CANCELED` (`auctionCanceled`) ; `GetCancelCost` (`cancelCost`) : un coût en plus
+  du dépôt, ou le dépôt lui-même ? (compté en plus : prudent) ; `CanCancelAuction` ;
+* `QueryOwnedAuctions` relit la liste de mes ventes (→ `OWNED_AUCTIONS_UPDATED`) et passe par le limiteur ;
+* le courrier « Vente aux enchères annulée : X (n) » porte la quantité.
+
+Pas fait : file d'achat des composants d'une recette rentable ; relances automatiques de scans aux bons créneaux
+(le joueur reste maître de ses scans) ; marges des métiers de récolte (vendre brut ou transformé).

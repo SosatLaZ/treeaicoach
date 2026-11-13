@@ -901,7 +901,7 @@ function M.FinishScan(j)
   local prev = s.full and M.sig or nil
   local hrs = prev and (t - prev.t) / 3600 or 0
   if hrs < 0.2 or hrs > 48 then prev, hrs = nil, 0 end
-  local cur, nItems = {}, 0
+  local cur, nItems, patGone = {}, 0, 0
   for id, it in pairs(s.items) do
     nItems = nItems + 1
     table.sort(it.listings, function(a, b) return a.unit < b.unit end)
@@ -913,11 +913,25 @@ function M.FinishScan(j)
       if not rec then rec = { h = {} } r.items[id] = rec end
       if n0(rec.v) <= 0 then rec.v = vendorPrice(id) end
       local gone = (prev and prev.items[id]) and max(0, F.soldBetween(prev.items[id], it.sig)) or 0
+      patGone = patGone + gone
       addPoint(rec, day, it.units[1], F.lowMedian(it.units), it.qty, gone, prev and floor(hrs * 100 + 0.5) / 100 or 0)
       addSel(rec, day, sellersOf(it))
       rec.last = t
     end
     slice(j)
+  end
+  -- (5.1 AH, tranche 2) moments de vente : unités disparues entre deux scans complets espacés de ≤ 6 h, rangées par
+  -- jour de la semaine × tranche de 4 h (milieu de l'intervalle, heure locale) — AHMath.pattern ne dit rien sans assez de créneaux
+  if r and prev and hrs > 0 and hrs <= 6 then
+    local mid = t - floor(hrs * 1800)
+    local wd, hh = tonumber((try(_G.date, "%w", mid))), tonumber((try(_G.date, "%H", mid)))
+    if wd and hh then
+      r.pat = type(r.pat) == "table" and r.pat or {}
+      local k = wd * 6 + floor(hh / 4)
+      local e = type(r.pat[k]) == "table" and r.pat[k] or { g = 0, h = 0 }
+      e.g, e.h = n0(e.g) + patGone, n0(e.h) + floor(hrs * 100 + 0.5)
+      r.pat[k] = e
+    end
   end
   if s.full then
     local sig = { t = t, items = {} }
@@ -970,7 +984,7 @@ function M.ApplyItemListings(id, rows)
   if not id then return end
   local s = { items = {} }
   M.meName = me()
-  for i, l in ipairs(rows) do addRow(s, i, id, l.count, l.buy, l.owner, l.auctionID) end
+  for i, l in ipairs(rows) do addRow(s, i, id, l.count, l.buy, l.owner or l.seller, l.auctionID) end
   local it = s.items[id] or { units = {}, listings = {}, qty = 0, sig = {} }
   table.sort(it.listings, function(a, b) return a.unit < b.unit end)
   table.sort(it.units)
@@ -1266,12 +1280,20 @@ function M.ReadSearch(id, commodity)
     local o = type(r.owners) == "table" and r.owners[1]
     return o ~= nil and (o == mine or o == "player")
   end
+  -- (5.1 AH, tranche 2) vendeurs d'une ligne des AUTRES (« Nom » ou « Nom1,Nom2 ») : la régulation d'un petit marché
+  -- exige de savoir combien de vendeurs tiennent le mur bas ; jamais écrit ailleurs que dans la session
+  local function sellers(r)
+    if type(r.owners) ~= "table" then return nil end
+    local t = {}
+    for _, o in ipairs(r.owners) do if type(o) == "string" and o ~= "" and o ~= mine and o ~= "player" then t[#t + 1] = o end end
+    return #t > 0 and table.concat(t, ",") or nil
+  end
   if commodity then
     for i = 1, min(200, n0(try(A.GetNumCommoditySearchResults, id))) do
       local r = try(A.GetCommoditySearchResultInfo, id, i)
       if type(r) == "table" and n0(r.unitPrice) > 0 and n0(r.quantity) > 0 then
         rows[#rows + 1] = { count = n0(r.quantity), buy = n0(r.unitPrice) * n0(r.quantity), unit = n0(r.unitPrice),
-          owner = owned(r) and "player" or nil, auctionID = r.auctionID }
+          owner = owned(r) and "player" or nil, seller = sellers(r), auctionID = r.auctionID }
       end
     end
   else
@@ -1281,7 +1303,7 @@ function M.ReadSearch(id, commodity)
       if type(r) == "table" and n0(r.buyoutAmount) > 0 then
         local q = max(1, n0(r.quantity))
         rows[#rows + 1] = { count = q, buy = n0(r.buyoutAmount), unit = floor(n0(r.buyoutAmount) / q),
-          owner = owned(r) and "player" or nil, auctionID = r.auctionID }
+          owner = owned(r) and "player" or nil, seller = sellers(r), auctionID = r.auctionID }
       end
     end
   end
@@ -2569,12 +2591,7 @@ function M.PageModel()
   local rd = M.RealmData()
   local last = (M.lastScan and M.lastScan.t) or (M.db and n0(M.db.lastScanT) > 0 and M.db.lastScanT) or nil
   -- (5.0 BAGS) ce qu'il te manque (stock conseillé) : la liste d'achats de l'HV
-  local need = {}
-  local B = brain()
-  if B and type(B.Shopping) == "function" then
-    local okS, sh = pcall(B.Shopping)
-    if okS and type(sh) == "table" then need = sh end
-  end
+  local need = M.NeedList()
   return { gold = g, realized = r, bags = bags, vendorN = vendorN, bagGain = bagGain, groups = groups, need = need,
     planGain = n0(M.planGain), possible = n0(M.planGain) + bagGain, ownedN = n, ownedV = v, ownedT = t,
     tracked = rd and n0(rd.n) or 0, lastScan = last, scanned = last ~= nil or (rd and n0(rd.n) > 0) }
@@ -2602,75 +2619,41 @@ local function scanHere(W)
   end
 end
 M.ScanSmart = scanHere
+--- (5.1 AH, tranche 2) la page « HV » est UN tableau de bord, celui du bureau d'achat-revente (AHDesk.RenderPage) :
+--- objectif du jour, capital, files Acheter / Poster / Annuler avec leurs comptes. Les anciennes tuiles (« Vendre tes
+--- sacs à l'HV », « Acheter-revendre », « gagné cette semaine », « Scanner ») sont remplacées par ces files.
 function M.RenderPage(Ly, W)
+  local D = T.AHDesk
+  if type(D) == "table" and D._active and type(D.RenderPage) == "function" then
+    local ok, err = pcall(D.RenderPage, Ly, W, M)
+    if ok then return end
+    logErr("page HV : " .. tostring(err))
+  end
+  -- bureau coupé par le joueur : la liste d'achat de l'ancien moteur et les ventes en cours, sans tuiles
   local m = M.PageModel()
-  local week = n0(m.realized.week)
-  -- (5.1 AH) le bureau d'achat-revente : objectif du jour et capital en tête ; la tuile « Acheter-revendre » lit SES files
-  local D = deskOn() and T.AHDesk or nil
-  local flipGain, flipN = m.planGain, #m.groups
-  if D then
-    if D.PageHead then pcall(D.PageHead, Ly, W) end
-    local okS, sm = pcall(D.Summary)
-    if okS and type(sm) == "table" then
-      flipGain, flipN = n0(sm.planNet), n0(sm.buy)
-      week = n0(sm.week)                       -- un seul bilan sur la page : celui du journal du bureau (coût d'achat déduit)
-      m.realized = { week = week, today = n0(sm.today), total = n0(sm.total) }
-    end
+  Ly.text("Le bureau « Achat-revente (HV) » est coupé : allume-le dans les options (files Acheter / Poster / Annuler, objectif du jour).", "S", "muted")
+  M.RenderFlips(Ly, W, m)
+  M.RenderOwned(Ly)
+end
+--- « Ce qu'il te manque » (stock conseillé par l'assistant d'inventaire)
+function M.NeedList()
+  local B = brain()
+  if B and type(B.Shopping) == "function" then
+    local okS, sh = pcall(B.Shopping)
+    if okS and type(sh) == "table" then return sh end
   end
-  -- (4.2 FIX42) deux gains JAMAIS additionnés : vendre ce que tu as déjà (sacs) ≠ acheter pour revendre (de l'or engagé)
-  local nBags = #m.bags
-  local view = M.view or "flips"
-  -- (5.0 BAGS) une seule rangée de chiffres : les deux premiers SONT les listes (plus de tuile en double dessous)
-  Ly.tiles({
-    { "Vendre tes sacs à l'HV : +" .. money(m.bagGain), nBags > 0 and (nBags .. " objet" .. (nBags > 1 and "s" or "") .. " mieux payé" .. (nBags > 1 and "s" or "") .. " qu'au marchand")
-        or "rien de mieux qu'au marchand", function() M.view = "bags" end,
-      { "Ce que tu as déjà : vendu à l'HV plutôt qu'au marchand (net, risque d'invendu compris).",
-        "Net : commission 5 % (15 % en HV neutre) et dépôt perdu si invendu déjà déduits.",
-        "Jamais ce que tu dois garder (potions, munitions, quêtes, compos de tes métiers) : l'avis de la page « Sacs »." },
-      view == "bags", "Clic : la liste" },
-    { "Acheter-revendre : +" .. money(flipGain), flipN > 0 and (flipN .. " achat" .. (flipN > 1 and "s" or "") .. " sûr" .. (flipN > 1 and "s" or "") .. (D and " ou prouvé" .. (flipN > 1 and "s" or "") or ""))
-        or "rien de sûr pour l'instant", function() M.view = "flips" end,
-      { "De l'or engagé : acheté à l'HV, revendu plus cher (ventes mesurées entre tes scans).",
-        "Net : commission et dépôt déjà déduits. Jamais additionné à la vente de tes sacs." },
-      view == "flips", "Clic : la liste" },
-    { ("%d vente%s · %s"):format(m.ownedN, m.ownedN > 1 and "s" or "", money(m.ownedV)), "en vente à l'HV", nil,
-      { m.ahOpen and "Lu à l'instant" or ("Vu à l'HV " .. ago(m.ownedT)) } },
-    { (week >= 0 and "+" or "") .. money(week), "gagné cette semaine", nil,
-      { ("Aujourd'hui %s · total %s"):format(money(m.realized.today), money(m.realized.total)), D and "Ventes (prix − commission − prix d'achat), reventes au marchand, dépôts perdus." or "Lu dans le courrier de l'HV (ventes − achats)." } },
-  }, 2)
-  local function pick(v) return function() M.view = v end end
-  local need = m.need or {}
-  local needSub = "rien : ton stock est bon"
-  if #need > 0 then
-    local parts = {}
-    for i, e in ipairs(need) do if i <= 2 then parts[#parts + 1] = ("%d %s"):format(n0(e.n), tostring(e.label)) end end
-    needSub = table.concat(parts, ", ") .. (#need > 2 and "…" or "")
-  end
-  local scanSub = M.Scanning() and ("lecture " .. M.Scanning())
-    or (not M.ahOpen and "ouvre l'HV d'abord")
-    or (M.FullCooldown() > 0 and ("complet dans " .. mmss(M.FullCooldown()) .. " · ciblé maintenant"))
-    or (m.lastScan and ("dernier : " .. ago(m.lastScan))) or "jamais fait"
-  Ly.tiles({
-    { "Scanner", scanSub, function() scanHere(W) end, { "Lit les prix de l'HV (scan complet 1 fois / 15 min, sinon tes objets).",
-      "Plusieurs scans espacés sur 2-3 jours mesurent ce qui se vend vraiment." }, false, M.ahOpen and "Clic : scanner" or "Ouvre l'HV d'abord" },
-    { "Ce qu'il te manque", needSub, pick("need"), { "Potions, nourriture, munitions : le stock conseillé pour ton niveau (page « Sacs »).",
-      "Ici : leur prix à l'HV quand il est connu." }, view == "need", "Clic : la liste" },
-    { "Mes métiers", "ce que tu fabriques et vends", pick("craft"), { "Coût des composants contre prix de vente mesuré à l'HV." },
-      view == "craft", "Clic : la liste" },
-  }, 3)
-  if view == "bags" then M.RenderBags(Ly, W, m)
-  elseif view == "craft" then M.RenderCraft(Ly, W, m)
-  elseif view == "need" then M.RenderNeed(Ly, W, m)
-  else M.RenderFlips(Ly, W, m) end
-  -- toujours : mes ventes en cours (si on en a vu) et le bilan court
+  return {}
+end
+--- mes ventes en cours (gardées : l'HV fermé, on sait encore ce qui est en vente)
+function M.RenderOwned(Ly)
   local owned = {}
   for _, a in ipairs(M.owned or {}) do if a.state ~= "cancelled" then owned[#owned + 1] = a end end
-  if #owned > 0 and Ly.header("Mes ventes en cours", "hv:owned", #owned) then
-    for i, a in ipairs(owned) do
-      if i > 8 then break end
-      Ly.row({ text = ("%s ×%d à %s/u — %s"):format(itemName(a.id), a.count, money(a.unit), a.advice or "ok"),
-        prio = a.worth and 2 or 1, tooltip = a.lowest and ("Plus bas des autres : " .. money(a.lowest) .. "/u") or nil })
-    end
+  if not Ly.header("Mes ventes en cours", "hv:owned", #owned) then return end
+  if #owned == 0 then Ly.text(M.ahOpen and "Rien en vente." or "Rien vu en vente à ta dernière visite à l'HV.", "S", "muted") end
+  for i, a in ipairs(owned) do
+    if i > 12 then break end
+    Ly.row({ text = ("%s ×%d à %s/u%s"):format(itemName(a.id), a.count, money(a.unit), a.advice and (" — " .. a.advice) or ""),
+      prio = a.worth and 2 or 1, tooltip = a.lowest and ("Plus bas des autres : " .. money(a.lowest) .. "/u") or nil })
   end
 end
 local function emptyScan(Ly, m)
@@ -2713,23 +2696,6 @@ function M.RenderFlips(Ly, W, m)
     end
   end
 end
-function M.RenderBags(Ly, W, m)
-  if Ly.header("Vendre à l'HV plutôt qu'au marchand", "hv:bags", #m.bags) then
-    if #m.bags == 0 and not emptyScan(Ly, m) then
-      Ly.text(m.vendorN > 0 and ("Rien dans tes sacs ne rapporte plus à l'HV : vends tout au marchand (%d objet%s)."):format(m.vendorN, m.vendorN > 1 and "s" or "")
-        or "Rien à vendre dans tes sacs (ou pas encore de prix : scanne à l'HV).", "S", "muted")
-    end
-    for i, s in ipairs(m.bags) do
-      if i > 12 then break end
-      Ly.row({ text = ("%s ×%d — HV ≈ %s/u (vendu ~%s/j) · net ≈ %s · marchand %s → +%s à l'HV%s"):format(itemName(s.id), s.count, money(s.unit),
-        soldShort(s.sold), money(s.ev), money(s.vendor), money(s.gain), s.keep and (" · garde " .. s.keep) or ""), prio = 2,
-        tooltip = { s.keep and ("Garde %d : %s. Seul le surplus est compté."):format(s.keep, tostring(s.keepWhy or "tu en as besoin")) or nil,
-          ("Dépôt %s (perdu si invendu), commission déduite."):format(money(s.deposit)),
-          s.proof and "Ventes mesurées entre tes scans." or "Peu de ventes mesurées : prix d'après les annonces.",
-          "À l'HV : bouton « Poster » du panneau TreeAI (1 clic = 1 mise en vente)." } })
-    end
-  end
-end
 --- (5.0 BAGS) « Ce qu'il te manque » : le stock conseillé par l'assistant d'inventaire, avec le prix d'HV s'il est connu
 function M.RenderNeed(Ly, W, m)
   local need = m.need or {}
@@ -2749,27 +2715,6 @@ function M.RenderNeed(Ly, W, m)
     end
   end
 end
-function M.RenderCraft(Ly, W, m)
-  local list, profs = M.CraftProfits(8)
-  if Ly.header("Ce que tu fabriques et vends avec bénéfice", "hv:craft", #list) then
-    if #profs == 0 then
-      Ly.empty("Pas de métier de fabrication : apprends-en un chez un maître de métier, en ville.")
-    elseif #list == 0 and not emptyScan(Ly, m) then
-      Ly.text("Rien de rentable à fabriquer pour l'instant avec tes recettes (ou les objets fabriqués ne se vendent pas assez).", "S", "muted")
-    end
-    for _, d in ipairs(list) do
-      local parts = {}
-      for k = 1, #(d.mats or {}) - 1, 2 do parts[#parts + 1] = ("%s ×%d"):format(itemName(d.mats[k]), n0(d.mats[k + 1])) end
-      Ly.row({ text = ("%s%s — composants %s, se vend ~%s → +%s net · se vend ~%s/j"):format(d.name or itemName(d.id),
-        d.count > 1 and (" ×" .. d.count) or "", money(d.cost), money(d.sell), money(d.profit), soldShort(d.sold)), prio = 2,
-        tooltip = { (d.prof and (d.prof .. " : ") or "") .. table.concat(parts, ", ") } })
-    end
-    if W and W.Select and #profs > 0 then
-      Ly.buttons({ { "Mon plan de métier", function() W.Select("prof") end, "Clic : le plan de montée de ton métier" } }, 2)
-    end
-  end
-end
-
 -- ------------------------------------------------------------------ fenêtre (ancrée à l'HV, jamais parentée)
 local ROWS = 9
 M.tab, M.page = "deals", 1

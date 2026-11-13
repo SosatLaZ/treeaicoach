@@ -51,9 +51,12 @@ def test_strip_metiers_button_and_binding():
 
 
 def test_hv_tiles_never_mixed():
+    # (5.1 AH, tranche 2) one dashboard: the three queues with their own counts; the old mixed tiles are gone
     src = code(MODS / "Auction.lua")
-    assert "Vendre tes sacs à l'HV : +" in src and "Acheter-revendre : +" in src
+    assert "Vendre tes sacs à l'HV : +" not in src and "Acheter-revendre : +" not in src
     assert "bénéfice possible maintenant" not in src
+    desk = code(MODS / "AHDesk.lua")
+    assert 'fmt("Acheter (%d)", b)' in desk and 'fmt("Poster (%d)", p)' in desk and 'fmt("Annuler (%d)", c)' in desk
 
 
 def test_theme_small_tokens():

@@ -29,6 +29,8 @@ import logging
 import math
 from typing import Any, Iterable
 
+from . import ahmath as desk  # (5.1 AH) the buy-and-resell desk's maths, twin of Modules/AHMath.lua (tested to the copper)
+
 log = logging.getLogger(__name__)
 
 __all__ = [
@@ -39,6 +41,7 @@ __all__ = [
     "LIQ", "demand_class", "sold_between", "liquidity", "max_quantity", "stop_loss", "item_cap", "safe_flip",
     "why_none", "cancel_advice", "scan_age", "STALE_TEXT",
     "MIN_NET", "MIN_ROI", "min_net", "undercut", "post_quantity", "vendor_to_ah", "craft_profit",
+    "desk", "desk_summary",
 ]
 
 CUT_PCT = {False: 5, True: 15}          # neutral? -> % of the sale price
@@ -766,6 +769,37 @@ def auction_summary(db_or_char: Any) -> dict:
     return {}
 
 
+def desk_summary(db_or_char: Any) -> dict:
+    """``summary.ahdesk`` (5.1 AH: the buy-and-resell desk) from TreeAIDB, a char entry or a summary ({} if absent)."""
+    try:
+        d = db_or_char if isinstance(db_or_char, dict) else {}
+        if isinstance(d.get("ahdesk"), dict):
+            return d["ahdesk"]
+        if isinstance(d.get("summary"), dict):
+            return desk_summary(d["summary"])
+        chars = d.get("chars")
+        if isinstance(chars, dict):
+            for c in chars.values():
+                s = desk_summary(c) if isinstance(c, dict) else {}
+                if s:
+                    return s
+    except Exception:
+        log.debug("desk_summary failed", exc_info=True)
+    return {}
+
+
+def _desk_lines(s: dict) -> dict:
+    """French facts from the desk summary — the same numbers as the addon's panel (goal from AHMath.goal)."""
+    out: dict[str, Any] = {}
+    goal_c = _i(s.get("goal"))
+    g = desk.goal(s.get("today"), goal_c)
+    out["objectif_du_jour"] = (f"aujourd'hui {money_text(s.get('today'))} sur {money_text(goal_c)} ({g['pct']} %), "
+                               f"7 jours {money_text(s.get('week'))}")
+    out["files_hv"] = f"Acheter {_i(s.get('buy'))} · Poster {_i(s.get('post'))} · Annuler {_i(s.get('cancel'))}"
+    out["capital_hv"] = f"libre {money_text(s.get('free'))}, immobilisé {money_text(s.get('tied'))}"
+    return out
+
+
 def _deal_text(d: dict) -> str:
     name = str(d.get("name") or d.get("item") or "?")
     cnt = _i(d.get("count"), 1)
@@ -788,9 +822,10 @@ def auction_context(db_or_char: Any) -> dict:
     """Compact French facts for the AI prompt (« quoi revendre ? »). {} when the addon has no AH data."""
     try:
         a = auction_summary(db_or_char)
-        if not a:
+        ds = desk_summary(db_or_char)
+        if not a and not ds:
             return {}
-        out: dict[str, Any] = {}
+        out: dict[str, Any] = _desk_lines(ds) if ds else {}
         deals = [_deal_text(d) for d in _list(a.get("deals")) if isinstance(d, dict)][:5]
         if deals:
             out["affaires"] = deals

@@ -857,6 +857,45 @@ return function(X)
       end
       hv.posts = D.sess.posts
       hv.wait = D.waitQ
+      -- (5.1 AH, tranche 2) the next day: the loot sells ~12 / day (scans of the previous days), and a competitor
+      -- undercuts two of the player's items by 2 pa — the « Annuler » queue, hammered like the others: 10 cancels
+      do
+        local day = math.floor(M.serverTime / 86400)
+        for i = 1, 6 do
+          local id, h, sl = 302000 + i, {}, {}
+          for k = 5, 2, -1 do
+            for _, v in ipairs({ day - k, 820 + i * 10, 830 + i * 10, 80, 2, 10, 12 }) do h[#h + 1] = v end
+            sl[#sl + 1] = day - k sl[#sl + 1] = 6
+          end
+          local rec = A.RealmData().items[id] or {}
+          for _, v in ipairs(rec.h or {}) do h[#h + 1] = v end
+          rec.h, rec.sl = h, sl
+          A.RealmData().items[id] = rec
+        end
+        local aid = 490000
+        for i = 1, 2 do aid = aid + 1 M.ah.list[#M.ah.list + 1] = { id = 302000 + i, count = 20, buyout = (790 + i * 10) * 20, owner = "Rival", auctionID = aid } end
+      end
+      wait(75)                                           -- my auctions are re-read (2 s after the last post, throttle permitting)
+      M.Hw(D.frame.scan.Click, D.frame.scan)            -- full scan on cooldown: targeted re-read of what I trade
+      for _ = 1, 600 do wait(1) if not A.mini and not D.cb and D.CancelHead() then break end end
+      hv.cxl = #D.cxlQ
+      if opts.verbose then
+        io.write(("  hv cancel dbg: owned %d (mock %d), cxlQ %d\n"):format(#(A.owned or {}), #M.ah.owned, #D.cxlQ))
+        for i, a in ipairs(A.owned or {}) do
+          if i <= 30 and (a.id == 302001 or a.id == 302002) then
+            local e, st, why = D._CancelEntry(A, a, D.Rules())
+            local it = A.cur[a.id]
+            io.write(("  hv owned %s x%s @%s: %s %s %s (cur t-%s, low %s)\n"):format(tostring(a.id), tostring(a.count), tostring(a.unit),
+              tostring(e and e.gain), tostring(st), tostring(why), tostring(it and (M.serverTime - it.t)), tostring(it and it.listings[1] and it.listings[1].unit)))
+          end
+        end
+      end
+      for _ = 1, 400 do
+        if D.sess.cancels >= 10 or not (D.CancelHead() or D.cb or A.mini) then break end
+        if D.CancelHead() then M.Hw(Tm.AuctionNext) end
+        wait(6)
+      end
+      hv.cancels = D.sess.cancels
       if opts.verbose then
         local nb = 0
         for b = 1, 3 do for sl = 1, 10 do if M.bags[b] and M.bags[b].slots[sl] then nb = nb + 1 io.write(("  hv left in bags: %d/%d id %s x%s\n"):format(b, sl, tostring(M.bags[b].slots[sl].id), tostring(M.bags[b].slots[sl].count))) end end end
@@ -870,7 +909,8 @@ return function(X)
     hv.atEnd = hv.work()
     if hv.D then
       X.note = X.note or function() end
-      io.write(("hv session: queue %s, buys %s, posts %s, skipped %s\n"):format(tostring(hv.queue), tostring(hv.buys), tostring(hv.posts), tostring(hv.D.sess.skipped)))
+      io.write(("hv session: queue %s, buys %s, posts %s, cancels %s (queue %s), skipped %s\n"):format(tostring(hv.queue), tostring(hv.buys),
+        tostring(hv.posts), tostring(hv.cancels), tostring(hv.cxl), tostring(hv.D.sess.skipped)))
       if opts.verbose then for _, l in ipairs(hv.D.log) do io.write("  hv log: ", l, "\n") end end
       if opts.verbose then for _, w in ipairs(hv.wait or {}) do io.write("  hv wait: ", tostring(w.name), " ", tostring(w.why), "\n") end end
       if not hv.closedAt then X.fail("hv: the session did not finish")
@@ -880,6 +920,7 @@ return function(X)
       end
       if (hv.buys or 0) < 30 then X.fail(("hv: only %s purchases out of 30"):format(tostring(hv.buys))) end
       if (hv.posts or 0) < 30 then X.fail(("hv: only %s posts out of 30"):format(tostring(hv.posts))) end
+      if (hv.cancels or 0) < 10 then X.fail(("hv: only %s cancels out of 10"):format(tostring(hv.cancels))) end
     end
   end
 
