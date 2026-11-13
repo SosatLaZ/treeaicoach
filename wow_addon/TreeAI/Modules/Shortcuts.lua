@@ -319,6 +319,13 @@ function S.KeyText(k)
   return (tostring(k):gsub("SHIFT%-", "Maj-"):gsub("CTRL%-", "Ctrl-"):gsub("ALT%-", "Alt-"))
 end
 function S.KeyOf(cmd) local k = bindKey(cmd) return k and S.KeyText(k) or nil end
+--- la touche telle qu'elle tient dans le coin d'un bouton : « Alt-1 » ; au-delà de 6 lettres, modificateurs en une
+--- lettre (« Ctrl-Maj-3 » → « C-M-3 ») — l'infobulle garde le nom entier
+function S.KeyShort(text)
+  if type(text) ~= "string" then return nil end
+  if ulen(text) <= 6 then return text end
+  return (text:gsub("Ctrl%-", "C-"):gsub("Maj%-", "M-"):gsub("Alt%-", "A-"):gsub("Cmd%-", "D-"))
+end
 --- liaisons de la bande encore sans touche (celles d'un bouton absent — pas de métier — ne comptent pas)
 function S.MissingKeys()
   local out = {}
@@ -1235,7 +1242,7 @@ function S.LayoutStrip(compact)
         local b = button(st.id)
         if b then
           b:SetLayout(compact and "icon" or "tile")
-          b:Set({ icon = st.icon, label = st.label, key = showKeys and st.key or false, count = st.count,
+          b:Set({ icon = st.icon, label = st.label, key = showKeys and S.KeyShort(st.key) or false, count = st.count,
             active = st.active, disabled = st.disabled })
           local w = b:Fit(compact and t.compact or t.w)
           meth(b, "ClearAllPoints")
@@ -1299,7 +1306,7 @@ function S.Paint()
   for _, st in ipairs(S.lastState or {}) do
     local b = btns[st.id]
     if b then
-      b:Set({ icon = st.icon, label = st.label, key = showKeys and st.key or false, count = st.count, active = st.active, disabled = st.disabled })
+      b:Set({ icon = st.icon, label = st.label, key = showKeys and S.KeyShort(st.key) or false, count = st.count, active = st.active, disabled = st.disabled })
     end
   end
   if pill and not S.compact then pill:SetOn(guideOn) end

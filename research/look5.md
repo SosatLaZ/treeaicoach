@@ -330,7 +330,7 @@ RECHERCHE « erreurs » : Page : Réglages → Outils | Réglage : Autotest → 
    Tu joues : Chasseur niveau 30. / Spécialisation : inconnue pour l'instant (TreeAI la lira sur tes talents, jamais au hasard). / TreeAI règle là-dessus ses conseils d'équipement, de talents et de macros. / Ta prochaine étape : …
    boutons : [C'est bien ça] [Ce n'est pas ça…]
 étape 2 — Bienvenue dans TreeAI  2/3 · Ce que TreeAI affiche
-   Choisis un profil : / Et ce que tu veux voir à l'écran (tout se change dans Réglages → Affichage) :
+   Choisis un profil : / Et ce que tu veux voir à l'écran (tout se change dans Réglages, page Affichage) :
    boutons : [> Simple <] [Complet] [Guidage quêtes : ON] [Bande d'actions : ON] [Boussole : ON] [Icônes de quêtes : ON]
 étape 3 — Bienvenue dans TreeAI  3/3 · Tes touches
    Une touche par action rapide (en vert : déjà posée). / Alt-1 Rendre  ·  Alt-2 Prendre  ·  Alt-3 Suivant  ·  Alt-4 Zone  ·  Alt-5 Groupe  ·  Alt-6 Vite  ·  Alt-7 TreeAI  ·  Alt-8 Action suivante  ·  Alt-9 Sacs  ·  Alt-0 Équipem…
@@ -348,11 +348,26 @@ familier) ni Maj-1…6. « Action suivante » = la chose la plus utile d'après 
 quêtes finies → les rendre ; plus rien à rendre → retour à la zone ; rien en cours et des quêtes à prendre → les prendre ;
 sinon rien (« continue ton étape »). Jamais « Suivant » tout seul (ça saute un arrêt : choix du joueur).
 
-## 7. Coût
+## 7. Coût (session simulée, `tests/wow/session_sim.lua`)
 
 Bande : aucun OnUpdate, aucune minuterie au repos ; événements regroupés (≥ 0,3 s ; `T:OnQuestLog` du cœur s'il existe) ;
-peinture différentielle (`b:Set` ne touche que ce qui change), disposition seulement si un mot change.
+peinture différentielle (`b:Set` ne touche que ce qui change), disposition seulement si un mot change ; UN bouton par
+action qui change de forme (mots ↔ icônes : pas de 2e jeu de boutons) ; à la connexion / au `/reload` les boutons sont
+créés 3 par image (1re version : 10 boutons d'un coup = pire image 121 kinstr > budget 115 ; maintenant 107 = la base) ;
+le placement mesure chaque forme une fois (tailles gardées) au lieu de redisposer à chaque essai.
+Mesuré (WARRIOR / modern / essentiel, 60 min) : pire image 107 kinstr (base 107), connexion 97 (base 96). Au repos
+(HUNTER / forever / sur, 10 min) : Shortcuts < 1 kinstr/min, Window 1 (comme la base). Les dépassements restants de
+`test_session_sim[HUNTER-forever-sur*]` (Core, Export, PathDraw…) existaient sur la base et ne sont pas dans mes fichiers.
 Fenêtre : rien quand elle est fermée ; ouverte : la page visible seulement, ≤ 1 rendu / s, cadres recyclés.
+
+### Hors de mes fichiers (petits morceaux gardés)
+- `Core.lua` : la ligne `MODULE_INFO.Shortcuts` (description de la fonction).
+- Scénarios d'autres zones mis à jour pour la nouvelle bande / navigation / page Quêtes / assistant : `uiredo`, `layout`,
+  `menu`, `qaui`, `qaui_first`, `fix42`, `polish`, `see41`, `zonepick`, `coach` (une ligne chacun ou presque) + `test_layout.py`,
+  `test_fix42.py`.
+- Pages à onglets des autres modules (HV, Conseils, Talents…) : leurs 3 premières lignes « commande » deviennent
+  automatiquement les grosses tuiles du haut (`W.RenderTab`) ; `icon` / `sub` sur la ligne = icône / sous-titre de la tuile.
+- Une page inscrite `hidden = true, parent = "hv"` avec un id de la navigation (`bags`) y prend quand même sa place.
 
 ## 8. Pas fait / à vérifier dans le vrai jeu
 
@@ -364,3 +379,8 @@ Fenêtre : rien quand elle est fermée ; ouverte : la page visible seulement, �
   l'alerte ne suit qu'à la suivante.
 - Les pages Équipement / Sacs / Métiers / Groupe gardent leur contenu actuel : leurs agents les remplissent (tuiles `top`).
 - Le libellé « Mode sûr » reste dans les lignes du cœur (page Fonctions) ; la fenêtre dit « Profil Simple (mode sûr) ».
+- Le réglage en 3 étapes est reproposé UNE fois aux joueurs qui avaient fini l'ancien assistant (`db.setupV = 5`).
+- Fenêtre rouverte pendant son fondu de fermeture (0,12 s) : elle reste ouverte (avant : elle se refermait seule).
+- Pas fait : alerte déplacée par le placement du cœur (elle est seulement reposée sous la boussole à chaque alerte) ;
+  rendu « différentiel » des lignes de la fenêtre (elle redessine la page visible au plus 1 fois / s, comme avant) ;
+  pastilles de « Sacs » / « Équipement » (aux modules, par `S.SetAction`) ; captures dans le vrai client.

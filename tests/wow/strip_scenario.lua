@@ -374,6 +374,8 @@ return function(M, ctx)
   out("avec touches : " .. table.concat(dump, " · "))
   check(dump[2]:find("[Alt-1]", 1, true) and dump[4]:find("[Ctrl-Maj-3]", 1, true), "touche affichée sur chaque bouton")
   check(B.rendre.keyText:GetText() == "Alt-1", "petite touche sur le bouton")
+  check(B.suivant.keyText:GetText() == "C-M-3" and S.KeyShort("Ctrl-Maj-3") == "C-M-3", "touche longue abrégée dans le coin (« C-M-3 »), entière dans l'infobulle")
+  check(tipOf(B.suivant):find("Ctrl-Maj-3", 1, true), "infobulle : la touche entière")
   -- a 2nd click changes nothing (already bound)
   local before = M.bindings.TREEAI_QB_TURNIN
   S.SuggestKeys()
