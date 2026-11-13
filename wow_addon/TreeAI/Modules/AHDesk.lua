@@ -24,9 +24,9 @@ local G = _G
 
 local M = T:RegisterModule("AHDesk", {
   title = "Achat-revente (HV)",
-  description = "À l'hôtel des ventes : files « Acheter » et « Poster » (un clic = une action), gain sûr ou probable, journal et objectif du jour.",
-  defaults = { enabled = true, dock = true, goal = 50, sharePct = 50, itemPct = 20, minNetPa = 1, marginPct = 15 },
-  charDefaults = { ev = {}, open = {}, posts = {}, names = {}, seen = {}, ahTime = {} },
+  description = "À l'hôtel des ventes : files « Acheter », « Annuler » et « Poster » (un clic = une action), gain sûr ou probable, journal et objectif du jour.",
+  defaults = { enabled = true, dock = true, goal = 50, sharePct = 50, itemPct = 20, minNetPa = 1, marginPct = 15, reset = true, resetCapPo = 3 },
+  charDefaults = { ev = {}, open = {}, posts = {}, names = {}, seen = {}, ahTime = {}, cxl = {} },
   options = {
     { key = "dock", type = "toggle", label = "Panneau collé à la fenêtre de l'HV (Acheter / Poster)" },
     { key = "goal", type = "range", label = "Objectif de gain par jour (po)", min = 5, max = 500, step = 5 },
@@ -34,6 +34,8 @@ local M = T:RegisterModule("AHDesk", {
     { key = "itemPct", type = "range", label = "Part max de ton or dans un même objet (%)", min = 5, max = 50, step = 5 },
     { key = "minNetPa", type = "range", label = "Gain net minimal par clic (pa)", min = 1, max = 100, step = 1 },
     { key = "marginPct", type = "range", label = "Marge minimale d'un achat-revente à l'HV (% de la mise)", min = 5, max = 50, step = 5 },
+    { key = "reset", type = "toggle", label = "Proposer de « réguler » un petit marché (racheter le mur bas d'un objet bon marché)" },
+    { key = "resetCapPo", type = "range", label = "Plafond d'un mur à racheter pour réguler (po)", min = 1, max = 50, step = 1 },
   },
 })
 T.AHDesk = M
@@ -110,6 +112,7 @@ local function rules()
   R.minNet = max(1, n0(cfg("minNetPa", 1))) * 100
   R.marginPct = max(1, n0(cfg("marginPct", 15)))
   R.sharePct, R.itemPct = n0(cfg("sharePct", 50)), n0(cfg("itemPct", 20))
+  R.resetCap = max(1, n0(cfg("resetCapPo", 3))) * 10000
   return R
 end
 M.Rules = rules
@@ -224,6 +227,11 @@ local function mailOne(i, A)
     if id then takePost(id, n) end
     M.Note("sale", e)
   else
+    if kind ~= "expired" and id and n0(ch.cxl[id]) > 0 then   -- annulée par un clic TreeAI : déjà comptée à l'annulation
+      ch.cxl[id] = n0(ch.cxl[id]) - n
+      if ch.cxl[id] <= 0 then ch.cxl[id] = nil end
+      return
+    end
     local dep = id and takePost(id, n) or 0
     M.Note(kind == "expired" and "exp" or "cancel", { id = id, name = nm, n = n, dep = dep, src = "courrier" })
   end
@@ -291,7 +299,7 @@ end
 M.all, M.buyQ, M.postQ, M.waitQ = {}, {}, {}, {}
 M.sessPosted = {}   -- [id] = { n = unités postées cette visite, low = mon prix le plus bas }
 M.touched = {}   -- [id] = heure de mon dernier achat : les annonces lues avant ne valent plus pour poster
-M.sess = { buys = 0, spent = 0, expect = 0, posts = 0, skipped = 0 }
+M.sess = { buys = 0, spent = 0, expect = 0, posts = 0, skipped = 0, cancels = 0 }
 
 local function vendorSure(A, id)
   local v = num((select(11, A.ItemInfo(id))))
@@ -342,7 +350,14 @@ local function evidenceOf(A, id, liq)
   local r = A.RealmData()
   local rec = r and r.items[id]
   local why = liq.reasons and liq.reasons[1] and liq.reasons[1].text
-  return { ok = liq.ok and true or false, why = why, days = n0(liq.days), scans = n0(liq.scans), hours = n0(liq.hours),
+  -- preuves refusées SEULEMENT pour « trop peu de vendeurs » (et « prix en chute » : le mur bas du jour tire la médiane)
+  local only = not liq.ok and type(liq.reasons) == "table" and #liq.reasons > 0
+  local reset = only
+  for _, r in ipairs(type(liq.reasons) == "table" and liq.reasons or {}) do
+    if r.code ~= "sellers" then only = false end
+    if r.code ~= "sellers" and r.code ~= "falling" then reset = false end
+  end
+  return { ok = liq.ok and true or false, why = why, onlySellers = only or nil, resetOnly = reset or nil, days = n0(liq.days), scans = n0(liq.scans), hours = n0(liq.hours),
     sold = liq.sold, sellers = n0(liq.sellers), volPct = floor(n0(liq.vol) * 100 + 0.5),
     ageH = rec and max(0, (now() - n0(rec.last)) / 3600) or 9999 }
 end
@@ -376,15 +391,19 @@ local function dealsFor(A, id, rows, t, live)
     -- pré-filtre gratuit : assez de jours d'historique et l'annonce la moins chère sous la dernière médiane vue
     if h and #h >= 7 * R.minDays and rows[1].unit < n0(h[#h - 4]) then
       local liq = A.Liq(id)
-      if type(liq) == "table" and liq.ok and n0(liq.market) > 0 then
+      if type(liq) == "table" and n0(liq.market) > 0 then
         if com == nil then com = commodityOf(id) end
-        if com ~= nil then
-          evd = evidenceOf(A, id, liq)
-          local listed = ownedOf(A, id)
+        evd = com ~= nil and evidenceOf(A, id, liq) or nil
+        if evd and (liq.ok or ((evd.onlySellers or evd.resetOnly) and cfg("reset", true))) then
+          local listed, mineLow = ownedOf(A, id)
           local held = bagCount(id) + listed
-          out = X.flipDeals({ id = id, rows = rows, market = floor(liq.market * (1 - n0(liq.vol) / 2)), sold = liq.sold,
+          local o = { id = id, rows = rows, market = floor(liq.market * (1 - n0(liq.vol) / 2)), sold = liq.sold,
             ahead = listed, maxQty = floor(n0(liq.sold) * R.maxDays) - held, vendorUnit = vend or 0, hours = hoursOf(A),
-            neutral = A.IsNeutral(), depPm = M.db and M.db.depPm and M.db.depPm[hoursOf(A)], commodity = com, ev = evd }, R)
+            neutral = A.IsNeutral(), depPm = M.db and M.db.depPm and M.db.depPm[hoursOf(A)], commodity = com, ev = evd,
+            mineLow = mineLow, more = #rows > R.rows }
+          if liq.ok then out = X.flipDeals(o, R) end
+          -- (tranche 2) un petit marché bon marché tenu par peu de vendeurs : racheter TOUT le mur bas, seuils explicites
+          if (not out or #out == 0) and cfg("reset", true) then out = X.resetDeals(o, R) end
         end
       end
     end
@@ -454,6 +473,7 @@ function M.BuildStep()
   M.all, M.built = keep, now()
   M.Allocate()
   M.BuildPosts()
+  M.BuildCancels()
   M.Refresh()
   M.Prefetch()
 end
@@ -524,6 +544,11 @@ function M.OnSearchRows(id, rows, commodity)
   if not A then return end
   local mine = M.search and M.search.id == id
   if mine then M.search = nil end
+  -- ce que le vrai client donne : les noms des vendeurs des AUTRES dans une recherche (la régulation en a besoin)
+  local known, unk = 0, 0
+  for _, r in ipairs(rows) do if r.owner == nil then if r.seller then known = known + 1 else unk = unk + 1 end end end
+  if known > 0 then diag("sellerNamesKnown") end
+  if unk > 0 then diag("sellerNamesMissing") end
   local wanted = mine
   if not wanted then for _, d in ipairs(M.all) do if d.id == id and not d.state then wanted = true break end end end
   if wanted then M.Live(id, rows, commodity and true or false) end
@@ -533,6 +558,11 @@ function M.OnSearchRows(id, rows, commodity)
   if not dirty then for _, p in ipairs(M.postQ) do if p.id == id and not p.state then dirty = true break end end end
   if not dirty then for _, p in ipairs(M.waitQ) do if p.id == id then dirty = true break end end end
   if dirty and not A.mini then if M.pb then M.postsDirty = true else M.BuildPosts() end end   -- (relecture ciblée : refait à sa fin)
+  if not A.mini then
+    local mineToo = false
+    for _, a in ipairs(A.owned or {}) do if a.id == id and a.state ~= "cancelled" then mineToo = true break end end
+    if mineToo then if M.cb then M.cxlDirty = true else M.BuildCancels() end end
+  end
   M.Refresh()
   T:After(0, M.Prefetch)
 end
@@ -665,6 +695,113 @@ function M.PostHead()
   return nil
 end
 
+-- ===================================================================== file « Annuler » (ventes dépassées)
+-- Une de MES ventes a un concurrent moins cher : l'annuler (son dépôt est perdu) puis la reposter vaut-il le coup ?
+-- Seulement avec des ventes mesurées (preuves), des prix lus il y a ≤ 10 min, un nouveau prix ≥ plancher, et un gain
+-- espéré ≥ max(gain minimal, 5 % du net reposté) — calcul exact dans AHMath.cancelGain.
+M.cxlQ = {}
+local function depositOfMine(id, n, unit)
+  local ch = char()
+  for _, l in ipairs(ch and ch.posts[id] or {}) do
+    if n0(l.n) == n and n0(l.u) == unit then return n0(l.dep), true end
+  end
+  return nil, false
+end
+local function cancelEntry(A, a, R)
+  local id = a.id
+  if not (id and a.auctionID) or a.state == "cancelled" then return nil end
+  if A.Odd and try(A.Odd, id) then return nil end
+  local it = A.cur[id]
+  if not it or now() - n0(it.t) > 600 or M.touched[id] then return nil, "check" end
+  local com = commodityOf(id)
+  if com == nil then return nil end
+  local n, my = max(1, n0(a.count)), n0(a.unit)
+  local rows = rowsOf(A, id, it.listings, R, true)   -- les AUTRES (mes annonces écartées)
+  local low = rows[1] and rows[1].unit
+  if not low or low >= my then return nil end        -- pas dépassée
+  local liq = A.Liq(id)
+  if type(liq) ~= "table" or n0(liq.market) <= 0 then return nil, "keep", "prix habituel inconnu" end
+  local ev = evidenceOf(A, id, liq)
+  if X.evidence(ev, R, "sellers") ~= "probable" then return nil, "keep", "ventes pas assez prouvées pour perdre un dépôt" end
+  local normal = floor(liq.market)
+  if low < floor(normal * (100 - R.maxVolPct) / 100) then return nil, "keep", "le moins cher est anormalement bas : attends" end
+  local hrs, neutral = hoursOf(A), A.IsNeutral()
+  local vend = vendorSure(A, id) or 0
+  local dep2
+  local ah = AH()
+  if com and ah and type(ah.CalculateCommodityDeposit) == "function" then dep2 = num(try(ah.CalculateCommodityDeposit, id, durIndex(hrs), n)) end
+  dep2 = dep2 and floor(dep2) or X.deposit(vend, n, hrs, neutral, M.db and M.db.depPm and M.db.depPm[hrs])
+  local cost = lotCost(id, n) or vend * n
+  local pm0 = X.sellPm(liq.sold, 0, n, hrs) or 500
+  local fl = X.floorUnit(cost, n, dep2, pm0, neutral, X.need(cost, R.minNet, R.marginPct))
+  local new, how, why = X.postUnit({ floor = fl, low = low, normal = normal, undercutPct = A.db and A.db.undercutPct })
+  if not new then return nil, "keep", why end
+  local aheadKeep, aheadNew = 0, 0
+  for _, r in ipairs(rows) do
+    if r.unit < my then aheadKeep = aheadKeep + n0(r.count) end
+    if r.unit < new then aheadNew = aheadNew + n0(r.count) end
+  end
+  local dep, exact = depositOfMine(id, n, my)
+  if not dep then dep = X.deposit(vend, n, hrs, neutral, M.db and M.db.depPm and M.db.depPm[hrs]) end
+  local cc = ah and type(ah.GetCancelCost) == "function" and num(try(ah.GetCancelCost, a.auctionID)) or nil
+  if cc then diag("cancelCost", cc) end
+  local gain, keepV, cxlV = X.cancelGain({ my = my, n = n, dep = dep, aheadKeep = aheadKeep, new = new, aheadNew = aheadNew,
+    dep2 = dep2, cost = cc or 0, sold = liq.sold, hours = hrs, neutral = neutral })
+  if not gain then return nil, "keep", "ventes non mesurées" end
+  if gain < X.cancelNeed(new, n, neutral, R) then return nil, "keep", "annuler ne rapporte pas assez" end
+  return { auctionID = a.auctionID, id = id, name = itemName(id), n = n, my = my, low = low, new = new, how = how, floor = fl,
+    dep = dep, depExact = exact, dep2 = dep2, cost = cc or 0, gain = gain, keepV = keepV, cxlV = cxlV, commodity = com, t = it.t }
+end
+M._CancelEntry = cancelEntry
+local CXL_N = 6
+--- file « Annuler » refaite en fond (6 de mes ventes par image)
+function M.BuildCancels()
+  local A = auc()
+  if not (A and M.ahOpen) then return false end
+  local first = M.cb == nil
+  M.cb = { i = 0, out = {}, check = {} }
+  if first then T:Spread(M, M.CancelStep) end
+  return true
+end
+function M.CancelStep()
+  local b, A = M.cb, auc()
+  if not (b and A and M.ahOpen) then M.cb = nil return end
+  local R = rules()
+  local owned = A.owned or {}
+  local total = min(#owned, 200)
+  local last = min(total, b.i + CXL_N)
+  for i = b.i + 1, last do
+    local e, state = cancelEntry(A, owned[i], R)
+    if e then b.out[#b.out + 1] = e elseif state == "check" and owned[i].id then b.check[owned[i].id] = true end
+  end
+  b.i = last
+  if last < total then T:Spread(M, M.CancelStep) return end
+  M.cb = nil
+  table.sort(b.out, function(x, y) if x.gain ~= y.gain then return x.gain > y.gain end return n0(x.auctionID) < n0(y.auctionID) end)
+  M.cxlQ = b.out
+  local ids = {}
+  M.checked = M.checked or {}
+  for id in pairs(b.check) do
+    if clock() - n0(M.checked[id] or -999) > 60 then ids[#ids + 1] = id M.checked[id] = clock() end
+  end
+  if #ids > 0 and not A.mini and not A.job and A.ScanTargets then table.sort(ids) A.ScanTargets(ids) end
+  M.Refresh()
+  if M.cxlDirty then M.cxlDirty = nil M.BuildCancels() end
+end
+function M.CancelHead()
+  for _, e in ipairs(M.cxlQ) do if not e.state then return e end end
+  return nil
+end
+--- la liste de mes ventes est relue par le jeu (non protégé, au rythme du limiteur) : après mes mises en vente
+function M.QueryOwned()
+  local a = AH()
+  if not (a and M.ahOpen and type(a.QueryOwnedAuctions) == "function") or M.pend then return false end
+  if not ready() then return false end
+  M.ownedWanted = nil
+  try(a.QueryOwnedAuctions, {})
+  return true
+end
+
 -- ===================================================================== actions (UN appel protégé par clic)
 local function refuse()
   if not M.ahOpen then say("Ouvre l'hôtel des ventes d'abord.") return true end
@@ -691,6 +828,13 @@ function M.Resolve(ok, why)
   end
   if ok == nil then
     if p.kind == "buy" then ok = (p.money - gold()) == p.paid
+    elseif p.kind == "cancel" then
+      local a = AH()
+      ok = a ~= nil and type(a.GetNumOwnedAuctions) == "function"   -- plus dans la liste du jeu = annulée
+      for i = 1, ok and min(n0(try(a.GetNumOwnedAuctions)), 200) or 0 do
+        local r = try(a.GetOwnedAuctionInfo, i)
+        if type(r) == "table" and r.auctionID == p.e.auctionID and n0(r.status) == 0 then ok = false break end
+      end
     else
       local item = API.BagItem and API.BagItem(p.e.bag, p.e.slot)
       ok = (not item or item.itemID ~= p.e.id or n0(item.count) < p.e.count) and gold() <= p.money
@@ -715,6 +859,26 @@ function M.Resolve(ok, why)
       say(fmt("%s : achat non confirmé par le jeu (%s). Rien n'est compté.", d.name, why or "refus"))
     end
     M.Allocate()
+  elseif p.kind == "cancel" then
+    local e = p.e
+    if ok then
+      e.state = "done"
+      M.sess.cancels = M.sess.cancels + 1
+      local ch = char()
+      local dep = takePost(e.id, e.n)
+      if dep <= 0 then dep = e.dep end
+      M.Note("cancel", { id = e.id, name = e.name, n = e.n, dep = dep + n0(e.cost), src = "clic" })
+      if ch then ch.cxl[e.id] = n0(ch.cxl[e.id]) + e.n end   -- le courrier « annulée » qui suivra est déjà compté
+      local A = auc()
+      for _, a in ipairs(A and A.owned or {}) do if a.auctionID == e.auctionID then a.state = "cancelled" end end
+      local sp = M.sessPosted[e.id]
+      if sp then sp.n = max(0, sp.n - e.n) end
+      say(fmt("Annulée : %s ×%d (dépôt %s perdu). Elle revient par courrier ; « Poster » la remettra à ~%s l'unité.", e.name, e.n,
+        money(dep + n0(e.cost)), money(e.new)))
+    else
+      e.state, e.why = "skip", why or "refusé par le jeu"
+      say(fmt("%s : annulation non confirmée par le jeu (%s). Rien n'est compté.", e.name, why or "refus"))
+    end
   else
     local e = p.e
     if ok then
@@ -733,6 +897,9 @@ function M.Resolve(ok, why)
       M.sessPosted[e.id] = sp
       for _, o in ipairs(M.postQ) do if o.bag == e.bag and o.slot == e.slot then o.state = "done" end end   -- file refaite entre-temps
       if M.pb then M.postsDirty = true end
+      -- la liste de mes ventes est relue 2 s après la dernière mise en vente (file « Annuler »), au rythme du limiteur
+      M.ownedWanted, M.ownedAt = true, clock() + 2
+      T:After(2.1, function() if M.ahOpen and M.ownedWanted and clock() >= n0(M.ownedAt) then M.QueryOwned() end end)
       say(fmt("En vente : %s ×%d à %s l'unité (dépôt %s).", e.name, e.qty, money(e.unit), money(e.dep)))
     else
       e.state, e.why = "skip", why or "refusé par le jeu"
@@ -741,6 +908,45 @@ function M.Resolve(ok, why)
   end
   M.Refresh()
   T:After(0, M.Prefetch)
+end
+
+--- « Annuler » : UNE annulation protégée par clic, la vente dépassée qui rapporte le plus à reposter
+function M.CancelClick()
+  if refuse() then return false end
+  local A = auc()
+  local e = M.CancelHead()
+  if not (A and e) then say("Aucune vente dépassée à annuler.") return false end
+  if not ready() then say("Le jeu digère l'action précédente : reclique.") return false end
+  local owned
+  for _, a in ipairs(A.owned or {}) do if a.auctionID == e.auctionID and a.state ~= "cancelled" then owned = a end end
+  if not owned then e.state = "skip" say(fmt("%s : déjà vendue ou retirée.", e.name)) M.Refresh() return false end
+  local it = A.cur[e.id]
+  if not it or n0(it.t) ~= n0(e.t) then
+    -- prix relus depuis le calcul : l'entrée est refaite avant d'agir
+    local n2, state = cancelEntry(A, owned, rules())
+    if not n2 then
+      e.state = "skip"
+      if state == "check" and A.ScanTargets and not A.mini and not A.job then A.ScanTargets({ e.id }) say(fmt("%s : je relis les prix… reclique.", e.name))
+      else say(fmt("%s : annuler ne vaut plus le coup, gardée.", e.name)) end
+      M.Refresh()
+      return false
+    end
+    for k, v in pairs(n2) do e[k] = v end
+  elseif now() - n0(it.t) > 600 then
+    if A.ScanTargets and not A.mini and not A.job then A.ScanTargets({ e.id }) end
+    say(fmt("%s : prix trop vieux, je les relis… reclique.", e.name))
+    return false
+  end
+  local a = AH()
+  if type(a.CanCancelAuction) == "function" and try(a.CanCancelAuction, e.auctionID) == false then
+    e.state = "skip"
+    say(fmt("%s : le jeu refuse l'annulation de cette vente.", e.name))
+    M.Refresh()
+    return false
+  end
+  arm({ kind = "cancel", e = e, money = gold() })
+  try(a.CancelAuction, e.auctionID)                            -- action protégée : dans le clic du joueur
+  return true
 end
 
 function M.BuyClick()
@@ -828,6 +1034,7 @@ end
 --- « Action suivante » (bouton ou touche) : au plus UNE action protégée par appui
 function M.Next()
   if M.BuyHead() then return M.BuyClick() end
+  if M.CancelHead() then return M.CancelClick() end
   if M.PostHead() then return M.PostClick() end
   if refuse() then return false end
   say(M.built and "Rien à faire : aucune affaire, rien à poster." or "Scanne d'abord : clique « Scanner ».")
@@ -851,10 +1058,11 @@ function M.ScanClick()
   return ok and true or false
 end
 function M.Counts()
-  local b, p = 0, 0
+  local b, p, c = 0, 0, 0
   for _, d in ipairs(M.buyQ) do if not d.state or d.state == "confirm" then b = b + 1 end end
   for _, e in ipairs(M.postQ) do if not e.state then p = p + 1 end end
-  return b, p, #M.waitQ
+  for _, e in ipairs(M.cxlQ) do if not e.state then c = c + 1 end end
+  return b, p, #M.waitQ, c
 end
 
 -- réponses du jeu
@@ -915,10 +1123,26 @@ function M.DealText(d)
     return fmt("Acheter %s ×%d pour %s → revendre au MARCHAND %s. Gain sûr : +%s (aucun frais).", d.name, d.qty, money(d.buy),
       money(d.gross), money(d.net))
   end
+  if d.kind == "reset" then
+    return fmt("Réguler %s : racheter tout le mur bas (%d unités, %d annonce%s, %d vendeur%s) pour %s → reposter à %s l'unité. Gain probable : +%s après commission et dépôts, ~%s j. %s",
+      d.name, n0(d.wallQty), n0(d.wallRows), n0(d.wallRows) > 1 and "s" or "", n0(d.sellers), n0(d.sellers) > 1 and "s" or "",
+      money(d.wallBuy), money(d.sellUnit), money(d.groupNet), dec(d.days), M.RiskText(d))
+  end
   local ev = d.ev or {}
   return fmt("Acheter %s ×%d pour %s → revendre à l'HV %s l'unité. Frais : commission %s, dépôts perdus prévus %s. Gain probable : +%s, vendu en ~%s j (%d j de preuves, ~%s ventes/j).",
     d.name, d.qty, money(d.buy), money(d.sellUnit), money(d.cut), money(d.depLoss), money(d.net), dec(d.days), n0(ev.days),
     dec(ev.sold))
+end
+--- le risque d'une régulation, en une ligne
+function M.RiskText(d)
+  local w = n0(d.worst)
+  return fmt("Risque : un autre vendeur peut reposter sous ton prix ; au pire, revendu au marchand : %s.",
+    w >= 0 and ("+" .. money(w)) or ("perte " .. money(-w)))
+end
+function M.CancelText(e)
+  if not e then return nil end
+  return fmt("Annuler %s ×%d (%s l'unité, dépassée à %s) : dépôt perdu %s%s, reposter à %s → +%s espéré de plus qu'en attendant.",
+    e.name, e.n, money(e.my), money(e.low), money(e.dep + n0(e.cost)), e.depExact and "" or " (estimé)", money(e.new), money(e.gain))
 end
 local HOW = { undercut = "juste sous le moins cher", match = "au prix de ta vente en cours", normal = "au prix habituel (personne d'autre)" }
 function M.PostText(e)
@@ -951,10 +1175,10 @@ function M.CapitalLine()
     reserve > 0 and (" · réserve " .. money(reserve)) or "")
 end
 function M.Summary()
-  local b, p, w = M.Counts()
+  local b, p, w, c = M.Counts()
   local r = M.Realized()
   local budget, g, tied = M.Budget()
-  return { buy = b, post = p, wait = w, today = r.today, week = r.week, total = r.total, goal = max(0, n0(cfg("goal", 50))) * 10000,
+  return { buy = b, post = p, wait = w, cancel = c, today = r.today, week = r.week, total = r.total, goal = max(0, n0(cfg("goal", 50))) * 10000,
     tied = tied, free = budget, gold = g, perHour = M.PerHour(), planNet = M.planNet, open = M.ahOpen and true or false }
 end
 
@@ -968,7 +1192,7 @@ function M.PageHead(Ly)
   local r = M.Realized()
   Ly.text(fmt("7 jours : %s%s · %s", r.week >= 0 and "+" or "", money(r.week), M.CapitalLine()), "S", "muted")
   if not M.ahOpen then
-    Ly.text("À l'HV, le panneau « Achat-revente » se colle à la fenêtre : Acheter · Poster · Action suivante (un clic = une action).", "S", "muted")
+    Ly.text("À l'HV, le panneau « Achat-revente » se colle à la fenêtre : Acheter · Poster · Annuler · Action suivante (un clic = une action).", "S", "muted")
   end
 end
 function M.PageDeals(Ly)
@@ -990,7 +1214,186 @@ function M.PageDeals(Ly)
   end
 end
 
--- ===================================================================== panneau collé à l'HV (ancré, jamais parenté)
+-- ===================================================================== marges d'artisanat (tes métiers)
+-- Ce que TU sais fabriquer (recettes lues, sinon celles de ton rang), composants payés au prix lu (marchand : prix exact ;
+-- HV : coût des unités les moins chères à l'instant, sinon prix habituel de tes scans), revente au prix habituel prudent,
+-- commission et dépôts perdus déduits. Seulement « probable » (ventes prouvées de l'objet fabriqué).
+local function matCost(A, id, q, R)
+  local Dd = T.Data and T.Data.Recipes
+  local v = Dd and Dd.mats and Dd.mats[id]
+  if type(v) == "table" and v[3] == 1 and n0(v[2]) > 0 then return n0(v[2]) * q, "marchand" end
+  local it = A.cur[id]
+  if it and now() - n0(it.t) <= R.maxAgeH * 3600 then
+    local c = X.buyCost(rowsOf(A, id, it.listings, R, true), q)
+    if c then return c, "HV" end
+  end
+  local liq = A.Liq(id)
+  if type(liq) == "table" and liq.ok and n0(liq.market) > 0 then return floor(liq.market) * q, "habituel" end
+  return nil
+end
+function M.CraftSpreads(limit)
+  local c = M._craft
+  if c and clock() - c.t < 60 then return c.list, c.profs end
+  local A = T.modules and T.modules.Auction
+  local Dd, PL = T.Data and T.Data.Recipes, T.ProfLevel
+  local list, profs = {}, {}
+  if not (type(A) == "table" and A._active and type(A.cur) == "table") then return list, profs end
+  profs = A.Professions and A.Professions() or {}
+  if not (Dd and Dd.lines and Dd.r and PL) then M._craft = { t = clock(), list = list, profs = profs } return list, profs end
+  local R = rules()
+  local hrs, neutral = hoursOf(A), A.IsNeutral()
+  local rd = A.RealmData()
+  local looked = 0
+  for _, pr in ipairs(profs) do
+    local line, rank = tonumber(pr.line), n0(pr.rank)
+    local kind = line and Dd.lines[line] and Dd.lines[line][1]
+    local rows = (kind == "c" or kind == "s") and Dd.r[line] or nil
+    local known = rows and type(PL.Known) == "function" and PL.Known(line) or nil
+    for _, rc in ipairs(rows or {}) do
+      local spell, item = rc[1], rc[2]
+      if item and ((known and known[spell]) or (not known and n0(rc[4]) <= rank)) and rd and rd.items[item] and looked < 300 then
+        looked = looked + 1
+        local liq = A.Liq(item)
+        if type(liq) == "table" and liq.ok and n0(liq.market) > 0 then
+          local cost, mats, ok = 0, {}, true
+          local m = rc[10] or {}
+          for k = 1, #m - 1, 2 do
+            local q = n0(m[k + 1])
+            local c1, src = matCost(A, m[k], q, R)
+            if not c1 then ok = false break end
+            cost = cost + c1
+            mats[#mats + 1] = { id = m[k], n = q, c = c1, src = src }
+          end
+          if ok and #mats > 0 then
+            local ev = evidenceOf(A, item, liq)
+            local sp = X.craftSpread({ cost = cost, made = max(1, n0(rc[3])), market = floor(liq.market * (1 - n0(liq.vol) / 2)),
+              sold = liq.sold, ahead = 0, vendorUnit = vendorSure(A, item) or 0, hours = hrs, neutral = neutral,
+              depPm = M.db and M.db.depPm and M.db.depPm[hrs], ev = ev }, R)
+            if sp then
+              sp.id, sp.name, sp.prof, sp.mats, sp.ev = item, rc[9] or itemName(item), pr.name, mats, ev
+              list[#list + 1] = sp
+            end
+          end
+        end
+      end
+    end
+  end
+  table.sort(list, function(a, b) if a.net ~= b.net then return a.net > b.net end return a.id < b.id end)
+  for i = #list, (limit or 8) + 1, -1 do list[i] = nil end
+  M._craft = { t = clock(), list = list, profs = profs }
+  return list, profs
+end
+local SRC = { marchand = "marchand", HV = "HV maintenant", habituel = "prix habituel" }
+function M.CraftText(sp)
+  local parts = {}
+  for _, m in ipairs(sp.mats or {}) do parts[#parts + 1] = fmt("%s ×%d %s (%s)", itemName(m.id), m.n, money(m.c), SRC[m.src] or m.src) end
+  return fmt("%s%s : composants %s → revente ~%s l'unité. Gain probable : +%s après commission et dépôts, ~%s j (%d j de preuves).",
+    sp.name, sp.made > 1 and (" ×" .. sp.made) or "", money(sp.cost), money(sp.sellUnit), money(sp.net), dec(sp.days),
+    n0(sp.ev and sp.ev.days)), table.concat(parts, ", ")
+end
+
+-- ===================================================================== moments de vente (tes scans)
+local DAYS = { "dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi" }
+function M.PatternText()
+  local A = T.modules and T.modules.Auction
+  local rd = type(A) == "table" and A.RealmData and A.RealmData()
+  local p, why = X.pattern(rd and rd.pat or {}, rules())
+  if not p then return fmt("Moments de vente : pas encore assez de scans espacés pour le dire (%s).", why or "?") end
+  if not p.clear then return fmt("Moments de vente (%d créneaux mesurés) : aucun nettement meilleur, poste quand tu veux.", p.n) end
+  return fmt("Moments de vente (tes scans, %d créneaux) : %s %d h–%d h, ventes ≈ %s × la moyenne : poste juste avant.", p.n,
+    DAYS[p.wd + 1] or "?", p.blk * 4, p.blk * 4 + 4, dec(p.pm / 1000))
+end
+
+-- ===================================================================== page « HV » : un seul tableau de bord
+-- objectif du jour et capital, les trois files avec leurs comptes, puis la liste choisie ; ce qui n'en fait pas partie
+-- (ventes en cours, métiers, ce qu'il te manque) en dessous. Les anciennes tuiles (« Vendre tes sacs à l'HV »,
+-- « Acheter-revendre », « gagné cette semaine ») sont remplacées par ces files : un seul chiffre par chose.
+M.view = "buy"
+function M.ItemLines(limit)
+  local items = {}
+  for _, it in pairs(M.Realized().items) do
+    if n0(it.bought) > 0 or n0(it.sold) > 0 then items[#items + 1] = it end
+  end
+  table.sort(items, function(a, b) if a.profit ~= b.profit then return a.profit > b.profit end return tostring(a.id or a.name) < tostring(b.id or b.name) end)
+  local out = {}
+  for i, it in ipairs(items) do
+    if i > (limit or 5) then break end
+    out[#out + 1] = fmt("%s : %s%s (acheté %d, vendu %d%s)", it.id and itemName(it.id) or tostring(it.name), it.profit >= 0 and "+" or "",
+      money(it.profit), n0(it.bought), n0(it.sold), n0(it.held) > 0 and fmt(", en stock %d pour %s", it.held, money(it.heldCost)) or "")
+  end
+  return out
+end
+function M.RenderPage(Ly, W, A)
+  if type(Ly) ~= "table" or type(Ly.tiles) ~= "function" then return end
+  M.PageHead(Ly)
+  local b, p, _, c = M.Counts()
+  local open = M.ahOpen and true or false
+  local view = M.view or "buy"
+  local function pick(v) return function() M.view = v end end
+  local hint = open and "Clic : la liste" or "Clic : la liste (les actions se font à l'HV)"
+  Ly.tiles({
+    { fmt("Acheter (%d)", b), b > 0 and fmt("+%s prévu, %s engagés", money(M.planNet), money(M.planSpend)) or (M.built and "rien de sûr ou prouvé" or "scanne à l'HV"),
+      pick("buy"), { "Affaires sûres (revente au marchand) et probables (ventes prouvées sur plusieurs jours).", "Net = après commission et dépôts perdus prévus." }, view == "buy", hint },
+    { fmt("Poster (%d)", p), open and (p > 0 and "jamais sous ton plancher" or "rien à poster") or "calculé à l'HV",
+      pick("post"), { "Ce que l'avis des sacs met « à l'HV » et ce que tu as acheté pour revendre.", "Prix : 1 pc sous le moins cher, jamais sous coût + frais + marge." }, view == "post", hint },
+    { fmt("Annuler (%d)", c), open and (c > 0 and "ventes dépassées" or "aucune vente dépassée") or "calculé à l'HV",
+      pick("cancel"), { "Tes ventes dépassées par un concurrent, seulement si reposter rapporte plus que le dépôt perdu." }, view == "cancel", hint },
+  }, 3)
+  local n, v = 0, 0
+  if A and A.OwnedSummary then n, v = A.OwnedSummary() end
+  local crafts = M.CraftSpreads(8)
+  local need = A and A.NeedList and A.NeedList() or {}
+  local needSub = #need > 0 and fmt("%d %s%s", n0(need[1].n), tostring(need[1].label or need[1].name or "?"), #need > 1 and "…" or "") or "rien : ton stock est bon"
+  Ly.tiles({
+    { fmt("En vente : %d", n0(n)), money(v), pick("owned"), { "Tes ventes en cours à l'HV (vues à ta dernière visite)." }, view == "owned", "Clic : la liste" },
+    { fmt("Mes métiers (%d)", #crafts), #crafts > 0 and fmt("meilleur : +%s", money(crafts[1].net)) or "rien de rentable prouvé", pick("craft"),
+      { "Fabriquer pour vendre : composants au prix lu, revente au prix prouvé, frais déduits." }, view == "craft", "Clic : la liste" },
+    { "Ce qu'il te manque", needSub, pick("need"), { "Potions, nourriture, munitions : le stock conseillé (page « Sacs »)." }, view == "need", "Clic : la liste" },
+  }, 3)
+  if view == "post" then M.PagePosts(Ly)
+  elseif view == "cancel" then M.PageCancels(Ly)
+  elseif view == "craft" then M.PageCraft(Ly, crafts)
+  elseif view == "owned" and A and A.RenderOwned then A.RenderOwned(Ly)
+  elseif view == "need" and A and A.RenderNeed then A.RenderNeed(Ly, W, { need = need })
+  else M.PageDeals(Ly, W) end
+  local items = M.ItemLines(5)
+  if #items > 0 and Ly.header("Résultat par objet", "hv:items", #items) then
+    for _, l in ipairs(items) do Ly.text(l, "S") end
+  end
+  Ly.text(M.PatternText(), "S", "muted")
+end
+function M.PagePosts(Ly)
+  local _, p = M.Counts()
+  if not Ly.header("Poster (un clic = une pile)", "hv:posts", p) then return end
+  if not M.ahOpen then Ly.text("Calculé à l'HV : prix lus à l'instant, jamais sous ton plancher.", "S", "muted") return end
+  if p == 0 then Ly.text(#M.waitQ > 0 and fmt("Rien à poster maintenant. En attente : %s (%s).", M.waitQ[1].name, M.waitQ[1].why or "")
+    or "Rien à poster : l'avis des sacs ne met rien « à l'HV ».", "S", "muted") end
+  local k = 0
+  for _, e in ipairs(M.postQ) do
+    if not e.state then k = k + 1 if k > 8 then break end Ly.row({ text = M.PostText(e), prio = 2 }) end
+  end
+end
+function M.PageCancels(Ly)
+  local _, _, _, c = M.Counts()
+  if not Ly.header("Annuler / reposter (un clic = une annulation)", "hv:cancels", c) then return end
+  if not M.ahOpen then Ly.text("Calculé à l'HV : tes ventes dépassées, si reposter vaut le dépôt perdu.", "S", "muted") return end
+  if c == 0 then Ly.text("Aucune vente dépassée qui vaille le dépôt perdu : laisse-les.", "S", "muted") end
+  local k = 0
+  for _, e in ipairs(M.cxlQ) do
+    if not e.state then k = k + 1 if k > 8 then break end Ly.row({ text = M.CancelText(e), prio = 2 }) end
+  end
+end
+function M.PageCraft(Ly, list)
+  local _, profs = M.CraftSpreads(8)
+  if not Ly.header("Fabriquer pour vendre (tes métiers)", "hv:craft", #list) then return end
+  if #profs == 0 then Ly.text("Pas de métier de fabrication : apprends-en un chez un maître de métier, en ville.", "S", "muted") return end
+  if #list == 0 then Ly.text("Rien de rentable prouvé avec tes recettes : il faut des ventes mesurées de l'objet fabriqué (3 jours de scans).", "S", "muted") end
+  for _, sp in ipairs(list) do
+    local t, mats = M.CraftText(sp)
+    Ly.row({ text = t, prio = 2, tooltip = { (sp.prof and (sp.prof .. " : ") or "") .. mats } })
+  end
+end
+
 local DOCK_W = 316
 function M.Docked() return M._active == true and cfg("dock", true) and auc() ~= nil end
 local function keyName()
@@ -1027,11 +1430,14 @@ function M.CreateDock()
   f.capital = text("S", "muted", -82)
   local function act(fn) return function() T:UserAction(fn) M.Refresh() end end
   local bw = floor((w - 4) / 2)
-  f.buy = Th:Button(f, "Acheter", bw, 40, act(M.BuyClick), { "Un clic = un achat (la meilleure affaire d'abord).", "L'annonce est relue en direct avant l'achat." })
+  local b3 = floor((w - 8) / 3)
+  f.buy = Th:Button(f, "Acheter", b3, 40, act(M.BuyClick), { "Un clic = un achat (la meilleure affaire d'abord).", "L'annonce est relue en direct avant l'achat." })
   f.buy:SetPoint("TOPLEFT", f, "TOPLEFT", pad, -100)
-  f.post = Th:Button(f, "Poster", bw, 40, act(M.PostClick), { "Un clic = une pile mise en vente.", "Jamais sous ton plancher (coût + frais + marge)." })
+  f.post = Th:Button(f, "Poster", b3, 40, act(M.PostClick), { "Un clic = une pile mise en vente.", "Jamais sous ton plancher (coût + frais + marge)." })
   f.post:SetPoint("TOPLEFT", f.buy, "TOPRIGHT", 4, 0)
-  f.next = Th:Button(f, "Action suivante", w, 32, act(M.Next), { "Fait la prochaine action : acheter, puis poster.", "Une action par clic ou par appui de touche." })
+  f.cancel = Th:Button(f, "Annuler", b3, 40, act(M.CancelClick), { "Un clic = une de tes ventes dépassées annulée.", "Seulement si reposter rapporte plus que le dépôt perdu." })
+  f.cancel:SetPoint("TOPLEFT", f.post, "TOPRIGHT", 4, 0)
+  f.next = Th:Button(f, "Action suivante", w, 32, act(M.Next), { "Fait la prochaine action : acheter, annuler une vente dépassée, puis poster.", "Une action par clic ou par appui de touche." })
   f.next:SetPoint("TOPLEFT", f, "TOPLEFT", pad, -144)
   f.deal = text("S", "text", -182, 84)
   f.status = text("S", "muted", -268, 24)
@@ -1056,19 +1462,20 @@ function M.Anchor()
 end
 function M.Lines()
   local l1, l2 = M.GoalLines()
-  local b, p, w = M.Counts()
-  local d, e = M.BuyHead(), M.PostHead()
+  local b, p, w, c = M.Counts()
+  local d, e, x = M.BuyHead(), M.PostHead(), M.CancelHead()
   local cur
   if M.pend then cur = "Le jeu répond…"
   elseif d then cur = M.DealText(d)
+  elseif x then cur = M.CancelText(x)
   elseif e then cur = M.PostText(e)
   elseif M.build or M.pb then cur = "Calcul des affaires…"
   elseif not M.built then cur = "Clique « Scanner » : je lis les prix, puis je te propose les affaires sûres."
   elseif w > 0 then cur = fmt("Rien à faire maintenant. En attente : %s (%s).", M.waitQ[1].name, M.waitQ[1].why or "")
-  else cur = "Rien à faire maintenant : aucune affaire sûre ou prouvée, rien à poster." end
+  else cur = "Rien à faire maintenant : aucune affaire sûre ou prouvée, rien à poster ni à annuler." end
   local k = keyName()
   return { title = "Achat-revente", goal = l1, goal2 = l2 or "", capital = M.CapitalLine(),
-    buy = fmt("Acheter (%d)", b), post = fmt("Poster (%d)", p),
+    buy = fmt("Acheter (%d)", b), post = fmt("Poster (%d)", p), cancel = fmt("Annuler (%d)", c),
     next = k and fmt("Action suivante [%s]", k) or "Action suivante", deal = cur, status = M.status or "" }
 end
 function M.Refresh()
@@ -1080,6 +1487,7 @@ function M.Refresh()
   f.capital:SetText(L.capital)
   f.buy:SetLabel(L.buy)
   f.post:SetLabel(L.post)
+  f.cancel:SetLabel(L.cancel)
   f.next:SetLabel(L.next)
   f.deal:SetText(L.deal)
   f.status:SetText(L.status)
@@ -1108,15 +1516,16 @@ function M.AUCTION_HOUSE_CLOSED()
     local k = dayKey()
     ch.ahTime[k] = n0(ch.ahTime[k]) + max(0, now() - M.openT)
   end
-  M.ahOpen, M.openT, M.pend, M.search, M.build, M.pb = false, nil, nil, nil, nil, nil
+  M.ahOpen, M.openT, M.pend, M.search, M.build, M.pb, M.cb = false, nil, nil, nil, nil, nil, nil
+  M.ownedWanted, M.cxlDirty, M.postsDirty = nil, nil, nil
   for _, d in ipairs(M.all) do if d.state == "confirm" then d.state = nil end d.liveT = nil end
-  M.postQ, M.waitQ, M.sessPosted = {}, {}, {}
+  M.postQ, M.waitQ, M.sessPosted, M.cxlQ = {}, {}, {}, {}
   if M.frame then M.frame:Hide() end
 end
 function M:OnInit()
   local ch = M.char
   if ch then
-    for _, k in ipairs({ "ev", "open", "posts", "names", "seen", "ahTime" }) do if type(ch[k]) ~= "table" then ch[k] = {} end end
+    for _, k in ipairs({ "ev", "open", "posts", "names", "seen", "ahTime", "cxl" }) do if type(ch[k]) ~= "table" then ch[k] = {} end end
     local old = dayKey(now() - 30 * 86400)
     for k in pairs(ch.ahTime) do if k < old then ch.ahTime[k] = nil end end
   end
@@ -1126,7 +1535,18 @@ function M:OnEnable()
     "COMMODITY_PRICE_UPDATED", "COMMODITY_PRICE_UNAVAILABLE", "PLAYER_MONEY" }) do
     self:RegisterEvent(ev)
   end
-  self:RegisterEvent("AUCTION_HOUSE_THROTTLED_SYSTEM_READY", function() if M.ahOpen then M.Prefetch() end end)
+  self:RegisterEvent("AUCTION_HOUSE_THROTTLED_SYSTEM_READY", function()
+    if not M.ahOpen then return end
+    if not M.Prefetch() and M.ownedWanted and clock() >= n0(M.ownedAt) then M.QueryOwned() end
+  end)
+  self:RegisterEvent("AUCTION_CANCELED", function(_, _, auctionID)
+    diag("auctionCanceled")
+    local p = M.pend
+    if p and p.kind == "cancel" and (auctionID == nil or auctionID == p.e.auctionID) then M.Resolve(true) end
+  end)
+  self:RegisterEvent("OWNED_AUCTIONS_UPDATED", function()   -- (après le module Auction, qui relit la liste)
+    if M.ahOpen then T:After(0, function() if M.ahOpen then if M.cb then M.cxlDirty = true else M.BuildCancels() end end end) end
+  end)
   self:RegisterEvent("AUCTION_HOUSE_PURCHASE_COMPLETED", bought("purchaseCompleted"))
   self:RegisterEvent("COMMODITY_PURCHASE_SUCCEEDED", bought("commoditySucceeded"))
   self:RegisterEvent("COMMODITY_PURCHASE_FAILED", failed("commodityFailed", "buy"))
@@ -1166,7 +1586,7 @@ function M:OnEnable()
 end
 function M:OnDisable()
   if M.frame then M.frame:Hide() end
-  M.ahOpen, M.pend, M.search, M.build, M.pb = false, nil, nil, nil, nil
+  M.ahOpen, M.pend, M.search, M.build, M.pb, M.cb = false, nil, nil, nil, nil, nil
   if T.Bags and T.Bags.UnregisterKeeper then pcall(T.Bags.UnregisterKeeper, "ahdesk") end
 end
 

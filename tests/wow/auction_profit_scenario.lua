@@ -74,13 +74,10 @@ return function(M, ctx)
     function Ly.gap() end
     A.RenderPage(Ly, W)
     local tx = table.concat(rec, " | ")
-    -- (4.2 FIX42) sacs et achat-revente : deux tuiles, jamais un total mélangé
-    check(tx:find("tile:Vendre tes sacs à l'HV : +", 1, true) and tx:find("tile:Acheter-revendre : +", 1, true)
-      and not tx:find("bénéfice possible", 1, true) and tx:find("en vente à l'HV", 1, true) and tx:find("gagné cette semaine", 1, true),
-      "page: the numbers on top (bags vs flips never mixed): " .. tx)
-    -- (5.0 BAGS) no duplicate tiles: the two figures above ARE the lists; the action row = Scanner · Ce qu'il te manque · Mes métiers
-    check(tx:find("tile:Scanner", 1, true) and tx:find("tile:Ce qu'il te manque", 1, true) and tx:find("tile:Mes métiers", 1, true)
-      and not tx:find("tile:Vendre mes sacs", 1, true), "page: the 3 big buttons, no duplicate: " .. texts())
+    -- (5.1 AH, tranche 2) the HV page is the desk's dashboard (ah5b_scenario.lua); desk switched off here: no old tiles
+    -- (« Vendre tes sacs à l'HV », « Acheter-revendre », « gagné cette semaine » are gone), the old buy list, a hint
+    check(tx:find("text:Le bureau « Achat-revente (HV) » est coupé", 1, true) and tx:find("header:Acheter pour revendre", 1, true)
+      and not tx:find("tile:", 1, true) and not tx:find("bénéfice possible", 1, true), "page (desk off): hint + the buy list, no old tiles: " .. tx)
     check(tx:find("Ouvre l'HV et clique Scanner", 1, true), "empty state says what to do: " .. tx)
     local q0 = #M.ah.queries
     M.Hw(A.ScanSmart, W)
@@ -223,13 +220,6 @@ return function(M, ctx)
     check(band and band.cost > 0 and band.profit >= F.minNet(band.cost), "craft: Bandage-test made with lin sells with profit")
     if W and W.Open then
       W.Open("hv")
-      A.view = "craft"
-      W.Render()
-      check(texts():find("Ce que tu fabriques et vends avec bénéfice", 1, true) and texts():find("Bandage", 1, true), "page: « Mes métiers » list")
-      A.view = "bags"
-      W.Render()
-      check(texts():find("Vendre à l'HV plutôt qu'au marchand", 1, true), "page: « Vendre mes sacs » list")
-      A.view = "flips"
       W.Render()
       check(texts():find("Acheter au marchand, revendre à l'HV", 1, true), "page: vendor → AH section: " .. texts())
       W.Close()

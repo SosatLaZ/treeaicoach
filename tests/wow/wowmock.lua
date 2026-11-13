@@ -2242,7 +2242,9 @@ function M.InstallAH(G, modern)
       aidSeq = aidSeq + 1
       M.ah.posts[#M.ah.posts + 1] = { id = it.id, count = qty, unit = unit, buyout = unit * qty, duration = duration, commodity = commodity or nil, auctionID = aidSeq }
       if M.ah.real then
-        M.ah.owned[#M.ah.owned + 1] = { id = it.id, count = qty, buyout = unit * qty, auctionID = aidSeq, owner = M.player.name }
+        local mine = { id = it.id, count = qty, buyout = unit * qty, auctionID = aidSeq, owner = M.player.name }
+        M.ah.owned[#M.ah.owned + 1] = mine
+        M.ah.list[#M.ah.list + 1] = mine           -- (5.1 AH) my auction is on the market too (searches show it as mine)
         local left = (it.count or 1) - qty
         M.SetBagItem(loc.bag, loc.slot, left > 0 and it.id or nil, left > 0 and left or nil)
         answer("AUCTION_HOUSE_AUCTION_CREATED", aidSeq)
@@ -2329,11 +2331,31 @@ function M.InstallAH(G, modern)
       if M.flavor == "forever" and not M.ah.open then return end
       respond(function() M.FireEvent("OWNED_AUCTIONS_UPDATED") end)
     end
+    -- (5.1 AH, tranche 2) documented C_AuctionHouse: CancelAuction(ownedAuctionID) is a protected action (one per
+    -- click, throttled like the others); the server answers AUCTION_CANCELED(auctionID) and the item comes back by
+    -- mail (« Vente aux enchères annulée »), the deposit is not refunded. GetCancelCost(ownedAuctionID) = what the
+    -- cancel costs on top (0 here, M.ah.cancelCost to change it); CanCancelAuction = false for an auction already sold.
     AH.CancelAuction = function(auctionID)
       if not ahProtected("CancelAuction") then return end
+      if actionBusy("CancelAuction") then return end
       for i, a in ipairs(M.ah.owned) do
-        if a.auctionID == auctionID then M.ah.cancels[#M.ah.cancels + 1] = table.remove(M.ah.owned, i) return end
+        if a.auctionID == auctionID then
+          M.ah.cancels[#M.ah.cancels + 1] = table.remove(M.ah.owned, i)
+          for k, x in ipairs(M.ah.list) do if x.auctionID == auctionID then table.remove(M.ah.list, k) break end end
+          if M.ah.real and (M.ah.cancelCost or 0) > 0 then pay(M.ah.cancelCost) end
+          answer("AUCTION_CANCELED", auctionID)
+          return
+        end
       end
+      answer("AUCTION_HOUSE_SHOW_ERROR", 3)
+    end
+    AH.GetCancelCost = function(auctionID)
+      for _, a in ipairs(M.ah.owned) do if a.auctionID == auctionID then return M.ah.cancelCost or 0 end end
+      return nil
+    end
+    AH.CanCancelAuction = function(auctionID)
+      for _, a in ipairs(M.ah.owned) do if a.auctionID == auctionID then return true end end
+      return false
     end
   end
 end

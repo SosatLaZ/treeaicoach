@@ -326,7 +326,7 @@ local function suggestionRow()
 end
 M.TIPS = {
   { id = "ah", title = "Première fois à l'HV",
-    text = "Mode rafale : une touche = une action sûre (acheter, puis poster).",
+    text = "Mode rafale : une touche = une action sûre (acheter, annuler une vente dépassée, poster).",
     note = "Bouton « Lier une touche » en bas du panneau TreeAI de l'HV.",
     when = function()
       local A = T.modules and T.modules.Auction
