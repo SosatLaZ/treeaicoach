@@ -216,6 +216,9 @@ function M.Invalidate(id, cause)
       for key, sid in pairs(S.id) do if S.touch[sid] then S.dirty[key] = true end end
     end
     S.touch = {}
+    -- (5.1 INTEG) des avis en attente (recettes lues, quêtes à venir vérifiées, métiers) ont pu changer : les autres
+    -- modules qui en dépendent (bureau de l'HV) refont leur file — pas pour un prix (c'est l'HV qui vient de le lire)
+    if n > 0 and (cause == "prof" or cause == "quest") and T.Fire then T:Fire("BAGS_VERDICTS", cause) end
   else
     V, PLAN = {}, {}
     C.gen = C.gen + 1
@@ -1101,7 +1104,8 @@ local function compute(id, bag, slot)
       reasons[#reasons + 1] = c.why
       return v
     end
-    if type(c) == "table" then u = "attention : " .. tostring(c.why) end
+    if type(c) == "table" then u = "attention : " .. tostring(c.why)
+    elseif Q.said.ahdesk == "opinion" then u = nil end   -- (5.1 INTEG) acheté pour revendre : ton choix, pas un doute
     unsure = unsure or u
   end
   -- en trop (avis explicite) : des piles ENTIÈRES dans le surplus (jamais de découpe), les plus petites d'abord
@@ -1134,6 +1138,7 @@ local function compute(id, bag, slot)
     -- (5.1) la raison est dite : rien ne s'en sert dans nos données, mais on ne brade pas une marchandise sans son prix
     v.keep, v.surplus, v.action = have, 0, "keep"
     v.why = "aucune recette ni quête connue ne s'en sert ; sans prix d'HV connu je garde (scanne l'HV)"
+    v.needPrice = d.unknown or nil   -- (5.1 INTEG) le bureau de l'HV relit son prix (recherche ciblée), l'avis suit
     return v
   end
   local tail

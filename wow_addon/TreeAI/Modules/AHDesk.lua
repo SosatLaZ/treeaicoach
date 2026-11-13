@@ -361,6 +361,11 @@ local function evidenceOf(A, id, liq)
     sold = liq.sold, sellers = n0(liq.sellers), volPct = floor(n0(liq.vol) * 100 + 0.5),
     ageH = rec and max(0, (now() - n0(rec.last)) / 3600) or 9999 }
 end
+-- (5.1 INTEG) le joueur attend devant l'HV qu'il vient d'ouvrir : les tranches du bureau passent EN TÊTE de la file
+-- « un travail par image » (T:SpreadFirst), devant les calculs de fond (plan d'équipement…) — toujours un par image
+local function spread(fn)
+  if M.ahOpen and T.SpreadFirst then T:SpreadFirst(M, fn) else T:Spread(M, fn) end
+end
 -- « tu le garderais ? » (métiers, quêtes, T.Bags) : réponse gardée 2 min par objet (le plan de métier coûte cher à relire)
 M.keepC, M.keepCalls = {}, 0
 local function keepOf(A, id)
@@ -368,7 +373,14 @@ local function keepOf(A, id)
   local t = clock()
   if c and t - c.t < 120 then return c.n end
   M.keepCalls = M.keepCalls + 1
-  local n = A.KeepOf and n0(try(A.KeepOf, id)) or 0
+  local n, v = 0, nil
+  if A.KeepOf then
+    local ok, k, _, vv = pcall(A.KeepOf, id)
+    if ok then n, v = n0(k), vv end
+  end
+  -- (5.1 INTEG) un avis « à confirmer » (quêtes à venir inconnues…) n'est pas une réclamation : seul ce que les
+  -- gardiens réclament vraiment compte pour « tu le garderais »
+  if type(v) == "table" and v.unsure and type(v.confirm) == "table" then n = n0(v.confirm.kept) end
   M.keepC[id] = { n = n, t = t }
   return n
 end
@@ -445,7 +457,7 @@ function M.Build()
   table.sort(ids)
   local first = M.build == nil
   M.build = { ids = ids, i = 0, deals = {} }
-  if first then T:Spread(M, M.BuildStep) end
+  if first then spread(M.BuildStep) end
   return true
 end
 local BUILD_N = 25
@@ -465,7 +477,7 @@ function M.BuildStep()
     if M.keepCalls - calls >= 2 then last = i break end   -- deux questions « tu le garderais ? » par image au plus
   end
   b.i = last
-  if last < #b.ids then T:Spread(M, M.BuildStep) return end
+  if last < #b.ids then spread(M.BuildStep) return end
   M.build = nil
   local keep = {}
   for _, d in ipairs(M.all) do if d.state == "confirm" then keep[#keep + 1] = d end end   -- un prix déjà confirmé par le jeu reste
@@ -580,7 +592,24 @@ local function postEntry(A, bag, slot, id, count)
   local B = T.Bags
   if type(B) == "table" and B._active and type(B.Verdict) == "function" then
     local ok, v = pcall(B.Verdict, id, bag, slot)
-    if not (ok and type(v) == "table" and not v.off and v.action == "ah") then return nil end   -- « garde » : jamais proposé
+    if not (ok and type(v) == "table" and not v.off and v.action == "ah") then
+      -- (5.1 INTEG) « à confirmer » pour l'HV (quêtes à venir inconnues…) : jamais posté d'un clic, mais son prix est
+      -- relu (recherche ciblée, non protégée) pour que la carte « à confirmer » des sacs dise un prix vrai
+      -- et une marchandise que personne ne réclame, gardée faute de prix d'HV connu (v.needPrice) : son prix est relu
+      if ok and type(v) == "table" and not v.off then
+        local it = A.cur[id]
+        local stale = not it or now() - n0(it.t) > 600
+        if v.needPrice and stale then return nil, "check", "prix à relire" end
+        if v.unsure then
+          if M.pb then M.pb.unsure = true end
+          if type(v.confirm) == "table" and v.confirm.action == "ah" then
+            if stale then return nil, "check", "prix à relire" end
+            return nil, "wait", "à confirmer : " .. tostring(v.unsure)   -- dit dans le panneau (« En attente : … »)
+          end
+        end
+      end
+      return nil   -- « garde » : jamais proposé
+    end
   elseif not (lot and n0(lot.n) > 0 and lot.kind ~= "vendor") then
     return nil   -- assistant des sacs coupé : seulement ce que TU as acheté pour le revendre
   end
@@ -641,7 +670,7 @@ function M.BuildPosts()
   if not (A and M.ahOpen) then return false end
   local first = M.pb == nil
   M.pb = { bag = 0, slot = 0, out = {}, wait = {}, check = {} }
-  if first then T:Spread(M, M.PostStep) end
+  if first then spread(M.PostStep) end
   return true
 end
 function M.PostStep()
@@ -666,8 +695,9 @@ function M.PostStep()
       end
     end
   end
-  if b.bag <= maxBag then T:Spread(M, M.PostStep) return end
+  if b.bag <= maxBag then spread(M.PostStep) return end
   M.pb = nil
+  if b.unsure then M.QuestWatch() end
   -- une pile postée (ou déplacée) pendant le calcul : son entrée ne vaut plus
   local out = {}
   for _, e in ipairs(b.out) do
@@ -689,6 +719,18 @@ function M.PostStep()
   if #ids > 0 and not A.mini and not A.job and A.ScanTargets then table.sort(ids) A.ScanTargets(ids) end
   M.Refresh()
   if M.postsDirty then M.postsDirty = nil M.BuildPosts() end
+end
+-- (5.1 INTEG) tu es à l'HV pour vendre et ce que tu as ramassé reste « à confirmer » parce que le lien « objet →
+-- quêtes » de Questie n'a pas pu être vérifié : la relecture « Vérifier mes quêtes à venir » des Sacs (20 quêtes par
+-- image, jamais en combat, gardée pour les sessions suivantes) part d'elle-même, dès l'ouverture de l'HV ; à sa fin
+-- les Sacs revoient leurs avis (message BAGS_VERDICTS) et la file « Poster » est refaite. Rien si c'est déjà vérifié.
+function M.QuestWatch()
+  if not M.ahOpen then return end
+  local B = T.Bags
+  local P = type(B) == "table" and B._active and B.Predict
+  if not (type(P) == "table" and type(P.QuestState) == "function" and type(P.QuestScan) == "function") then return end
+  local ok, st = pcall(P.QuestState)
+  if ok and st == "unverified" then pcall(P.QuestScan) end
 end
 function M.PostHead()
   for _, p in ipairs(M.postQ) do if not p.state then return p end end
@@ -760,7 +802,7 @@ function M.BuildCancels()
   if not (A and M.ahOpen) then return false end
   local first = M.cb == nil
   M.cb = { i = 0, out = {}, check = {} }
-  if first then T:Spread(M, M.CancelStep) end
+  if first then spread(M.CancelStep) end
   return true
 end
 function M.CancelStep()
@@ -775,7 +817,7 @@ function M.CancelStep()
     if e then b.out[#b.out + 1] = e elseif state == "check" and owned[i].id then b.check[owned[i].id] = true end
   end
   b.i = last
-  if last < total then T:Spread(M, M.CancelStep) return end
+  if last < total then spread(M.CancelStep) return end
   M.cb = nil
   table.sort(b.out, function(x, y) if x.gain ~= y.gain then return x.gain > y.gain end return n0(x.auctionID) < n0(y.auctionID) end)
   M.cxlQ = b.out
@@ -869,6 +911,9 @@ function M.Resolve(ok, why)
       if dep <= 0 then dep = e.dep end
       M.Note("cancel", { id = e.id, name = e.name, n = e.n, dep = dep + n0(e.cost), src = "clic" })
       if ch then ch.cxl[e.id] = n0(ch.cxl[e.id]) + e.n end   -- le courrier « annulée » qui suivra est déjà compté
+      -- (5.1 INTEG) annulée pour la reposter : TON choix de la vendre, dit aux Sacs (gardien « ahdesk ») jusqu'à la remise
+      if ch and type(ch.repost) == "table" then ch.repost[e.id] = { n = e.n, t = now() } end
+      if T.Bags and T.Bags.Invalidate then pcall(T.Bags.Invalidate, e.id) end
       local A = auc()
       for _, a in ipairs(A and A.owned or {}) do if a.auctionID == e.auctionID then a.state = "cancelled" end end
       local sp = M.sessPosted[e.id]
@@ -890,6 +935,7 @@ function M.Resolve(ok, why)
         local q = ch.posts[e.id]
         q[#q + 1] = { n = e.qty, u = e.unit, dep = e.dep, t = now() }
         ch.names[e.name] = e.id
+        if type(ch.repost) == "table" then ch.repost[e.id] = nil end
       end
       if T.Stats and T.Stats.NotePost then pcall(T.Stats.NotePost, e.name) end
       local sp = M.sessPosted[e.id] or { n = 0 }
@@ -1507,6 +1553,7 @@ function M.AUCTION_HOUSE_SHOW()
     if f then M.Anchor() f:Show() T:After(0, M.Anchor) end
   end
   local A = auc()
+  M.QuestWatch()
   if next(A.cur) ~= nil then M.Build() else M.BuildPosts() end
   M.Refresh()
 end
@@ -1525,9 +1572,10 @@ end
 function M:OnInit()
   local ch = M.char
   if ch then
-    for _, k in ipairs({ "ev", "open", "posts", "names", "seen", "ahTime", "cxl" }) do if type(ch[k]) ~= "table" then ch[k] = {} end end
+    for _, k in ipairs({ "ev", "open", "posts", "names", "seen", "ahTime", "cxl", "repost" }) do if type(ch[k]) ~= "table" then ch[k] = {} end end
     local old = dayKey(now() - 30 * 86400)
     for k in pairs(ch.ahTime) do if k < old then ch.ahTime[k] = nil end end
+    for id, r in pairs(ch.repost) do if type(r) ~= "table" or now() - n0(r.t) >= 14 * 86400 then ch.repost[id] = nil end end
   end
 end
 function M:OnEnable()
@@ -1562,6 +1610,12 @@ function M:OnEnable()
     local p = M.pend
     if p and p.kind == "post" then M.Resolve(true) end
   end)
+  -- (5.1 INTEG) les Sacs ont changé d'avis (recettes lues, quêtes à venir vérifiées, métiers) : la file « Poster » suit
+  self:On("BAGS_VERDICTS", function()
+    if not M.ahOpen then return end
+    M.QuestWatch()
+    if M.pb then M.postsDirty = true else M.BuildPosts() end
+  end)
   if T.OnBags then
     T:OnBags(M, function()
       if not M.ahOpen then return end
@@ -1576,6 +1630,8 @@ function M:OnEnable()
       local ch = M.char
       local o = M._active and ch and ch.open[id]
       if o and n0(o.n) > 0 then return 0, "acheté pour revendre" end
+      local r = M._active and ch and type(ch.repost) == "table" and ch.repost[id]
+      if r and now() - n0(r.t) < 14 * 86400 then return 0, "ta vente annulée pour la reposter" end
       return nil
     end)
   end

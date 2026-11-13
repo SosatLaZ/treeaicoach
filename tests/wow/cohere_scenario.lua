@@ -95,6 +95,9 @@ return function(M, ctx)
   check(Q.InLog(7102) and not Q.InLog(7101), "InLog suit le journal")
 
   -- ------------------------------------------------------------ 3. one line per meaning in « Maintenant »
+  -- (5.1 INTEG) the gear plan of the login (sliced, one step per free image) publishes its own « Gear:* » lines when it
+  -- ends: let it settle first, so the line injected below is not replaced by the module's real answer
+  for _ = 1, 60 do if not (T.Gear and T.Gear.Busy and T.Gear.Busy()) then break end M.Advance(0.5, 0.05) end
   if T.ApplyPreset then T:ApplyPreset("tout") end   -- 8 lignes : on voit tout ce qui passe le filtre
   T:Suggest("Quests:prog:7102", "Oeuf de wyverne : 1/10", 2, { ttl = 60 })
   T:Suggest("Quests:near", "Tu es près de la remise de « Oeufs de wyverne ».", 2, { ttl = 60 })

@@ -609,19 +609,47 @@ end
 F.Sources = S
 
 --- recherche : query = mot(s) ; → liste triée par gain (≤ 12). Sur demande / hors combat seulement.
+local function searchCtx()
+  return { level = level(), group = max(1, tonumber(try(G("GetNumGroupMembers"))) or 0),
+    petTrain = (tonumber(try(G("GetPetTrainingPoints")) or try(C("C_PetInfo", "GetPetTrainingPoints"))) or 0) > 0 }
+end
+local function searchCat(c, cats, here, ctx, out)
+  if cats and not cats[c.id] then return end
+  local ok, list = pcall(S[c.id], here, ctx)
+  if ok and type(list) == "table" then for _, r in ipairs(list) do out[#out + 1] = r end
+  elseif not ok then F:Debug("source " .. c.id .. " : " .. tostring(list)) end
+end
+local finishSearch
 function F.Search(query)
   local cats, free = F.ParseQuery(query)
   local here = me()
-  local ctx = { level = level(), group = max(1, tonumber(try(G("GetNumGroupMembers"))) or 0),
-    petTrain = (tonumber(try(G("GetPetTrainingPoints")) or try(C("C_PetInfo", "GetPetTrainingPoints"))) or 0) > 0 }
+  local ctx = searchCtx()
   local out = {}
-  for _, c in ipairs(CATS) do
-    if not cats or cats[c.id] then
-      local ok, list = pcall(S[c.id], here, ctx)
-      if ok and type(list) == "table" then for _, r in ipairs(list) do out[#out + 1] = r end
-      elseif not ok then F:Debug("source " .. c.id .. " : " .. tostring(list)) end
+  for _, c in ipairs(CATS) do searchCat(c, cats, here, ctx, out) end
+  return finishSearch(out, free, query)
+end
+--- (5.1 INTEG) la recherche de fond (minuteur) : une source par image (T:Spread), jamais tout dans l'image du minuteur
+--- (avec les trajets de 5.1 — coût des chemins, morts — la recherche entière dépassait 2 ms) ; done(liste) à la fin
+function F.SearchAsync(query, done)
+  if not T.Spread then return done(F.Search(query)) end
+  local cats, free = F.ParseQuery(query)
+  local job = { i = 0, out = {}, here = me(), ctx = searchCtx() }
+  F._job = job
+  local function step()
+    if F._job ~= job then return end
+    if inCombat() then F._job, F._dirty = nil, true return end
+    job.i = job.i + 1
+    local c = CATS[job.i]
+    if c then
+      searchCat(c, cats, job.here, job.ctx, job.out)
+      return T:Spread(F, step)
     end
+    F._job = nil
+    done(finishSearch(job.out, free, query))
   end
+  T:Spread(F, step)
+end
+finishSearch = function(out, free, query)
   if free then
     local keep = {}
     for _, r in ipairs(out) do if low(r.title):find(free, 1, true) then keep[#keep + 1] = r end end
@@ -787,11 +815,20 @@ local lastRun = -1000
 --- retour d'un clic : une ligne brève dans le panneau (jamais la discussion)
 function F:Say(text) pcall(self.Suggest, self, "info", text, 1, { ttl = 8, cooldown = 0, sound = false, tab = TAB }) end
 
-function F:Refresh(force)
+function F:Refresh(force, background)
   if inCombat() then self._dirty = true return end
   if not force and now() - lastRun < 25 then return end
   lastRun = now()
   self._dirty = false
+  F._job = nil   -- une recherche de fond en cours est remplacée
+  if background and not (F.frame and F.frame:IsShown()) then
+    F.SearchAsync(self.lastQuery, function(list)
+      self:Publish(list)
+      self:UpdateNow(list)
+      if F.frame and F.frame:IsShown() then F.Render() end
+    end)
+    return
+  end
   local list = F.Search(self.lastQuery)
   self:Publish(list)
   self:UpdateNow(list)
@@ -944,10 +981,10 @@ function F:OnEnable()
     local age = now() - lastRun
     local shown = F.frame and F.frame.IsShown and F.frame:IsShown()
     if (shown and F._dirty) or (F._dirty and age >= 120) or age >= 300 then
-      T:After(1.1, function() if not inCombat() then F:Refresh(true) end end)
+      T:After(1.1, function() if not inCombat() then F:Refresh(true, true) end end)
     end
   end, self)
-  T:After(8, function() if not inCombat() then F:Refresh(true) end end)
+  T:After(8, function() if not inCombat() then F:Refresh(true, true) end end)
 end
 function F:OnDisable()
   if self.ticker and self.ticker.Cancel then self.ticker:Cancel() end

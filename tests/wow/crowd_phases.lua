@@ -249,6 +249,14 @@ return function(X)
       QDB.quests[40000 + i] = q
     end
     for id, q in pairs(QDB.quests) do QDB.xp[id] = 55 * q.questLevel + q.questLevel * q.questLevel end
+    -- (5.1 INTEG) like the real QuestieDB, an item row lists the quests that ask for it (relatedQuests): BAGS checks
+    -- this link on real quests before trusting it (without it every trade good stays « à confirmer »)
+    for qid, q in pairs(QDB.quests) do
+      for _, it in ipairs(q.objectives and q.objectives[3] or {}) do
+        local row = QDB.items[it]
+        if row then row.relatedQuests = row.relatedQuests or {} table.insert(row.relatedQuests, qid) end
+      end
+    end
   end
   local EXTRA_ITEMS = {
     [20101] = { name = "Viande de tortue", questItem = true, stack = 20, classID = 12 },
