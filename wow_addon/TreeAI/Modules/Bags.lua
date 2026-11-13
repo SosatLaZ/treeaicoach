@@ -64,7 +64,7 @@ local fmt, tconcat, tsort = string.format, table.concat, table.sort
 local ICON = "Interface\\Icons\\"
 
 -- ===================================================================== utilitaires
-local function pass(ok, ...) if ok then return ... end return nil end
+local function pass(ok, ...) if ok then return ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw((...), "Bags") end return nil end
 local function try(fn, ...) if type(fn) ~= "function" then return nil end return pass(pcall(fn, ...)) end
 local function g(name) return rawget(G, name) end
 local function meth(o, k, ...) if type(o) == "table" and type(o[k]) == "function" then return try(o[k], o, ...) end end

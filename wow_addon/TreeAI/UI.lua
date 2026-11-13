@@ -1006,11 +1006,6 @@ function TreeAI:CreatePanel()
     end)
   toolButton("options", L["Options"], function() if TreeAI.OpenOptions then TreeAI:OpenOptions() end end)
   -- (Macros, Déplacer, Tout, Réinitialiser : dans le sous-menu « Plus », la barre reste courte)
-  toolButton("radar", L["Radar (afficher / cacher)"], function()
-    local R = TreeAI.GetModule and TreeAI:GetModule("Radar")
-    if R and type(R.Show) == "function" then TreeAI.safecall(R.Show, not (R.db and R.db.shown ~= false))
-    else TreeAI:HandleSlash("radar") end
-  end)
   if TreeAI.Compass or (TreeAI.GetModule and TreeAI:GetModule("Compass")) then
     toolButton("compass", L["Boussole"], toggleCompass)
   end
@@ -2350,35 +2345,11 @@ function TreeAI:AutoLayout(force, strict)
   local party = {}
   for _, n in ipairs(PARTY_NAMES) do if named[n] then party[#party + 1] = named[n] end end
 
-  -- 1. radar : SOUS la minimap si c'est libre, sinon à sa gauche ; jamais sur un suivi de quêtes
-  local R, rf = moduleFrame("Radar", "TreeAIRadarFrame")
-  hookManual(rf, "radar")
-  if R and R.char and R.db and not keep("radar") then   -- placé même caché : juste quand il réapparaît
-    local k = call(rf, "GetScale") or 1
-    local sz = ((type(R.Size) == "function" and R.Size()) or tonumber(R.db.size) or 170) * k
-    local l, b
-    if mm then
-      local cands = {
-        { mm.l + mm.w - sz, mm.b - 10 - sz },            -- sous la minimap, aligné à droite
-        { mm.l + (mm.w - sz) / 2, mm.b - 10 - sz },      -- sous la minimap, centré
-        { mm.l - 10 - sz, mm.b + mm.h - sz },            -- à gauche, en haut
-        { mm.l - 10 - sz, mm.b + (mm.h - sz) / 2 },      -- à gauche, centré
-      }
-      for _, c in ipairs(cands) do
-        if fitsAt(g, c[1], c[2], sz, sz) then l, b = c[1], c[2]; break end
-      end
-      if not l then l, b = bestSpot(g, sz, sz, mm.l - sz / 2 - 10, mm.b + mm.h / 2) end
-    else
-      l, b = bestSpot(g, sz, sz, W - 300, H - sz / 2 - 20)
-    end
-    if l then
-      local pt, x, y = anchorFor(l, b, sz, sz, W, H, k, true)
-      R.char.point, R.char.x, R.char.y = pt, x, y
-      if rf then setAnchor(rf, pt, x, y) end
-      placed.radar = { point = pt, x = x, y = y, l = l, b = b, w = sz, h = sz }
-      g.mark({ l = l, b = b, w = sz, h = sz }, 6)
-    end
-  end
+  -- 1. (5.1 INTEG) la bande d'actions (Shortcuts) déjà posée : sa place est réservée (le radar retiré en 5.1 tenait
+  --    cette case-là ; sans lui, sur un petit écran, la boussole venait sous la bande)
+  local Sc = TreeAI.Shortcuts
+  local sr = type(Sc) == "table" and Sc.placed and type(Sc.StripRect) == "function" and Sc.StripRect() or nil
+  if sr and sr.w > 0 and sr.h > 0 then g.mark({ l = sr.l - 4, b = sr.b - 4, w = sr.w + 8, h = sr.h + 8 }, 4) end
 
   -- 2. encadré d'alerte : juste sous la minimap (sinon la place libre la plus proche)
   local al = S.alert
@@ -3366,7 +3337,19 @@ do
           local home = displaced[id]
           local hl, hb = l, b
           if home then hl, hb = home.l, home.b end
-          local hits = blockers(id, rects, hl, hb, w, h)
+          local rs = rects
+          if id == "compass" then
+            -- (5.1 INTEG) la bande d'actions posée automatiquement garde sa place en haut à gauche (petit écran : il n'y
+            -- en a pas d'autre) ; c'est la boussole qui s'écarte — avant, le carré du radar retiré lui gardait cette case
+            local Sc = TreeAI.Shortcuts
+            local sr = type(Sc) == "table" and Sc.placed == "auto" and type(Sc.StripRect) == "function" and Sc.StripRect() or nil
+            if sr then
+              rs = {}
+              for i = 1, #rects do rs[i] = rects[i] end
+              rs[#rs + 1] = { l = sr.l, b = sr.b, w = sr.w, h = sr.h, name = "TreeAIStrip" }
+            end
+          end
+          local hits = blockers(id, rs, hl, hb, w, h)
           if #hits > 0 then
             if not grid then
               grid = newGrid(self:ScanScreen())
@@ -3376,6 +3359,12 @@ do
             local g = grid
             for _, o in ipairs(shownMovers(id, W, H)) do g.mark(o, 4) end
             local nl, nb = bestSpot(g, w, h, hl + w / 2, hb + h / 2)
+            if not nl and id == "compass" then
+              -- (5.1 INTEG) petit écran (800×600) : sans la réserve du centre, comme le panneau (nos cadres restent évités)
+              local g2 = newGrid(self:ScanScreen())
+              for _, o in ipairs(shownMovers(id, W, H)) do g2.mark(o, 4) end
+              nl, nb = bestSpot(g2, w, h, hl + w / 2, hb + h / 2)
+            end
             local hp, _, hrp, hx, hy = pointOf(f)
             -- (PLACEBUG) jamais écarté sans une vraie place où revenir (pas de « CENTER 0,0 » inventé)
             if nl and (math.abs(nl - l) > 2 or math.abs(nb - b) > 2) and (home or validAnchor(hp, hx, hy)) then
@@ -3443,8 +3432,6 @@ function TreeAI:ApplyDisposition(name)
   local P = S.panel
   if P then P.width, P.maxLines, P.scale = D.width, D.lines, D.scale end
   if S.alert then S.alert.scale = D.alertScale end
-  local R = self.modules and self.modules.Radar
-  if R and R.db then R.db.size = D.radar end
   local db = moverDB()
   for k in pairs(db) do db[k] = nil end
   if self.ResetReflow then self:ResetReflow() end

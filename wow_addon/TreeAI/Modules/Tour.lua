@@ -56,7 +56,7 @@ M.TIPS_AFTER = 60   -- s après la connexion avant la première astuce
 
 local floor, max, min, abs = math.floor, math.max, math.min, math.abs
 local atan2 = math.atan2
-local function pass(ok, ...) if ok then return ... end return nil end
+local function pass(ok, ...) if ok then return ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw((...), "Tour") end return nil end
 local function try(fn, ...) if type(fn) ~= "function" then return nil end return pass(pcall(fn, ...)) end
 local function meth(o, m, ...)
   local f = type(o) == "table" and o[m]
@@ -400,10 +400,10 @@ M.STEPS = {
     text = function() return "La flèche vise ta prochaine étape, avec la distance et le temps de trajet." end },
   { id = "quick", title = "Les actions rapides",
     can = function()
-      return fromRegistry("quick") ~= nil or firstVisible(movable("quick"), movable("quickfight"), movable("quicktravel")) ~= nil
+      return fromRegistry("quick") ~= nil or firstVisible(movable("quicktravel")) ~= nil
     end,
     find = function()
-      return fromRegistry("quick") or firstVisible(movable("quick"), movable("quickfight"), movable("quicktravel"))
+      return fromRegistry("quick") or firstVisible(movable("quicktravel"))
     end,
     text = function()
       local Sc = T.Shortcuts

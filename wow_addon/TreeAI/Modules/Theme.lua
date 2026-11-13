@@ -119,6 +119,7 @@ local function meth(o, name, ...)
   if type(f) ~= "function" then return nil end
   local ok, a, b, c, d = pcall(f, o, ...)
   if ok then return a, b, c, d end
+  local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw(a, "Theme") end
 end
 
 -- settings (module db once bound, defaults before) ---------------------------------------------------

@@ -54,7 +54,7 @@ T.ZonePlan = Z
 local floor, max, min, sqrt, huge = math.floor, math.max, math.min, math.sqrt, math.huge
 local tsort, tconcat, tinsert, fmt = table.sort, table.concat, table.insert, string.format
 
-local function tryPass(ok, a, ...) if ok then return a, ... end return nil end
+local function tryPass(ok, a, ...) if ok then return a, ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw(a, "ZonePlan") end return nil end
 local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
   return tryPass(pcall(fn, ...))

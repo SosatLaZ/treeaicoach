@@ -9,7 +9,7 @@ if not W then return end
 local G = _G
 local fmt, floor, max, min = string.format, math.floor, math.max, math.min
 local tconcat, tsort = table.concat, table.sort
-local function pass(ok, ...) if ok then return ... end return nil end
+local function pass(ok, ...) if ok then return ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw((...), "WindowPages") end return nil end
 local function try(fn, ...) if type(fn) ~= "function" then return nil end return pass(pcall(fn, ...)) end
 local function meth(o, m, ...) local f = type(o) == "table" and o[m] if type(f) == "function" then return pass(pcall(f, o, ...)) end end
 local function strip(s) return (tostring(s or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|T.-|t", "")) end
@@ -664,13 +664,6 @@ W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = 
     if #keep > 0 then
       Ly.header("À faire maintenant", nil, #keep, W.TAB_ICON.now)
       for _, e in ipairs(keep) do Ly.row(e) end
-    end
-    -- (4.1) Suivi TreeAI allumé mais caché : il passerait sur le suivi de Questie / du jeu (jamais l'un sur l'autre)
-    local Wt = T.Watch
-    if type(Wt) == "table" and Wt._active and Wt.blockedBy and W.Query() == "" then
-      Ly.row({ id = "watch:blocked", text = "Suivi TreeAI caché : il passerait sur " .. tostring(Wt.blockedBy) .. ".",
-        kind = "info", tooltip = { "Déplace-le à côté (Réglages → Affichage → Déplacer les cadres), ou garde le suivi du jeu." },
-        clickHint = "Clic : déplacer les cadres", onClick = function() if T.SetEditMode then T:SetEditMode(true) end end })
     end
     -- 4. « Rendre mes quêtes » (mode actif) puis le trajet
     W.TurnInRows(Ly)

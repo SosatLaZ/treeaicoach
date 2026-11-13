@@ -113,7 +113,7 @@ return function(M, ctx)
   M.Advance(1, 0.2)
   local lines = PL.ComponentLines()
   for _, l in ipairs(lines) do out("composants : " .. l) end
-  check(#lines >= 1 and lines[1]:find("^Travail du cuir %d+ → %d+ : "), "at a merchant: one line per profession: " .. tostring(lines[1]))
+  check(#lines >= 1 and lines[1]:find("^Travail du cuir %d+ à %d+ : "), "at a merchant: one line per profession: " .. tostring(lines[1]))
   local joined = table.concat(lines, "\n")
   check(joined:find("%((marchand)%)") or joined:find("%(HV%)") or joined:find("%(à farmer%)") or joined:find("rien à acheter"),
     "quantities with their source (marchand / HV / à farmer)")

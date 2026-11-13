@@ -16,7 +16,10 @@ needs_lua = pytest.mark.skipif(not LUA, reason="lua5.1 not installed")
 @needs_lua
 @pytest.mark.parametrize("flavor", ["modern", "forever"])
 def test_routefix_scenario(flavor):
-    r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--flavor", flavor, "--class", "HUNTER", "--level", "30",
+    # (5.1 INTEG) « tout »: the scenario hand-feeds the Planner its steps (P.steps); in « sur » (harness default since
+    # clean6) the real plan is rebuilt during its 3 s wait and replaces them, so the SPF re-send it checks has nothing
+    # to re-send — a test-world artifact, not the route (the SPF re-send itself is the same code in both profiles)
+    r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--profile", "tout", "--flavor", flavor, "--class", "HUNTER", "--level", "30",
                         "--allow", "ShortestPathForever", "--scenario", "tests/wow/routefix_scenario.lua", str(ADDON)],
                        cwd=ROOT, capture_output=True, text=True, timeout=300)
     out = r.stdout + r.stderr

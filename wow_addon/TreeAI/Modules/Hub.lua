@@ -280,9 +280,6 @@ function H.Entries()
   local Cm = T.modules and T.modules.Compass
   add("outils", "boussole", "Boussole", ICON .. "INV_Misc_Spyglass_02", "Clic : afficher / cacher la flèche",
     act(function() if Cm and Cm.Toggle then Cm.Toggle() end end), (Cm and Cm.Toggle and Cm._active) and true or false)
-  local Rd = T.modules and T.modules.Radar
-  add("outils", "radar", "Radar", ICON .. "INV_Misc_Map_01", "Clic : afficher / cacher le radar",
-    act(function() Rd.Show(not (Rd.db and Rd.db.shown ~= false)) end), (Rd and Rd._active and Rd.Show) and true or false)
   -- entrées des modules (Dungeon…) : Outils d'abord puis Réglages, quel que soit l'ordre de chargement (un seul
   -- en-tête par groupe)
   for pass = 1, 2 do

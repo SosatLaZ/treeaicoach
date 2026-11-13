@@ -62,7 +62,7 @@ local unpack = unpack or table.unpack
 
 -- ------------------------------------------------------------------ utilitaires
 -- (LITE) sans table par appel (pcall direct) ; toujours au moins une valeur
-local function tryPass(ok, a, ...) if ok then return a, ... end return nil end
+local function tryPass(ok, a, ...) if ok then return a, ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw(a, "Auction") end return nil end
 local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
   return tryPass(pcall(fn, ...))

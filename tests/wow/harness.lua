@@ -374,6 +374,12 @@ local function storm()
     -- (Réglages → Affichage → card toggle = W:OnOptionChanged), so it is really built and shown
     if W and W.db then W.db.card = true if W._active and W.OnOptionChanged then pcall(W.OnOptionChanged, W, "card") end end
     if C and C.db then C.db.shown = true end
+    -- (5.1 INTEG) the « Conseils pro » rows (Chasseur → Familier, Réglages → Conseils pro) were clicked too: one click =
+    -- that tip off; scenarios start with every tip at its default
+    local Co = mods.Coach
+    if Co and Co.db and type(Co.defaults) == "table" then
+      for k, v in pairs(Co.defaults) do if type(v) == "boolean" and k ~= "enabled" then Co.db[k] = v end end
+    end
     -- (4.1 INTEG) the strip's « Suivant » (stop 1 passed for the session) and mode buttons (Rendre / À prendre /
     -- Zone / Groupe) were clicked too: scenarios start with no stop passed and the default quest mode
     local QB = T.QuestBrain

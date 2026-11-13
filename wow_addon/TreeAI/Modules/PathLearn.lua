@@ -38,6 +38,7 @@ local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
   local ok, a, b = pcall(fn, ...)
   if ok then return a, b end
+  local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw(a, "PathLearn") end
   return nil
 end
 local function secret(v) local f = G("issecretvalue") return f and v ~= nil and f(v) and true or false end

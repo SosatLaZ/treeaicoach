@@ -326,7 +326,10 @@ function PL.TrainerCard()
   if #lines == 0 then lines[1] = "Rien à apprendre d'utile ici pour l'instant." end
   local first = o.list[1]
   local label = first and ("Apprendre " .. cut(first.name, 26)) or nil
-  local f = PL.ShowCard(PL.OwnerOf("trainer"), "Ici : maître de " .. lineName(line):lower() .. fmt(" · utile : %d", #o.list),
+  -- (5.1 INTEG) « utile : 0 » ne disait rien : le nombre de recettes à apprendre, ou rien
+  local n = #o.list
+  local f = PL.ShowCard(PL.OwnerOf("trainer"), "Ici : maître de " .. lineName(line):lower()
+    .. (n > 0 and fmt(" · %d recette%s à apprendre", n, n > 1 and "s" or "") or ""),
     tconcat(lines, "\n"), label, first and PL.LearnNext or nil,
     first and { "Apprendre", fmt("Clic : apprendre « %s »%s — une recette par clic.", first.name, first.cost > 0 and (" (" .. money(first.cost) .. ")") or ""),
       "Seulement ce qui te donne des points (ou le rang suivant). Rien n'est appris sans ton clic." } or nil)

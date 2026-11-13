@@ -46,6 +46,7 @@ local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
   local ok, a, b, c, d = pcall(fn, ...)
   if ok then return a, b, c, d end
+  local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw(a, "Route") end
   return nil
 end
 local function G(name) return rawget(_G, name) end

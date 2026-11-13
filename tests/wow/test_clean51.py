@@ -82,10 +82,10 @@ def test_default_profile_lists():
 
 
 # ------------------------------------------------------------------------------------------------ B9 swallowed errors
-OWNED_BY_OTHERS = {"Auction", "Bags", "Inventory", "Errands", "Theme", "Shortcuts", "Window", "WindowPages", "Hub",
-                   "Tour", "Planner", "ZonePlan", "Route", "QuestBrain", "Brain", "NavTime", "PathLearn", "Quests",
-                   "Export", "Highlight", "Compass",
-                   "Bugs", "SelfTest"}   # these two probe the game's API on purpose and report it themselves
+# (5.1 INTEG) the merged branches' files (route6 / look6 / bags6 / ah5) now report too; left: files no branch of this
+# round owned, and the two that probe the game's API on purpose and report it themselves
+OWNED_BY_OTHERS = {"Inventory", "Hub", "Quests", "Highlight",
+                   "Bugs", "SelfTest"}
 
 
 def test_wrappers_report_through_the_central_counter():

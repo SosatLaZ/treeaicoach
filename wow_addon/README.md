@@ -28,22 +28,23 @@ Démarrage rapide côté joueur (installer, 3 choses à savoir, menu, bêta, bug
 ## Ordre de chargement (TOC)
 
 ```
-Core.lua  Locale_frFR.lua  UI.lua  Modules/Theme.lua  Options.lua  Modules/SelfTest.lua  Data/Macros.lua  Data/PetFood.lua
-Data/Consumables.lua  Data/Dungeons.lua  Data/Gear.lua  Data/Talents.lua  Data/Recipes.lua  Data/Travel.lua
-Data/Pets.lua  Modules/Hunter.lua  Modules/Classes.lua  Modules/Leveling.lua  Modules/Group.lua  Modules/Plain.lua
-Modules/Quests.lua  Modules/Compass.lua  Modules/NavTime.lua  Modules/Horizon.lua  Modules/Detect.lua  Modules/Stats.lua
-Modules/Macros.lua  Modules/Binds.lua  Modules/Tracker.lua  Modules/Todo.lua  Modules/Region.lua  Modules/Hub.lua
-Modules/Export.lua  Modules/Planner.lua  Modules/Speed.lua  Modules/Route.lua  Modules/PathDraw.lua  Modules/ZonePlan.lua
-Modules/ZoneWatch.lua  Modules/NavTrace.lua
-Modules/Inventory.lua  Modules/Boost.lua  Modules/Fight.lua  Modules/Pro.lua  Modules/Abandon.lua  Modules/Auction.lua
-Modules/Prof.lua  Modules/Glow.lua  Modules/Highlight.lua  Modules/PvP.lua  Modules/PvPMark.lua  Modules/Dungeon.lua
-Modules/DungeonPrep.lua  Modules/Radar.lua  Modules/MinimapPins.lua  Modules/QuestPins.lua  Modules/Watch.lua
-Modules/Gear.lua  Modules/ItemInfo.lua  Modules/Talents.lua
-Modules/Session.lua  Modules/Errands.lua  Modules/Edge2.lua  Modules/Bugs.lua  Modules/Finder.lua  Modules/Quick.lua
-Modules/QuickFight.lua  Modules/QuickTravel.lua  Modules/Shortcuts.lua  Modules/Window.lua  Modules/WindowPages.lua
-Modules/JournalPage.lua  Modules/Coach.lua  Modules/QoL.lua  Modules/Meter.lua  Modules/Addons.lua  Modules/Brain.lua
-Modules/BrainPage.lua  Modules/Tour.lua
-(4.0 : Squad / Missions / Team → Group ; SafePath, Edge, HunterPro, Comfort, Economy, Predict retirés — voir plus bas)
+Core.lua  Locale_frFR.lua  UI.lua  Modules/Theme.lua  Options.lua  Modules/SelfTest.lua  Data/Macros.lua
+Data/PetFood.lua  Data/Consumables.lua  Data/Dungeons.lua  Data/Gear.lua  Data/Talents.lua  Data/TalentSpells.lua
+Data/Recipes.lua  Data/Travel.lua  Data/Pets.lua  Modules/Hunter.lua  Modules/Classes.lua  Modules/Leveling.lua
+Modules/Group.lua  Modules/GroupJoin.lua  Modules/Plain.lua  Modules/Quests.lua  Modules/Compass.lua
+Modules/NavTime.lua  Modules/PathLearn.lua  Modules/Detect.lua  Modules/Stats.lua  Modules/Macros.lua
+Modules/Binds.lua  Modules/Tracker.lua  Modules/Todo.lua  Modules/Hub.lua  Modules/Export.lua  Modules/Planner.lua
+Modules/Speed.lua  Modules/Route.lua  Modules/PathDraw.lua  Modules/ZonePlan.lua  Modules/ZoneWatch.lua
+Modules/QuestBrain.lua  Modules/NavTrace.lua  Modules/Bags.lua  Modules/BagsPredict.lua  Modules/Inventory.lua
+Modules/Boost.lua  Modules/Fight.lua  Modules/Pro.lua  Modules/Abandon.lua  Modules/Auction.lua  Modules/AHMath.lua
+Modules/AHDesk.lua  Modules/Prof.lua  Modules/Glow.lua  Modules/Highlight.lua  Modules/PvP.lua  Modules/PvPMark.lua
+Modules/Dungeon.lua  Modules/DungeonPrep.lua  Modules/MinimapGeo.lua  Modules/QuestPins.lua  Modules/Gear.lua
+Modules/GearSpec.lua  Modules/GearValue.lua  Modules/GearRent.lua  Modules/ItemInfo.lua  Modules/Talents.lua
+Modules/Session.lua  Modules/Errands.lua  Modules/Edge2.lua  Modules/Bugs.lua  Modules/Finder.lua
+Modules/QuickTravel.lua  Modules/Shortcuts.lua  Modules/Window.lua  Modules/WindowPages.lua  Modules/JournalPage.lua
+Modules/Coach.lua  Modules/QoL.lua  Modules/Meter.lua  Modules/Addons.lua  Modules/Now.lua  Modules/Brain.lua
+Modules/BrainPage.lua  Modules/ProfLevel.lua  Modules/CityRun.lua  Modules/ProfGuide.lua  Modules/GroupGear.lua
+Modules/Tour.lua
 ```
 
 `Modules/Route.lua` + `Data/Travel.lua` (agent ROUTE) : le chemin le plus rapide entre les étapes du plan =
@@ -204,8 +205,6 @@ Questie / Shortest Path Forever / TomTom, jamais en doublon, aucun cadre ni fonc
 * **Temps de trajet** (`T.NavTime`, `Modules/NavTime.lua`, agent NAV) : `NavTime.Estimate(a, b)` → secondes,
   "spf" | "modèle" ; `Speed(mode)` (mesurée hors combat, w/m/s), `Detour(mapID)` (appris aux arrivées),
   `Model(yd, mapID)`, journal prévu/réel (`Accuracy()`, `AccuracyText()`), `summary.navTime`.
-* **Bande d'horizon** (`T.Horizon`, `Modules/Horizon.lua`) : prochains arrêts placés selon le cap (pas de
-  projection 3D dans l'API) ; suit la boussole (`Horizon.Sync(state)`).
 * **Lueurs** (`T.Glow`, `Modules/Glow.lua`) : `Glow.Ants(host, r, g, b, a, w, h)`, `Glow.Pulse(...)`,
   `Glow.Stop(host)` — animations jouées par le client, sur nos cadres seulement (Highlight).
 * (4.0) **Route sûre** (`SafePath`) : retirée — ses dangers étaient devinés (positions des monstres illisibles sur
@@ -796,13 +795,6 @@ manuel prioritaire. Déjà inscrits : panneau, encadré d'alerte, boussole, suiv
 * **Meilleur guide** : la 1re ligne de « Quête en cours » affiche distance · durée (cible de `Compass.state`, même
   contrat que Route / Compass ; sinon l'entrée du suivi), direction + pourquoi en infobulle ; mise à jour par le
   ticker 1 s existant, sans redessin complet (`TreeAI:_UpdateGuide()`).
-* **Quêtes par région** (`Modules/Region.lua`, `TreeAI.Region`) : l'onglet Quêtes est regroupé Ici · <zone> →
-  Zones voisines (par temps de trajet) → Plus loin, recalculé à `ZONE_CHANGED_NEW_AREA` (rien en combat). Région
-  déconseillée (autre continent, ≥ +5 niveaux, élite seul, donjon, > 8 min de trajet) : la quête reste listée
-  (« · déconseillée ») ; si c'est la meilleure option, une ligne « Région déconseillée : <raison> — on y va quand
-  même parce que <pourquoi> » (et sous l'étape en cours de « Maintenant »). **Jamais** d'appel automatique au
-  suivi d'objectifs du jeu : bouton d'onglet « Suivi du jeu » (clic, hors combat, ≤ 5 quêtes de la zone).
-  Questie / Shortest Path : rien ne leur est envoyé.
 * **Pastille de la minimap** (`Modules/Hub.lua`, `TreeAI.Hub`) : bouton rond enfant de `Minimap` (glisser autour
   du bord, angle sauvé, minimaps carrées via `GetMinimapShape`), aussi dans `AddonCompartmentFrame` s'il existe.
   Clic = fenêtre TreeAI (UIREDO ; sans le module Window : menu hub) ; clic droit = menu hub (Jeu : tous les onglets ;
@@ -1326,49 +1318,15 @@ Options (module « Thème », section Apparence) : thème Sombre / Clair / Blizz
 - Polices : `Th:Font(fs, "S"|"M"|"L"[, token])`, `Th:Text(parent, size, token)` (suivent l'échelle).
 - Habillage : `Th:Skin(frame, kind[, opts])`, kind = `window panel hud bar badge button row alert tooltip` ; opts `bg=` texture de fond existante, `noBg`, `border=false`. BackdropTemplate si présent, sinon textures. Refuse tout cadre nommé hors « TreeAI… », protégé ou interdit : jamais un cadre Blizzard. Toujours appeler gardé : `if T.Theme then T.Theme:Skin(f, "hud") end`.
 - Widgets : `Th:Frame Button IconButton ProgressBar(:SetProgress(v,max,prio,txt)) Header Separator Checkbox Slider Tab(:SetSelected) Badge(:SetBadge)`, `Th:Tooltip(frame, title, lines)` (GameTooltip rempli, jamais habillé). Message `THEME_CHANGED` après un changement.
-## Radar : module `Radar` (`Modules/Radar.lua`, après Compass/Squad)
+## Retirés en 5.1 (CLEAN)
 
-Petit radar **rond** à nous (jamais la minimap de Blizzard), `TreeAIRadarFrame` enfant d'`UIParent` : verre
-sombre (masque circulaire si dispo, sinon texture ronde teintée), fin anneau doré, cercles de distance,
-flèche du joueur (nord en haut, ou carte qui tourne : option), zoom 50–400 yd (molette ou boutons −/+).
-Tout à la souris : boutons sur l'anneau (−, +, cadenas, menu ≡) et **clic droit = menu** (couches, rotation,
-cercles, taille, verrou, oublier, cacher). Points : objectifs (amas d'apparitions via `Compass.QuestPoints`,
-hors combat, cache monde 6 s), remises, cible boussole + étapes `Planner`, amis (`party/raid` en direct puis état `Squad`), rares / élites vus
-(relevés à notre position, `char.rares` / `char.dangers`), corps (`PLAYER_DEAD`), maîtres de vol
-(`C_TaxiMap.GetTaxiNodesForMap`). Loin = collé au bord (flèche pour amis / cible), survol = infobulle,
-clic = cible de la boussole. 20 i/s seulement visible, caché en instance. API pure : `R.Project(dn, dw,
-facing, rotate, zoom, radius)`, `R.WorldToMap`, `R.Cluster`. `RegisterMovable(frame, "radar", "Radar",
-{resizable, square, minSize, maxSize, onResize, onMove})` appelé si présent. `/tai radar [zoom N|tourne|statut|reset|oublier]`.
-**Caché par défaut depuis 3.9.2** (`db.shown = false`, migration unique `db.offByDefault`), réactivable dans
-« Apparence » ; le module reste actif (relevés rares / élites / corps) pour MinimapPins.
+`Watch` (Suivi TreeAI), `Horizon` (bande d'horizon), `Radar`, `QuickFight` (barre de combat), `Quick` (barre de quête),
+`MinimapPins` (points en plus sur la minimap) et `Region` (quêtes par région) : coupés chez tout le monde depuis la 4.1,
+supprimés en 5.1. Leurs réglages enregistrés sont effacés une fois (`TreeAI.GONE_MODULES`). La géométrie de la minimap
+(projection yards / zoom, rotation, forme) reste dans `Modules/MinimapGeo.lua`, sous le même nom `T.MinimapPins` (lu par
+QuestPins / PathDraw) ; la cible suivante de l'ancienne barre Quick est passée dans Macros.
 
-## Points sur la minimap : module `MinimapPins` (`Modules/MinimapPins.lua`, après Radar)
-
-Nos points sur la **vraie** minimap de Blizzard, seulement ce que Questie ne montre pas : cible boussole /
-étape 1 du plan (sauf si `Compass.OtherGuide` dit que Blizzard / TomTom / SPF l'affiche), rares,
-élites près de moi / du chemin (anneau doux ± 40 yd, sans souris), butin de quête (relevé au `LOOT_OPENED`,
-**couche coupée si Questie est chargé**), amis au-delà du rayon de la minimap (flèche au bord + nom), maîtres de
-vol non découverts ≤ 800 yd, marchand / courrier / HV / réparation les plus proches (relevés à l'interaction)
-quand Inventaire dit sacs pleins / réparation (`T.Predict.list`). Moteur : `HereBeDragons-Pins-2.0` via `LibStub` si un addon
-l'embarque (`AddMinimapIconMap(MP, pin, uiMapID, x, y, false, floatOnEdge)` / `RemoveMinimapIcon`), sinon le nôtre :
-boutons enfants de `Minimap`, `MP.Offset(dn, dw, facing, rotate, yardsRadius, pxRadius, shape, inset)` avec
-`Minimap:GetZoom()`, `IsIndoors()`, table yards HBD, CVar `rotateMinimap`, `GetMinimapShape` ; ≤ 10 i/s via un cadre
-pilote enfant de Minimap. Minimap jamais modifiée ni hookée. Couches : options + page « Apparence ». `/tai minimap`.
-`Modules/Gear.lua` + `Data/Gear.lua` (agent GEAR) : planificateur d'équipement, onglet « Équipement » (tout au clic :
-« ↻ Recalculer », horizon +2, clic sur un emplacement = toutes les sources et alternatives ; `/tai equipement` en
-secours). Score par emplacement avec les poids du module Boost (exportés : `Boost.Weights`, `ScoreStats`,
-`ScoreLink`, `EQUIP_SLOTS`, `ARMOR_LEVEL`, `WEAPON_TYPES` — aucune duplication) ; candidats = ~5 100 objets du
-client (`tools/wow_build_gear.py`, build 1.60.1.70862 : pas de tables JournalEncounter*) + sacs + récompenses du
-journal (`Pro.char.rewards`, `GetQuestLogItemLink`). Sources : sacs, quête (journal / Questie `questRewards`),
-boss de donjon (Questie `npcDrops` dans une zone de donjon) ou monstre / coffre, marchand (Questie `vendors` +
-prix d'achat client), artisanat (SkillLineAbility/SpellEffect, compétence ≈ seuil jaune − 15), HV (`Auction.Stats`,
-jamais pour un objet lié quand ramassé) ; contrats optionnels lus si présents : `Dungeon.ItemSource(id)`,
-`Prof.CraftInfo(id)` → `{text, min, cost}`. Valeur = gain ÷ √(effort en minutes, or converti via or/h).
-Chasseur : DPS / vitesse de l'arme à distance (lente favorisée ±15 %), munitions assorties, mailles au niv 40.
-Calcul par coroutine hors combat. Résumé IA : `summary.gear = {priority, slots={{slot,item,score,next={id,name,
-gain,need,kind,where,cost,min}}}, shopping, total, hunter}` → `treeaicoach/wow/gear.py` (`gear_context`).
-
-## Sans autres addons (agent REPLACE, 4.0.1) : `QuestPins`, `Watch`, `Addons`, `QoL`, `Meter`
+## Sans autres addons (agent REPLACE, 4.0.1) : `QuestPins`, `Addons`, `QoL`, `Meter`
 
 But : jouer avec TreeAI seul — Questie installé mais **silencieux** (sa base QuestieDB lue en jeu, rien de copié), plus
 besoin de son suivi ni de ses icônes, ni de Leatrix Plus pour le confort, ni de Details pour les dégâts. Audit et plan :
@@ -1391,20 +1349,6 @@ besoin de son suivi ni de ses icônes, ni de Leatrix Plus pour le confort, ni de
   donneur, autres quêtes du même PNJ, XP, distance + durée (NavTime), pourquoi ; clic = `Compass.SetQuestTarget` /
   `SetTarget`. `/tai icones`. Coût mesuré (`replace_scenario.lua`) : immobile 0, en marchant ≈ 25, carte ouverte ≈ 7,
   carte glissée sans arrêt ≈ 35 kinstr/min ; session_sim : plafond 40, 1 à l'arrêt.
-* **`Watch` « Suivi TreeAI »** (mode sûr ; `TreeAIWatchFrame`, Theme:Window) : quêtes du trajet par zone dans l'ordre des
-  arrêts (puis « Hors trajet ») ou « Par distance » (bascule dans l'en-tête, retri toutes les 4 s en marchant) ; chaque
-  objectif : barre, texte du jeu, distance au bord de la zone + direction (N, NE…) + durée à pied, réécrits seulement si
-  la valeur arrondie change (1 lecture / s en marchant, rien à l'arrêt) ; « Rendre à X » ; bouton d'objet sécurisé
-  (`TreeAIWatchItem<n>`, type=item, enfant d'UIParent posé à la position lue de la ligne, hors combat seulement) ;
-  clic = boussole, clic droit = menu (guider, ignorer dans le trajet `ZonePlan:Ignore`, partager `QuestLogPushQuest`,
-  retirer du suivi, abandonner → page « Journal »). En combat : progression réécrite sur place (`W.Refill`), une quête de
-  plus attend la fin du combat. **« Remplacer le suivi du jeu »** (défaut oui) : `ObjectiveTrackerFrame` (ou
-  QuestWatchFrame) caché hors combat + `HookScript("OnShow")` qui le recache ; en combat seulement `SetAlpha(0)` puis
-  Hide après le combat ; mode édition du jeu ouvert = rendu ; option coupée = `Show` + alpha 1. Questie : une ligne
-  « Questie affiche aussi son suivi : clic pour le couper » (`Addons.SilenceQuestie`). Placement : 1re place = la colonne
-  du suivi du jeu (son rectangle, lisible même caché), écran posé (`T:ScreenStable`, `T._ScreenSize`), puis jamais
-  déplacé par TreeAI (`RegisterMovable(…, { noReflow = true })`) ; UI.lua le mesure comme un suivi (`_taiScan`,
-  `GROWS`, `SCAN_NAMES`) : carte, panneau et placement vivant l'évitent. `/tai monsuivi [on|off]`.
 * **`Addons` « Mes addons »** (mode sûr, rien d'automatique) : page cachée de la fenêtre (hors navigation : la
   pastille garde sa hauteur), ouverte par Outils / pastille (« Mes addons », groupe réglages), la ligne d'avis et
   `/tai addons` (`A.Open()`) : par addon trouvé
@@ -1612,36 +1556,6 @@ Uniquement des événements + une minuterie de 60 s (aucun OnUpdate, ≤ 60 kins
 * Perf : événements (cible, survol, niveau, zone) + relevé toutes les 30 s hors combat (calcul ≤ 1 / 25 s, à la
   demande sinon) ; QuestieDB lu une fois par PNJ et par session. Budget session_sim `Finder = 60` kinstr/min (mesuré
   ~11). Rien d'automatique, aucune fonction protégée. Test : `tests/wow/finder_scenario.lua`, `tests/wow/test_finder.py`.
-## Raccourcis : module `Quick` (agent QUICK1, `Modules/Quick.lua`, dernier du TOC)
-Barre d'icônes déplaçable (`RegisterMovable` id `quick`, cadre `TreeAIQuickBar`) qui ne montre que les boutons utiles :
-interrupteur « quêtes automatiques », objet de quête (sécurisé `type=item`, choisi par `Quests.PickItem` ; le bouton
-du module Quêtes se tait via `Quick.OwnsQuestItem()`), cibler le prochain objectif (sécurisé `type=macro`,
-`/targetexact Nom` depuis `Compass.Current().npc` ou l'objectif « … tué »), partager les quêtes qu'un membre n'a pas
-(`QuestLogPushQuest(index)` toutes les 0,6 s, jamais la sélection du journal), vendre gris + réparer (marchand),
-prendre tout le courrier (sauf contre-remboursement), pierre de foyer (hors repos), monture (journal, objet de
-monture, sinon Aspect du guépard). Cadres sécurisés créés / modifiés / montrés **hors combat seulement**
-(`RunOutOfCombat("Quick:layout")`), aucun ticker, aucune sortie chat ; boutons nommés `TreeAIQuick<Clé>` (`/click`).
-Automatismes (options, section Quêtes / PNJ / Marchand et courrier ; Maj = pause) : `AcceptQuest` (pas si journal
-plein), `CompleteQuest` (pas si la quête coûte de l'or), `GetQuestReward` (`Quick.Engine.PickReward` : un seul
-choix, sinon la seule amélioration `Boost.UpgradePct`, sinon la plus chère à la revente ; deux améliorations ou
-objet pas en cache = rien), quêtes des dialogues (finies d'abord, pas grises / répétables), option de dialogue sûre
-(vol, ou unique marchand / banque / maître ; jamais une option de discussion), vente des gris, réparation,
-rappel « butin automatique » (clic = CVar). `/tai raccourcis` = afficher / cacher la barre.
-## Raccourcis : module `QuickFight` (agent QUICK2, `Modules/QuickFight.lua`, fin du TOC)
-Barre compacte déplaçable (`TreeAIQuickBar`, poignée dorée à gauche, mode édition id `quick`) de boutons
-**sécurisés** (`SecureActionButtonTemplate`, `type = macro`, nommés `TreeAIQuick_<clé>` → `/click` possible) qui
-n'apparaissent que quand ils servent : `pull` (Marque du chasseur + `/petattack`, cible hostile hors combat), `pet`
-(Appeler / Ressusciter), `mend` (familier sous `petHp` %), `feed` (bonheur < 3, nourriture de `Hunter:BestFood`),
-`aspect` (Faucon / Singe sans aspect ou en combat ; Guépard / Meute pour voyager 20 s après un combat, Maj = l'autre),
-`bandage` (quand 8 s de bandage battent le repas, sans « Bandage récent », sans besoin de boire), `eat` (meilleure
-boisson / nourriture de `Macros.NewContext`, sous `hp` / `mana` %), + bouton normal `ammo` au marchand (achat sur
-clic jusqu'au stock `ammoBuy`, par piles de 200). Texte d'état : « Repos 18 s : bois maintenant », « Repos : plein
-dans 12 s » (vitesse mesurée pendant le repas), « Bande-toi : 8 s au lieu de 13 s », « Pas prêt : PV 45 %, … »,
-« Prêt à engager » (6 s). Règles : création / attributs / Show / Hide / placement / échelle **hors combat**
-(`RunOutOfCombat`) ; `PLAYER_REGEN_DISABLED` (avant le verrou sur le vrai client) garde seulement `pet` / `mend` /
-`aspect` ; en combat : alpha (1 utile, 0,3 sinon), textures, texte, recharge. Aucune ligne de conseil :
-`QF:OwnsPrePull()` fait taire `Fight:prepull`. Pur / testable : `QF:Plan(snapshot, opt)`, `QF.RestTime`,
-`QF.EatDuration`. Options « Raccourcis » ; `/tai raccourcis` = afficher / masquer. Budget session_sim ≤ 80 kinstr/min.
 ## Raccourcis : module `QuickTravel` (agent QUICK3, `Modules/QuickTravel.lua`, en fin de TOC)
 Tout part d'un clic du joueur, rien en combat, aucun cadre Blizzard modifié ni ancré (nos cadres sont sur UIParent,
 placés à la position LUE des fenêtres du jeu). `TreeAI.QuickTravel` :

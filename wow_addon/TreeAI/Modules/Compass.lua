@@ -42,7 +42,7 @@ local YD2M = 0.9144
 local RUN = 7  -- vitesse de course (yd/s) si l'API ne donne rien
 
 -- (LITE) sans table par appel (pcall direct) ; toujours au moins une valeur
-local function tryPass(ok, a, ...) if ok then return a, ... end return nil end
+local function tryPass(ok, a, ...) if ok then return a, ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw(a, "Compass") end return nil end
 local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
   return tryPass(pcall(fn, ...))
@@ -1433,12 +1433,10 @@ end
 local OFF = { none = true, hidden = true, off = true }
 local function refresh()
   local want = M.db and M.db.shown ~= false and M:IsEnabled()
-  local Hz = T.Horizon
-  local wantHz = Hz and Hz.db and Hz.db.shown ~= false and Hz:IsEnabled()
   local fight = inCombat()
   local hideFight = fight and M.db and M.db.hideCombat == true
   -- (NAV) rien à montrer (boussole et bande coupées, ou combat avec l'option cochée) : aucun calcul, aucune lecture
-  if frame and (hideFight or not (want or wantHz)) then
+  if frame and (hideFight or not want) then
     hideAll(hideFight and "combat" or "off")
     return OFF
   end
@@ -1449,7 +1447,7 @@ local function refresh()
   -- course au corps (DATA, Speed) : la cible « corps » passe avant tout (itinéraire, autre guide, Shortest Path)
   local cc = M.char and M.char.custom
   st.corpse = (not st.none and st.target and st.target.kind == "custom" and type(cc) == "table" and cc.source == "corpse") or nil
-  if visible or wantHz then
+  if visible then
     -- mort (pas encore libéré) : la fenêtre de mort de Blizzard reste lisible ; fantôme : seulement la flèche du corps
     local dg = _ns(try(_G.UnitIsDeadOrGhost, "player")) and true or nil   -- un seul appel (pas tout l'état)
     local ghost = dg and _ns(try(_G.UnitIsGhost, "player")) and true or nil
@@ -1538,8 +1536,6 @@ function M.Refresh()
   M._inRefresh = false
   if not ok then error(st, 0) end
   traceVis(st)
-  local Hz = T.Horizon                               -- bande d'horizon : suit la boussole (même règle d'un seul guide)
-  if Hz and Hz.Sync then pcall(Hz.Sync, st) end
   return st
 end
 
@@ -1581,10 +1577,6 @@ function M.WriteSummary()
 end
 
 -- ------------------------------------------------------------------ cycle de vie
-local function horizonWanted()
-  local Hz = T.Horizon
-  return Hz and Hz.db and Hz.db.shown ~= false and Hz:IsEnabled() and true or false
-end
 local pending
 local function rebuildSoon(reason)
   if pending then return end
@@ -1646,8 +1638,7 @@ function M:OnEnable()
     M.ticker = T:NewTicker(1, function()
       n = n + 1
       if frame and frame:IsShown() and not M.hideWhy then M.Glance()
-      elseif frame and SOFT[M.hideWhy or ""] and n % 2 == 0 then M.Refresh()
-      elseif frame and M.hideWhy == "off" and horizonWanted() then M.Refresh() end   -- la bande seule : elle suit
+      elseif frame and SOFT[M.hideWhy or ""] and n % 2 == 0 then M.Refresh() end
       if n % 10 == 0 and frame and (frame:IsShown() or M.hideWhy == "none") and not inCombat() then
         local py, px = lastPy, lastPx
         if M.hideWhy == "none" or n % 60 == 0 or py ~= M._rbPy or px ~= M._rbPx then

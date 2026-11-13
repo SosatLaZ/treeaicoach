@@ -313,11 +313,12 @@ return function(M, ctx)
   W.ShareAll()
   check(#pushed >= 1, "Partager : la quête est proposée au groupe (" .. #pushed .. ")")
   -- search finds actions on other pages
-  win.search:SetText("horizon")
+  -- (5.1 INTEG) the horizon band was removed (clean6): another element of Réglages → Affichage
+  win.search:SetText("pointillé")
   win.search:GetScript("OnTextChanged")(win.search)
   local found = false
-  for _, rr in ipairs(W.lastLay.rects) do if rr.label:find("Bande d'horizon", 1, true) then found = true end end
-  check(found, "recherche « horizon » depuis Groupe : trouvée dans Réglages → Affichage")
+  for _, rr in ipairs(W.lastLay.rects) do if rr.label:find("Chemin pointillé", 1, true) then found = true end end
+  check(found, "recherche « pointillé » depuis Groupe : trouvée dans Réglages → Affichage")
   win.search:SetText("")
   win.search:GetScript("OnTextChanged")(win.search)
   -- an unsolicited notice shows on its own page only

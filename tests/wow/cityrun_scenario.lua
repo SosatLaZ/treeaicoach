@@ -443,8 +443,8 @@ return function(M, ctx)
   check(T.focus == nil and fired[#fired] == "nil", "T.focus cleared, FOCUS_CHANGED(nil)")
   check(R.char.paused == false, "quest route resumed")
   local fin = false
-  for _, l in ipairs(M.output) do if l:find("Fini : ", 1, true) then fin = l:find("^%[UIError%]") ~= nil end end
-  check(fin and CR.last and CR.last.spent > 0, "« Fini : X dépensées, N min » on screen (never in chat)")
+  for _, l in ipairs(M.output) do if l:find("Courses finies en ", 1, true) then fin = l:find("^%[UIError%]") ~= nil end end
+  check(fin and CR.last and CR.last.spent > 0, "« Courses finies en N min · coût X » on screen (never in chat)")
   check(chat() == out0, "nothing in the chat during the courses (" .. (chat() - out0) .. ")")
   check(#M.violations == 0 and #M.blocked == 0, "zero violation, zero blocked action (" .. #M.violations .. ")")
   check(clicks >= 3, "cards clicked: " .. clicks)

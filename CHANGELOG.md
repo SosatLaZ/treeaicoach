@@ -16,7 +16,7 @@ Les versions les plus récentes en premier. Les chiffres de détection viennent 
   que l'assistant d'inventaire dit de garder n'est proposé à la vente.
 - Livre de comptes : gain réel du jour et sur 7 jours, or par heure passée à l'HV, objectif du jour (50 po,
   modifiable). Si le marché ne permet pas l'objectif, il le dit.
-- Fin du gel de ~20 ms à la fin de chaque recherche à l'HV.
+- Fin du gel de ~20 ms (mesuré en simulation) à la fin de chaque recherche à l'HV.
 
 ## 5.0.0 · 13 novembre 2026
 

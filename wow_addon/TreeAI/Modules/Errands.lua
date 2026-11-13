@@ -48,6 +48,7 @@ local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
   local ok, a, b, c, d, e, f, h, i, j, k = pcall(fn, ...)
   if ok then return a, b, c, d, e, f, h, i, j, k end
+  local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw(a, "Errands") end
 end
 local function sv(v)
   local is = g("issecretvalue")

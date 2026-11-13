@@ -16,7 +16,7 @@
 --  * MODE FOCUS (contrat T.focus de ProfLevel : kind = "city", owner = "CityRun") : trajet de quêtes en pause, boussole
 --    sur l'arrêt choisi, chaque arrêt se coche seul (fenêtre du jeu ouverte puis achats faits / fenêtre fermée), petite
 --    carte sous la fenêtre du jeu (UN clic = UNE action : vendre une pile, réparer, acheter un lot, retirer une pile,
---    recherche / achat HV via ProfLevel), « Fini : X dépensées, 4 min », puis le trajet reprend (ou la session métier
+--    recherche / achat HV via ProfLevel), « Courses finies en 4 min · coût X », puis le trajet reprend (ou la session métier
 --    enchaîne). Clic sur un arrêt = c'est lui maintenant ; clic droit = le passer ; « Étape suivante / précédente » +
 --    touches. Ton choix n'est jamais écrasé par un recalcul.
 --  * MÉTIERS : « Me concentrer sur les métiers » (courses d'abord si besoin, puis la session métier) ; options
@@ -1909,7 +1909,7 @@ function CR.Replan()
   CR.Refresh(true)
   return true
 end
---- fin des courses : trajet rendu, boussole rendue, « Fini : X dépensées, 4 min », session métier enchaînée si prévue
+--- fin des courses : trajet rendu, boussole rendue, « Courses finies en 4 min · coût X », session métier enchaînée si prévue
 function CR.Stop(why)
   local run = CR.run
   if not run then return false end
@@ -1932,7 +1932,9 @@ function CR.Stop(why)
   CR.last = { spent = spent, sec = sec, why = why }
   if why == "done" then
     local ask = #(run.unknown or {}) > 0 and fmt(" (%d à demander à un garde)", #run.unknown) or ""
-    say((spent >= 0 and fmt("Fini : %s dépensées, %s", money(spent), minutes(sec)) or fmt("Fini : %s gagnées, %s", money(-spent), minutes(sec))) .. ask)
+    -- (5.1 INTEG) jamais « Fini : 0 pc dépensées » : le coût seulement s'il y en a un, en mots justes
+    local cost = (spent > 0 and fmt(" · coût %s", money(spent))) or (spent < 0 and fmt(" · gain %s", money(-spent))) or ""
+    say(fmt("Courses finies en %s%s%s.", minutes(sec), cost, ask))
   elseif why ~= "silent" then
     say("Courses en ville arrêtées : le trajet de quêtes reprend.")
   end

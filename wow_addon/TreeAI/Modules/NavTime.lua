@@ -63,7 +63,7 @@ N.RELIEF = {
 local ARRIVE_YD = 15
 local MIN_SAMPLES = 5
 
-local function tryPass(ok, a, ...) if ok then return a, ... end return nil end
+local function tryPass(ok, a, ...) if ok then return a, ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw(a, "NavTime") end return nil end
 local function try(fn, ...) if type(fn) ~= "function" then return nil end return tryPass(pcall(fn, ...)) end
 local function G(n) return rawget(_G, n) end
 local function secret(v) local f = G("issecretvalue") return f and v ~= nil and f(v) and true or false end

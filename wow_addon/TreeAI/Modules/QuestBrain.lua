@@ -30,7 +30,7 @@ T.QuestBrain = QB
 
 local floor, max, min, huge = math.floor, math.max, math.min, math.huge
 local tsort, tconcat, fmt, tinsert = table.sort, table.concat, string.format, table.insert
-local function tryPass(ok, a, ...) if ok then return a, ... end return nil end
+local function tryPass(ok, a, ...) if ok then return a, ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw(a, "QuestBrain") end return nil end
 local function try(fn, ...) if type(fn) ~= "function" then return nil end return tryPass(pcall(fn, ...)) end
 local function G(name) return rawget(_G, name) end
 local function C(ns, fn) local t = G(ns) return type(t) == "table" and t[fn] or nil end

@@ -2337,7 +2337,8 @@ function PL.Components(force)
           parts[#parts + 1] = tconcat(shown, ", ") .. " (" .. SRC_FR[src] .. ")"
         end
         local reach = plan.res and plan.res.reached or plan.target
-        local txt = fmt("%s %d → %d : ", plan.name, plan.skill or 0, reach or 0) .. (#parts > 0 and tconcat(parts, " · ") or "rien à acheter")
+        -- (5.1 INTEG) « 143 à 150 » : la flèche « → » est absente des polices du jeu (SafeText en faisait « > »)
+        local txt = fmt("%s %d à %d : ", plan.name, plan.skill or 0, reach or 0) .. (#parts > 0 and tconcat(parts, " · ") or "rien à acheter")
         out[#out + 1] = { line = line, name = plan.name, text = txt, items = items, learn = learn }
       end
     end

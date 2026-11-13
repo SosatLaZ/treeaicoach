@@ -11,6 +11,7 @@
     the cancel / repost queue (one CancelAuction per press, deposit lost counted once), crafting spreads, sale-time
     patterns, the HV page as one dashboard (the superseded tiles are gone).
 """
+# (5.1 INTEG) harness default = « sur » (clean6) ; the HV is a beta function the player switches on: « tout »
 from __future__ import annotations
 
 import re
@@ -29,7 +30,7 @@ pytestmark = pytest.mark.skipif(not LUA, reason="lua5.1 not installed")
 
 @pytest.mark.parametrize("flavor", ["forever", "modern", "legacy"])
 def test_desk_scenario(flavor):
-    r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--flavor", flavor, "--scenario", "tests/wow/ah5_scenario.lua",
+    r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--profile", "tout", "--flavor", flavor, "--scenario", "tests/wow/ah5_scenario.lua",
                         str(ADDON)], cwd=ROOT, capture_output=True, text=True, timeout=240)
     assert r.returncode == 0, r.stdout[-6000:] + r.stderr
     assert "RESULT ok" in r.stdout and "violations=0" in r.stdout
@@ -42,7 +43,7 @@ def test_desk_scenario(flavor):
 
 @pytest.mark.parametrize("flavor", ["forever", "modern", "legacy"])
 def test_desk_slice2_scenario(flavor):
-    r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--flavor", flavor, "--scenario", "tests/wow/ah5b_scenario.lua",
+    r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--profile", "tout", "--flavor", flavor, "--scenario", "tests/wow/ah5b_scenario.lua",
                         str(ADDON)], cwd=ROOT, capture_output=True, text=True, timeout=240)
     assert r.returncode == 0, r.stdout[-6000:] + r.stderr
     assert "RESULT ok" in r.stdout and "violations=0" in r.stdout

@@ -207,13 +207,9 @@ end
 ---------------------------------------------------------------------------------------------------
 -- 3. « Avant le pull »
 ---------------------------------------------------------------------------------------------------
---- seuils : ceux de la barre de combat quand c'est elle qui montre « Prêt / Pas prêt » (une seule définition de
---- « prêt »), sinon les nôtres (les curseurs « Vie / Mana minimale avant un pull » de Combat)
+--- seuils : les curseurs « Vie / Mana minimale avant un pull » de Combat (la barre de combat est retirée en 5.1)
 local function thresholds()
-  local QF = T.QuickFight
-  local q = QF and type(QF.OwnsPrePull) == "function" and QF:OwnsPrePull() and QF.db or nil
-  return tonumber(q and q.hp) or tonumber(opt("hpPull")) or 60, tonumber(q and q.mana) or tonumber(opt("manaPull")) or 40,
-    tonumber(q and q.petHp) or 50
+  return tonumber(opt("hpPull")) or 60, tonumber(opt("manaPull")) or 40, 50
 end
 --- raisons de ne pas engager (pur sur un état) : s = { hp, mana, petHp, hunter } -> { "vie 45 %", … }
 function M.PrePullReasons(s, hpMin, manaMin, petMin)
@@ -228,8 +224,6 @@ function M.CheckPrePull()
   if not opt("prepull") or inCombat() or not hostile("target") or sv(try(G.UnitAffectingCombat, "target")) then
     M:Clear("prepull") return
   end
-  local QF = T.QuickFight   -- (QUICK2) la barre affiche déjà « Pas prêt : … » : un seul propriétaire
-  if QF and type(QF.OwnsPrePull) == "function" and QF:OwnsPrePull() then M:Clear("prepull") return end
   local s = { hp = pct("player"), hunter = T:PlayerClass() == "HUNTER" }
   if sv(try(G.UnitPowerType, "player")) == 0 then s.mana = pct("player", true) end
   if exists("pet") and not sv(try(G.UnitIsDead, "pet")) then s.petHp = pct("pet") end

@@ -61,6 +61,9 @@ return function(M, ctx)
   if VARIANT == "nofp" then KNOWN = { 22, 23, 25, 29, 30, 77, 13, 11, 10 } end   -- Splintertree never discovered
   R.char.taxi = {}
   for _, id in ipairs(KNOWN) do R.char.taxi[id] = true end
+  -- (5.1 INTEG) learned at a flight master: the route re-reads its known nodes (its 30 s cache is dropped by the game's
+  -- TAXIMAP_OPENED) — written straight into the saved table, they were invisible for 30 s whatever the profile
+  M.FireEvent("TAXIMAP_OPENED")
   -- hearthstone bound in Orgrimmar (Valley of Strength inn)
   rawset(_G, "GetBindLocation", function() return "Orgrimmar" end)
   local Sp = T.Speed

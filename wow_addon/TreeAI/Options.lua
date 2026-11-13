@@ -458,24 +458,6 @@ local function buildAppearance(content, width)
     function(v) al().scale = v; if TreeAI.ApplyAlertSettings then TreeAI:ApplyAlertSettings() end end)
   P.slider(L["Opacité de l'encadré"], 0.3, 1, 0.05, function() return al().alpha end, function(v) al().alpha = v end)
 
-  P.header(L["Radar"])
-  P.check(L["Afficher le radar"], function() return modGet("Radar", "shown") ~= false end,
-    function(v) local m = TreeAI.modules and TreeAI.modules.Radar; if m and m.Show then TreeAI.safecall(m.Show, v) end end)
-  P.check(L["Radar compact (120 px)"], function() return modGet("Radar", "compact") end, function(v) modSet("Radar", "compact", v) end)
-  P.check(L["Cacher le radar en combat"], function() return modGet("Radar", "hideCombat") end, function(v) modSet("Radar", "hideCombat", v) end)
-  P.slider(L["Taille du radar"], 110, 300, 10, function() return modGet("Radar", "size") end, function(v) modSet("Radar", "size", v) end)
-  P.slider(L["Opacité du fond du radar"], 0.2, 1, 0.05, function() return modGet("Radar", "opacity") end, function(v) modSet("Radar", "opacity", v) end)
-
-  -- points TreeAI sur la vraie minimap (seulement ce que Questie ne montre pas)
-  local MPm = TreeAI.modules and TreeAI.modules.MinimapPins
-  if MPm and type(MPm.LAYERS) == "table" then
-    P.header(L["Points sur la minimap"])
-    for _, layer in ipairs(MPm.LAYERS) do
-      P.check(L[(MPm.LABELS and MPm.LABELS[layer]) or layer], function() return modGet("MinimapPins", layer) ~= false end,
-        function(v) modSet("MinimapPins", layer, v) end)
-    end
-  end
-
   P.header(L["Boussole"])
   P.check(L["Afficher la boussole"], function() return modGet("Compass", "shown") ~= false end,
     function(v) local m = TreeAI.modules and TreeAI.modules.Compass; if m and m.Show then TreeAI.safecall(m.Show, v) end end)
@@ -609,9 +591,9 @@ end
 -- familles de modules (ordre logique : jouer → combat → groupe → sacs → réglages) ; inconnu → « Autres »
 local FAMILY = {
   { title = "Quêtes et trajet", mods = { "Quests", "Tracker", "Todo", "ZonePlan", "Planner", "Route", "Compass", "NavTime",
-    "Horizon", "Radar", "MinimapPins", "Highlight", "Abandon", "Region", "Speed", "Leveling", "Errands", "Edge2" } },
+    "Highlight", "Abandon", "Speed", "Leveling", "Errands", "Edge2" } },
   { title = "Combat et classe", mods = { "Hunter", "Classes", "Fight", "Boost", "Talents", "Macros", "Binds", "Detect",
-    "QuickFight", "PvPMark" } },
+    "PvPMark" } },
   { title = "Groupe", mods = { "Group", "Dungeon", "QuickTravel", "PvP" } },
   { title = "Sacs, or, métiers", mods = { "Inventory", "ItemInfo", "Auction", "Gear", "Prof" } },
   { title = "Outils", mods = { "Window", "Shortcuts", "Hub", "Session", "Stats", "Pro", "Theme", "Export", "SelfTest", "Bugs" } },
@@ -892,7 +874,7 @@ local function wizButton(parent, text, width, fn, textFn)
 end
 local WIZ_PROFILES = {
   { "sur", "Simple", "Simple : seulement ce qui est fiable et utile tout le temps (quêtes, trajet, boussole, bande d'actions, métiers, groupe). Écran léger." },
-  { "tout", "Complet", "Complet : tout TreeAI, fonctions bêta comprises (HV, combat, radar, conseils avancés). Plus d'aides, plus de choses à l'écran." },
+  { "tout", "Complet", "Complet : tout TreeAI, fonctions bêta comprises (HV, combat, conseils avancés). Plus d'aides, plus de choses à l'écran." },
 }
 local function wizProfile() return TreeAI.ModuleProfile and TreeAI:ModuleProfile() or "tout" end
 --- classe, niveau, spécialisation du joueur — lus dans le jeu (T.Gear.Spec() s'il existe), « inconnue » sinon

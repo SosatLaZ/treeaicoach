@@ -41,7 +41,7 @@ T.Window = W
 
 local fmt, floor, ceil, max, min = string.format, math.floor, math.ceil, math.max, math.min
 local tconcat, tsort = table.concat, table.sort
-local function pass(ok, ...) if ok then return ... end return nil end
+local function pass(ok, ...) if ok then return ... end local sw = _G.TreeAI and _G.TreeAI.Swallow if sw then sw((...), "Window") end return nil end
 local function try(fn, ...) if type(fn) ~= "function" then return nil end return pass(pcall(fn, ...)) end
 local function meth(o, m, ...) local f = type(o) == "table" and o[m] if type(f) == "function" then return pass(pcall(f, o, ...)) end end
 local function inCombat() return T.InCombat and T:InCombat() or false end
@@ -2766,25 +2766,15 @@ function W.ShareList()
       return out, "brain"
     end
   end
-  local Qk = T.Quick
-  if type(Qk) == "table" and type(Qk.ShareCandidates) == "function" then
-    local ok, l = pcall(Qk.ShareCandidates)
-    if ok and type(l) == "table" then
-      for _, e in ipairs(l) do if type(e) == "table" then out[#out + 1] = { title = e.title, id = e.id, index = e.index } end end
-    end
-  end
-  return out, "quick"
+  return out, nil   -- (5.1 INTEG) sans le Pilote (QuestBrain) : rien de sûr à partager (l'ancienne barre Quick est retirée)
 end
 --- un clic : chaque quête de la liste partagée au groupe (QuestLogPushQuest, hors combat, jamais sans clic)
 function W.ShareAll()
   if inCombat() then W.Flash("Impossible en combat : réessaie après.") return 0 end
-  local Qk = T.Quick
-  local list, src = W.ShareList()
+  local list = W.ShareList()
   if #list == 0 then W.Flash("Rien à partager : tes amis ont déjà tes quêtes (ou ne peuvent pas les prendre).") return 0 end
   local n = 0
-  if src == "quick" and type(Qk) == "table" and type(Qk.ShareAll) == "function" then
-    n = tonumber((try(Qk.ShareAll))) or #list     -- (index du journal, une quête toutes les 0,6 s, jamais la sélection)
-  else
+  do
     local QL = G.C_QuestLog
     local push = G.QuestLogPushQuest
     for _, e in ipairs(list) do
@@ -3209,33 +3199,15 @@ W.DISPLAY = {
     set = function(v) local d = dbOf("Compass") if v and not modOn("Compass") then setMod("Compass", true) end
       if d then d.shown = v and true or false end
       local Cm = T.Compass if Cm and Cm.OnOptionChanged then pcall(Cm.OnOptionChanged, Cm, "shown") end end },
-  { id = "horizon", label = "Bande d'horizon (2e flèche, en haut)", preview = "N · NE · E… avec les 3 prochains arrêts",
-    on = function() local d = dbOf("Horizon") return modOn("Horizon") and d and d.shown == true or false end,
-    set = function(v) local d = dbOf("Horizon") if v and not modOn("Horizon") then setMod("Horizon", true) end
-      if d then d.shown = v and true or false end
-      local Hz = T.Horizon if Hz and Hz.OnOptionChanged then pcall(Hz.OnOptionChanged, Hz, "shown") end end },
   { id = "card", label = "Carte « Prochaine étape »", preview = "les 3 prochaines étapes dans une petite carte",
     on = function() return (W.db and W.db.card ~= false) and true or false end,
     set = function(v) if W.db then W.db.card = v and true or false W:OnOptionChanged("card") end end },
-  { id = "watch", label = "Suivi TreeAI (à côté du suivi du jeu)", preview = "quêtes du trajet avec distance et durée",
-    on = function() local d = dbOf("Watch") return modOn("Watch") and not (d and d.shown == false) end,
-    set = function(v) local d = dbOf("Watch") if d then d.shown = v and true or false end setMod("Watch", v) end },
   { id = "meter", label = "Fenêtre « Dégâts »", preview = "dégâts du groupe après chaque combat",
     on = function() local d = dbOf("Meter") return modOn("Meter") and d and d.shown == true or false end,
     set = function(v) local d = dbOf("Meter") if v and not modOn("Meter") then setMod("Meter", true) end
       local Dm = T.Meter
       if Dm and type(Dm.Show) == "function" then pcall(Dm.Show, v) elseif d then d.shown = v and true or false end
       if d then d.shown = v and true or false end end },
-  { id = "quickbar", label = "Barre de quête (objet, cible, partage, foyer)", preview = "petite barre d'icônes déplaçable",
-    on = function() local d = dbOf("Quick") return modOn("Quick") and not (d and d.bar == false) end,
-    set = function(v) local d = dbOf("Quick") if d then d.bar = v and true or false end setMod("Quick", v) end },
-  { id = "fightbar", label = "Barre de combat (manger, familier, pull…)", preview = "boutons « c-1… » au-dessus des barres d'action",
-    on = function() return modOn("QuickFight") end, set = function(v) setMod("QuickFight", v) end },
-  { id = "radar", label = "Radar rond", preview = "petit radar des objectifs",
-    on = function() local d = dbOf("Radar") return modOn("Radar") and d and d.shown == true or false end,
-    set = function(v) local d = dbOf("Radar") if v and not modOn("Radar") then setMod("Radar", true) end
-      local Rd = T.modules and T.modules.Radar
-      if Rd and type(Rd.Show) == "function" then pcall(Rd.Show, v) elseif d then d.shown = v and true or false end end },
   { id = "minimap", sec = "map", label = "Pastille de la minimap", preview = "clic : cette fenêtre ; clic droit : le menu",
     on = function() local d = dbOf("Hub") return modOn("Hub") and not (d and d.button == false) end,
     set = function(v) local d = dbOf("Hub") if d then d.button = v and true or false end
@@ -3246,8 +3218,6 @@ W.DISPLAY = {
     on = function() return modOn("Highlight") end, set = function(v) setMod("Highlight", v) end },
   { id = "tooltips", sec = "bags", label = "Lignes TreeAI dans les infobulles d'objets", preview = "Amélioration, valeur, quête, métier : sous l'infobulle du jeu",
     on = function() return modOn("ItemInfo") end, set = function(v) setMod("ItemInfo", v) end },
-  { id = "minipins", sec = "map", label = "Points en plus sur la minimap", preview = "rares, élites, maîtres de vol, services",
-    on = function() return modOn("MinimapPins") end, set = function(v) setMod("MinimapPins", v) end },
   { id = "path", sec = "map", label = "Chemin pointillé (carte + minimap)", preview = "le trajet appris, en pointillés",
     on = function() return modOn("PathDraw") end, set = function(v) setMod("PathDraw", v) end },
 }
@@ -3316,7 +3286,7 @@ W.PROFILES = {
   { id = "sur", label = "Simple",
     text = "Seulement ce qui est fiable et utile tout le temps : quêtes, trajet, boussole, bande d'actions, métiers, groupe. Rien de bêta, écran léger." },
   { id = "tout", label = "Complet",
-    text = "Tout TreeAI, fonctions bêta comprises (HV, combat, radar, conseils avancés…) : plus d'aides, plus de choses à lire et à l'écran." },
+    text = "Tout TreeAI, fonctions bêta comprises (HV, combat, conseils avancés…) : plus d'aides, plus de choses à lire et à l'écran." },
 }
 --- le profil en cours : « sur » (Simple) | « tout » (Complet) | « essentiel » (léger : réglage avancé)
 function W.Profile() return T.ModuleProfile and T:ModuleProfile() or "tout" end
