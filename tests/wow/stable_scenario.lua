@@ -107,7 +107,8 @@ return function(M, ctx)
   -- a new subscriber gets the first burst whatever it holds (it has seen nothing yet): primed here
   fireIn("QUEST_LOG_UPDATE") fireIn("GROUP_ROSTER_UPDATE")
   M.Advance(4, 0.05)
-  check(#fl.quest == 1 and #fl.roster == 1, "premier appel après l'abonnement : l'état de départ (" .. #fl.quest .. ", " .. #fl.roster .. ")")
+  -- (5.0 INTEG : avec la bande d'actions abonnée au journal, le flux a déjà servi → 0 appel ici, le journal n'ayant pas changé)
+  check(#fl.quest <= 1 and #fl.roster <= 1, "premier appel après l'abonnement : l'état de départ, une fois au plus (" .. #fl.quest .. ", " .. #fl.roster .. ")")
   for k in pairs(fl) do fl[k] = {} end
   -- bags: 20 changes in a burst (loot / vendor) → one call, later
   local t0 = M.now

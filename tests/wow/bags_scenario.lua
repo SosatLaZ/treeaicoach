@@ -26,6 +26,13 @@ return function(M, ctx)
   local b0 = blocked()
   M.LeaveCombat()
   if not check(B and B.Verdict and B.RegisterKeeper and B._active, "Bags module loaded and active") then return end
+  -- (5.0 INTEG) sections 1-8 = Bags ALONE with its coarse bridges (what the player gets when « Équipement » or
+  -- « Métiers » is switched off): the real keepers of GEAR and PROF step aside; section 9 puts them back.
+  local Gm, PLm = T.Gear, T.Prof and T.Prof.Level
+  check(#B.Keepers() >= 2, "the real keepers « Gear » and « Prof » are registered at login: " .. table.concat(B.Keepers(), ", "))
+  B.UnregisterKeeper("Gear")
+  B.UnregisterKeeper("Prof")
+  check(#B.Keepers() == 0, "real keepers set aside for the bridge sections")
   local Q = T.modules.QoL
   if Q and Q.db then Q.db.sellRepair = false end          -- the card first; the automatic grey sale has its own step
   local K = T.modules.Quick
@@ -84,7 +91,7 @@ return function(M, ctx)
       "evidence: the profession verdict calls the healing potions surplus (" .. tostring(cv.text) .. ")")
     local listed = false
     for _, e in ipairs(CR.ExtraList and CR.ExtraList() or {}) do if e.id == 929 and (e.bags or 0) >= 5 then listed = true end end
-    check(listed, "evidence: 4.3.4 listed the 5 healing potions « à vendre » (ExtraList)")
+    check(not listed, "« à vendre » of Courses en ville no longer lists the 5 healing potions (consumable + the bags' verdict)")
     local stillSold = false
     for _, e in ipairs(CR.SellStacks and CR.SellStacks() or {}) do if e.id == 929 then stillSold = true end end
     check(not stillSold, "the profession quick sale no longer lists them (a keeper claims them)")
@@ -622,6 +629,54 @@ return function(M, ctx)
   check(B.stats.computed == c0, "in combat: no verdict computed")
   M.LeaveCombat()
   M.Advance(2, 0.1)
+
+  -- ------------------------------------------------------------------ 9. (5.0 INTEG) with the REAL keepers of GEAR and PROF
+  -- the bridges step aside (one opinion per item, from the module that knows): an upgrade is « à utiliser », a piece
+  -- he cannot wear is surplus alone and kept in a group until GEAR knows nobody wants it, a leather of HIS plan is kept
+  clearBags()
+  item(9021, "Collier d'agilité de test", { quality = 2, stack = 1, sellPrice = 900, classID = 4, subclassID = 0, equipLoc = "INVTYPE_NECK",
+    minLevel = 20, stats = { ITEM_MOD_AGILITY_SHORT = 6 } })
+  M.SetBagItem(0, 1, 6948, 1)
+  M.SetBagItem(0, 2, 9007, 1)       -- plate chest: not for a hunter
+  M.SetBagItem(0, 3, 9021, 1)       -- an upgrade (empty neck slot)
+  M.SetBagItem(0, 4, 2319, 6)       -- medium leather (his leatherworking)
+  M.group = {}
+  M.FireEvent("GROUP_ROSTER_UPDATE")
+  if Gm and Gm.RegisterKeeper then Gm.UnregisterKeeper() Gm.RegisterKeeper() end
+  if PLm and PLm.RegisterKeeper then PLm.keeperOn = nil PLm.RegisterKeeper() end
+  M.FireEvent("BAG_UPDATE", 0)
+  bagsChanged()
+  M.Advance(4, 0.1)
+  B.Invalidate()
+  local names = table.concat(B.Keepers(), ", ")
+  check(names:find("Gear", 1, true) and names:find("Prof", 1, true), "real keepers back: " .. names)
+  local _, v7 = show(9007, 0, 2)
+  out("vrais gardiens : " .. show(9007, 0, 2))
+  check(v7.action ~= "keep" and tostring(v7.why):find("pas pour toi", 1, true), "GEAR: plate chest alone = surplus, said by Gear (" .. tostring(v7.why) .. ")")
+  local _, vb = show(9021, 0, 3)
+  out("vrais gardiens : " .. show(9021, 0, 3))
+  check((vb.action == "use" or vb.action == "keep") and vb.keeper == "Gear", "GEAR: the upgrade is claimed by Gear (" .. tostring(vb.action) .. " / " .. tostring(vb.why) .. ")")
+  local _, vl = show(2319, 0, 4)
+  out("vrais gardiens : " .. show(2319, 0, 4))
+  check(vl.action ~= "sell", "PROF: the leather of his own profession is never a one-click vendor sale (" .. tostring(vl.action) .. " : " .. tostring(vl.why) .. ")")
+  M.group = { { name = "Ami-Un", class = "WARRIOR", level = 30, online = true }, { name = "Ami-Deux", class = "MAGE", level = 30, online = true },
+    { name = "Ami-Trois", class = "PRIEST", level = 29, online = true } }
+  M.FireEvent("GROUP_ROSTER_UPDATE")
+  M.Advance(1.5, 0.1)
+  B.Invalidate()
+  local _, vg = show(9007, 0, 2)
+  out("vrais gardiens : (groupe de 4) " .. show(9007, 0, 2))
+  check(vg.action == "keep", "GEAR in a group of 4: the tradable plate chest is kept (a friend may wear it): " .. tostring(vg.why))
+  M.group = {}
+  M.FireEvent("GROUP_ROSTER_UPDATE")
+  M.Advance(1.5, 0.1)
+  -- a switched-off module takes its keeper away: the bridge answers again
+  if Gm and Gm.UnregisterKeeper then
+    Gm.UnregisterKeeper()
+    B.Invalidate()
+    check(not table.concat(B.Keepers(), ","):find("Gear", 1, true) and B.Verdict(9007, 0, 2).action ~= "keep", "Gear off: its keeper leaves, the bridge decides again")
+    Gm.RegisterKeeper()
+  end
 
   -- (« [UIError] … » = the short answer to a click at the top of the screen, not the chat)
   local chat = 0

@@ -247,6 +247,8 @@ return function(M, ctx)
   -- fenêtre : page « Groupe » → section « Équipement du groupe » + « Échanges conseillés »
   local W = T.Window
   check(W and W.Open, "fenêtre TreeAI")
+  -- (the harness storm clicks every button at boot, section headers included: start from unfolded sections)
+  if W.char and type(W.char.collapsed) == "table" then W.char.collapsed["gg:trade"], W.char.collapsed["gg:gear"] = nil, nil end
   W.Open("group")
   M.Advance(1, 0.5)
   W.Render()

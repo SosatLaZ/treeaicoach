@@ -137,6 +137,16 @@ return function(M, ctx)
   at(0.50, 0.50)
 
   -- ------------------------------------------------------------------ 3. the shopping list
+  -- (5.0 INTEG) ONE « à vendre » list for the whole addon: the inventory assistant's (verdicts prepared by small
+  -- batches, the profession keeper computed off the event) — let both settle as they do in play
+  local BG = T.Bags
+  -- (no AH price known in this scenario: the option « vendre au marchand quand le prix d'HV est inconnu » is on, so
+  -- that a trade good declared surplus by the profession keeper is a vendor sale as in 4.x)
+  if BG and BG.db then BG.db.ahUnknown = true end
+  if BG and BG.Warm then
+    for _ = 1, 3 do BG.Warm() M.Advance(2, 0.1) end
+    check(BG.Ready(), "inventory verdicts ready (keepers settled)")
+  end
   local plan = CR.Plan({})
   local by = {}
   for _, e in ipairs(plan.errands) do by[e.id] = e end
@@ -348,12 +358,29 @@ return function(M, ctx)
         { id = 2678, price = 2, stack = 1, maxStack = 20 }, { id = 3371, price = 20, stack = 5, maxStack = 20 },
         { id = 2605, price = 100, stack = 1, maxStack = 20 } }
       M.bought = {}
-      M.SetMerchant(true) M.Advance(0.4)
+      M.SetMerchant(true) M.Advance(1.6, 0.1)
       local c = card()
-      check(c and c:IsShown() and c.label and c.label:find("^Vendre %(%d+%)"), "merchant: sell first « " .. tostring(c and c.label) .. " »")
+      -- (5.0 INTEG) ONE sell / repair card: the inventory assistant's « Vendre N objets · X + réparer », under the
+      -- courses card, which keeps the purchases only (no second « Vendre » / « Réparer » button)
+      local bc = BG and BG.GetCard and BG.GetCard("merchant")
+      local bm = BG and BG.cardModel
+      check(bc and bc:IsShown() and bm and bm.label and bm.label:find("^Vendre %d+ objet") and bm.label:find("réparer", 1, true),
+        "merchant: ONE sell + repair card (Bags) « " .. tostring(bm and bm.label) .. " »")
+      check(c and c:IsShown() and c.label and not c.label:find("^Vendre") and not c.label:find("^Réparer"),
+        "merchant: the courses card has no sell / repair button « " .. tostring(c and c.label) .. " »")
       M.EnterCombat()
       check(not CR.SellNext() and not CR.BuyNext(), "sell / buy refused in combat")
       M.LeaveCombat() M.Advance(0.6)
+      -- one click on the Bags card: repair + sale by re-checked batches (its own scenario proves the details)
+      local sold0 = M.sold or 0
+      if bc and bc.btn then
+        bc.btn:Click() clicks = clicks + 1
+        M.FireEvent("BAG_UPDATE_DELAYED") M.Advance(2, 0.1)
+        M.FireEvent("BAG_UPDATE_DELAYED") M.Advance(1, 0.1)
+      end
+      check((M.sold or 0) > sold0, "the Bags card sold the surplus (" .. ((M.sold or 0) - sold0) .. " stacks)")
+      CR.run.repaired = true                            -- (the mock's repair does not restore durability)
+      check(CR.ErrandDone({ kind = "sell", id = "sell" }, CR.run), "sale errand checked off once the Bags card sold")
       local n = 0
       c = card()
       while c and c:IsShown() and c.label and n < 20 do

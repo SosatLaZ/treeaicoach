@@ -192,6 +192,7 @@ return function(M, ctx)
     n = n + 1
   end
   check(#(M.withdrawn or {}) > before and violations() == 0, "bank withdraw: " .. (#(M.withdrawn or {}) - before) .. " stack(s), no violation")
+  M.Advance(1, 0.1)   -- (5.0 STABLE: bag changes are delivered ≥ 0.3 s after the last event, never in its frame)
   check((plan.split.bank[4234] or 0) == 0 or PL.Compute(165, "full", 165).split.bank[4234] == nil, "nothing left to withdraw")
   M.SetBank(false)
   M.Advance(0.5)

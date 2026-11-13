@@ -198,6 +198,10 @@ return function(M, ctx)
   end
 
   -- ------------------------------------------------------------------ « Guidage quêtes » : fallback (no core switch)
+  -- (5.0 INTEG) the core of STABLE provides the real switch: set aside for this section, real checks further down
+  local realOn, realSet = T.QuestGuideOn, T.SetQuestGuide
+  check(S.GuideIsCore() and type(realOn) == "function", "5.0 : le cœur fournit T:SetQuestGuide / T:QuestGuideOn")
+  T.QuestGuideOn, T.SetQuestGuide = nil, nil
   check(not S.GuideIsCore(), "sans T:SetQuestGuide : la pastille grise les boutons de quêtes")
   B.guide:Click("LeftButton")
   M.Advance(0.3, 0.1)
@@ -233,8 +237,34 @@ return function(M, ctx)
   guide = true
   T:Fire("QUEST_GUIDE_CHANGED", true)
   M.Advance(0.3, 0.1)
-  T.QuestGuideOn, T.SetQuestGuide = nil, nil
+  T.QuestGuideOn, T.SetQuestGuide = realOn, realSet
   S.SetGuide(true)
+  -- the REAL switch (STABLE): pill, key, « /tai guide » and « /tai quetes on|off » are one and the same thing
+  if realSet then
+    local function guideMods(on)
+      local bad
+      for name in pairs(T.QUEST_GUIDE or {}) do
+        local m = T.modules[name]
+        if m and on == false and (m._active or not m._guideOff) then bad = name end
+      end
+      return bad
+    end
+    check(T:QuestGuideOn() and S.GuideOn(), "cœur : guidage allumé au départ")
+    B.guide:Click("LeftButton")
+    M.Advance(0.5, 0.1)
+    check(not T:QuestGuideOn() and not S.GuideOn() and TreeAIDB.questGuide == false, "cœur : la pastille coupe T:QuestGuideOn() (gardé dans TreeAIDB.questGuide)")
+    check(not guideMods(false), "cœur : les modules de guidage sont arrêtés (" .. tostring(guideMods(false)) .. ")")
+    out("guidage coupé (cœur) : " .. table.concat(S.Dump(), " · "))
+    SlashCmdList["TREEAI"]("quetes on")
+    M.Advance(0.5, 0.1)
+    check(T:QuestGuideOn() and S.GuideOn() and B.guide.on ~= false, "/tai quetes on : rallumé, la pastille suit")
+    SlashCmdList["TREEAI"]("guide off")
+    M.Advance(0.5, 0.1)
+    check(not T:QuestGuideOn(), "/tai guide off = /tai quetes off")
+    SlashCmdList["TREEAI"]("guide on")
+    M.Advance(0.5, 0.1)
+    check(T:QuestGuideOn() and S.GuideOn(), "/tai guide on : rallumé")
+  end
 
   -- ------------------------------------------------------------------ fake QuestBrain (agent QUESTS' public API)
   local calls = {}
@@ -453,8 +483,12 @@ return function(M, ctx)
 
   -- ------------------------------------------------------------------ hygiene
   T.QuestBrain = nil
-  for i = chat0 + 1, #M.output do out("chat: " .. M.output[i]) end
-  check(#M.output == chat0, "rien dans le chat (" .. (#M.output - chat0) .. " lignes)")
+  -- (« [UIError] … » = the short answer at the top of the screen — /tai quetes on|off — not the chat)
+  local chatN = 0
+  for i = chat0 + 1, #M.output do
+    if not tostring(M.output[i]):find("^%[UIError%]") then chatN = chatN + 1 out("chat: " .. M.output[i]) end
+  end
+  check(chatN == 0, "rien dans le chat (" .. chatN .. " lignes)")
   check(blocked() == b0, "aucune action bloquée")
   for i = v0 + 1, #M.violations do out("violation: " .. tostring(M.violations[i].kind) .. " " .. tostring(M.violations[i].msg)) end
   check(#M.violations == v0, "aucune violation")

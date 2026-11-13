@@ -1657,6 +1657,9 @@ local function merchantTip()
   lines[#lines + 1] = "Jamais ce qu'un gardien réclame (quêtes, potions, munitions, métiers, équipement)."
   return "Vendre au marchand", lines, m.n > 0 and "Clic : vendre · clic droit sur une ligne : garder" or nil
 end
+--- (5.0 INTEG) vrai quand la carte « Vendre N objets + réparer » du marchand est la nôtre : les autres modules
+--- (Métiers, Courses en ville) n'affichent alors NI bouton de vente NI bouton de réparation
+function M.OwnsMerchant() return M._active == true and opt("card") and true or false end
 function M.UpdateCard()
   local f = CARD.merchant
   if not (M._active and opt("card") and M.merchantOpen) or inCombat() then

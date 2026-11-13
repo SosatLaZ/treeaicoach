@@ -306,7 +306,11 @@ return function(M, ctx)
   end
   check(not lwText:find("%d+/%d+"), "no « have/need » fraction anywhere in the steps")
   -- surplus / keep: the plan's leather is kept (exact count + margin), what no plan uses is declared
+  -- (5.0 INTEG: with the real T.Bags the keeper has usually been asked already — put it back to « never computed »)
+  M.Advance(3)
+  PL._keep.map, PL._keep.sig, PL._keep.at = nil, nil, 1e9
   local keepN, keepWhy = PL.KeepFor(2319)
+  PL._keep.at = -100
   check(keepN == 28 and keepWhy:find("en cours", 1, true), "keeper before the first computation: all 28 Cuir moyen are kept (when in doubt, never sold)")
   M.Advance(2)
   PL.KeepRebuild() M.Advance(3)

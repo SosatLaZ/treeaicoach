@@ -616,7 +616,9 @@ return function(M, ctx)
       return t, table.concat(t, " || ")
     end
     local t, all = labels()
-    check(t[1] == "button:» Meilleur maintenant" and t[2] == "button:Stuff rentable" and t[3] == "button:Mon équipement",
+    -- LOOK 5.0 draws the first three commands of a tabbed page as action tiles (kind "action")
+    local function top(l, name) return l == "button:" .. name or l == "action:" .. name end
+    check(top(t[1], "» Meilleur maintenant") and top(t[2], "Stuff rentable") and top(t[3], "Mon équipement"),
       "D5 top = 3 big actions: " .. table.concat({ tostring(t[1]), tostring(t[2]), tostring(t[3]) }, " | "))
     check(all:find("row:Spé : ", 1, true) and all:find("choisie par toi", 1, true), "D5 spec + source on the page")
     check(all:find("header:Le meilleur maintenant", 1, true) and all:find("Équipe Collier%-test des sacs"), "D5 « Meilleur maintenant » lists the bag upgrade")

@@ -134,8 +134,18 @@ local function scanBag(bag, lv)
         local sc = M.Score(link)
         if sc and sc.known and sc.usable and sc.kind == "good" and (sc.delta or 0) > 0 then
           list[#list + 1] = { bag = bag, slot = slot, id = id, link = link, sc = sc, wait = sc.req }
-        elseif sc and sc.usable == false and sc.later and sc.later - lv <= 5 then
+        elseif sc and sc.usable == false and sc.later and sc.later - lv <= 10 then
           list[#list + 1] = { bag = bag, slot = slot, id = id, link = link, later = sc.later }
+        elseif sc and sc.known and sc.equip ~= false then
+          -- (5.0 INTEG) l'avis « en trop » du gardien de Sacs : seulement quand il est SÛR (stats lues, comparaison faite)
+          if sc.usable == false then
+            list[#list + 1] = { bag = bag, slot = slot, id = id, link = link,
+              drop = sc.later and ("pas portable avant le niveau " .. sc.later) or ("pas pour toi : " .. tostring(sc.why or "tu ne peux pas le porter")) }
+          elseif sc.kind == "bad" then
+            list[#list + 1] = { bag = bag, slot = slot, id = id, link = link, drop = "moins bien que ce que tu portes" }
+          elseif sc.kind == "same" then
+            list[#list + 1] = { bag = bag, slot = slot, id = id, link = link, same = true }
+          end
         end
       end
     end
@@ -159,10 +169,14 @@ function M.BagUpgrades(force)
     for bag in pairs(dirtyBags) do perBag[bag] = scanBag(bag, lv) end
   end
   dirtyBags, bagsKey = {}, key
-  local out = { list = {}, bySlot = {}, keep = {}, gen = gen, n = 0 }
+  local out = { list = {}, bySlot = {}, keep = {}, drop = {}, where = {}, gen = gen, n = 0 }
   for bag = 0, nb do
     for _, e in ipairs(perBag[bag] or {}) do
-      if e.sc then
+      if e.drop then
+        if not out.keep[e.id] then out.drop[e.id], out.where[e.id] = e.drop, e end
+      elseif e.same then
+        out.keep[e.id], out.drop[e.id] = "équivalent à ce que tu portes", nil
+      elseif e.sc then
         local sc = e.sc
         out.list[#out.list + 1] = e
         if not sc.req then
@@ -170,31 +184,91 @@ function M.BagUpgrades(force)
           if not cur or (sc.delta or 0) > (cur.sc.delta or 0) then out.bySlot[sc.slot] = e end
         end
         out.keep[e.id] = sc.req and ("amélioration au niveau " .. sc.req) or "amélioration pour toi"
+        out.drop[e.id] = nil
         out.n = out.n + 1
       elseif e.later then
         out.keep[e.id] = "portable au niveau " .. e.later   -- mailles / plaques proches : ne pas vendre
+        out.drop[e.id] = nil
       end
     end
   end
   bagUp = out
   return out
 end
---- garde-fou de vente (contrat BAGS) : nombre à garder et pourquoi, pour un n° d'objet
-function M.KeepCount(id)
+--- garde-fou de vente (contrat BAGS : fn(id, infos, combien, sac, case)) — le VRAI gardien « Gear », qui remplace le
+--- pont grossier de Sacs : n > 0 + raison = à garder (amélioration pour toi, portable bientôt, équivalent, utile à un
+--- ami) ; 0 + raison = « en trop » SÛR (stats lues et comparées : moins bien / pas pour toi, et personne du groupe ne
+--- peut s'en servir) ; 0 seul = pas d'avis (stats illisibles, ami pas encore inspecté…) → Sacs garde.
+local DOUBLE = { INVTYPE_FINGER = true, INVTYPE_TRINKET = true, INVTYPE_WEAPON = true }
+local groupMemo = {}   -- n° d'objet → { t, réponse } : l'avis du groupe (GroupGear.Rank) gardé 10 s
+local function isBound(it, e)
+  if type(it) == "table" and it.bind == 1 then return true end   -- lié quand ramassé
+  if not e then return nil end
+  local CC = g("C_Container")
+  if type(CC) == "table" and CC.GetContainerItemInfo then
+    local raw = try(CC.GetContainerItemInfo, e.bag, e.slot)
+    if type(raw) ~= "table" then return nil end
+    return pub(raw.isBound) and true or false
+  end
+  local r = { try(g("GetContainerItemInfo"), e.bag, e.slot) }
+  if r[1] == nil and r[7] == nil then return nil end
+  return pub(r[11]) and true or false
+end
+--- un ami du groupe peut-il s'en servir ? false = non (seul, objet lié, ou tous lus : personne) ; true = oui ;
+--- nil = on ne sait pas (ami pas encore inspecté, module du groupe coupé)
+local function friendsWant(id, it, e)
+  local n = num(try(g("GetNumGroupMembers"))) or num(try(g("GetNumPartyMembers"))) or 0
+  if n <= 0 then return false end
+  local b = isBound(it, e)
+  if b == true then return false end                        -- lié à toi : aucun ami ne peut le recevoir
+  local GG = T.GroupGear
+  if not (GG and GG._active and type(GG.Rank) == "function") then return nil end   -- on ne sait pas : pas d'avis
+  local c = groupMemo[id]
+  local t = num(try(g("GetTime"))) or 0
+  if c and t - c[1] < 10 then return c[2] end
+  local r = e and e.link and try(GG.Rank, e.link) or nil
+  local ans = nil
+  if type(r) == "table" then
+    ans = false
+    for _, x in ipairs(r.need or {}) do if x.m and not x.m.me then ans = true end end
+    for _, x in ipairs(r.later or {}) do if x.m and not x.m.me then ans = true end end
+    if not ans then for _, m in ipairs(r.unknown or {}) do if not m.me then ans = nil break end end end
+  end
+  groupMemo[id] = { t, ans }
+  return ans
+end
+function M.KeepCount(id, it, have)
+  if not M._active then return nil end
+  M.BagUpgrades()                                          -- (clé = génération des sacs : rien si rien n'a changé)
   local why = bagUp.keep[id]
-  if why then return 1, why end
+  if why then
+    local n = 1
+    if type(it) == "table" and DOUBLE[it.loc or ""] and (tonumber(have) or 1) > 1 then n = 2 end   -- deux anneaux / bijoux / armes
+    return n, why, why == "amélioration pour toi" and "use" or nil
+  end
   local GG = T.GroupGear   -- utile à un ami du groupe (échanges conseillés) : jamais vendu non plus
   local tr = GG and GG._active and GG.TradeFor and try(GG.TradeFor, id)
   if type(tr) == "string" then return 1, tr end
-  return 0
+  local drop = bagUp.drop and bagUp.drop[id]
+  if not drop then return 0 end
+  local fw = friendsWant(id, it, bagUp.where[id])
+  if fw == false then return 0, drop end
+  if fw == true then return 1, "un ami du groupe peut s'en servir" end
+  return 0                                                 -- groupe pas encore lu : pas d'avis (gardé)
 end
 local keeperFor   -- la table T.Bags auprès de laquelle on s'est inscrit (une fois par table)
 function M.RegisterKeeper()
   local B = T.Bags
   if type(B) ~= "table" or type(B.RegisterKeeper) ~= "function" then return false end
   if keeperFor == B then return true end
-  if pcall(B.RegisterKeeper, "Gear", function(id) return M.KeepCount(id) end) then keeperFor = B return true end
+  if pcall(B.RegisterKeeper, "Gear", function(id, it, have) return M.KeepCount(id, it, have) end) then keeperFor = B return true end
   return false
+end
+--- module coupé : le gardien se retire (le pont de Sacs reprend la main)
+function M.UnregisterKeeper()
+  local B = keeperFor
+  keeperFor = nil
+  if type(B) == "table" and type(B.UnregisterKeeper) == "function" then pcall(B.UnregisterKeeper, "Gear") end
 end
 
 -- flèches vertes sur les boutons de sac (calque à nous, ancré sur le bouton, jamais son enfant)
@@ -777,6 +851,7 @@ function M.RentCombatEnd()
   if M._bagsLater and M.OnBagsChanged then M._bagsLater = false T:After(1, function() pcall(M.OnBagsChanged) end) end
 end
 function M.RentDisable()
+  M.UnregisterKeeper()
   hideArrows()
   if arrowWatch then arrowWatch:Cancel() arrowWatch = nil end
 end

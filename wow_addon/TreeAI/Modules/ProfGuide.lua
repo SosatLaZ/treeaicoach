@@ -430,6 +430,7 @@ end
 -- changement de sacs / de recettes, jamais dans l'image de l'événement. Tant que rien n'est calculé : une compo d'un de
 -- TES métiers est gardée en entier (dans le doute on ne vend pas).
 local keep = { map = nil, sig = nil, busy = false, at = -100 }
+PL._keep = keep   -- (tests)
 local function keepSig()
   local v = PL.ver or {}
   return tostring(API.BagGen and API.BagGen() or 0) .. ":" .. tostring(v.known) .. ":" .. tostring(v.bank) .. ":" .. tostring(v.prices)
@@ -460,17 +461,51 @@ function PL.KeepRebuild()
       local e = acc[id]
       if e then e.n = e.n + n else acc[id] = { n = n, why = fmt("quête « %s » (%d)", cut(why[id] or "?", 28), n) } end
     end
+    -- (5.0 INTEG) le « en trop » SÛR, dit par « Courses en ville » (plans des deux modes, quêtes, recettes d'ici 50
+    -- points) : une compo qu'aucun de tes plans ne réclame, qui ne servira pas plus tard, et qui n'est pas un
+    -- consommable → avis explicite pour Sacs (« 0 + raison »). Tout le reste : pas d'avis (Sacs garde).
+    local surplus = {}
+    local CR = T.CityRun
+    if type(CR) == "table" and type(CR.Verdicts) == "function" and (not CR.IsEnabled or CR:IsEnabled()) then
+      local okV, vm = pcall(CR.Verdicts)
+      for id, v in pairs(okV and type(vm) == "table" and vm or {}) do
+        if type(v) == "table" and (tonumber(v.extra) or 0) > 0 and not v.keep and not v.later and not acc[id]
+          and not (CR.IsConsumable and CR.IsConsumable(id)) and (tonumber(v.need) or 0) == 0 then
+          surplus[id] = tostring(v.text or "aucun de tes plans de métier n'en a besoin")
+        end
+      end
+    end
+    local before, beforeS = keep.map, keep.surplus or {}
+    keep.surplus = surplus
     keep.map, keep.sig, keep.at, keep.busy = acc, sig, now(), false
     PL.keepGen = (PL.keepGen or 0) + 1
     if T.Fire then T:Fire("PROF_KEEP_CHANGED") end
+    -- (5.0 INTEG) l'avis a changé : Sacs refait SEULEMENT les objets touchés (tout, la première fois)
+    local B = T.Bags
+    if PL.keeperOn and type(B) == "table" and type(B.Invalidate) == "function" then
+      if not before then pcall(B.Invalidate)
+      else
+        for id, e in pairs(acc) do
+          local o = before[id]
+          if not o or o.n ~= e.n then pcall(B.Invalidate, id) end
+        end
+        for id in pairs(before) do if not acc[id] then pcall(B.Invalidate, id) end end
+        for id, w in pairs(surplus) do if beforeS[id] ~= w then pcall(B.Invalidate, id) end end
+        for id in pairs(beforeS) do if not surplus[id] then pcall(B.Invalidate, id) end end
+      end
+      -- marchand / banque ouverts : sa carte se remet à jour (avis refaits par petits paquets)
+      if (B.merchantOpen or B.bankOpen) and type(B.Refresh) == "function" then pcall(B.Refresh) end
+    end
   end
   local function step()
     i = i + 1
     local line = lines[i]
     if not line then return finish() end
+    local planned = 0
     for _, mode in ipairs({ "full", "exact" }) do
       local ok, plan = pcall(PL.Compute, line, mode, mode == "exact" and 300 or PL.Target(line, mode))
       if ok and type(plan) == "table" and not plan.bad then
+        planned = planned + 1
         local need = {}
         for id, n in pairs(plan.use or {}) do need[id] = (need[id] or 0) + n end
         if mode == "full" then for id, n in pairs(plan.res and plan.res.buy or {}) do need[id] = (need[id] or 0) + n end end
@@ -483,6 +518,20 @@ function PL.KeepRebuild()
             e.plan = n + margin
             e.why = fmt("ton plan de %s en utilise %d%s", lineName(line):lower(), n, margin > 0 and fmt(" (+%d de marge)", margin) or "")
           end
+        end
+      end
+    end
+    if planned < 2 then
+      -- (5.0 INTEG) un plan de ce métier manque (incohérent, pas calculable) : dans le doute TOUTES ses compos sont
+      -- gardées — jamais « personne ne le réclame » pour le cuir d'un travailleur du cuir dont le plan est muet
+      local d = D()
+      for _, r in ipairs(d and d.r[line] or {}) do
+        local m = r[10] or {}
+        for k = 1, #m - 1, 2 do
+          local e = acc[m[k]]
+          if not e then e = { n = 0, plan = 0 } acc[m[k]] = e end
+          e.n, e.all = math.huge, true
+          e.why = e.why or fmt("compo de ton métier (%s) : plan pas sûr, je garde", lineName(line):lower())
         end
       end
     end
@@ -521,6 +570,8 @@ function PL.KeepFor(id)
   end
   local e = keep.map[id]
   if e and e.n > 0 then return e.n, e.why end
+  local w = keep.surplus and keep.surplus[id]
+  if w then return 0, w end                                -- avis explicite « en trop » (voir KeepRebuild)
   return 0, nil
 end
 function PL.KeepSoon()
@@ -642,10 +693,18 @@ function PL.OnEnable()
   PL.RegisterKeeper()
   -- (contrat STABLE) changements de sacs regroupés : T:OnBags (≥ 0,3 s après le dernier événement, jamais dans son image)
   if type(T.OnBags) == "function" and not PL.viaOnBags then
-    PL.viaOnBags = pcall(T.OnBags, T, "Prof", function()
+    PL.viaOnBags = pcall(T.OnBags, T, M, function()
       if PL.BagsChanged then pcall(PL.BagsChanged) end
       if PL.keeperOn then PL.KeepSoon() end
     end) and true or false
   end
   if not PL.keeperOn then T:After(3, function() PL.RegisterKeeper() end) end   -- Bags chargé après nous
+end
+-- (5.0 INTEG) module coupé : le gardien se retire (le pont « Métiers » de Sacs reprend la main)
+local baseDisable = PL.OnDisable
+function PL.OnDisable()
+  if baseDisable then pcall(baseDisable) end
+  local B = T.Bags
+  if PL.keeperOn and type(B) == "table" and type(B.UnregisterKeeper) == "function" then pcall(B.UnregisterKeeper, "Prof") end
+  PL.keeperOn = nil
 end

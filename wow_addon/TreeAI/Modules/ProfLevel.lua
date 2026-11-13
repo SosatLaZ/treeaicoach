@@ -305,11 +305,12 @@ function PL.KeepText(id, have)
 end
 
 -- ===================================================================== prix
-local priceCache, priceAt = {}, -100
+local priceCache, priceAt, priceVer = {}, -100, -1
 --- prix unitaire d'une compo : marchand (exact), sinon HV (TreeAI, confiance ≥ 30 %) ou Auctionator ; jamais deviné
 --- → prix, source ("vendeur" | "HV" | "Auctionator"), confiance
 function PL.PriceOf(id)
-  if now() - priceAt > 60 then priceCache, priceAt = {}, now() end
+  -- (5.0 INTEG) oubliée aussi quand les prix changent (ver.prices) : un plan n'est jamais gardé avec un prix périmé
+  if now() - priceAt > 60 or priceVer ~= ver.prices then priceCache, priceAt, priceVer = {}, now(), ver.prices end
   local c = priceCache[id]
   if c then return c[1], c[2], c[3], c[4] end
   local d = D()
@@ -1972,7 +1973,10 @@ function PL.NpcModel()
   if not kind then return nil end
   local lines, btn, more = {}, nil, {}
   local comps = PL.ComponentLines()
-  if kind == "merchant" then
+  -- (5.0 INTEG) UNE seule carte « vendre + réparer » chez le marchand : celle de l'assistant d'inventaire (T.Bags) ;
+  -- cette carte-ci garde son rôle « métiers » (composants à acheter, recettes) sans bouton en double
+  local bagsCard = C and type(C.BagsCard) == "function" and C.BagsCard() or false
+  if kind == "merchant" and not bagsCard then
     local stacks = (C and C.SellStacks and select(2, pcall(C.SellStacks))) or {}
     stacks = type(stacks) == "table" and stacks or {}
     local n, v, grey = 0, 0, 0

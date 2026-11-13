@@ -605,7 +605,7 @@ function CR.VerdictOf(v)
   if have <= 0 then return nil end
   if v.mine then
     out.text, out.tone, out.extra = "Pas besoin : aucune recette utile à ton niveau", "warn", have
-    if v.later then out.details[#out.details + 1] = fmt("Servira plus tard : « %s » dès %d.", cut(v.later.name, 30), v.later.at)
+    if v.later then out.later = true out.details[#out.details + 1] = fmt("Servira plus tard : « %s » dès %d.", cut(v.later.name, 30), v.later.at)
     else out.details[#out.details + 1] = "Tes recettes qui s'en servent sont grises (plus aucun point)." end
     return out
   end
@@ -749,7 +749,37 @@ function CR.IsConsumable(id)
   classID = num(classID)
   return classID == nil or classID == 0
 end
+--- (5.0 INTEG) l'assistant d'inventaire allumé : UNE seule liste « à vendre » pour tout l'addon (la sienne — gris +
+--- ce qu'un avis explicite dit en trop, jamais ce qu'un gardien réclame) et UNE seule carte chez le marchand (la sienne)
+local function brain()
+  local B = T.Bags
+  if type(B) == "table" and B._active and type(B.Lists) == "function" and type(B.Ready) == "function" then return B end
+  return nil
+end
+CR.Brain = brain
+function CR.BagsCard()
+  local B = brain()
+  return B ~= nil and type(B.OwnsMerchant) == "function" and B.OwnsMerchant() == true
+end
 function CR.SellStacks()
+  local B = brain()
+  if B then
+    local okR, ready = pcall(B.Ready)
+    if not (okR and ready) then
+      -- avis pas prêts : préparés par petits paquets (jamais un gros calcul ici), la liste arrive à la prochaine demande
+      if type(B.Warm) == "function" and not CR.warming then
+        CR.warming = true
+        pcall(B.Warm, function() CR.warming = nil if CR.run and CR.Soon then CR.Soon(0.1) end end)
+      end
+      return {}
+    end
+    local okL, L = pcall(B.Lists)
+    local list = {}
+    for i, e in ipairs(okL and type(L) == "table" and L.sell or {}) do
+      list[i] = { bag = e.bag, slot = e.slot, id = e.id, n = e.n, value = e.value, grey = e.grey or nil }
+    end
+    return list
+  end
   local out, left = {}, {}
   for _, e in ipairs(CR.ExtraList()) do left[e.id] = e.bags end
   local iter = API.IterBags
@@ -1288,10 +1318,15 @@ function CR.BagsShopping(out)
         seen[id] = true
         nAdd = nAdd + 1
         local have = cnt(id)
-        local it = buyItem(id, have + floor(n), have)
+        -- (5.0 INTEG) une course « marchand » seulement pour ce qu'un marchand vend (nourriture, munitions…) : une potion
+        -- de soins ne s'achète pas chez le fournisseur du coin → pas de « demande à un garde » pour elle (page Sacs / HV)
+        local vendorSold = e.src == "marchand" or e.vendor == true or e.npc ~= nil or (e.src == nil and e.cat == nil)
+        local it = vendorSold and buyItem(id, have + floor(n), have) or nil
         if it then
+          local known = str(e.name) or (str(select(1, try(API.ItemInfo, id))))
           out[#out + 1] = { id = "bags:" .. id, kind = "vendor", cat = "food", prio = num(e.prio) or PRIO.food, items = { it },
-            label = (str(e.label) and (cut(e.label, 24) .. " : ") or "À racheter : ") .. itemsText({ it }),
+            label = known and ((str(e.label) and (cut(e.label, 24) .. " : ") or "À racheter : ") .. itemsText({ it }))
+              or fmt("À racheter : %d %s", floor(n), str(e.label) or "consommables"),
             why = str(e.why or e.reason) or fmt("il t'en reste %d", have), any = "consommables", src = "Bags" }
         end
       end
@@ -1779,6 +1814,11 @@ function CR.ErrandDone(e, run)
   elseif k == "mail" then return v.mail == true
   elseif k == "repair" then
     if run.repaired then return true end
+    -- (5.0 INTEG) réparé par la carte de l'assistant d'inventaire (ou à la main) : le marchand ouvert dit « plus rien »
+    if CR.merchantOpen and v.repair == true and pub(try(g("CanMerchantRepair"))) and (num((try(g("GetRepairAllCost")))) or 0) == 0 then
+      run.repaired = true
+      return true
+    end
     local d = durability()
     return (v.repair == true) and (d == nil or d >= 90) or false
   elseif k == "sell" then return v.sell == true or #CR.SellStacks() == 0
@@ -2194,6 +2234,11 @@ function CR.UpdateCard()
     local nSell = sellLeft()
     local buys = CR.MerchantNeeds()
     local rep = repairWanted() and pub(try(g("CanMerchantRepair"))) and (num((try(g("GetRepairAllCost")))) or 0) or 0
+    -- (5.0 INTEG) UNE seule carte « vendre + réparer » : celle de l'assistant d'inventaire, juste dessous ; ici les achats
+    if CR.BagsCard() then
+      if nSell + rep > 0 and #buys > 0 then lines[#lines + 1] = "Vendre / réparer : le bouton juste dessous" end
+      nSell, rep = 0, 0
+    end
     if nSell > 0 then lines[#lines + 1] = fmt("À vendre : %d pile%s (gris, compos en trop)", nSell, nSell > 1 and "s" or "") end
     if rep > 0 then lines[#lines + 1] = "Réparation : " .. money(rep) end
     for i, e in ipairs(buys) do if i <= 4 then lines[#lines + 1] = fmt("À acheter : %d %s", e.n, itemName(e.id)) end end
