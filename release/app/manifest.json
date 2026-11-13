@@ -1,25 +1,25 @@
 {
- "version": "4.3.6",
+ "version": "5.0.0",
  "exe": "TreeAICoach-app.exe",
- "sha256": "44f963bf3d8b2086a3948b640be3b0d343174b0ab3baba236c5879dbb9324937",
+ "sha256": "010c196f735f87ba54dc0bdb18994ea5dbb0d7988e6e9e2a0025f3b059b47cf2",
  "chunks": [
   {
-   "name": "4.3.6/part-01.zip",
-   "size": 88058712,
-   "sha256": "84475841694863cdf08c3cdf33d6a4a57e8d1daa5e02d29e455de9312e918111",
+   "name": "5.0.0/part-01.zip",
+   "size": 88066194,
+   "sha256": "fbd0e67edf54ce42733692113041aaac1289590b39e1fc2496e0b03e24c17311",
    "files": 127
   },
   {
-   "name": "4.3.6/part-02.zip",
-   "size": 14206509,
-   "sha256": "ed09ebc9f54bf9b65936d8f4baec4f2f30e40bb98a1d5356a94404eb9411dfa9",
-   "files": 688
+   "name": "5.0.0/part-02.zip",
+   "size": 14374502,
+   "sha256": "82cb6711c5aa94c2a33c73447c2d7fc3394262a552baa96ee4b580e8011e298e",
+   "files": 694
   }
  ],
- "total_size": 102265221,
+ "total_size": 102440696,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "TreeAI 4.3.6 : moins de lags (qu\u00eates, objectifs), boutons rapides toujours visibles, macros plus claires."
+ "notes": "5.0.0 : stabilit\u00e9 (foules, butin, qu\u00eates), \u00e9quipement selon ta sp\u00e9, sacs, m\u00e9tiers, interface refaite"
 }

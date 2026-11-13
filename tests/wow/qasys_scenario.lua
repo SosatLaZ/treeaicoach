@@ -370,7 +370,7 @@ return function(M, ctx)
     check(H and H.moving == false, "S13 : PLAYER_STOPPED_MOVING suivi")
   end
   -- S16 / S17
-  check(type(T.version) == "string" and T.version:match("^4%.%d+%.%d+$") ~= nil, "S17 : version 4.x.y (autotest, rapport d'erreurs)")
+  check(type(T.version) == "string" and T.version:match("^%d+%.%d+%.%d+$") ~= nil, "S17 : version x.y.z (autotest, rapport d'erreurs)")
   -- S19 : une entrée par objet dans « à jeter d'abord »
   local Inv = T.modules.Inventory
   local g = (Inv.GroupByName or function() return {} end)({ { name = "Griffe cassée", value = 7, unit = 7, count = 1, quality = 0, classID = 15 },

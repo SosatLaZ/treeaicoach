@@ -3,6 +3,28 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 5.0.0 · 13 novembre 2026
+
+Grosse reprise : stabilité d'abord, puis équipement, sacs, métiers et interface. Mesures faites en simulation.
+
+- **Plus de saccades** en capitale (40 joueurs), au butin et quand les quêtes s'actualisent : pire image TreeAI
+  2,8 ms (7,7 ms en 4.3.6), aucune image au-dessus de 4 ms. Les évènements du jeu sont regroupés et le bruit du
+  journal de quêtes est ignoré. `/tai pics` liste ce qui a ralenti ; une fonction trop lente se met en pause seule.
+- **Guidage des quêtes coupé d'un clic** : pastille de la bande, `/tai guide` ou `/tai quetes off`. Le suivi du jeu
+  n'est jamais touché.
+- **Équipement** : ta vraie spé (talents Forever lus, sinon déduite de tes sorts, sinon demandée une fois ;
+  `/tai spe`), valeur de chaque objet pour ta spé (« ≈ +2,1 DPS »), « Stuff rentable » par emplacement
+  (Équipe / Achète / Fais la quête / Attends le niveau N / Garde).
+- **Sacs** : un seul verdict par objet (garder, vendre, HV, banque) avec la raison ; potions, composants de tes
+  métiers, objets de quête et améliorations ne sont jamais proposés à la vente. Chez le marchand, une seule carte
+  « Vendre N objets + réparer » ; à la banque « Ranger » ; « Il te manque : … ». `/tai sacs`, `/tai garde [objet]`.
+- **Métiers** : le maître avant l'HV, vraies exigences lues chez lui, quantités réalistes, plan limité à ton or,
+  recettes utiles en un clic chez le maître. Aucun plan incohérent sur tous les métiers et niveaux testés.
+- **Interface** : bande d'actions lisible à place fixe (Quêtes · Sacs · Équipement · Métiers · Groupe), fenêtre
+  refaite avec recherche, une alerte à la fois, `/tai interface reset`. TreeAI évite les cadres des autres addons
+  (compteurs, Suivi Forever, cadres d'unité) et ne répète plus la liste de composants de Suivi Forever.
+- Le rapport d'erreurs contient maintenant les pics de lenteur et ce que le jeu permet de lire (talents…).
+
 ## 4.3.6 · 9 novembre 2026
 
 - **Moins de lags** : prendre une quête, la suivre, tuer un monstre de quête, remplir un objectif → un seul calcul

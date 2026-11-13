@@ -1,6 +1,6 @@
 {
-  "version": "4.3.6",
+  "version": "5.0.0",
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334,
-  "notes": "TreeAI 4.3.6 : moins de lags (quêtes, objectifs), boutons rapides toujours visibles, macros plus claires."
+  "notes": "5.0.0 : stabilité (foules, butin, quêtes), équipement selon ta spé, sacs, métiers, interface refaite"
 }

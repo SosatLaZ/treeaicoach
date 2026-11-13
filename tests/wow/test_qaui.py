@@ -81,7 +81,7 @@ def test_static_contracts():
     quick = _src("Modules/Quick.lua")
     assert "defaults.autoQuest, defaults.autoReward, defaults.autoGossip = false, false, false" in quick
     # UI-25: the release version in the TOC
-    assert re.search(r"^## Version: 4\.\d+\.\d+$", _src("TreeAI.toc"), re.M)
+    assert re.search(r"^## Version: \d+\.\d+\.\d+$", _src("TreeAI.toc"), re.M)
     # UI-20: no glyph the game fonts lack in the strings QA listed
     for name, bad in (("Modules/Theme.lua", "Échap → Options"), ("Modules/Shortcuts.lua", "Options → Barre"),
                       ("Modules/Region.lua", "Ici → Zones"), ("Modules/Highlight.lua", "à rendre ✓")):
