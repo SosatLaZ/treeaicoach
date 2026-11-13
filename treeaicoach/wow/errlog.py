@@ -85,6 +85,68 @@ def _blocked_total(d: dict, rows: list[dict]) -> int:
     return _i(d.get("blockedTotal")) or sum(max(1, _i(e.get("n"), 1)) for e in rows)
 
 
+def _f(v: Any) -> float:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _spike(e: dict, count: bool = False) -> str:
+    """One slowness spike kept by the addon (``diag.spikes``): {m module, j job, ms, k "appel"|"image", c combat,
+    p nameplates, g group size, t, n calls of the frame, b biggest call, x times seen}."""
+    where = []
+    if e.get("c"):
+        where.append("en combat")
+    if _i(e.get("p")) > 0:
+        where.append(f"{_i(e.get('p'))} barres de nom")
+    if _i(e.get("g")) > 1:
+        where.append(f"groupe de {_i(e.get('g'))}")
+    if e.get("k") == "image":
+        what = (f"image entière {_f(e.get('ms')):.1f} ms ({_i(e.get('n'))} appels, le plus gros : "
+                f"{_s(e.get('m'), 30)} · {_s(e.get('j'), 60)} {_f(e.get('b')):.1f} ms)")
+    else:
+        what = f"{_s(e.get('m'), 30)} · {_s(e.get('j'), 60)} : {_f(e.get('ms')):.1f} ms"
+    if count and _i(e.get("x"), 1) > 1:
+        what += f" ×{_i(e.get('x'), 1)}"
+    return what + (f" ({', '.join(where)})" if where else "")
+
+
+def _spike_lines(d: dict) -> list[str]:
+    """« Pics de lenteur »: what TreeAI measured in the real game (5.0: a call over 8 ms, a frame over 12 ms)."""
+    sp = _d(d.get("spikes"))
+    if not sp:
+        return []
+    out = ["== Pics de lenteur (mesurés en jeu par TreeAI) =="]
+    out.append(f"Depuis le {_when(sp.get('since'))} (TreeAI {_s(sp.get('ver'), 20)}) : {_i(sp.get('calls'))} appel(s) de plus "
+               f"de 8 ms, {_i(sp.get('frames'))} image(s) de plus de 12 ms.")
+    asleep = _d(sp.get("asleep"))
+    if asleep:
+        names = [f"{_s(k, 30)} ({'erreurs' if _d(v).get('why') == 'err' else 'trop lent'})" for k, v in sorted(asleep.items())]
+        out.append("Mis en pause par le chien de garde : " + ", ".join(names))
+    top = sorted((e for e in _seq(sp.get("top")) if isinstance(e, dict)), key=lambda e: -_f(e.get("ms")))
+    if not top:
+        out.append("Aucun pic relevé.")
+    else:
+        out.append("Les plus gros :")
+        for i, e in enumerate(top[:30], 1):
+            out.append(f"{i:2d}. {_spike(e, True)}")
+        out.append("Les derniers :")
+        for e in reversed([e for e in _seq(sp.get("last")) if isinstance(e, dict)][-30:]):
+            out.append(f"{_when(e.get('t'))}  {_spike(e)}")
+    out.append("")
+    return out
+
+
+def _api_lines(d: dict) -> list[str]:
+    """« API du client »: which game functions exist on this client and the shape of what they return (5.0)."""
+    api = _d(d.get("api"))
+    lines = [_s(x, 400) for x in _seq(api.get("lines")) if isinstance(x, str)]
+    if not lines:
+        return []
+    return [f"== API du client (sonde du {_when(api.get('t'))}) ==", *lines[:200], ""]
+
+
 def build_text(db: Any, now: float | None = None) -> str:
     """The report (French, newest first). ``db`` = parsed TreeAIDB."""
     d = _diag(db)
@@ -159,6 +221,8 @@ def build_text(db: Any, now: float | None = None) -> str:
                 v = ", ".join(_s(x, 60) for x in (_seq(v) or [f"{a}={b}" for a, b in _d(v).items()]))
             out.append(f"  {k} : {_s(v, 200)}")
         out.append("")
+    out.extend(_spike_lines(d))
+    out.extend(_api_lines(d))
     nav = [_s(x, 300) for x in _seq(_d(d.get("nav")).get("lines")) if isinstance(x, str)]
     if nav:
         # ZONEFIX (4.0.1): the compass / route decisions the addon keeps by itself (ring of the last 300, ≤ 30 KB)

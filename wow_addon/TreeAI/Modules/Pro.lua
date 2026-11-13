@@ -393,6 +393,7 @@ end
 -- (3, 4, 14) barres de nom / cible / survol
 local function observe(unit)
   if not unit then return end
+  if try(g("UnitIsPlayer"), unit) then return end   -- (5.0 STABLE) foule : un joueur = une lecture, rien d'autre
   local name, guid = try(g("UnitName"), unit), try(g("UnitGUID"), unit)
   if not name or secret(name) or secret(guid) or not guid then return end
   if not try(g("UnitCanAttack"), "player", unit) and not try(g("UnitIsEnemy"), "player", unit) then return end
@@ -858,10 +859,12 @@ end
 function M:OnEnable()
   S.start = now()
   for _, ev in ipairs({ "LOOT_OPENED", "QUEST_DETAIL", "QUEST_COMPLETE", "TRAINER_SHOW",
-    "PLAYER_LEVEL_UP", "NAME_PLATE_UNIT_ADDED", "PLAYER_TARGET_CHANGED", "UPDATE_MOUSEOVER_UNIT", "QUEST_LOG_UPDATE",
+    "PLAYER_LEVEL_UP", "PLAYER_TARGET_CHANGED", "UPDATE_MOUSEOVER_UNIT", "QUEST_LOG_UPDATE",
     "PLAYER_UPDATE_RESTING" }) do
     M:RegisterEvent(ev)
   end
+  if T.OnPlates then T:OnPlates(M, function(_, us) for unit in pairs(us) do observe(unit) end end)   -- (5.0 STABLE) regroupées
+  else M:RegisterEvent("NAME_PLATE_UNIT_ADDED") end
   M:On("SUMMARY", function() pcall(M.WriteSummary, M) end)
   M:On("COMBAT_END", function() M.Refresh(1) end)
   M:On("DETECT", function(_, _, kind, data) if kind == "kill" and type(data) == "table" then M.OnKill(data.name) end end)

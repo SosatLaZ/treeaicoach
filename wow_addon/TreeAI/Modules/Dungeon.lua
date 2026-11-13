@@ -420,6 +420,16 @@ local function questie()
   local lib = rawget(G, "LibQuestieDB")
   if type(lib) == "table" and type(lib.Quest) == "table" and type(lib.Quest.Get) == "function" then
     local Q, N, I = lib.Quest, lib.Npc, lib.Item
+    local memo = T.API and T.API.QuestieMemo   -- (5.0 STABLE) une lecture par (id, champ), partagée entre les modules
+    if memo then
+      local none = function() return nil end
+      return {
+        quest = memo(Q, "Get", Q.Get),
+        npc = type(N) == "table" and memo(N, "Get", N.Get) or none,
+        item = type(I) == "table" and memo(I, "Get", I.Get) or none,
+        all = function() local ids = try(Q.GetAllIds, false) return type(ids) == "table" and ids or {} end,
+      }
+    end
     return {
       quest = function(id, key) return try(Q.Get, id, key) end,
       npc = function(id, key) return type(N) == "table" and try(N.Get, id, key) or nil end,

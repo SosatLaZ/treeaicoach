@@ -1716,7 +1716,10 @@ function M:OnLegacy(m, kind, payload)
   markAddon(m, m.addon == "4" and "4" or "3", kind ~= "SQS")
 end
 
+--- (5.0 STABLE) quelque chose vient d'arriver (groupe changé, message d'un ami) : le relevé étiré à l'arrêt reprend sa cadence
+function M.Kick() local tk = M._ticker if tk and tk.Kick then tk:Kick() end end
 function M:OnComm(kind, payload, sender)
+  M.Kick()
   local m = self:MemberOf(sender)
   if not m or not allow(m.name) then return end
   if kind == "GRP" then return self:OnWire(m, payload) end
@@ -2861,7 +2864,7 @@ function M:OnEnable()
       T:RegisterComm(kind, M, function(_, payload, sender) M:OnComm(kind, payload, sender) end)
     end
   end
-  self:RegisterEvent("GROUP_ROSTER_UPDATE", function() M:ScanRoster() end)
+  self:RegisterEvent("GROUP_ROSTER_UPDATE", function() M:ScanRoster() M.Kick() end)
   self:RegisterEvent("PLAYER_ENTERING_WORLD", function()
     M:ScanRoster(); dirty.zone = true
     if M.Join and M.Join.OnWorld then call(M.Join.OnWorld) end   -- entrée de donjon apprise (ma dernière position dehors)
@@ -2881,11 +2884,16 @@ function M:OnEnable()
   self:RegisterEvent("SKILL_LINES_CHANGED", function() dirty.prof = true end)
   self:RegisterEvent("SPELLS_CHANGED", function() knowsCache = {} end)
   local function live(_, _, u) if partyUnit(u) then dirty.live = true end end
-  self:RegisterEvent("UNIT_HEALTH", live)
-  self:RegisterEvent("UNIT_POWER_UPDATE", live)
+  -- (5.0 STABLE) « group » : joueur, familier, membres ; la vie / l'énergie des 40 barres de nom d'un champ de bataille
+  -- ne passent plus par ici (filtrées par le cœur avant tout appel)
+  local function unitEvent(ev, fn)
+    if self.RegisterUnitEvent then self:RegisterUnitEvent(ev, "group", nil, fn) else self:RegisterEvent(ev, fn) end
+  end
+  unitEvent("UNIT_HEALTH", live)
+  unitEvent("UNIT_POWER_UPDATE", live)
   local function status(_, _, u) if partyUnit(u) then dirty.live, dirty.view = true, true end end
   for _, ev in ipairs({ "UNIT_CONNECTION", "UNIT_LEVEL", "PLAYER_FLAGS_CHANGED", "UNIT_FLAGS", "UNIT_PET" }) do
-    self:RegisterEvent(ev, status)
+    unitEvent(ev, status)
   end
   self:RegisterEvent("PLAYER_TARGET_CHANGED", function() if #roster > 0 then M:PullSoon() end end)
   self:RegisterEvent("PLAYER_REGEN_DISABLED", function() if pullText then pullText = nil; M:Push() end end)

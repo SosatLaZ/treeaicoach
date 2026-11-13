@@ -1115,6 +1115,8 @@ end
 
 function M.UpdatePlate(unit)
   plateInfo[unit] = nil
+  -- (5.0 STABLE) foule : un joueur n'est jamais un objectif — une lecture, rien d'autre
+  if try(G.UnitIsPlayer, unit) then softHide(plates[unit]) return nil end
   local NP = G.C_NamePlate
   local plate = NP and NP.GetNamePlateForUnit and try(NP.GetNamePlateForUnit, unit)
   if not (plate and (on("plates") or on("plateDrops"))) then softHide(plates[unit]) return nil end
@@ -1226,7 +1228,8 @@ function M.UpdateCompass()
   end
   M.nearCount = count
   if not (on("compass") and type(CF) == "table" and meth(CF, "IsShown")) or count == 0 then
-    if pulse then pulse:Hide() end
+    -- (5.0 STABLE) cachée = plus suivie : le veilleur de visibilité (OnUpdate) s'arrête au lieu de tourner sans fin
+    if pulse then pulse:Hide() active[pulse] = nil end
     nearShown = 0
     return count
   end
@@ -1318,18 +1321,24 @@ function M.TooltipGlow(tt, kind, r, g, b)
   GL.Ants(tipGlow, r, g, b, 1, (tonumber(meth(tt, "GetWidth")) or 250) + 80, (tonumber(meth(tt, "GetHeight")) or 80) + 160)
   return tipGlow
 end
-function M.OnUnitTooltip(tt)
+--- la ligne d'infobulle d'une unité (texte, r, g, b) ou rien
+function M.UnitTipLine(unit)
   if not M.TooltipActive() or inCombat() then return nil end
-  local _, unit = nil, nil
-  if tt and tt.GetUnit then _, unit = try(tt.GetUnit, tt) end
-  unit = sv(unit) or "mouseover"
   if not try(G.UnitExists, unit) then return nil end
   local e, how = M.UnitObjective(unit)
   if not e or how == "party" then return nil end   -- le jeu affiche déjà la ligne du membre
   local left = math.max(0, (e.need or 1) - (e.have or 0))
   local txt = ("Quête : %s — encore %d"):format(cut(e.quest, 34), left)
   if how == "drop" then txt = txt .. (e.rate and (" (chute %d %%)"):format(math.floor(e.rate * 100 + 0.5)) or " (butin)") end
-  addLine(tt, txt, color("colMob"))
+  return txt, color("colMob")
+end
+function M.OnUnitTooltip(tt)
+  local _, unit = nil, nil
+  if tt and tt.GetUnit then _, unit = try(tt.GetUnit, tt) end
+  unit = sv(unit) or "mouseover"
+  local txt, r, g, b = M.UnitTipLine(unit)
+  if not txt then return nil end
+  addLine(tt, txt, r, g, b)
   return txt
 end
 -- (4.0.2) infobulles d'objets : un seul propriétaire, le module « Infos objets » (il reprend cette ligne et le contour)
@@ -1338,13 +1347,15 @@ local tipHooked = false
 local function hookTooltips()
   if tipHooked then return end
   tipHooked = true
+  -- (5.0 STABLE) infobulles d'unité : crochet unique du cœur (réponse gardée par monstre, rien pour les joueurs)
+  local viaCore = T.OnUnitTip and T:OnUnitTip(M, function(_, unit) return M.UnitTipLine(unit) end)
   local TDP, E = G.TooltipDataProcessor, G.Enum
   if TDP and TDP.AddTooltipPostCall and E and E.TooltipDataType then
     pcall(TDP.AddTooltipPostCall, E.TooltipDataType.Item, function(tt, data) if (tt == G.GameTooltip or tt == G.ItemRefTooltip) and not M.ItemInfoOwns() then M.OnItemTooltip(tt, data) end end)
-    pcall(TDP.AddTooltipPostCall, E.TooltipDataType.Unit, function(tt) if tt == G.GameTooltip then M.OnUnitTooltip(tt) end end)
+    if not viaCore then pcall(TDP.AddTooltipPostCall, E.TooltipDataType.Unit, function(tt) if tt == G.GameTooltip then M.OnUnitTooltip(tt) end end) end
   elseif G.GameTooltip and G.GameTooltip.HookScript then
     pcall(G.GameTooltip.HookScript, G.GameTooltip, "OnTooltipSetItem", function(tt) if not M.ItemInfoOwns() then M.OnItemTooltip(tt) end end)
-    pcall(G.GameTooltip.HookScript, G.GameTooltip, "OnTooltipSetUnit", function(tt) M.OnUnitTooltip(tt) end)
+    if not viaCore then pcall(G.GameTooltip.HookScript, G.GameTooltip, "OnTooltipSetUnit", function(tt) M.OnUnitTooltip(tt) end) end
   end
 end
 
@@ -1456,8 +1467,24 @@ function M:OnEnable()
   self:RegisterEvent("UNIT_QUEST_LOG_CHANGED", function(_, _, u) if u == "player" then logChanged() end end)
   self:RegisterEvent("GET_ITEM_INFO_RECEIVED", function() kindCache = {} schedule("bags", 0.3) schedule("tab", 2) end)
   if not (T.Lite and T:Lite()) then   -- (LITE) barres de nom / cible : seulement hors profil essentiel
-    self:RegisterEvent("NAME_PLATE_UNIT_ADDED", function(_, _, unit) M.UpdatePlate(unit) M.UpdateCompass() end)
-    self:RegisterEvent("NAME_PLATE_UNIT_REMOVED", function(_, _, unit) M.RemovePlate(unit) M.UpdateCompass() end)
+    -- (5.0 STABLE) barres de nom regroupées par le cœur (T:OnPlates) : les nouvelles ensemble, 0,1 s après ; une barre
+    -- qui part cache notre icône tout de suite (le jeu réutilise la barre pour une autre unité)
+    if T.OnPlates then
+      T:OnPlates(M, function(_, units)
+        if T.Lite and T:Lite() then return end
+        for unit in pairs(units) do M.UpdatePlate(unit) end
+        M.UpdateCompass()
+      end, function(_, unit)
+        if plates[unit] or plateInfo[unit] then
+          local had = plateInfo[unit]
+          M.RemovePlate(unit)
+          if had then M.UpdateCompass() end
+        end
+      end)
+    else
+      self:RegisterEvent("NAME_PLATE_UNIT_ADDED", function(_, _, unit) M.UpdatePlate(unit) M.UpdateCompass() end)
+      self:RegisterEvent("NAME_PLATE_UNIT_REMOVED", function(_, _, unit) M.RemovePlate(unit) M.UpdateCompass() end)
+    end
     self:RegisterEvent("PLAYER_TARGET_CHANGED", function() M.UpdateTarget() end)
   end
   self:RegisterEvent("PLAYER_REGEN_ENABLED", function() tipScanCache = {} schedule("rebuild", 0.5) end)

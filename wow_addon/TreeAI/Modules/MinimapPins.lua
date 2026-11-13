@@ -93,6 +93,8 @@ end
 MP.QUESTIE_COVERS = { drops = true }
 function MP.LayerOn(layer)
   if not opt(layer) then return false end
+  -- (5.0 STABLE) guide de quêtes coupé : plus de point de butin de quête (la cible de la boussole n'a plus de quête)
+  if layer == "drops" and T.QuestGuideOn and not T:QuestGuideOn() then return false end
   if MP.QUESTIE_COVERS[layer] and MP.QuestieLoaded() then return false end
   return true
 end

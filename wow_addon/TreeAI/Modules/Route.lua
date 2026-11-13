@@ -2087,6 +2087,12 @@ function R.PurgeSPF()
   return n
 end
 
+-- (5.0 STABLE) guide de quêtes coupé : nos trajets sont retirés de Shortest Path Forever (plus rien ne lui est envoyé)
+if T.On then
+  T:On("QUEST_GUIDE_CHANGED", "Route:guide", function(_, _, on)
+    if on == false and T.RunOutOfCombat then T:RunOutOfCombat("Route:spf", function() pcall(R.PurgeSPF) end) end
+  end)
+end
 function R:OnEnable()
   T:After(6, function()
     -- ménage des trajets empilés, PUIS (choix « ordre de TreeAI ») notre trajet renvoyé, un seul

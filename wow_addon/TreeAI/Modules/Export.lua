@@ -388,7 +388,11 @@ local function libDB()
   if not ok then return nil end
   local Q, N, O, I = lib.Quest or G("QuestDB"), lib.Npc or G("NpcDB"), lib.Object or G("ObjectDB"), lib.Item or G("ItemDB")
   if type(Q) ~= "table" or type(Q.Get) ~= "function" then return nil end
-  local function getter(E) return function(id, key) if type(E) == "table" then return try(E.Get, id, key) end end end
+  local function getter(E)
+    local memo = type(E) == "table" and T.API and T.API.QuestieMemo and T.API.QuestieMemo(E, "Get", E.Get)
+    if memo then return memo end   -- (5.0 STABLE) une lecture par (id, champ), partagée avec la boussole
+    return function(id, key) if type(E) == "table" then return try(E.Get, id, key) end end
+  end
   local area2map
   local function map(areaId)
     if area2map == nil then
@@ -438,7 +442,11 @@ local function legacyDB()
   local db = type(mods) == "table" and rawget(mods, "QuestieDB")
   if type(db) ~= "table" or type(db.QueryQuestSingle) ~= "function" then return nil end
   local zdb = rawget(mods, "ZoneDB")
-  local function q(fn) return function(id, key) if type(db[fn]) == "function" then return try(db[fn], id, key) end end end
+  local function q(fn)
+    local memo = type(db[fn]) == "function" and T.API and T.API.QuestieMemo and T.API.QuestieMemo(db, fn, db[fn])
+    if memo then return memo end
+    return function(id, key) if type(db[fn]) == "function" then return try(db[fn], id, key) end end
+  end
   return { src = "QuestieLoader", Q = q("QueryQuestSingle"), N = q("QueryNPCSingle"), O = q("QueryObjectSingle"),
     I = q("QueryItemSingle"),
     ids = function()

@@ -230,7 +230,14 @@ end
 
 -- drive ------------------------------------------------------------------------------------------
 local fired = {}
-local function fire(ev, ...) fired[ev] = true return M.FireEvent(ev, ...) end
+-- (5.0 STABLE) nameplates are handed to the modules grouped, 0.1 s later (T:OnPlates): a scenario that shows a
+-- nameplate and then looks at the result lets that time pass, as the game's frame loop does
+local function fire(ev, ...)
+  fired[ev] = true
+  local r = M.FireEvent(ev, ...)
+  if ev == "NAME_PLATE_UNIT_ADDED" then M.Advance(0.4, 0.01) end   -- (40 images : la file « un travail par image »)
+  return r
+end
 local ctx = { addonName = addonName, addonTable = addonTable, meta = meta, fire = fire, notes = notes }
 function ctx.check(cond, msg)
   if not cond then M.errors[#M.errors + 1] = { label = "check", msg = tostring(msg) .. " (" .. where(3) .. ")" } end

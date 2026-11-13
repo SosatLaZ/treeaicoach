@@ -396,10 +396,19 @@ function PM:Info(unit) return units[unit] end
 -- événements
 ---------------------------------------------------------------------------------------------------
 function PM:OnEnable()
-  self:RegisterEvent("NAME_PLATE_UNIT_ADDED", function(s, _, unit) s:UpdateUnit(unit) s:UpdateList() end)
-  self:RegisterEvent("NAME_PLATE_UNIT_REMOVED", function(s, _, unit)
-    if units[unit] or plateOf[unit] then s:RemoveUnit(unit) s:UpdateList() end
-  end)
+  if T.OnPlates then   -- (5.0 STABLE) barres de nom regroupées par le cœur ; une barre qui part : repère retiré tout de suite
+    T:OnPlates(self, function(s, us)
+      for unit in pairs(us) do s:UpdateUnit(unit) end
+      s:UpdateList()
+    end, function(s, unit)
+      if units[unit] or plateOf[unit] then s:RemoveUnit(unit) s:UpdateList() end
+    end)
+  else
+    self:RegisterEvent("NAME_PLATE_UNIT_ADDED", function(s, _, unit) s:UpdateUnit(unit) s:UpdateList() end)
+    self:RegisterEvent("NAME_PLATE_UNIT_REMOVED", function(s, _, unit)
+      if units[unit] or plateOf[unit] then s:RemoveUnit(unit) s:UpdateList() end
+    end)
+  end
   local function one(s, _, unit)
     if unit == "player" then s:RefreshAll() return end
     if type(unit) == "string" and (units[unit] or unit:match("^nameplate%d+$")) then s:UpdateUnit(unit) s:UpdateList() end

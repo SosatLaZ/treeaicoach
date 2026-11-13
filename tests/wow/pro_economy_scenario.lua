@@ -88,6 +88,7 @@ return function(M, ctx)
   end
   M.units.nameplate6 = { name = "Gnoll-Chef", guid = "Creature-0-0-0-0-88-1", hostile = true, classification = "elite" }
   for i = 1, 6 do M.FireEvent("NAME_PLATE_UNIT_ADDED", "nameplate" .. i) end
+  M.Advance(0.4, 0.01)   -- (5.0 STABLE) nameplates reach the modules grouped, 0.1 s later
   P.Update(true)
   ctx.check(find(P.lines.quests, "Trop de monde sur Loup des forêts : reviens dans 5 min"), "3 camp saturated: " .. dump(P.lines.quests))
   ctx.check(find(P.lines.quests, "PNJ de quête en vue : Gnoll%-Chef"), "4 named quest NPC")
@@ -99,6 +100,7 @@ return function(M, ctx)
   M.Advance(400)
   M.units.nameplate6 = { name = "Gnoll-Chef", guid = "Creature-0-0-0-0-88-2", hostile = true }
   M.FireEvent("NAME_PLATE_UNIT_ADDED", "nameplate6")
+  M.Advance(0.4, 0.01)
   P.Update(true)
   ctx.check(find(P.lines.quests, "Respawn de Gnoll%-Chef : ~7 min %(observé ×1%)"), "14 observed respawn: " .. dump(P.lines.quests))
   for i = 1, 6 do M.units["nameplate" .. i] = nil end

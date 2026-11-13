@@ -749,6 +749,11 @@ local function hookTips()
     if not ok then line = nil end
     if line and tt.AddLine then pcall(tt.AddLine, tt, line, 1, 0.82, 0.2) end
   end
+  -- (5.0 STABLE) crochet unique du cœur (réponse gardée par monstre, rien pour les joueurs ni en combat)
+  if T.OnUnitTip and T:OnUnitTip(M, function(_, _, name)
+    local line = M.DropTip(name)
+    if line then return line, 1, 0.82, 0.2 end
+  end) then return end
   local TDP, E = _G.TooltipDataProcessor, _G.Enum
   if TDP and TDP.AddTooltipPostCall and E and E.TooltipDataType then
     pcall(TDP.AddTooltipPostCall, E.TooltipDataType.Unit, onUnit)

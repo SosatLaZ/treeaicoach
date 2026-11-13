@@ -970,13 +970,17 @@ function M:OnEnable()
   self:RegisterEvent("UPDATE_BATTLEFIELD_STATUS", guard(function(s) s:UpdateQueue() end))
   self:RegisterEvent("PLAYER_ENTERING_WORLD", guard(function(s) s:UpdateQueue() end))
   self:RegisterEvent("ZONE_CHANGED_NEW_AREA", guard(function(s) s:UpdateQueue() end))
-  self:RegisterEvent("NAME_PLATE_UNIT_ADDED", guard(function(s, _, unit) s:SeeUnit(unit, "barre de nom") end))
+  if T.OnPlates then   -- (5.0 STABLE) barres de nom regroupées par le cœur
+    T:OnPlates(self, guard(function(s, us) for unit in pairs(us) do s:SeeUnit(unit, "barre de nom") end end))
+  else
+    self:RegisterEvent("NAME_PLATE_UNIT_ADDED", guard(function(s, _, unit) s:SeeUnit(unit, "barre de nom") end))
+  end
   self:RegisterEvent("UPDATE_MOUSEOVER_UNIT", guard(function(s) s:SeeUnit("mouseover", "survol") end))
   self:RegisterEvent("PLAYER_TARGET_CHANGED", guard(function(s) s:SeeUnit("target", "cible"); s:Refresh() end))
-  self:RegisterEvent("UNIT_HEALTH", guard(function(s, _, unit)
+  self:RegisterUnitEvent("UNIT_HEALTH", "target", nil, guard(function(s, _, unit)   -- (5.0 STABLE) filtré par le cœur
     if unit == "target" and isEnemyPlayer("target") then s:SeeUnit("target", "cible") end
   end))
-  self:RegisterEvent("UNIT_AURA", guard(function(s, _, unit) if unit == "target" then s:Refresh() end end))
+  self:RegisterUnitEvent("UNIT_AURA", "target", nil, guard(function(s, _, unit) if unit == "target" then s:Refresh() end end))
   self:RegisterEvent("CHAT_MSG_COMBAT_HONOR_GAIN", guard(function(s, _, msg) s:OnHonor(msg) end))
   self:RegisterEvent("PLAYER_PVP_KILLS_CHANGED", guard(function(s) s:Refresh() end))
   self:RegisterEvent("PLAYER_DEAD", guard(function(s) if inBG() then s.session.deaths = (s.session.deaths or 0) + 1 end end))

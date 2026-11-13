@@ -128,7 +128,11 @@ local function qField(id, key)
   local db = Q and Q.QuestieDB and Q.QuestieDB()
   if db and db.QueryQuestSingle then return try(db.QueryQuestSingle, id, key) end
   local lib = g("LibQuestieDB")
-  if type(lib) == "table" and type(lib.Quest) == "table" and type(lib.Quest.Get) == "function" then return try(lib.Quest.Get, id, key) end
+  if type(lib) == "table" and type(lib.Quest) == "table" and type(lib.Quest.Get) == "function" then
+    local memo = T.API and T.API.QuestieMemo and T.API.QuestieMemo(lib.Quest, "Get", lib.Quest.Get)
+    if memo then return memo(id, key) end
+    return try(lib.Quest.Get, id, key)
+  end
   return nil
 end
 local function questDone(id)

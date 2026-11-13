@@ -1067,9 +1067,12 @@ local shownN = {}          -- [clé] = fois montré cette session (≤ max du co
 local loginAt = 0
 M.active = active
 
+-- (5.0 STABLE) guide de quêtes coupé (T:SetQuestGuide) : plus de conseil sur le rendu des quêtes
+local QUEST_TIPS = { turninLevel = true, questPenalty = true }
 local function eligible(tp)
   if not tp or not opt(tp.key) then return false end
   if tp.hunter and not hunter() then return false end
+  if QUEST_TIPS[tp.key] and T.QuestGuideOn and not T:QuestGuideOn() then return false end
   return true
 end
 local function spent(key) local tp = TIP[key] return tp and tp.max and (shownN[key] or 0) >= tp.max or false end
@@ -1270,7 +1273,7 @@ function M:OnEnable()
     if T.After then T:After(0.6, afterFight) else afterFight() end
   end)
   -- la vie juste avant un pull : seulement la vie (2 lectures), au plus 2 fois par seconde
-  self:RegisterEvent("UNIT_HEALTH", function(_, _, u)
+  self:RegisterUnitEvent("UNIT_HEALTH", "player", nil, function(_, _, u)   -- (5.0 STABLE) filtré par le cœur
     if u ~= "player" then return end
     local t = now()
     if t - (V.hpAt or -1e9) < 0.5 or inCombat() then return end

@@ -644,6 +644,8 @@ end
 function D.UpdatePlate(unit)
   if type(unit) ~= "string" then return nil end
   local prev = P.units[unit]
+  -- (5.0 STABLE) foule : un joueur n'est ni un monstre de quête ni un rare — une lecture, rien d'autre
+  if not prev and try(G.UnitIsPlayer, unit) then return nil end
   local info = D.QuestUnit(unit)
   -- en combat sur Forever : nom / GUID secrets -> on garde ce qu'on savait de cette barre
   if not info and prev and T.InCombat and T:InCombat() and not str(try(G.UnitName, unit)) then return prev end
@@ -1094,8 +1096,13 @@ function D:OnEnable()
   self:RegisterEvent("UNIT_QUEST_LOG_CHANGED", function(_, _, unit) if unit == "player" or unit == nil then questsSoon() end end)
   self:RegisterEvent("QUEST_TURNED_IN", function(_, _, qid) if num(qid) then Q.turned[qid] = true end questsSoon() end)
   self:RegisterEvent("CHAT_MSG_COMBAT_XP_GAIN", function(_, _, msg) D.OnXP(msg) end)
-  self:RegisterEvent("NAME_PLATE_UNIT_ADDED", function(_, _, unit) D.UpdatePlate(unit) end)
-  self:RegisterEvent("NAME_PLATE_UNIT_REMOVED", function(_, _, unit) D.RemovePlate(unit) end)
+  if T.OnPlates then   -- (5.0 STABLE) barres de nom regroupées par le cœur ; une barre qui part : oubliée tout de suite
+    T:OnPlates(D, function(_, units) for unit in pairs(units) do D.UpdatePlate(unit) end end,
+      function(_, unit) D.RemovePlate(unit) end)
+  else
+    self:RegisterEvent("NAME_PLATE_UNIT_ADDED", function(_, _, unit) D.UpdatePlate(unit) end)
+    self:RegisterEvent("NAME_PLATE_UNIT_REMOVED", function(_, _, unit) D.RemovePlate(unit) end)
+  end
   self:RegisterEvent("PLAYER_TARGET_CHANGED", function() D.ScanUnitRare("target") end)
   self:RegisterEvent("PLAYER_REGEN_ENABLED", function() soon("plates", 0.5, D.RescanPlates) end)
   for ev, kind in pairs(SERVICE_EVENTS) do
@@ -1108,7 +1115,7 @@ function D:OnEnable()
   for _, ev in ipairs({ "GROUP_ROSTER_UPDATE", "UNIT_CONNECTION", "PLAYER_FLAGS_CHANGED" }) do
     self:RegisterEvent(ev, function() soon("grp", 1, D.CheckGroup) end)
   end
-  self:RegisterEvent("UNIT_FLAGS", function(_, _, unit)
+  self:RegisterUnitEvent("UNIT_FLAGS", "group", nil, function(_, _, unit)   -- (5.0 STABLE) filtré par le cœur
     if type(unit) == "string" and (unit:match("^party%d$") or unit:match("^raid%d+$")) then soon("grp", 1, D.CheckGroup) end
   end)
   -- (4.0.1) unités filtrées par le cœur avant tout appel : la vie / les coups des membres du groupe et des barres de
