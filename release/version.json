@@ -1,6 +1,6 @@
 {
-  "version": "5.0.1",
+  "version": "5.1.0",
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334,
-  "notes": "5.0.1 : achat-revente à l'HV (panneau, files Acheter / Poster, gains nets exacts, livre de comptes)"
+  "notes": "5.1.0 : trajet qui dit vrai, sacs qui prédisent, HV annuler/réguler/artisanat, graphisme calme, macros et ménage"
 }

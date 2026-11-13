@@ -3,6 +3,34 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 5.1.0 · 13 novembre 2026
+
+Mesures faites en simulation ; ton rapport d'erreurs donnera désormais les vrais temps mesurés chez toi.
+
+- **Trajet qui dit vrai** : il repart d'où tu es (déplacement, changement de zone, mort, atterrissage), une zone
+  choisie montre tout de suite ses quêtes à prendre, deux rendus au même PNJ = un seul arrêt. Une seule réponse
+  partout (« Fais ça maintenant »). Plus de chiffres inventés : XP à la remise et distance, un rythme XP/min seulement
+  s'il est mesuré. Coût des trajets : Shortest Path Forever, puis chemins appris, puis estimation ; une zone où tu es
+  mort deux fois coûte plus cher. « Achète X chez Y » pour les quêtes d'achat.
+- **Quêtes fantômes** : « Ce PNJ n'est pas là ? [Pas là] [Je reviens plus tard] », liste « Quêtes écartées » avec
+  annulation ; passer devant un PNJ ne retire plus rien. « Mauvais conseil » (clic droit sur l'étape ou
+  `/tai mauvais`) enregistre le contexte dans le rapport.
+- **Sacs qui prédisent** : quêtes du journal et à venir (jusqu'à +8 niveaux), métiers et rangs suivants, munitions,
+  nourriture du familier, consommables par palier, équipement, choix retenus (« toujours garder / vendre »,
+  rachats). « Vends » seulement quand tout usage est écarté ; dans le doute, « à confirmer ». Montée 30→45 rejouée :
+  aucun objet vendu qui manque ensuite.
+- **Hôtel des ventes** : file « Annuler » (reposter quand c'est plus rentable qu'attendre), régulation des petits
+  marchés peu chers (conditions strictes, risque affiché), artisanat rentable, page HV en un seul tableau de bord.
+- **Graphisme plus calme** : rangée d'une ligne fine qui s'efface sous les fenêtres du jeu, style plat et
+  translucide, page d'accueil « Maintenant », aucune fenêtre à la connexion. Avec Shortest Path Forever, TreeAI lui
+  passe la destination et ne double plus son trajet ; il s'efface aussi devant Adventure Guide Forever, SkillUp
+  Forever et Leatrix. Page « Autres addons ».
+- **Macros et commandes** : plus de pierre de foyer dans « TAI Monture », plus rien dans le chat, tutoriel à un
+  clic ; une commande seule montre l'état sans rien changer.
+- **Profil par défaut** : aides chasseur (familier mort → « Ressuscite »), lecture des talents, chemins appris.
+- **Ménage** : 7 modules morts supprimés (~8 000 lignes) ; plus aucun symbole que les polices du jeu n'affichent pas.
+- **Rapport d'erreurs** : erreurs avalées sans message, temps réel par module, entrées « Mauvais conseil ».
+
 ## 5.0.1 · 13 novembre 2026
 
 - **Achat-revente à l'hôtel des ventes** (première partie) : panneau « Achat-revente » collé à la fenêtre de l'HV
