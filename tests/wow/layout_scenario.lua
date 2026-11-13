@@ -183,16 +183,18 @@ return function(M, ctx)
   -- navigation
   local ids = {}
   for _, p in ipairs(W.PAGES) do if not p.hidden then ids[#ids + 1] = p.id end end
-  check(table.concat(ids, ",") == "quests,route,group,dungeon,gear,prof,hv,hunter,coach,binds,settings",
-    "navigation : 11 catégories (" .. table.concat(ids, ",") .. ")")
+  -- (5.0 LOOK) 11 catégories au plus : « Sacs » entre quand son module inscrit sa page, Macros & touches → Réglages
+  check((table.concat(ids, ","):gsub(",bags", "")) == "quests,route,group,dungeon,gear,prof,hv,hunter,coach,settings" and #ids <= 11,
+    "navigation : 11 catégories au plus (" .. table.concat(ids, ",") .. ")")
   local labels = {}
   for _, p in ipairs(W.PAGES) do if not p.hidden then labels[#labels + 1] = p.label end end
-  check(table.concat(labels, ",") == "Quêtes,Trajet,Groupe,Donjons,Équipement,Métiers,HV,Chasseur,Conseils,Macros & touches,Réglages", "libellés : " .. table.concat(labels, ","))
+  check((table.concat(labels, ","):gsub(",Sacs", "")) == "Quêtes,Trajet,Groupe,Donjons,Équipement,Métiers,HV,Chasseur,Conseils,Réglages", "libellés : " .. table.concat(labels, ","))
   -- old ids land on the right place
   local REDIR = { now = { "quests", "quests" }, route = { "route", "route" }, journal = { "journal", "quests" },
     brain = { "brain", "quests" }, tools = { "tools", "settings" }, modules = { "modules", "settings" },
-    options = { "options", "settings" }, addons = { "addons", "settings" }, macros = { "macros", "binds" },
-    prof = { "prof", "prof" }, talents = { "talents", "hunter" }, gear = { "gear", "gear" }, keys = { "keys", "binds" },
+    options = { "options", "settings" }, addons = { "addons", "settings" }, macros = { "macros", "settings" },
+    prof = { "prof", "prof" }, talents = { "talents", "hunter" }, gear = { "gear", "gear" }, keys = { "keys", "settings" },
+    binds = { "keys", "settings" },
     perso = { "gear", "gear" }, pet = { "pet", "hunter" },
     display = { "display", "settings" }, group = { "group", "group" }, dungeon = { "dungeon", "dungeon" }, hv = { "hv", "hv" },
     coach = { "coach", "coach" } }
@@ -211,28 +213,26 @@ return function(M, ctx)
   W.Close()
   T.ToggleMain("route")
   check(W.IsOpen() and W.CurrentPage() == "route", "touche « Trajet » : page Trajet")
-  -- Macros & touches / Réglages : sub-page tabs, the last one reopened
+  -- (5.0 LOOK) Réglages : sous-liste à gauche (façon Leatrix Plus), la dernière sous-page rouverte
   W.Select("keys")
   W.Select("macros")
-  W.Select("binds")
-  check(W.CurrentPage() == "macros", "Macros & touches rouvre la dernière sous-page (Macros)")
-  local tabs = {}
-  for _, rr in ipairs(W.lastLay.rects) do if rr.kind == "tab" then tabs[#tabs + 1] = rr.label:gsub(" %(%d+%)$", "") end end
-  check(table.concat(tabs, ",") == "Macros,Raccourcis,Sorts & barres", "Macros & touches : onglets Macros · Raccourcis · Sorts & barres (" .. table.concat(tabs, ",") .. ")")
   W.Select("settings")
-  tabs = {}
-  for _, rr in ipairs(W.lastLay.rects) do if rr.kind == "tab" then tabs[#tabs + 1] = rr.label:gsub(" %(%d+%)$", "") end end
-  check(table.concat(tabs, ","):find("^Affichage,Fonctions,Mes addons,Options,Outils"), "Réglages : onglets (" .. table.concat(tabs, ",") .. ")")
+  check(W.CurrentPage() == "macros", "Réglages rouvre la dernière sous-page (Macros)")
+  local side = {}
+  for _, rr in ipairs(W.lastLay.rects) do if rr.kind == "side" then side[#side + 1] = rr.label end end
+  check(table.concat(side, ","):find("^Affichage,Profil : Simple / Complet,Touches,Macros,Sorts & barres,Fonctions,Mes addons,Options,Outils"),
+    "Réglages : sous-liste (" .. table.concat(side, ",") .. ")")
   -- Quêtes : the 4 modes on top, next step, route, « À prendre près de toi » with the elite badge
   W.Select("quests")
   local Ly = W.lastLay
+  -- (5.0 LOOK) 3 grosses tuiles d'action en tête (Rendre · Prendre · Tout faire ici), les autres modes dans leur section
   local tiles, order = {}, {}
   for _, rr in ipairs(Ly.rects) do
-    if rr.kind == "tile" then tiles[#tiles + 1] = rr.label end
+    if rr.kind == "tile" or rr.kind == "action" then tiles[#tiles + 1] = rr.label end
     if rr.kind == "header" or rr.kind == "tile" then order[#order + 1] = rr.label end
   end
   check(table.concat(tiles, ",") == "Rendre mes quêtes,Quêtes à prendre,Tout faire ici,Avec le groupe", "Quêtes : les 4 modes en gros boutons (" .. table.concat(tiles, ",") .. ")")
-  check(Ly.rects[1].kind == "tile", "Quêtes : les modes tout en haut")
+  check(Ly.rects[1].kind == "action" and Ly.rects[3].kind == "action" and Ly.rects[4].kind == "toggle", "Quêtes : 3 tuiles d'action tout en haut, puis la case « Guidage des quêtes »")
   local hasPick, hasElite = false, false
   for _, rr in ipairs(Ly.rects) do
     if rr.kind == "header" and rr.label == "À prendre près de toi" then hasPick = true end
@@ -250,7 +250,7 @@ return function(M, ctx)
   T.QuestBrain = nil
   W.Render()
   local anyTile = false
-  for _, rr in ipairs(W.lastLay.rects) do if rr.kind == "tile" then anyTile = true end end
+  for _, rr in ipairs(W.lastLay.rects) do if rr.kind == "tile" or rr.kind == "action" then anyTile = true end end
   check(not anyTile and #W.lastLay.rects > 0, "sans cerveau des quêtes : la page Quêtes comme avant (pas de modes)")
   T.QuestBrain = QB
   -- Suivi Forever shows its OWN route: one line, two choices, never asked again once chosen
@@ -261,7 +261,9 @@ return function(M, ctx)
     for _, rr in ipairs(W.lastLay.rects) do if rr.label:find("Suivi Forever affiche son propre trajet", 1, true) then return rr end end
   end
   W.Render()
-  check(spfLine() and W.lastLay.rects[1].label:find("Suivi Forever", 1, true), "Suivi Forever chargé : une ligne en tête de la page Quêtes")
+  local firstText
+  for _, rr in ipairs(W.lastLay.rects) do if rr.kind ~= "action" then firstText = rr break end end
+  check(spfLine() and firstText and firstText.label:find("Suivi Forever", 1, true), "Suivi Forever chargé : une ligne en tête de la page Quêtes (sous les tuiles d'action)")
   for _, b in ipairs(win.content.__children or {}) do
     if b:IsShown() and b.labelText == "Le rendre silencieux" and b.fn then b:GetScript("OnClick")(b) end
   end
@@ -283,17 +285,17 @@ return function(M, ctx)
   W.Select("display")
   local function displayRow(prefix)
     for _, b in ipairs(win.content.__children or {}) do
-      if b:IsShown() and b.entry and tostring(b.entry.text):find(prefix, 1, true) == 1 then return b end
+      if b:IsShown() and b.entry and tostring(b.entry.label):find(prefix, 1, true) == 1 then return b end
     end
   end
   local hz = displayRow("Bande d'horizon")
-  check(hz and hz.entry.right == "coupé", "Affichage : bande d'horizon coupée")
-  if hz then T:UserAction(hz.entry.onClick) end
+  check(hz and hz.on == false, "Affichage : bande d'horizon coupée")
+  if hz then hz:GetScript("OnClick")(hz) end
   local Hz = T.modules.Horizon
   check(Hz.db.enabled ~= false and Hz.db.shown == true, "Affichage : un clic l'allume")
   W.Render()
   hz = displayRow("Bande d'horizon")
-  if hz then T:UserAction(hz.entry.onClick) end
+  if hz then hz:GetScript("OnClick")(hz) end
   check(Hz.db.shown == false, "Affichage : un clic la coupe")
   -- Groupe : « Partager »
   local pushed = {}

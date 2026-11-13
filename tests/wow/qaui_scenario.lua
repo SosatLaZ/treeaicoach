@@ -130,14 +130,14 @@ return function(M, ctx)
   local intro = ""
   for _, r in ipairs(W.lastLay.rects) do if r.kind == "text" then intro = r.label break end end   -- (4.1 : onglets au-dessus)
   if prof == "tout" then check(intro:find("Tout est allumé", 1, true), "Fonctions intro in « tout »: " .. intro)
-  else check(intro:find("Mode sûr", 1, true), "Fonctions intro in mode sûr: " .. intro) end
+  else check(intro:find("Profil Simple (mode sûr)", 1, true), "Fonctions intro in mode sûr: " .. intro) end
   -- W-36 : module lines = state + title (+ bêta), the description is the tooltip
   for _, r in ipairs(rectsOf("row")) do
     if r.label:find("^ON ") or r.label:find("^OFF ") then check(not r.label:find(" — ", 1, true), "Fonctions line without « — desc »: " .. r.label) end
   end
   -- UI-15 : « Tout allumer » says the quest automations stay opt-in
   if prof == "sur" then
-    check(win.action.labelText == "Tout allumer" and tostring(win.action.tip):find("automatismes de quête", 1, true), "« Tout allumer » tip")
+    check(win.action.labelText == "Profil Complet (tout allumer)" and tostring(win.action.tip):find("automatismes de quête", 1, true), "« Tout allumer » tip")
   end
   -- UI-13 : dungeon names in their card (the « x/y quêtes » counter moved to the bottom line)
   W.char.dungeon, W.char.dgAll = nil, true

@@ -1286,6 +1286,31 @@ function Th:ToastSeconds(text)
   local _, n = tostring(text or ""):gsub("[^\128-\191]", "")
   return math.max(K.min, math.min(K.max, K.min + math.floor(math.max(0, n - 40) / 12)))
 end
+--- l'alerte se pose juste sous la boussole (le seul endroit où le joueur regarde déjà), sauf s'il l'a placée lui-même,
+--- si la boussole n'est pas à l'écran, ou si elle tomberait sur la bande d'actions : alors la place du cœur est gardée.
+--- Ancrée sur UIParent à la position LUE de la boussole (jamais sur elle).
+local function nearCompass(a)
+  if T.IsPlayerPlaced and T:IsPlayerPlaced("alert") then return false end
+  local cf = rawget(G, "TreeAICompassFrame")
+  if type(cf) ~= "table" or not meth(cf, "IsVisible") then return false end
+  local l, b, w = meth(cf, "GetRect")
+  local W, H
+  if T._ScreenSize then W, H = T._ScreenSize() end
+  local ue = tonumber(meth(G.UIParent, "GetEffectiveScale")) or 1
+  local k = (tonumber(meth(cf, "GetEffectiveScale")) or ue) / ue
+  local as = tonumber(meth(a, "GetScale")) or 1
+  local aw, ah = (tonumber(meth(a, "GetWidth")) or 300) * as, (tonumber(meth(a, "GetHeight")) or 23) * as
+  if not (tonumber(l) and tonumber(b) and tonumber(w) and W and H and k > 0 and as > 0) then return false end
+  local cx, top = (l + w / 2) * k, b * k - 6
+  if top - ah < H * 0.5 or cx - aw / 2 < 4 or cx + aw / 2 > W - 4 then return false end
+  local Sc = T.Shortcuts
+  local sr = type(Sc) == "table" and type(Sc.StripRect) == "function" and Sc.Strip and Sc.Strip() and meth(Sc.Strip(), "IsShown") and Sc.StripRect() or nil
+  if sr and cx - aw / 2 < sr.l + sr.w and sr.l < cx + aw / 2 and top - ah < sr.b + sr.h and sr.b < top then return false end
+  meth(a, "ClearAllPoints")
+  meth(a, "SetPoint", "TOP", G.UIParent, "TOP", (cx - W / 2) / as, (top - H) / as)
+  return true
+end
+Th._ToastNearCompass = nearCompass
 local function oneToast(e)
   local a = T.GetAlert and T:GetAlert()
   if type(a) ~= "table" or type(a.lines) ~= "table" then return end
@@ -1298,6 +1323,7 @@ local function oneToast(e)
     a.left = math.max(tonumber(a.left) or 0, Th:ToastSeconds(e and e.text))
     if a.left > Th.TOKENS.toast.max then a.left = Th.TOKENS.toast.max end
   end
+  if meth(a, "IsShown") then pcall(nearCompass, a) end
 end
 Th._OneToast = oneToast
 

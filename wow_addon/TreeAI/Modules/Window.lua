@@ -1356,6 +1356,13 @@ local function newLay(width, x0)
     cols = cols or min(3, #list)
     if cols < 1 or #list == 0 then return end
     local bw = floor((Ly.col - (cols - 1) * 8) / cols)
+    -- (5.0) jamais un mot coupé : colonne étroite (sous-liste des Réglages, petite fenêtre) → moins de boutons par ligne
+    local need = 0
+    for _, it in ipairs(list) do need = max(need, ulen(it[1]) * 6.2 + 8) end
+    while cols > 1 and bw < need do
+      cols = cols - 1
+      bw = floor((Ly.col - (cols - 1) * 8) / cols)
+    end
     local p = pool("button", function()
       local th = Th()
       local f = th and th:Button(content, "", 120, 24) or newButton(content)
@@ -1493,7 +1500,7 @@ local function newLay(width, x0)
       meth(f.n, "SetJustifyH", "RIGHT")
       meth(f.n, "SetPoint", "TOPRIGHT", f, "TOPRIGHT", -8, -6)
       meth(f, "SetScript", "OnClick", function(self)
-        if self.off then return end
+        if self.off or not meth(self, "IsShown") then return end   -- (tuile rangée dans la réserve : plus d'action)
         if self.fn then T:UserAction(self.fn) W.Dirty() W.Render() end
       end)
       meth(f, "SetScript", "OnEnter", function(self) W.Tooltip(self, self.titleText, self.tipL, self.hint) end)
@@ -1566,7 +1573,7 @@ local function newLay(width, x0)
       meth(f.r, "SetPoint", "TOPRIGHT", f, "TOPRIGHT", -8, -8)
       meth(f, "SetScript", "OnClick", function(self)
         local en = self.entry
-        if not en or en.disabled or type(en.set) ~= "function" then return end
+        if not en or en.disabled or type(en.set) ~= "function" or not meth(self, "IsShown") then return end
         if inCombat() and not en.combatOK then W.Flash("Impossible en combat : réessaie après.") return end
         T:UserAction(function() en.set(not self.on) end)
         W.Dirty() W.Render()
@@ -1584,6 +1591,10 @@ local function newLay(width, x0)
     end))
     local on = e.on and true or false
     b.entry, b.on = e, on
+    -- (même contrat que les lignes Ly.row : text / right / onClick — ce que lisent la recherche, la visite et les tests)
+    e.text = e.text or e.label
+    e.right = e.state or (on and "allumé" or "coupé")
+    if type(e.set) == "function" then e.onClick = function() e.set(not on) end end
     -- (« mod: » : une bascule — l'orage de clics du harnais la laisse tranquille, comme les lignes « Fonctions »)
     e.id = tostring(e.id or ("toggle:" .. tostring(e.label)))
     if not e.id:find("^mod:") then e.id = "mod:" .. e.id end
@@ -1621,7 +1632,7 @@ local function newLay(width, x0)
       f.s = text(f, "S", "text")
       meth(f.s, "SetPoint", "TOPLEFT", f, "TOPLEFT", 10, -30)
       meth(f.s, "SetWordWrap", true)
-      meth(f, "SetScript", "OnClick", function(self) if self.fn then T:UserAction(self.fn) W.Dirty() W.Render() end end)
+      meth(f, "SetScript", "OnClick", function(self) if self.fn and meth(self, "IsShown") then T:UserAction(self.fn) W.Dirty() W.Render() end end)
       meth(f, "SetScript", "OnEnter", function(self) W.Tooltip(self, self.titleText, self.subL, self.on and "Choisi" or "Clic : choisir") end)
       meth(f, "SetScript", "OnLeave", hideTip)
       return f
@@ -1643,6 +1654,7 @@ local function newLay(width, x0)
       meth(b.t, "SetWidth", bw - 36)
       meth(b.t, "SetText", safe(it[1]))
       b.fn, b.titleText, b.subL, b.on = it[3], it[1], it[2] and { it[2] } or nil, on
+      b.entry = { id = "mod:choice:" .. tostring(it[1]) }   -- (un choix de profil : l'orage de clics du harnais le laisse)
       if on then
         color(b.bg, 0.40, 0.30, 0.05, 0.75); border(b, tok("gold", 1, 0.82, 0.2, 0.9)); color(b.dot, tok("on", 0.3, 0.85, 0.4, 1))
       else
@@ -1879,7 +1891,18 @@ function W.SearchHits(cur)
       end
     end
   end
-  tsort(hits, function(a, b) return a._k < b._k end)
+  -- le mot cherché en début de mot du nom passe devant (« rendre » : « Rendre mes quêtes » avant « Quêtes à prendre »)
+  local q = W.Fold(W.Query()):match("%S+") or ""
+  for _, e in ipairs(hits) do
+    local name = " " .. W.Fold((tostring(e.text):gsub("^[^:]+: ", "")))
+    e._r = (q ~= "" and name:find(" " .. q, 1, true)) and 0 or 1
+  end
+  tsort(hits, function(a, b)
+    local ca, cb = a._k:sub(1, 1), b._k:sub(1, 1)
+    if ca ~= cb then return ca < cb end
+    if a._r ~= b._r then return a._r < b._r end
+    return a._k < b._k
+  end)
   return hits
 end
 function W.SearchElsewhere(Ly, cur)
@@ -1910,7 +1933,9 @@ function W.ClearSearch()
 end
 --- vrai si le texte correspond à la recherche (mots, accents et casse ignorés)
 local ACC = { ["à"] = "a", ["â"] = "a", ["ä"] = "a", ["é"] = "e", ["è"] = "e", ["ê"] = "e", ["ë"] = "e", ["î"] = "i",
-  ["ï"] = "i", ["ô"] = "o", ["ö"] = "o", ["ù"] = "u", ["û"] = "u", ["ü"] = "u", ["ç"] = "c", ["œ"] = "oe" }
+  ["ï"] = "i", ["ô"] = "o", ["ö"] = "o", ["ù"] = "u", ["û"] = "u", ["ü"] = "u", ["ç"] = "c", ["œ"] = "oe",
+  -- (5.0) majuscules accentuées (« Équipement » : string.lower ne les connaît pas)
+  ["É"] = "e", ["È"] = "e", ["Ê"] = "e", ["À"] = "a", ["Â"] = "a", ["Ç"] = "c", ["Î"] = "i", ["Ô"] = "o", ["Û"] = "u", ["Œ"] = "oe" }
 local function fold(s)
   s = low(s)
   for k, v in pairs(ACC) do s = s:gsub(k, v) end
@@ -2060,7 +2085,7 @@ function W.SideList(Ly, par, cur)
     meth(f.t, "SetWordWrap", false)
     f.n = text(f, "S", "prio3")
     meth(f.n, "SetPoint", "RIGHT", f, "RIGHT", -4, 0)
-    meth(f, "SetScript", "OnClick", function(self) if self.page then W.Select(self.page) end end)
+    meth(f, "SetScript", "OnClick", function(self) if self.page and meth(self, "IsShown") then W.Select(self.page) end end)
     meth(f, "SetScript", "OnEnter", function(self) W.Tooltip(self, self.labelText, self.desc and { self.desc } or nil, "Clic : ouvrir") end)
     meth(f, "SetScript", "OnLeave", hideTip)
     return f
@@ -2919,7 +2944,7 @@ W.DISPLAY_SECTIONS = {
   { "main", "Toujours à l'écran", ICON .. "INV_Misc_Spyglass_02" },
   { "map", "Carte et minimap", ICON .. "INV_Misc_Map_01" },
   { "bags", "Sacs et infobulles", ICON .. "INV_Misc_Bag_08" },
-  { "more", "En plus (coupés d'office)", ICON .. "INV_Misc_EngGizmos_20", true },
+  { "more", "En plus (coupés d'office)", ICON .. "INV_Misc_EngGizmos_20" },
 }
 --- (5.0) l'état de chaque élément d'écran : { { id, label, on } } (tests, visite, research/look5.md)
 function W.DisplayState()
@@ -3103,9 +3128,9 @@ W.AddPage({ id = "modules", label = "Fonctions", icon = ICON .. "INV_Misc_EngGiz
   render = function(Ly)
     -- (4.0 QA) l'intro suit le profil en cours (pas « Mode sûr… » quand tout est allumé)
     local prof = T.ModuleProfile and T:ModuleProfile()
-    local intro = (prof == "tout" and "Tout est allumé, fonctions bêta comprises (testées hors du jeu seulement).")
+    local intro = (prof == "tout" and "Profil Complet. Tout est allumé, fonctions bêta comprises (testées hors du jeu seulement).")
       or (prof == "essentiel" and "Profil léger : seul l'essentiel tourne.")
-      or "Mode sûr : seules les fonctions fiables tournent. Les fonctions « bêta » sont testées hors du jeu : allume-les une par une."
+      or "Profil Simple (mode sûr) : seules les fonctions fiables tournent. Les fonctions « bêta » sont testées hors du jeu : allume-les une par une."
     Ly.text(intro, "S", "muted")
     if W._perf then   -- « Coût des fonctions » (Options, ligne de cette page) : ici, jamais dans le chat
       local t = try(G.GetTime) or 0
@@ -3121,10 +3146,10 @@ W.AddPage({ id = "modules", label = "Fonctions", icon = ICON .. "INV_Misc_EngGiz
   action = function()
     local prof = T.ModuleProfile and T:ModuleProfile()
     if prof == "sur" then
-      return "Tout allumer", function() T:SetModuleProfile("tout") end,
+      return "Profil Complet (tout allumer)", function() T:SetModuleProfile("tout") end,
         "Clic : allumer toutes les fonctions bêta (les automatismes de quête restent à cocher dans Options > Barre de quête)"
     end
-    return "Revenir au mode sûr", function() T:SetModuleProfile("sur") end, "Clic : seulement les fonctions fiables"
+    return "Profil Simple (mode sûr)", function() T:SetModuleProfile("sur") end, "Clic : seulement les fonctions fiables"
   end })
 --- (4.0 QA) « Coût des fonctions » : la page « Fonctions » de la fenêtre le montre (au lieu du chat)
 function W.ShowPerf()
@@ -3202,7 +3227,7 @@ W.AddPage({ id = "options", label = "Options", icon = TAB_ICON.options, title = 
     if shown == 0 then Ly.empty("Aucun réglage ne correspond à « " .. query .. " ».") return end
     if type(sel) ~= "table" then sel = first end
     -- page choisie : construite une fois par le moteur TIDY (même rythme, rien ne se chevauche)
-    local pw = max(300, Ly.W - listW - PAD * 2)
+    local pw = max(260, min(max(300, Ly.W - listW - PAD * 2), Ly.W - (PAD + listW + 4) - 4))   -- (5.0) jamais hors de la colonne
     local key = sel.key .. ":" .. pw
     local f = optFrames[key]
     if not f and sel.builder then

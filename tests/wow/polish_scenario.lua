@@ -106,10 +106,17 @@ return function(M, ctx)
   check(W:IsShown() and W.step == 1, "étape 1")
   W.next:Click("LeftButton")
   check(W.step == 2, "étape 2")
-  for _, b in ipairs(W.groups[2]) do
-    if b:IsShown() and tostring(b:GetText()):find("Mode calme") then b:Click("LeftButton") end
+  -- (5.0 LOOK) étape 2 : profil Simple / Complet (une phrase chacun) + ce qui est à l'écran
+  local function wizClick(word)
+    for _, b in ipairs(W.groups[2]) do
+      if b:IsShown() and tostring(b:GetText()):find(word, 1, true) then b:Click("LeftButton") return true end
+    end
   end
-  check(T.settings.preset == "calme", "assistant : préréglage choisi")
+  local prof0 = T:ModuleProfile()
+  check(wizClick("Simple") and T:ModuleProfile() == "sur", "assistant : profil Simple choisi")
+  check(tostring(W.presetHelp:GetText()):find("Simple", 1, true), "assistant : le profil choisi est expliqué en une phrase")
+  check(wizClick("Complet") and T:ModuleProfile() == "tout", "assistant : profil Complet choisi")
+  T:SetModuleProfile(prof0)
   W.next:Click("LeftButton")
   check(W.step == 3, "étape 3")
   W.next:Click("LeftButton")

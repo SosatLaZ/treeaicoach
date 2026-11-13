@@ -219,7 +219,7 @@ function H.Entries()
         if st.id ~= "fenetre" and st.id ~= "suivant" then
           local id = st.id
           local n = tonumber(st.count)
-          out[#out + 1] = { group = "rapide", id = "strip:" .. id, title = tostring(st.title or st.label), icon = st.icon,
+          out[#out + 1] = { group = "rapide", id = "strip:" .. id, title = tostring(st.modeLabel or st.title or st.label), icon = st.icon,
             state = (n and n > 0) and tostring(n) or (st.active and "|cffffd133choisi|r") or nil, on = not st.disabled,
             tip = "Clic : " .. tostring(st.tip or st.title or st.label) .. (st.key and ("  (touche : " .. st.key .. ")") or ""),
             fn = act(function() Sc.Do(id) end) }

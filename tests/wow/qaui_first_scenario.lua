@@ -48,19 +48,25 @@ return function(M, ctx)
       local body = Lb.strip(wiz.body:GetText())
       p(("  -- wizard step %d title « %s »"):format(step, Lb.strip(wiz.title:GetText())))
       p("     body: " .. body:gsub("\n", " / "))
+      -- (5.0 LOOK) réglage en 3 étapes : ton personnage · ce que TreeAI affiche · tes touches
       if step == 1 then
-        check(body:find("petite carte", 1, true) and not body:find("petit panneau", 1, true), "wizard 1 describes the card (W-12)")
+        check(body:find("bande d'actions rapides", 1, true) and not body:find("petit panneau", 1, true), "wizard 1 describes what is on screen (W-12)")
         check(body:find("Aucun automatisme sans ton accord", 1, true), "wizard 1: W-13")
+        check(body:find("Tu joues", 1, true) and body:find("Spécialisation", 1, true), "wizard 1: class, level, spec read from the game")
       end
       if step == 2 then
-        check(body:find("Où mettre la carte « Prochaine étape »", 1, true), "wizard 2: where to put the CARD (W-14)")
-        -- every place button: the card stays the HUD, the old panel never comes back
+        check(body:find("Choisis un profil", 1, true), "wizard 2: Simple / Complet (W-14)")
+        -- the on-screen toggles: the strip goes and comes back, the old panel never comes back
         for _, b in ipairs(wiz.groups[2]) do
           local lbl = Lb.strip(b:GetText())
-          if lbl == "Auto (scan)" or lbl == "Haut droite" or lbl == "Bas gauche" then
+          if lbl:find("Bande d'actions", 1, true) then
             b:Click("LeftButton")
-            p(("     after « %s »: panel=%s card=%s"):format(lbl, tostring(panel()), tostring(cardShown())))
-            check(stripShown() and not panel(), "wizard « " .. lbl .. " » : quick buttons shown, old panel hidden (UI-05)")
+            M.Advance(0.3, 0.1)
+            check(not stripShown() and not panel(), "wizard « Bande d'actions » : one click hides it")
+            b:Click("LeftButton")
+            M.Advance(0.6, 0.1)
+            p(("     after « %s » twice: panel=%s card=%s"):format(lbl, tostring(panel()), tostring(cardShown())))
+            check(stripShown() and not panel(), "wizard « Bande d'actions » again : quick buttons shown, old panel hidden (UI-05)")
           end
         end
       end

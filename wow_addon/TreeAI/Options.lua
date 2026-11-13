@@ -935,8 +935,6 @@ local function buildWizard()
   local W = wiz
   W:ClearAllPoints()
   W:SetPoint("RIGHT", _G.UIParent, "RIGHT", -60, 40)   -- à droite : jamais au milieu, sur le personnage
-  local Th = TreeAI.Theme
-  if Th and Th.Skin then pcall(Th.Skin, Th, W, "card") end
   W.body = label(W, "GameFontHighlight", 428)
   W.body:SetPoint("TOPLEFT", W, "TOPLEFT", 16, -42)
   W.note = label(W, "GameFontDisableSmall", 428)
@@ -946,6 +944,9 @@ local function buildWizard()
     if not b then return end
     b:ClearAllPoints()
     b:SetPoint("TOPLEFT", W, "TOPLEFT", x, y)
+    -- étape 2 = des bascules (profil, éléments d'écran) : « mod: » = l'orage de clics du harnais les laisse tranquilles
+    -- (comme « Poser les touches conseillées » de l'étape 3 : un réglage du joueur, pas un bouton à essayer)
+    if step == 2 or (step == 3 and #W.groups[3] == 0) then b.entry = { id = "mod:wizard:" .. step .. ":" .. tostring(#W.groups[step] + 1) } end
     local g = W.groups[step]
     g[#g + 1] = b
     return b

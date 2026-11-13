@@ -278,7 +278,10 @@ function S.State()
       if m then
         st.mode = m.id
         st.active = (m.active == true) or (act ~= nil and act == m.id) or false
-        if type(m.label) == "string" and m.label ~= "" and d.id ~= "zone" then st.title = m.label end
+        if type(m.label) == "string" and m.label ~= "" then
+          st.modeLabel = m.label
+          if d.id ~= "zone" then st.title = m.label end
+        end
         if type(m.tip) == "string" and m.tip ~= "" then st.modeTip = m.tip end
         if type(m.count) == "number" and not secret(m.count) then st.count = m.count end
         if type(m.key) == "string" and m.key ~= "" then st.modeKey = m.key end
@@ -669,6 +672,8 @@ local function newButton(def, compact)
     meth(b, "SetScript", "OnLeave", hideTip)
   end
   b.id, b.compact = def.id, compact and true or false
+  -- bascules (guidage, session métier) : « mod: » = l'orage de clics du harnais les laisse, comme les lignes « Fonctions »
+  if def.id == "guide" or def.id == "metiers" then b.entry = { id = "mod:strip:" .. def.id } end
   meth(b, "Hide")
   return b
 end
@@ -776,7 +781,7 @@ local function ensureStrip()
       meth(p, "SetScript", "OnLeave", hideTip)
     end
   end
-  if pill then pill.id = "guide" end
+  if pill then pill.id, pill.entry = "guide", { id = "mod:strip:guide" } end
   -- « Touches » : seulement tant qu'une liaison manque (clic = touches conseillées, clic droit = ne plus proposer)
   local okK, kb = pcall(G.CreateFrame, "Button", "TreeAIStripKeys", f)
   if okK and kb then
@@ -862,7 +867,7 @@ local function screen()
   if finite(w) and finite(h) and w > 200 and h > 200 then return w, h end
 end
 --- taille plancher en pixels réels : à petite échelle d'interface (0,64 en 1080p = 0,9 px par unité) la bande grossit
---- pour que ses mots fassent au moins ~11 px réels ; jamais plus de +30 %. 1 sans la taille réelle de l'écran.
+--- pour que ses mots fassent au moins ~11 px réels ; jamais plus de +40 %. 1 sans la taille réelle de l'écran.
 function S.AutoScale()
   local f = rawget(G, "GetPhysicalScreenSize")
   local es = tonumber(meth(G.UIParent, "GetEffectiveScale"))
@@ -872,7 +877,7 @@ function S.AutoScale()
   if not (ph and ph > 200) then return 1 end
   local px = es * ph / 768           -- pixels réels par unité d'interface
   if not finite(px) or px <= 0 then return 1 end
-  return max(1, min(1.3, 1 / px))
+  return max(1, min(1.4, 1 / px))
 end
 local function stripScale()
   return max(0.7, min(1.5, (tonumber(S.db and S.db.stripScale) or 100) / 100)) * S.AutoScale()
@@ -927,37 +932,31 @@ function S.Avoid(W, H)
     if r and AURAS_BELOW[n] then r.b, r.h = r.b - AURAS_BELOW[n], r.h + AURAS_BELOW[n] end
     push(r)
   end
-  for _, n in ipairs(AVOID) do add(n) end
-  for _, n in ipairs(T.LAYOUT_SCAN_NAMES or {}) do add(n) end
-  -- la boussole TreeAI n'est pas encore à l'écran (elle apparaît avec la 1re cible) : sa place d'origine, en haut au
-  -- centre, est réservée — la bande ne s'y pose pas pour devoir en partir dix secondes plus tard
-  local Cm = T.modules and T.modules.Compass
-  if not S.RectOf("TreeAICompassFrame") and Cm and Cm._active and not (Cm.db and Cm.db.shown == false) then
-    local k = tonumber(Cm.db and Cm.db.scale) or 1
-    local cw, ch = ((tonumber(Cm.W) or 150) + 30) * k, ((tonumber(Cm.H) or 74) + 30) * k
-    push({ l = W / 2 - cw / 2, b = H - 70 - ch, w = cw, h = ch, name = "TreeAICompassFrame" })
-  end
-  -- … et quand elle se montre (déplacée par le joueur, ou plus grande que prévu) : un regard, une fois
-  local cf = rawget(G, "TreeAICompassFrame")
-  if type(cf) == "table" and not S._compassHooked and type(cf.HookScript) == "function" then
-    S._compassHooked = true
-    pcall(cf.HookScript, cf, "OnShow", function()
-      if S._compassLook then return end
-      S._compassLook = true
-      T:After(0.5, function() S._compassLook = nil if strip and S.placed == "auto" and S.UnderCompass() then S.PlaceStrip() end end)
-    end)
-  end
-  -- suivis d'autres addons repérés par le placement du cœur (colonne « Suivi Forever »…) : leur vrai rectangle
+  -- d'abord les rectangles du placement du cœur : suivis de quêtes et colonnes d'autres addons (« Suivi Forever »…)
+  -- avec la place qu'ils prennent en grandissant → la bande ne se pose pas juste sous un suivi qui va s'allonger
   if type(T._LightRects) == "function" then
     local ok, list = pcall(T._LightRects, W, H)
     for _, r in ipairs(ok and type(list) == "table" and list or {}) do
       local n = r.name
-      if type(n) == "string" and not n:find("^TreeAIStrip") and not seen[n] and finite(r.l) and finite(r.b) and finite(r.w) and finite(r.h) then
+      if type(n) == "string" and not n:find("^TreeAI") and not RESERVE[n] and not AURAS_BELOW[n] and not seen[n]
+          and finite(r.l) and finite(r.b) and finite(r.w) and finite(r.h) then
         seen[n] = true
         push({ l = r.l, b = r.b, w = r.w, h = r.h, name = n })
       end
     end
   end
+  for _, n in ipairs(AVOID) do add(n) end
+  for _, n in ipairs(T.LAYOUT_SCAN_NAMES or {}) do add(n) end
+  -- la place d'origine de la boussole TreeAI (en haut au centre) est toujours réservée, qu'elle y soit déjà ou non
+  -- (elle apparaît avec la 1re cible, puis le placement du cœur l'y ramène) : la bande ne s'y pose pas pour devoir
+  -- en partir dix secondes plus tard
+  local Cm = T.modules and T.modules.Compass
+  if Cm and Cm._active and not (Cm.db and Cm.db.shown == false) then
+    local k = tonumber(Cm.db and Cm.db.scale) or 1
+    local cw, ch = ((tonumber(Cm.W) or 150) + 30) * k, ((tonumber(Cm.H) or 74) + 30) * k
+    push({ l = W / 2 - cw / 2, b = H - 70 - ch, w = cw, h = ch, name = "TreeAICompassSlot" })
+  end
+  S.WatchCompass()
   return out
 end
 local function overlaps(a, b, m)
@@ -966,8 +965,12 @@ local function overlaps(a, b, m)
 end
 S.Overlaps = overlaps
 --- meilleure place libre en haut à gauche pour w × h (unités UIParent) : (gauche, haut) ou nil
-function S.FindSpot(w, h, W, H, avoid)
+function S.FindSpot(w, h, W, H, avoid, maxRight, relaxed)
   local xs, tops = { 8 }, { H - 6 }
+  maxRight = maxRight or (W - 4)
+  -- relaxed (écran bondé, rien de libre) : le haut de la zone « centre » gardée au jeu est permis, mais seulement
+  -- dans les 40 % hauts de l'écran — jamais le milieu, jamais sur un cadre
+  local minB = relaxed and H * 0.6 or 4
   for _, r in ipairs(avoid) do
     xs[#xs + 1] = r.l + r.w + 6
     tops[#tops + 1] = r.b - 6
@@ -978,7 +981,7 @@ function S.FindSpot(w, h, W, H, avoid)
   for _, x in ipairs(xs) do
     for _, top in ipairs(tops) do
       local rc = { l = x, b = top - h, w = w, h = h }
-      if x >= 4 and x + w <= W - 4 and rc.b >= 4 and top <= H - 2 then
+      if x >= 4 and x + w <= maxRight and rc.b >= minB and top <= H - 2 then
         local free, area = true, 0
         for _, r in ipairs(avoid) do
           if overlaps(rc, r, 3) then
@@ -987,7 +990,7 @@ function S.FindSpot(w, h, W, H, avoid)
           end
         end
         if not free and (not least or area < least) then least, ll, lt = area, x, top end
-        if free then for _, r in ipairs(keep) do if overlaps(rc, r, 0) then free = false break end end end
+        if free and not relaxed then for _, r in ipairs(keep) do if overlaps(rc, r, 0) then free = false break end end end
         if free then
           local score = (H - top) + x * 0.5
           if not best or score < best then best, bl, bt = score, x, top end
@@ -1008,12 +1011,32 @@ function S.Blockers(W, H, avoid)
   return out
 end
 
+local placeTries, placing = 0, false
+--- la boussole TreeAI se montre ou change de place (placement automatique du cœur, joueur qui la glisse) : un regard,
+--- regroupé (0,5 s) — si elle est venue sur la bande non posée par le joueur, la bande s'écarte. Crochets sur NOTRE
+--- cadre seulement (jamais un cadre du jeu) ; rien ne tourne tant que la boussole ne bouge pas.
+function S.WatchCompass()
+  local cf = rawget(G, "TreeAICompassFrame")
+  if S._compassHooked or type(cf) ~= "table" then return end
+  S._compassHooked = true
+  local function look()
+    if S._compassLook or placing then return end
+    S._compassLook = true
+    T:After(0.5, function()
+      S._compassLook = nil
+      if strip and stripOn() and S.placed == "auto" and S.UnderCompass() then S.PlaceStrip() end
+    end)
+  end
+  if type(cf.HookScript) == "function" then pcall(cf.HookScript, cf, "OnShow", look) end
+  local hk = rawget(G, "hooksecurefunc")
+  if type(hk) == "function" and type(cf.SetPoint) == "function" then pcall(hk, cf, "SetPoint", look) end
+  look()
+end
 --- la boussole TreeAI (visible) est-elle sur la bande ? (un seul rectangle lu : appelé à chaque rafraîchissement)
 function S.UnderCompass()
   local rc, c = stripRect(), S.RectOf("TreeAICompassFrame")
   return (rc and c and overlaps(rc, c, 1)) and true or false
 end
-local placeTries, placing = 0, false
 --- pose la bande : place du joueur si elle en a une, sinon la meilleure place libre en haut à gauche.
 --- STABLE : déjà posée, à l'écran et sans rien dessous → elle ne bouge pas (force = recalculer quand même).
 function S.PlaceStrip(force)
@@ -1057,12 +1080,16 @@ function S.PlaceStrip(force)
   for _, r in ipairs(avoid) do if not tostring(r.name or ""):find("^TreeAI") then game[#game + 1] = r end end
   placing = true
   local l, top, fl, ft, w, h
-  for _, try_ in ipairs({ { false, avoid }, { true, avoid }, { false, game }, { true, game } }) do
-    -- avec les mots d'abord (l'écran a pu grandir depuis), icônes seules si la bande ne tient nulle part
+  -- d'abord dans la partie gauche de l'écran (là où le joueur l'attend), avec les mots ; sinon icônes seules à
+  -- gauche ; sinon n'importe où ; en dernier, plutôt sur un cadre TreeAI que sur un cadre du jeu
+  local left = W * 0.62
+  for _, try_ in ipairs({ { false, avoid, left }, { true, avoid, left }, { false, avoid }, { true, avoid },
+      { true, avoid, nil, true }, { false, game, left }, { true, game, left }, { false, game }, { true, game },
+      { true, game, nil, true } }) do
     local compact = try_[1] or S.db.text == false
     if (S.compact or false) ~= compact then S.LayoutStrip(compact) end
     w, h = size()
-    local a, b, c, d = S.FindSpot(w, h, W, H, try_[2])
+    local a, b, c, d = S.FindSpot(w, h, W, H, try_[2], try_[3], try_[4])
     if not fl then fl, ft = c, d end
     if a then l, top = a, b break end
   end
