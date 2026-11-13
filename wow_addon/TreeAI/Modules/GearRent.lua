@@ -328,16 +328,17 @@ local function verdictFor(slot, plan, bud, bags)
       function() M.GoSource(src, nowC) end, M.GoHint and M.GoHint(src.kind) or "Clic : y aller", nowC.delta or nowC.pct, cost, src.min,
       (nowC.pct or 0) >= 15 and 2 or 1)
   end
-  if soon then
-    local gain = gainOf(soon, slot)
-    return done("wait", fmt("%s : attends le niveau %d — %s · %s (%s)", head, soon.need, soon.name or "?", gain, srcShort(soon.src)), nil,
-      { fmt("%s : %s → %s (niveau %d requis).", head, cur.name or "(vide)", soon.name or "?", soon.need), "Où : " .. tostring(soon.src.text) },
-      function() M.GoSource(soon.src, soon) end, "Clic : voir où l'obtenir", 0, 0, 0, 1)
-  end
   -- portable aujourd'hui, mais sa source ne l'est pas encore (trop cher, donjon / quête trop haut, métier trop bas)
   local later
   for _, cd in ipairs(list) do
     if (cd.need or 0) <= c.level and cd.src and cd.src.kind ~= "world" and cd.src.kind ~= "bag" and (not later or cd.score > later.score) then later = cd end
+  end
+  -- « attends le niveau N » seulement si l'objet à venir est nettement meilleur que ce qu'on peut viser dès maintenant
+  if soon and not (later and (not (cur.id or cur.link) or soon.score < later.score * 1.15)) then
+    local gain = gainOf(soon, slot)
+    return done("wait", fmt("%s : attends le niveau %d — %s · %s (%s)", head, soon.need, soon.name or "?", gain, srcShort(soon.src)), nil,
+      { fmt("%s : %s → %s (niveau %d requis).", head, cur.name or "(vide)", soon.name or "?", soon.need), "Où : " .. tostring(soon.src.text) },
+      function() M.GoSource(soon.src, soon) end, "Clic : voir où l'obtenir", 0, 0, 0, 1)
   end
   if later then
     local src = later.src
@@ -363,9 +364,11 @@ local function verdictFor(slot, plan, bud, bags)
   end
   local weak = list[1]
   if weak and weak.src and weak.src.kind == "world" then
-    return done("watch", (cur.id or cur.link) and fmt("%s : garde %s — mieux existe (%s), sans source sûre", head, cur.name or "?", weak.name or "?")
-        or fmt("%s : vide — %s existe, sans source sûre (butin, HV)", head, weak.name or "?"), nil,
-      { "Butin aléatoire : surveille l'hôtel des ventes et le butin des monstres." }, nil, nil, 0, 0, 0, 1)
+    local tradable = weak.bind ~= 1   -- lié quand ramassé : pas à l'hôtel des ventes
+    return done("watch", (cur.id or cur.link) and fmt("%s : garde %s — mieux existe (%s), source inconnue de TreeAI", head, cur.name or "?", weak.name or "?")
+        or fmt("%s : vide — %s existe, source inconnue de TreeAI", head, weak.name or "?"), nil,
+      { "TreeAI ne sait pas où il s'obtient (butin, réputation, JcJ…).", tradable and "Il s'échange : regarde à l'hôtel des ventes." or "Il est lié quand ramassé : pas à l'hôtel des ventes." },
+      tradable and function() M.GoSource({ kind = "ah" }, weak) end or nil, tradable and "Clic : le chercher à l'HV (ouverte), sinon la page HV" or nil, 0, 0, 0, 1)
   end
   if not (cur.id or cur.link) then
     return done("keep", fmt("%s : vide — aucune piste sûre pour l'instant", head), nil,

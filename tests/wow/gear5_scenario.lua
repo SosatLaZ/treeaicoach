@@ -169,6 +169,11 @@ return function(M, ctx)
   s = Gr.Spec()
   if lvl >= 10 then
     check(s.tree == nil and s.ask, "A5 spec unknown → ask")
+    -- right after login the game has not loaded the talents yet: no question before a second read
+    T._suggestions["Gear:spec"], Gr.char.specAsked = nil, nil   -- (the deferred read above may already have asked)
+    Gr._spec.enabledAt = GetTime()
+    check(Gr.AskSpecOnce() == false and not T._suggestions["Gear:spec"], "A5 not asked in the first seconds after login")
+    Gr._spec.enabledAt = GetTime() - 60
     Gr.AskSpecOnce()
     local q = T._suggestions["Gear:spec"]
     check(q and q.text:find("Quelle est ta spé", 1, true) and q.onClick, "A5 asked once, clickable: " .. tostring(q and q.text))

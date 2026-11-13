@@ -421,6 +421,7 @@ function M.Spec()
   if s.none and level() < 10 then s.early = true end
   s.class = cls
   remember(s)
+  if s.tree and s.source ~= "manual" and M.Clear then M:Clear("spec") end   -- lue : la question n'a plus lieu d'être
   SP.cur = s
   SP.dirty = false   -- en attente de la lecture longue : ce résultat sert tel quel ; c'est elle qui redemandera
   return s
@@ -484,6 +485,9 @@ function M.AskSpecOnce()
   local c = charDB()
   local s = M.Spec()
   if not (c and s and s.ask) or c.specAsked then return false end
+  -- juste après la connexion le jeu n'a pas encore chargé les talents : on ne demande qu'après une 2e lecture
+  local t = num(try(g("GetTime"))) or 0
+  if SP.enabledAt and t - SP.enabledAt < M.SPEC_ASK_AFTER then return false end
   c.specAsked = true
   local names = M.TreeNames(s.class)
   M:Suggest("spec", ("Quelle est ta spé ? %s, %s ou %s — clic pour choisir"):format(names[1], names[2], names[3]), 2,
@@ -526,17 +530,30 @@ end
 function M.SpecCombatEnd()
   if SP.deepWanted then SP.deepWanted = false SP.dirty = true end
 end
+M.SPEC_ASK_AFTER = 25   -- secondes après l'activation avant de poser la question (talents chargés par le jeu)
 --- branché par Gear:OnEnable
 function M.SpecEnable()
+  SP.enabledAt = num(try(g("GetTime"))) or 0
+  -- relecture une fois le jeu installé : si la spé n'était pas lisible à la connexion, on réessaie avant de demander
+  T:After(M.SPEC_ASK_AFTER + 1, function()
+    local s = SP.cur
+    if s and not s.tree and not s.none then M.SpecDirty(true) M.Spec() end
+  end)
   local function hard()
     M.SpecDirty(true)
     if M.ResetWeights then M.ResetWeights() end
     if M.plan and M.MarkDirty then M.MarkDirty() end
   end
   for _, ev in ipairs({ "PLAYER_TALENT_UPDATE", "CHARACTER_POINTS_CHANGED", "ACTIVE_TALENT_GROUP_CHANGED", "TRAIT_CONFIG_UPDATED",
-      "ACTIVE_COMBAT_CONFIG_CHANGED", "TRAIT_TREE_CURRENCY_INFO_UPDATED", "ACTIVE_PLAYER_SPECIALIZATION_CHANGED" }) do
+      "ACTIVE_COMBAT_CONFIG_CHANGED", "TRAIT_TREE_CURRENCY_INFO_UPDATED", "ACTIVE_PLAYER_SPECIALIZATION_CHANGED",
+      "TRAIT_CONFIG_LIST_UPDATED" }) do
     M:RegisterEvent(ev, hard)
   end
+  -- un sort appris ne compte que si la spé vient des sorts (ou n'est pas encore lue) : sinon rien
+  M:RegisterEvent("SPELLS_CHANGED", function()
+    local s = SP.cur
+    if s and (s.source == "spells" or (not s.tree and not s.none)) then hard() end
+  end)
   -- (un module = UN rappel par événement / message : PLAYER_LEVEL_UP et COMBAT_END sont branchés dans Gear.lua)
   if T.RegisterSlash then
     T:RegisterSlash("spe", function(rest)

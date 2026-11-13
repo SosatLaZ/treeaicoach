@@ -149,14 +149,21 @@ et l'apprentissage — c'est TA réserve, pas un prix lu). Sources : sacs (API),
   Agilité > PA » pour le chasseur au 60 ; pour la montée, l'arme à distance d'abord. Cohérent avec le modèle :
   à 30, +1 DPS d'arc ≈ 1,3 DPS, +1 Agi ≈ 0,15 DPS.
 
-## 5. Coût
+## 5. Coût (mesuré sur le simulateur, chasseur 30, équipement presque vide = pire cas ; 50 kinstr ≈ 1 ms)
 
-- Plan complet (5 090 objets) : seulement quand l'équipement, le niveau, la spé ou le journal changent ; par
-  tranches (coroutine), hors combat. Plus de plan sur un simple changement de sac, plus de plan périodique.
-- Sacs : un relevé regroupé (`T:OnBags`, repli maison) ; verdict en cache par lien → une comparaison par objet
-  nouveau ; les lignes ne sont refaites que si la liste des améliorations change.
-- Infobulle : `T.Gear.Score(lien)` en cache (O(1) à la 2e demande), invalidé par l'équipement / le niveau / la spé.
-- Spé : lecture légère à la demande après un événement de talents ; lectures longues différées.
+| travail | avant (4.4) | 5.0 |
+|---|---|---|
+| plan complet | ~490 kinstr, 1,7 Mo de déchets, tranche la plus lourde 95 kinstr ; relancé à chaque changement de sac (5 s) et toutes les 10 min | ~300 kinstr, 65 tranches ≤ 12–20 kinstr ; seulement à la demande (page ouverte, niveau gagné, marchand / HV, quête rendue) |
+| objet équipé | plan complet | son emplacement seul : ~50 kinstr, par tranches |
+| changement de sac | plan complet 5 s plus tard | 1,4 kinstr (le sac touché) ; verdict en cache par lien |
+| `T.Gear.Score(lien)` répété | — | ~30 instructions (cache) |
+| `T.Gear.Spec()` / poids répétés | relus à chaque appel | ~15 instructions (cache, périmé par les événements) |
+| au repos | cycle AutoRefresh du cœur tenu éveillé | rien : pas de méthode AutoRefresh, pas de minuterie |
+
+- Le premier plan n'est jamais calculé « pour rien » : sans plan, les sacs suffisent pour dire « Équipe X ».
+- Spé : lecture légère à la demande après un événement de talents ; lectures longues (nœuds, sorts) différées par
+  `T:Spread`, jamais en combat ; la question « Quelle est ta spé ? » n'est posée qu'après une 2e lecture (25 s après
+  la connexion, quand le jeu a chargé les talents).
 
 ## 6. Pas fait / limites connues
 
